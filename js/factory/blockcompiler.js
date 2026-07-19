@@ -8,7 +8,7 @@ import { logwarn, logdebug } from '../verbosity.js';
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
   API: 'api',
-  fetch: 'fetch',
+  FETCH: 'fetch',
   WRITER: 'writer',
   SPAWN: 'spawn',
   IO: 'io',
