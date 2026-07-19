@@ -93,7 +93,7 @@ export const enqueueapi = function(endpoint, method, payload, options) {
             method: method,
             payload: payload || {},
             token: (options && options.token) || '',
-            textual: (options && options.token) || false,
+            textual: (options && options.textual) || false,
             resolve: resolve,
             reject: reject
         });

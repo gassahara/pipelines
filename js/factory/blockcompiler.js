@@ -8,6 +8,7 @@ import { logwarn, logdebug } from '../verbosity.js';
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
   API: 'api',
+  fetch: 'fetch',
   WRITER: 'writer',
   SPAWN: 'spawn',
   IO: 'io',
@@ -97,6 +98,14 @@ const BLOCKANALYZERS = {
     return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
   },
   [BLOCKTYPES.API]: (block) => {
+      const errors = [];
+      const warnings = [];
+      if (!block.endpoint) errors.push('api block must have an endpoint');
+      if (!block.method) errors.push('api block must have a method field (GET or POST)');
+      else if (block.method !== 'GET' && block.method !== 'POST') errors.push('api block method must be GET or POST');
+      return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+    },
+  [BLOCKTYPES.FETCH]: (block) => {
       const errors = [];
       const warnings = [];
       if (!block.endpoint) errors.push('api block must have an endpoint');
@@ -212,6 +221,98 @@ const BLOCKCOMPILERS = {
         async () => {
           const endpoint = env[apiendpoint] || apiendpoint;
             const apiresolve = await enqueueapi(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' });
+	    console.log({apiendpoint, apiresolve,endpoint, enqueueapi}, merged.method, payload);
+          return { status: apiresolve.status, data: apiresolve.data };
+        },
+        [],
+        {
+          context: { env },
+          capturecontinuation: true,
+          errk: createerrorcontext(id, 'api:call')
+        }
+      );
+
+      const responsemapping = merged.mapping?.response;
+      let result = rawresult.data;
+      if (responsemapping) {
+        const buildresponse = (mappingobj, raw) => {
+          const result = {};
+          for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
+            if (typeof mappingdef === 'function') {
+              result[fieldkey] = mappingdef(raw);
+            } else if (typeof mappingdef === 'object' && mappingdef !== null && mappingdef.from !== undefined) {
+              result[fieldkey] = raw[mappingdef.from];
+            } else if (typeof mappingdef === 'object' && mappingdef !== null) {
+              result[fieldkey] = buildresponse(mappingdef, raw);
+            } else {
+              result[fieldkey] = raw[mappingdef];
+            }
+          }
+          return result;
+        };
+        result = buildresponse(responsemapping, rawresult);
+      }
+
+      const patch = {};
+      const apioutputkeys = Object.keys(sig.outputs);
+      if (apioutputkeys.length === 1) {
+        patch[apioutputkeys[0]] = result;
+      } else if (typeof result === 'object') {
+        for (const key of apioutputkeys) {
+          if (result[key] !== undefined) {
+            patch[key] = result[key];
+          }
+        }
+      }
+      for (const [k, v] of Object.entries(patch)) {
+        env[k] = v;
+      }
+    };
+    blockfn.id = id;
+    return blockfn;
+  },
+  [BLOCKTYPES.FETCH]: (merged, id, sig) => {
+    const blockfn = async (env) => {
+      logdebug('[BLOCK] Executing api block:', id);
+      const label = 'api:' + (merged.endpoint || id);
+      const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
+      const inputdata = {};
+      for (let i = 0; i < sig.inputs.length; i++) {
+        inputdata[sig.inputs[i]] = inputaccessors[i](env);
+      }
+      const apiendpoint = merged.endpoint;
+	const payloadmapping = merged.mapping?.payload || {};
+	console.log({inputaccessors, inputdata, apiendpoint, payloadmapping});
+
+      const buildpayload = (mappingobj, data) => {
+        const result = {};
+        for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
+          if (typeof mappingdef === 'function') {
+            result[fieldkey] = mappingdef(data);
+          } else if (typeof mappingdef === 'object' && mappingdef !== null && !Array.isArray(mappingdef)) {
+            if (mappingdef.from !== undefined) {
+              result[fieldkey] = data[mappingdef.from];
+            } else {
+              result[fieldkey] = buildpayload(mappingdef, data);
+            }
+          } else {
+            result[fieldkey] = mappingdef;
+          }
+        }
+        return result;
+      };
+      const payload = buildpayload(payloadmapping, inputdata);
+      for (const field of Object.keys(sig.outputs)) {
+        if (payload[field] === undefined && inputdata[field] !== undefined) {
+          payload[field] = inputdata[field];
+        }
+      }
+	console.log({buildpayload, payload});
+      const rawresult = await callwithstack(
+        EVALSTACK, label, 'async-await',
+        async () => {
+          const endpoint = env[apiendpoint] || apiendpoint;
+            const apiresolve = await enqueueapi(endpoint, merged.method, payload, { textual: true, token: env.authsessionaccesstoken || '' });
 	    console.log({apiendpoint, apiresolve,endpoint, enqueueapi}, merged.method, payload);
           return { status: apiresolve.status, data: apiresolve.data };
         },
