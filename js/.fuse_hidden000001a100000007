@@ -1,0 +1,102 @@
+/**
+ * auth.js - Reactive Supabase Authentication (v5.0 Actor Refactor)
+ * [Fundamental: CATEGORY | Object: ACTOR | Implementation: AUTH]
+ */
+
+//import { updateworldmap, getworldmap } from './context.js';
+import { updateworldmap, getworldmap } from './actors/worldmapactor.js';
+import { getfunctor } from './functor.js';
+import { registersubscription } from './actors/eventactor.js';
+
+const SUPABASEURL  = 'https://vflkhlyunshjgeuepquw.supabase.co';
+const SUPABASEKEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZmbGtobHl1bnNoamdldWVwcXV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTE2Mzc3NzgsImV4cCI6MjAyNzIxMzc3OH0.5_9X_8R7T3X9X_8R7T3X9X_8R7T3X9X_8R7T3X9X_8';
+
+const sb = window.supabase.createClient(SUPABASEURL, SUPABASEKEY);
+
+const authmodule = {
+    modal: null,
+    overlay: null,
+    msg: null,
+
+    async init() {
+        console.group("[AUTH:PERSISTENCE]");
+        this.modal    = document.getElementById('loginModal');
+        this.overlay  = document.getElementById('loginModalOverlay');
+        this.msg      = document.getElementById('authMsg');
+
+        this.wireevents();
+        this.listentoauthchanges();
+
+        try {
+            const { data, error } = await sb.auth.getSession();
+            if (error) throw error;
+            if (data?.session) {
+                const user = data.session.user;
+                updateworldmap({ auth: { user, isauthenticated: true, session: data.session } });
+            }
+        } catch (err) {
+            console.error("[AUTH:FATAL]", err.message);
+        }
+        console.groupEnd();
+    },
+
+    wireevents() {
+        const getctx = () => ({ worldmap: getworldmap(), stack: {}, stacklens: {}, worldmaplens: {} });
+
+        const openfn   = getfunctor(() => this.openloginmodal());
+        const closefn  = getfunctor(() => this.closeloginmodal());
+        const signinfn = getfunctor(() => this.signin());
+
+        registersubscription(document.body, 'click', getfunctor(([e]) => e.target.closest('#landingAuthBtn')), openfn, [], getctx);
+        registersubscription(document.body, 'click', getfunctor(([e]) => e.target.closest('#wsAuthBtn')), openfn, [], getctx);
+        registersubscription(document.body, 'click', getfunctor(([e]) => e.target.closest('#closeAuthModal')), closefn, [], getctx);
+        registersubscription(document.body, 'click', getfunctor(([e]) => e.target.closest('#loginModalOverlay')), closefn, [], getctx);
+        registersubscription(document.body, 'click', getfunctor(([e]) => e.target.closest('#authSignInBtn')), signinfn, [], getctx);
+    },
+
+    listentoauthchanges() {
+        sb.auth.onAuthStateChange((event, session) => {
+            const isauth = !!session;
+            const current = getworldmap();
+            if (current.auth?.isauthenticated === isauth && current.auth?.user?.id === session?.user?.id) return;
+            updateworldmap({ auth: { user: session?.user || null, isauthenticated: isauth, session: session || null } });
+        });
+    },
+
+    async signin() {
+        const email = document.getElementById('authEmail')?.value;
+        const password = document.getElementById('authPassword')?.value;
+        if (!email || !password) return this.setmsg('MISSING CREDENTIALS', true);
+        this.setmsg('AUTHENTICATING...', false);
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) this.setmsg(error.message, true);
+        else this.closeloginmodal();
+    },
+
+    async signout() {
+        await sb.auth.signOut();
+    },
+
+    openloginmodal() {
+        this.modal?.classList.remove('hidden');
+        this.overlay?.classList.remove('hidden');
+    },
+
+    closeloginmodal() {
+        this.modal?.classList.add('hidden');
+        this.overlay?.classList.add('hidden');
+    },
+
+    setmsg(text, iserror) {
+        if (!this.msg) return;
+        this.msg.textContent = text;
+        this.msg.className = iserror ? 'auth-msg auth-msg--error' : 'auth-msg auth-msg--ok';
+    },
+
+    isauthenticated() {
+        const state = getworldmap();
+        return state.auth?.isauthenticated || false;
+    }
+};
+
+export default authmodule;
