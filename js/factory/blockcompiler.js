@@ -326,36 +326,12 @@ const BLOCKCOMPILERS = {
 
 	    const responsemapping = merged.mapping?.response;
 	    let result = rawresult.data;
-	    if (responsemapping) {
-		const buildresponse = (mappingobj, raw) => {
-		    const result = {};
-		    for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
-			if (typeof mappingdef === 'function') {
-			    result[fieldkey] = mappingdef(raw);
-			} else if (typeof mappingdef === 'object' && mappingdef !== null && mappingdef.from !== undefined) {
-			    result[fieldkey] = raw[mappingdef.from];
-			} else if (typeof mappingdef === 'object' && mappingdef !== null) {
-			    result[fieldkey] = buildresponse(mappingdef, raw);
-			} else {
-			    result[fieldkey] = raw[mappingdef];
-			}
-		    }
-		    return result;
-		};
-		result = buildresponse(responsemapping, rawresult);
-	    }
 
 	    const patch = {};
 	    const apioutputkeys = Object.keys(sig.outputs);
 	    if (apioutputkeys.length === 1) {
 		patch[apioutputkeys[0]] = result;
-	    } else if (typeof result === 'object') {
-		for (const key of apioutputkeys) {
-		    if (result[key] !== undefined) {
-			patch[key] = result[key];
-		    }
-		}
-	    }
+	    } 
 	    for (const [k, v] of Object.entries(patch)) {
 		env[k] = v;
 	    }
