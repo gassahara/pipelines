@@ -21,6 +21,7 @@ export function rewritestyleattrs(html, rules) {
 	} else continue;
 	if (!els) continue;
 	for(let el of els) {
+	    if (!el) continue;
 	    var oldstyle = el.style || '';
 	    var pairs = oldstyle.split(';');
 	    var stylemap = {};
