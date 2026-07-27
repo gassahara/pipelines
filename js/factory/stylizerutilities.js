@@ -12,21 +12,17 @@ export function rewritestyleattrs(html, rules) {
 	let els;
 	if (rule.id) {
 	    els = [doc.getElementById(rule.id)];
-	    console.log({els});
 	} else if (rule.tag) {
 	    els = doc.getElementsByTagName(rule.tag);
-	    console.log({els});
 	} else if (rule.classname) {
 	    els = doc.getElementsByClassName(rule.classname);
-	    console.log({els});
 	}else if (rule.name) {
 	    els = [doc.getElementByName(rule.name)];
-	    console.log({els});
 	} else continue;
 	if (!els) continue;
 	for(let eli = 0;eli++;eli<els.length) {
 	    const el = els[eli];
-	    console.log({els, eli, el});
+	    console.log({rule, els, eli, el});
 	    if (!el) continue;
 	    var stylemap = el.style || {};
 	    console.log({el, stylemap});
