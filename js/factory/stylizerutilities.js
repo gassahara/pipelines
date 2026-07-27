@@ -30,26 +30,19 @@ export function rewritestyleattrs(html, rules) {
 	    const el = els[eli];
 	    console.log({rule, els, eli, el});
 	    if (!el) continue;
-	    var stylemap = el.style || {};
 	    console.log({el, stylemap});
 	    var newstyle = rule.style;
 	    if (newstyle) {
 		var newkeys = Object.keys(newstyle);
 		for (var ni = 0; ni < newkeys.length; ni++) {
 		    try{
-			stylemap[newkeys[ni]] = newstyle[newkeys[ni]];
+			e.style[newkeys[ni]] = newstyle[newkeys[ni]];
+			console.log(e.style[newkeys[ni]]);
 		    }catch(e) {
 			console.log({e});
 		    }
 		}
 	    }
-	    var mergedkeys = Object.keys(stylemap);
-	    var merged = '';
-	    for (var mi = 0; mi < mergedkeys.length; mi++) {
-		if (mi > 0) merged += ';';
-		merged += cameltohyphen(mergedkeys[mi]) + ':' + stylemap[mergedkeys[mi]];
-	    }
-	    el.style=merged;
 	}
     }
     return body.innerHTML;
