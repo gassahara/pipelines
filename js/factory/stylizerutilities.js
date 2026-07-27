@@ -24,7 +24,7 @@ export function rewritestyleattrs(html, rules) {
 	    console.log({els});
 	} else continue;
 	if (!els) continue;
-	for(let eli in els) {
+	for(let eli = 0;eli++;eli<els.length) {
 	    const el = els[eli];
 	    console.log({els, eli, el});
 	    if (!el) continue;
