@@ -22,7 +22,7 @@ export function rewritestyleattrs(html, rules) {
 	if (!els) continue;
 	for(let eli in els) {
 	    const el = els[eli];
-	    console.log({el});
+	    console.log({els, eli, el});
 	    if (!el) continue;
 	    var stylemap = window.getComputedStyle(el) || {};
 	    console.log({el, stylemap});
