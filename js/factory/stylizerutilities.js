@@ -31,7 +31,6 @@ export function rewritestyleattrs(html, rules) {
 	    const el = els[eli];
 	    console.log({rule, els, eli, el});
 	    if (!el) continue;
-	    console.log({el, stylemap});
 	    var newstyle = rule.style;
 	    if (newstyle) {
 		var newkeys = Object.keys(newstyle);
