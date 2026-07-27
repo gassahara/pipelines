@@ -22,17 +22,9 @@ export function rewritestyleattrs(html, rules) {
 	if (!els) continue;
 	for(let el of els) {
 	    if (!el) continue;
-	    var oldstyle = el.style || '';
+	    var oldstyle = 
 	    var pairs = oldstyle.split(';');
-	    var stylemap = {};
-	    for (var pi = 0; pi < pairs.length; pi++) {
-		var ci = pairs[pi].indexOf(':');
-		if (ci > 0) {
-		    stylemap[pairs[pi].slice(0, ci).trim()] = pairs[pi].slice(ci + 1).trim();
-		} else if (pairs[pi].trim()) {
-		    stylemap[pairs[pi].trim()] = '';
-		}
-	    }
+	    var stylemap = el.style || {};
 	    var newstyle = rule.style;
 	    if (newstyle) {
 		var newkeys = Object.keys(newstyle);
