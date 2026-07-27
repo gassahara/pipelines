@@ -34,7 +34,11 @@ export function rewritestyleattrs(html, rules) {
 	    if (newstyle) {
 		var newkeys = Object.keys(newstyle);
 		for (var ni = 0; ni < newkeys.length; ni++) {
-		    stylemap[newkeys[ni]] = newstyle[newkeys[ni]];
+		    try{
+			stylemap[newkeys[ni]] = newstyle[newkeys[ni]];
+		    }catch(e) {
+			console.log({e});
+		    }
 		}
 	    }
 	    var mergedkeys = Object.keys(stylemap);
