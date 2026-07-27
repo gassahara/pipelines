@@ -11,13 +11,13 @@ export function rewritestyleattrs(html, rules) {
 	let selector ;
 	let els;
 	if (rule.id) {
-	    els = [document.getElementById(rule.id)];
+	    els = [doc.getElementById(rule.id)];
 	} else if (rule.tag) {
-	    els = document.getElementsByTagName(rule.tag);
+	    els = doc.getElementsByTagName(rule.tag);
 	} else if (rule.classname) {
-	    els = document.getElementsByClassName(rule.classname);
+	    els = doc.getElementsByClassName(rule.classname);
 	}else if (rule.name) {
-	    els = [document.getElementByName(rule.name)];
+	    els = [doc.getElementByName(rule.name)];
 	} else continue;
 	if (!els) continue;
 	for(let eli in els) {
