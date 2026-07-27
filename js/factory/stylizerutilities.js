@@ -37,8 +37,8 @@ export function rewritestyleattrs(html, rules) {
 		var newkeys = Object.keys(newstyle);
 		for (var ni = 0; ni < newkeys.length; ni++) {
 		    try{
-			e.style[newkeys[ni]] = newstyle[newkeys[ni]];
-			console.log(e.style[newkeys[ni]]);
+			el.style[newkeys[ni]] = newstyle[newkeys[ni]];
+			console.log(el.style[newkeys[ni]]);
 		    }catch(e) {
 			console.log({e});
 		    }
