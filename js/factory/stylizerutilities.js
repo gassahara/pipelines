@@ -20,7 +20,7 @@ export function rewritestyleattrs(html, rules) {
 	    els = [body.document.getElementByName(rule.name)];
 	} else continue;
 	if (!el) continue;
-	foreach(el of els) {
+	for(el of els) {
 	    var oldstyle = el.getAttribute('style') || '';
 	    var pairs = oldstyle.split(';');
 	    var stylemap = {};
