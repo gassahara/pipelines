@@ -13,9 +13,9 @@ export function rewritestyleattrs(html, rules) {
 	if (rule.id) {
 	    els = [document.getElementById(rule.id)];
 	} else if (rule.tag) {
-	    els = document.getElementByTagName(rule.tag);
+	    els = document.getElementsByTagName(rule.tag);
 	} else if (rule.classname) {
-	    els = docdy.getElementByClassName(rule.classname);
+	    els = document.getElementsByClassName(rule.classname);
 	}else if (rule.name) {
 	    els = [document.getElementByName(rule.name)];
 	} else continue;
