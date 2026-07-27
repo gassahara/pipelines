@@ -28,7 +28,7 @@ export function rewritestyleattrs(html, rules) {
 	}
 	let eli=-1;
 	while(eli<els.length) {
-	    eli++;
+	    eli=eli+1;
 	    const el = els[eli];
 	    console.log({rule, els, eli, el});
 	    if (!el) continue;
