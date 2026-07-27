@@ -22,8 +22,6 @@ export function rewritestyleattrs(html, rules) {
 	if (!els) continue;
 	for(let el of els) {
 	    if (!el) continue;
-	    var oldstyle = 
-	    var pairs = oldstyle.split(';');
 	    var stylemap = el.style || {};
 	    var newstyle = rule.style;
 	    if (newstyle) {
