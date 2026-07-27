@@ -12,15 +12,19 @@ export function rewritestyleattrs(html, rules) {
 	let els = [];
 	if (rule.id) {
 	    els = [doc.getElementById(rule.id)];
+	    console.log({els});
 	}
 	if (rule.tag) {
 	    els = doc.getElementsByTagName(rule.tag);
+	    console.log({els});
 	}
 	if (rule.classname) {
 	    els = doc.getElementsByClassName(rule.classname);
+	    console.log({els});
 	}
 	if (rule.name) {
 	    els = [doc.getElementByName(rule.name)];
+	    console.log({els});
 	} 
 	for(let eli = 0;eli++;eli<els.length) {
 	    const el = els[eli];
