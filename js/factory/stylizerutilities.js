@@ -9,16 +9,19 @@ export function rewritestyleattrs(html, rules) {
     for (var ri = 0; ri < rules.length; ri++) {
 	var rule = rules[ri];
 	let selector ;
-	let els;
+	let els = null;;
 	if (rule.id) {
 	    els = [doc.getElementById(rule.id)];
-	} else if (rule.tag) {
+	}
+	if (rule.tag) {
 	    els = doc.getElementsByTagName(rule.tag);
-	} else if (rule.classname) {
+	}
+	if (rule.classname) {
 	    els = doc.getElementsByClassName(rule.classname);
-	}else if (rule.name) {
+	}
+	if (rule.name) {
 	    els = [doc.getElementByName(rule.name)];
-	} else continue;
+	} 
 	if (!els) continue;
 	for(let eli = 0;eli++;eli<els.length) {
 	    const el = els[eli];
