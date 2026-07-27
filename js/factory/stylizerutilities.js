@@ -26,8 +26,9 @@ export function rewritestyleattrs(html, rules) {
 	    els = [doc.getElementByName(rule.name)];
 	    console.log({els});
 	}
-	let eli=0;
+	let eli=-1;
 	while(eli<els.length) {
+	    eli++;
 	    const el = els[eli];
 	    console.log({rule, els, eli, el});
 	    if (!el) continue;
@@ -43,7 +44,6 @@ export function rewritestyleattrs(html, rules) {
 		    }
 		}
 	    }
-	    eli++;
 	}
     }
     return body.innerHTML;
