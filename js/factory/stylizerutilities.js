@@ -19,7 +19,7 @@ export function rewritestyleattrs(html, rules) {
 	}else if (rule.name) {
 	    els = [document.getElementByName(rule.name)];
 	} else continue;
-	if (!el) continue;
+	if (!els) continue;
 	for(let el of els) {
 	    var oldstyle = el.getAttribute('style') || '';
 	    var pairs = oldstyle.split(';');
