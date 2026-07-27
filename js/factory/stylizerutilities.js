@@ -21,7 +21,7 @@ export function rewritestyleattrs(html, rules) {
 	} else continue;
 	if (!els) continue;
 	for(let el of els) {
-	    var oldstyle = el.getAttribute('style') || '';
+	    var oldstyle = el.style || '';
 	    var pairs = oldstyle.split(';');
 	    var stylemap = {};
 	    for (var pi = 0; pi < pairs.length; pi++) {
@@ -45,7 +45,7 @@ export function rewritestyleattrs(html, rules) {
 		if (mi > 0) merged += ';';
 		merged += cameltohyphen(mergedkeys[mi]) + ':' + stylemap[mergedkeys[mi]];
 	    }
-	    el.setAttribute('style', merged);
+	    el.style=merged;
 	}
     }
     return body.innerHTML;
