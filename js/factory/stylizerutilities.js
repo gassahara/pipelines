@@ -1,43 +1,54 @@
 
 
 export function rewritestyleattrs(html, rules) {
-  var doc = new DOMParser().parseFromString(html, 'text/html');
-  var body = doc.body;
-  function cameltohyphen(str) {
-    return str.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); });
-  }
-  for (var ri = 0; ri < rules.length; ri++) {
-    var rule = rules[ri];
-    if (!rule.id) continue;
-    var el = body.querySelector('#' + rule.id);
-    if (!el) continue;
-    var oldstyle = el.getAttribute('style') || '';
-    var pairs = oldstyle.split(';');
-    var stylemap = {};
-    for (var pi = 0; pi < pairs.length; pi++) {
-      var ci = pairs[pi].indexOf(':');
-      if (ci > 0) {
-        stylemap[pairs[pi].slice(0, ci).trim()] = pairs[pi].slice(ci + 1).trim();
-      } else if (pairs[pi].trim()) {
-        stylemap[pairs[pi].trim()] = '';
-      }
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var body = doc.body;
+    function cameltohyphen(str) {
+	return str.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); });
     }
-    var newstyle = rule.style;
-    if (newstyle) {
-      var newkeys = Object.keys(newstyle);
-      for (var ni = 0; ni < newkeys.length; ni++) {
-        stylemap[newkeys[ni]] = newstyle[newkeys[ni]];
-      }
+    for (var ri = 0; ri < rules.length; ri++) {
+	var rule = rules[ri];
+	let selector ;
+	let els;
+	if (rule.id) {
+	    els = [body.document.getElementById(rule.id)];
+	} else if (rule.tag) {
+	    els = body.document.getElementByTagName(rule.tag);
+	} else if (rule.classname) {
+	    els = docdy.getElementByClassName(rule.classname);
+	}else if (rule.name) {
+	    els = [body.document.getElementByName(rule.name)];
+	} else continue;
+	if (!el) continue;
+	foreach(el of els) {
+	    var oldstyle = el.getAttribute('style') || '';
+	    var pairs = oldstyle.split(';');
+	    var stylemap = {};
+	    for (var pi = 0; pi < pairs.length; pi++) {
+		var ci = pairs[pi].indexOf(':');
+		if (ci > 0) {
+		    stylemap[pairs[pi].slice(0, ci).trim()] = pairs[pi].slice(ci + 1).trim();
+		} else if (pairs[pi].trim()) {
+		    stylemap[pairs[pi].trim()] = '';
+		}
+	    }
+	    var newstyle = rule.style;
+	    if (newstyle) {
+		var newkeys = Object.keys(newstyle);
+		for (var ni = 0; ni < newkeys.length; ni++) {
+		    stylemap[newkeys[ni]] = newstyle[newkeys[ni]];
+		}
+	    }
+	    var mergedkeys = Object.keys(stylemap);
+	    var merged = '';
+	    for (var mi = 0; mi < mergedkeys.length; mi++) {
+		if (mi > 0) merged += ';';
+		merged += cameltohyphen(mergedkeys[mi]) + ':' + stylemap[mergedkeys[mi]];
+	    }
+	    el.setAttribute('style', merged);
+	}
     }
-    var mergedkeys = Object.keys(stylemap);
-    var merged = '';
-    for (var mi = 0; mi < mergedkeys.length; mi++) {
-      if (mi > 0) merged += ';';
-      merged += cameltohyphen(mergedkeys[mi]) + ':' + stylemap[mergedkeys[mi]];
-    }
-    el.setAttribute('style', merged);
-  }
-  return body.innerHTML;
+    return body.innerHTML;
 }
 
 export function computecolorscheme(pos, tilecols, cellw, cellh, gridcols) {
