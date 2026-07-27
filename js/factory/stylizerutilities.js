@@ -24,7 +24,7 @@ export function rewritestyleattrs(html, rules) {
 	    console.log({el});
 	    if (!el) continue;
 	    var stylemap = window.getComputedStyle(el) || {};
-	    console.log({el, stylemap}});
+	    console.log({el, stylemap});
 	    var newstyle = rule.style;
 	    if (newstyle) {
 		var newkeys = Object.keys(newstyle);
