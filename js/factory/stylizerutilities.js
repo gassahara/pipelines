@@ -9,7 +9,7 @@ export function rewritestyleattrs(html, rules) {
     for (var ri = 0; ri < rules.length; ri++) {
 	var rule = rules[ri];
 	let selector ;
-	let els = null;;
+	let els = [];
 	if (rule.id) {
 	    els = [doc.getElementById(rule.id)];
 	}
@@ -22,7 +22,6 @@ export function rewritestyleattrs(html, rules) {
 	if (rule.name) {
 	    els = [doc.getElementByName(rule.name)];
 	} 
-	if (!els) continue;
 	for(let eli = 0;eli++;eli<els.length) {
 	    const el = els[eli];
 	    console.log({rule, els, eli, el});
