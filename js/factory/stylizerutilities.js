@@ -12,19 +12,15 @@ export function rewritestyleattrs(html, rules) {
 	let els = [];
 	if (rule.id) {
 	    els = [doc.getElementById(rule.id)];
-	    console.log({els});
 	}
 	if (rule.tag) {
 	    els = doc.getElementsByTagName(rule.tag);
-	    console.log({els});
 	}
 	if (rule.classname) {
 	    els = doc.getElementsByClassName(rule.classname);
-	    console.log({els});
 	}
 	if (rule.name) {
 	    els = [doc.getElementByName(rule.name)];
-	    console.log({els});
 	}
 	let eli=-1;
 	while(eli<els.length) {
@@ -38,7 +34,6 @@ export function rewritestyleattrs(html, rules) {
 		for (var ni = 0; ni < newkeys.length; ni++) {
 		    try{
 			el.style[newkeys[ni]] = newstyle[newkeys[ni]];
-			console.log(el.style[newkeys[ni]]);
 		    }catch(e) {
 			console.log({e});
 		    }
