@@ -78,7 +78,8 @@ function applyStep(nodes, step) {
       default:
         throw new Error(`Unknown axis: ${step.axis}`);
     }
-    // Apply filters
+
+    // Apply tag/class/id/index/depth/skip filters (unchanged)
     if (step.tag) {
       candidates = candidates.filter(
         el => el.tagName && el.tagName.toLowerCase() === step.tag.toLowerCase()
@@ -104,6 +105,53 @@ function applyStep(nodes, step) {
     ) {
       candidates = (candidates.length > step.skip) ? [candidates[step.skip]] : [];
     }
+
+    // — NEW: content filter —
+    if (step.content) {
+      const { text, mode = 'substring', caseSensitive = false } = step.content;
+      const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      let contentFilter;
+      if (caseSensitive) {
+        switch (mode) {
+          case 'substring':
+            contentFilter = el => el.textContent.includes(text);
+            break;
+          case 'word':
+            contentFilter = el => new RegExp('\\b' + escapeRegex(text) + '\\b').test(el.textContent);
+            break;
+          case 'exact':
+            contentFilter = el => el.textContent.trim() === text.trim();
+            break;
+          case 'regex':
+            contentFilter = el => new RegExp(text).test(el.textContent);
+            break;
+          default:
+            throw new Error(`Unknown content match mode: ${mode}`);
+        }
+      } else {
+        const lowerText = text.toLowerCase();
+        switch (mode) {
+          case 'substring':
+            contentFilter = el => el.textContent.toLowerCase().includes(lowerText);
+            break;
+          case 'word':
+            contentFilter = el => new RegExp('\\b' + escapeRegex(text) + '\\b', 'i').test(el.textContent);
+            break;
+          case 'exact':
+            contentFilter = el => el.textContent.trim().toLowerCase() === lowerText.trim();
+            break;
+          case 'regex':
+            contentFilter = el => new RegExp(text, 'i').test(el.textContent);
+            break;
+          default:
+            throw new Error(`Unknown content match mode: ${mode}`);
+        }
+      }
+      candidates = candidates.filter(contentFilter);
+    }
+
+    // Accumulate
     for (const c of candidates) {
       if (!next.includes(c)) next.push(c);
     }
