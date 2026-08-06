@@ -29,8 +29,7 @@ export function rewritestyleattrs(html, rules) {
 
         if (getverbosity() >= VERBOSITY.DEBUG) {
             logdebug('[rewritestyleattrs] Rule #' + ri + ': ' +
-                (rule.path ? 'path:' + JSON.stringify(rule.path) : 'id:' + rule.id) +
-                ' matched ' + els.length + ' elements');
+                (rule.path ? 'path:' + JSON.stringify(rule.path) : 'id:' + rule.id) +' matched ' + els.length + ' elements');
         }
 
         let eli = -1;
