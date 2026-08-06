@@ -1,0 +1,2820 @@
+
+--- Match: ./js/factory/blockcompiler.js ---
+import { enqueueapi } from '../actors/apiactor.js';
+import { createpipeline } from '../pipe.js';
+import { callwithstack } from './callwithstack.js';
+import { EVALSTACK } from '../evalstack.js';
+import { enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue, enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition, enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout, enqueusetlayout, DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES } from '../actors/renderactor.js';
+import { logwarn, logdebug } from '../verbosity.js';
+
+const BLOCKTYPES = Object.freeze({
+  FN: 'fn',
+  API: 'api',
+  FETCH: 'fetch',
+  WRITER: 'writer',
+  SPAWN: 'spawn',
+  IO: 'io',
+  DOMQUERY: 'domquery',
+  CRYPTO: 'crypto',
+  WAIT: 'wait'
+});
+
+const INHERITEDKEYS = [
+  'authsessionaccesstoken',
+  'currenttheme', 'themetokens', 'cssprefix',
+  'agents'
+];
+
+const compilepathaccessor = (pathstr) => {
+  const tokens = [];
+  let current = '', inbracket = false;
+  for (const ch of pathstr) {
+    if (ch === '[') { if (current) { tokens.push(current); current = ''; } inbracket = true; }
+    else if (ch === ']') { if (current) { tokens.push(current); current = ''; } inbracket = false; }
+    else if (ch === '.' && !inbracket) { if (current) { tokens.push(current); current = ''; } }
+    else current += ch;
+  }
+  if (current) tokens.push(current);
+  let code = 'env';
+  for (const t of tokens) code += /^\d+$/.test(t) ? '[' + t + ']' : '["' + t + '"]';
+  return new Function('env', 'return ' + code + ';');
+};
+
+const buildproperties = (merged) => {
+  const result = {};
+  for (const key of Object.keys(merged)) {
+    if (key !== 'fn') {
+      result[key] = merged[key];
+    }
+  }
+  return result;
+};
+
+const writeoutputs = (sig, env, result) => {
+  const patch = {};
+  const outputkeys = Object.keys(sig.outputs);
+  if (result === null || result === undefined) {
+    for (const key of outputkeys) {
+      throw new Error('block returned ' + result + ' but outputs expected keys: ' + outputkeys.join(', '));
+    }
+    return patch;
+  }
+  if (outputkeys.length === 1) {
+    const key = outputkeys[0];
+    const value = result[key] !== undefined ? result[key] : result;
+    patch[key] = value;
+    env[key] = value;
+    return patch;
+  }
+  for (const key of outputkeys) {
+    if (result[key] === undefined) {
+      throw new Error('missing required output "' + key + '" from block result');
+    }
+    patch[key] = result[key];
+    env[key] = result[key];
+  }
+  return patch;
+};
+
+const createerrorcontext = (id, stagetype) => {
+  return (err) => {
+    err.diagnostic = err.diagnostic || {};
+    err.diagnostic.blockid = id;
+    err.diagnostic.stagetype = stagetype;
+    throw err;
+  };
+};
+
+const BLOCKANALYZERS = {
+  [BLOCKTYPES.FN]: (block) => {
+    const errors = [];
+    const warnings = [];
+    if (!block.fn) errors.push('fn block must have a function');
+    if (typeof block.fn === 'function') {
+      const fnsrc = block.fn.toString();
+      const DOMPATTERNS = /document\.(querySelector|getElementById|getElementsBy|createElement|innerHTML|classList|addEventListener|body|head|window)|\bstyle\s*[.]|window\.(document|location|navigator|addEventListener|inner|device)/i;
+      if (DOMPATTERNS.test(fnsrc)) {
+        errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
+      }
+    }
+    return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  },
+  [BLOCKTYPES.API]: (block) => {
+      const errors = [];
+      const warnings = [];
+      if (!block.endpoint) errors.push('api block must have an endpoint');
+      if (!block.method) errors.push('api block must have a method field (GET or POST)');
+      else if (block.method !== 'GET' && block.method !== 'POST') errors.push('api block method must be GET or POST');
+      return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+    },
+  [BLOCKTYPES.FETCH]: (block) => {
+      const errors = [];
+      const warnings = [];
+      if (!block.endpoint) errors.push('api block must have an endpoint');
+      if (!block.method) errors.push('api block must have a method field (GET or POST)');
+      else if (block.method !== 'GET' && block.method !== 'POST') errors.push('api block method must be GET or POST');
+      return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+    },
+  [BLOCKTYPES.WRITER]: (block) => {
+    const errors = [];
+    const warnings = [];
+    if (!block.fn && typeof block.ref !== 'function') errors.push('writer block must have fn or ref');
+    return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  },
+  [BLOCKTYPES.SPAWN]: (block) => {
+    const errors = [];
+    const warnings = [];
+    if (!block.dna && !block.dnaref) errors.push('spawn block must have dna or dnaref');
+    return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  },
+  [BLOCKTYPES.IO]: (block) => {
+    const errors = [];
+    const warnings = [];
+    if (typeof block.ref !== 'function') errors.push('io block ref must be a function');
+    return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  },
+  [BLOCKTYPES.DOMQUERY]: (block) => {
+    const errors = [];
+    const warnings = [];
+    if (!block.command || !block.command.COMMAND) errors.push('domquery block requires command with COMMAND');
+    return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  },
+  [BLOCKTYPES.CRYPTO]: (block) => {
+    const errors = [];
+    const warnings = [];
+    if (!Object.keys(block.signature?.outputs || {})[0]) errors.push('crypto block must have signature.outputs[0]');
+    return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  },
+  [BLOCKTYPES.WAIT]: (block) => {
+    const errors = [];
+    const warnings = [];
+    if (block.ms === undefined) errors.push('wait block must have ms');
+    return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  }
+};
+
+const BLOCKCOMPILERS = {
+    [BLOCKTYPES.FN]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing fn block:', id);
+	    const fn = merged.fn;
+	    if (!fn) throw new Error('fn block must have a function: ' + id);
+	    const label = 'fn:' + (merged.ref || id);
+	    const properties = buildproperties(merged);
+	    const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
+	    const fnargs = [properties].concat(inputaccessors.map(fn => fn(env)));
+	    const result = await callwithstack(
+		EVALSTACK, label, 'async-await',
+		async (e) => {
+		    const fnresult = await fn(...fnargs);
+		    return fnresult || {};
+		},
+		[env],
+		{
+		    context: { env, pipestate: env.pipestate },
+		    capturecontinuation: true,
+		    errk: createerrorcontext(id, 'fn')
+		}
+	    );
+	    writeoutputs(sig, env, result);
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.API]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing api block:', id);
+	    const label = 'api:' + (merged.endpoint || id);
+	    const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
+	    const inputdata = {};
+	    for (let i = 0; i < sig.inputs.length; i++) {
+		inputdata[sig.inputs[i]] = inputaccessors[i](env);
+	    }
+	    const apiendpoint = merged.endpoint;
+	    const payloadmapping = merged.mapping?.payload || {};
+	    console.log({inputaccessors, inputdata, apiendpoint, payloadmapping});
+
+	    const buildpayload = (mappingobj, data) => {
+		const result = {};
+		for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
+		    if (typeof mappingdef === 'function') {
+			result[fieldkey] = mappingdef(data);
+		    } else if (typeof mappingdef === 'object' && mappingdef !== null && !Array.isArray(mappingdef)) {
+			if (mappingdef.from !== undefined) {
+			    result[fieldkey] = data[mappingdef.from];
+			} else {
+			    result[fieldkey] = buildpayload(mappingdef, data);
+			}
+		    } else {
+			result[fieldkey] = mappingdef;
+		    }
+		}
+		return result;
+	    };
+	    const payload = buildpayload(payloadmapping, inputdata);
+	    for (const field of Object.keys(sig.outputs)) {
+		if (payload[field] === undefined && inputdata[field] !== undefined) {
+		    payload[field] = inputdata[field];
+		}
+	    }
+	    console.log({buildpayload, payload});
+	    const rawresult = await callwithstack(
+		EVALSTACK, label, 'async-await',
+		async () => {
+		    const endpoint = env[apiendpoint] || apiendpoint;
+		    const apiresolve = await enqueueapi(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' });
+		    console.log({apiendpoint, apiresolve,endpoint, enqueueapi}, merged.method, payload);
+		    return { status: apiresolve.status, data: apiresolve.data };
+		},
+		[],
+		{
+		    context: { env },
+		    capturecontinuation: true,
+		    errk: createerrorcontext(id, 'api:call')
+		}
+	    );
+
+	    const responsemapping = merged.mapping?.response;
+	    let result = rawresult.data;
+	    if (responsemapping) {
+		const buildresponse = (mappingobj, raw) => {
+		    const result = {};
+		    for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
+			if (typeof mappingdef === 'function') {
+			    result[fieldkey] = mappingdef(raw);
+			} else if (typeof mappingdef === 'object' && mappingdef !== null && mappingdef.from !== undefined) {
+			    result[fieldkey] = raw[mappingdef.from];
+			} else if (typeof mappingdef === 'object' && mappingdef !== null) {
+			    result[fieldkey] = buildresponse(mappingdef, raw);
+			} else {
+			    result[fieldkey] = raw[mappingdef];
+			}
+		    }
+		    return result;
+		};
+		result = buildresponse(responsemapping, rawresult);
+	    }
+
+	    const patch = {};
+	    const apioutputkeys = Object.keys(sig.outputs);
+	    if (apioutputkeys.length === 1) {
+		patch[apioutputkeys[0]] = result;
+	    } else if (typeof result === 'object') {
+		for (const key of apioutputkeys) {
+		    if (result[key] !== undefined) {
+			patch[key] = result[key];
+		    }
+		}
+	    }
+	    for (const [k, v] of Object.entries(patch)) {
+		env[k] = v;
+	    }
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.FETCH]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing api block:', id);
+	    const label = 'api:' + (merged.endpoint || id);
+	    const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
+	    const inputdata = {};
+	    for (let i = 0; i < sig.inputs.length; i++) {
+		inputdata[sig.inputs[i]] = inputaccessors[i](env);
+	    }
+	    const apiendpoint = merged.endpoint;
+	    const payloadmapping = merged.mapping?.payload || {};
+	    console.log({inputaccessors, inputdata, apiendpoint, payloadmapping});
+
+	    const buildpayload = (mappingobj, data) => {
+		const result = {};
+		for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
+		    if (typeof mappingdef === 'function') {
+			result[fieldkey] = mappingdef(data);
+		    } else if (typeof mappingdef === 'object' && mappingdef !== null && !Array.isArray(mappingdef)) {
+			if (mappingdef.from !== undefined) {
+			    result[fieldkey] = data[mappingdef.from];
+			} else {
+			    result[fieldkey] = buildpayload(mappingdef, data);
+			}
+		    } else {
+			result[fieldkey] = mappingdef;
+		    }
+		}
+		return result;
+	    };
+	    const payload = buildpayload(payloadmapping, inputdata);
+	    for (const field of Object.keys(sig.outputs)) {
+		if (payload[field] === undefined && inputdata[field] !== undefined) {
+		    payload[field] = inputdata[field];
+		}
+	    }
+	    console.log({buildpayload, payload});
+	    const rawresult = await callwithstack(
+		EVALSTACK, label, 'async-await',
+		async () => {
+		    const endpoint = env[apiendpoint] || apiendpoint;
+		    const apiresolve = await enqueueapi(endpoint, merged.method, payload, { textual: true, token: env.authsessionaccesstoken || '' });
+		    console.log({apiendpoint, apiresolve,endpoint, enqueueapi}, merged.method, payload);
+		    return { status: apiresolve.status, data: apiresolve.data };
+		},
+		[],
+		{
+		    context: { env },
+		    capturecontinuation: true,
+		    errk: createerrorcontext(id, 'api:call')
+		}
+	    );
+
+	    const responsemapping = merged.mapping?.response;
+	    let result = rawresult.data;
+
+	    const patch = {};
+	    const apioutputkeys = Object.keys(sig.outputs);
+	    if (apioutputkeys.length === 1) {
+		patch[apioutputkeys[0]] = result;
+	    } 
+	    for (const [k, v] of Object.entries(patch)) {
+		env[k] = v;
+	    }
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.WRITER]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing writer block:', id);
+	    let fn = merged.fn;
+	    if (!fn && typeof merged.ref === 'function') {
+		fn = merged.ref;
+	    }
+	    if (!fn) {
+		throw new Error('[WRITER] Block "' + id + '" failed property validation:\n' +
+				'  Property: fn or ref\n' +
+				'  Schema: { type: "function", required: true, description: "Writer function returning { id, timeout, html }" }\n' +
+				'  Received: fn=' + JSON.stringify(merged.fn) + ', ref=' + JSON.stringify(merged.ref) + '\n' +
+				'  Resolution: Provide "fn" (inline) or "ref" (label reference) in block definition');
+	    }
+
+	    const properties = buildproperties(merged);
+	    const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
+	    const inputargs = inputaccessors.map(fn => fn(env));
+	    const fnargs = [properties].concat(inputargs);
+
+	    const result = await fn.apply(null, fnargs);
+
+	    if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined || result.timeout === undefined) {
+		throw new Error('[WRITER] Block "' + id + '" returned invalid result:\n' +
+				'  Expected: { id: string|null, timeout: number, html: string }\n' +
+				'  Received: ' + JSON.stringify(result) + '\n' +
+				'  Missing fields: ' + [
+				    result.id === undefined ? 'id' : null,
+				    result.timeout === undefined ? 'timeout' : null,
+				    result.html === undefined ? 'html' : null
+				].filter(Boolean).join(', '));
+	    }
+
+	    const html = result.html;
+	    const elementid = result.id;
+	    const timeout = result.timeout;
+
+	    let target = merged.targetlabel || env.approot;
+	    if (merged.targetlabel === null || merged.targetlabel === undefined) {
+		if (env.approot === null || env.approot === undefined) {
+		    throw new Error('[WRITER] Block "' + id + '" failed property validation:\n' +
+				    '  Property: targetlabel\n' +
+				    '  Schema: { type: "string", required: true, description: "Element ID to attach HTML output" }\n' +
+				    '  Received: ' + (merged.targetlabel === null ? 'null' : 'undefined') + '\n' +
+				    '  Fallback: env.approot = ' + (env.approot === null ? 'null' : env.approot === undefined ? 'undefined' : JSON.stringify(env.approot)) + '\n' +
+				    '  Resolution: Set "targetlabel" in block definition or provide "approot" in environment');
+		}
+		target = env.approot;
+	    } else {
+		target = merged.targetlabel;
+	    }
+
+	    await enqueuehtml(target, html, !merged.replace);
+
+	    if (elementid && Object.keys(sig.outputs).length > 0) {
+		const domref = await expectelement(elementid, timeout || 5000);
+		env[Object.keys(sig.outputs)[0]] = result;
+		env[elementid] = domref;
+	    }
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.SPAWN]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing spawn block:', id);
+	    const label = 'spawn:' + (merged.ref || id);
+	    console.log({merged});
+	    const containerrefraw = merged.container;
+	    if (containerrefraw === null || containerrefraw === undefined) {
+		throw new Error('[SPAWN] Block "' + id + '" failed property validation:\n' +
+				'  Property: container\n' +
+				'  Schema: { type: "string", required: true, description: "Element ID for child agent root" }\n' +
+				'  Received: ' + (merged.container === null ? 'null' : merged.container === undefined ? 'undefined' : JSON.stringify(merged.container)) + '\n' +
+				'  Fallback chain:\n' +
+				'    1. merged.container = ' + (merged.container === null ? 'null' : merged.container === undefined ? 'undefined' : JSON.stringify(merged.container)) + '\n' +
+				'    2. env.approot = ' + (env.approot === null ? 'null' : env.approot === undefined ? 'undefined' : JSON.stringify(env.approot)) + '\n' +
+				'    3. sig.inputs[0] = ' + (sig.inputs.length > 0 ? JSON.stringify(env[sig.inputs[0]]) : 'undefined') + '\n' +
+				'  Resolution: Set "container" in block definition or provide "approot" in environment');
+	    }
+	    const result = await callwithstack(
+		EVALSTACK, label, 'async-await',
+		async (e) => {
+		    let dna = merged.dna || null;
+		    if (!dna && merged.dnaref) {
+			const dnapath = merged.dnaref;
+			if (dnapath.from === 'eventtarget') {
+			    const target = e.eventtarget;
+			    const el = dnapath.query ? target?.closest(dnapath.query) : target;
+			    if (!el) return {};
+			    const agentid = dnapath.key || el?.getAttribute(dnapath.attr);
+			    const agents = env.agents || [];
+			    const rituals = env.rituals || [];
+			    const agentdef = agents.find(a => a.id === agentid);
+			    dna = agentdef ? agentdef.pipeline : null;
+			    if (!dna) {
+				const ritualdef = rituals.find(r => r.id === agentid);
+				dna = ritualdef ? ritualdef.pipeline : null;
+			    }
+			    if (!dna) return {};
+			}
+		    }
+		    if (!dna) {
+			throw new Error('[spawn] no dna provided. Use ' + 'dna' + ' property or ' + 'dnaref' + ' with from:eventtarget');
+		    }
+		    const inheritedenv = {};
+		    if (merged.sharestack) {
+			for (const key of INHERITEDKEYS) {
+			    if (env[key] !== undefined) inheritedenv[key] = env[key];
+			}
+		    }
+		    return { dna: dna, containerref: containerrefraw, inheritedenv: inheritedenv, outputkey: Object.keys(sig.outputs)[0] || null };
+		},
+		[env],
+		{
+		    context: { env },
+		    capturecontinuation: true,
+		    errk: createerrorcontext(id, 'spawn')
+		}
+	    );
+	    return result;
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.IO]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing io block:', id);
+	    const label = 'io:' + (merged.ref || id);
+	    const io = typeof merged.ref === 'function' ? merged.ref : null;
+	    if (!io) throw new Error('io block "' + id + '" ref must be a function. Got: ' + typeof merged.ref);
+	    const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
+	    const inputdata = {};
+	    for (let i = 0; i < sig.inputs.length; i++) {
+		inputdata[sig.inputs[i]] = inputaccessors[i](env);
+	    }
+	    const result = await callwithstack(
+		EVALSTACK, label, 'async-await',
+		async (e) => {
+		    return await io(inputdata, e);
+		},
+		[env],
+		{
+		    context: { env },
+		    capturecontinuation: true,
+		    errk: createerrorcontext(id, 'io')
+		}
+	    );
+	    return result;
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.DOMQUERY]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing domquery block:', id);
+	    const command = merged.command;
+	    if (!command || !command.COMMAND) {
+		throw new Error('[DOMQUERY] Block "' + id + '" requires command with COMMAND property');
+	    }
+	    const messages = command.COMMAND;
+	    if (typeof messages !== 'string') {
+		throw new Error('[DOMQUERY] Block "' + id + '" command.COMMAND must be a string');
+	    }
+	    const getters = DOMQUERYGETTERS;
+	    const setters = DOMQUERYSETTERS;
+	    if (!DOMQUERYMESSAGES.includes(messages)) {
+		throw new Error('[DOMQUERY] Block "' + id + '" unknown COMMAND type: ' + messages);
+	    }
+	    const props = command.properties;
+	    if (!props || !props.id || typeof props.id !== 'string') {
+		throw new Error('[DOMQUERY] Block "' + id + '" command requires properties.id field (string)');
+	    }
+	    const commandid = props.id;
+	    if (setters.includes(messages) && props.value === undefined) {
+		throw new Error('[DOMQUERY] Block "' + id + '" setter COMMAND requires command.properties.value');
+	    }
+	    const messagehandlers = {
+		'gethtml': enqueuegethtml,
+		'getvalue': enqueuegetvalue,
+		'getstyle': enqueuegetstyle,
+		'getposition': enqueuegetposition,
+		'getlayout': enqueuegetlayout,
+		'sethtml': enqueuesethtml,
+		'setposition': enqueuesetposition,
+		'setstyle': enqueuesetstyle,
+		'setvalue': enqueuesetvalue,
+		'setlayout': enqueusetlayout,
+		'property': enqueueproperty
+	    };
+	    const handler = messagehandlers[messages];
+	    const result = await callwithstack(
+		EVALSTACK, 'domquery:' + messages, 'async-await',
+		async (e) => {
+		    if (setters.includes(messages)) {
+			const resolvedvalue = props.value;
+			if (sig.inputs && sig.inputs.length > 0) {
+			    return await handler(commandid, compilepathaccessor(props.value)(env));
+			}
+			return await handler(commandid, resolvedvalue);
+		    }
+		    return await handler(commandid);
+		},
+		[env],
+		{
+		    context: { env },
+		    capturecontinuation: true,
+		    errk: (err) => {
+			err.diagnostic = err.diagnostic || {};
+			err.diagnostic.blockid = id;
+			err.diagnostic.stagetype = 'domquery:' + messages;
+			if (setters.includes(messages) && err.message && err.message.indexOf('element not found:') === 0) {
+			    return { ok: false, error: err.message };
+			}
+			throw err;
+		    }
+		}
+	    );
+	    writeoutputs(sig, env, result);
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.CRYPTO]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing crypto block:', id);
+	    const bytes = merged.bytes || 512;
+	    const timeout = merged.timeout || 10000;
+	    const outputkey = sig.outputs && Object.keys(sig.outputs).length > 0 ? Object.keys(sig.outputs)[0] : null;
+	    if (!outputkey) throw new Error('[crypto] block "' + id + '" must have signature.outputs[0]');
+	    const result = await new Promise(function(resolve, reject) {
+		RENDERACTOR.send({ type: MESSAGETYPES.CRYPTO, bytes: bytes, resolve: resolve, reject: reject });
+	    });
+	    env[outputkey] = result;
+	    return {};
+	};
+	blockfn.id = id;
+	return blockfn;
+    },
+    [BLOCKTYPES.WAIT]: (merged, id, sig) => {
+	const blockfn = async (env) => {
+	    logdebug('[BLOCK] Executing wait block:', id);
+	    const ms = typeof merged.ms === 'number' ? merged.ms : compilepathaccessor(merged.ms)(env);
+	    if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
+	    await new Promise(resolve => setTimeout(resolve, ms));
+	    return {};
+	};
+	blockfn.id = id;
+	return blockfn;
+    }
+};
+
+const compileElement = (el) => {
+    if (el.element === 'BLOCK') return compileBlockElement(el);
+    if (el.element === 'STAGE') return compileStageElement(el);
+    throw new Error('unknown element type: ' + el.element + ' on element id "' + (el.id || 'unnamed') + '"');
+};
+
+const compileBlockElement = (block) => {
+    const fn = compileblock(block);
+    fn.blockmeta = { id: block.id, type: block.type, ref: block.ref, replace: block.replace };
+    return fn;
+};
+
+const compileStageElement = (stage) => {
+    const children = (stage.elements || []).map(compileElement);
+    return stageRunner(stage, children);
+};
+
+const stageRunner = (stage, children) => {
+    const control = stage.control;
+    const id = stage.id;
+    if (!control || control.command === undefined || control.command === null) {
+	return defaultRunner(id, children);
+    }
+    if (control.command === 'TRIGGER') return triggerRunner(id, control, children, stage);
+    if (control.command === 'LOOP') return loopRunner(id, control, children);
+    throw new Error('unknown stage command: ' + control.command);
+};
+
+const triggerRunner = (id, control, children, stage) => {
+    return async (env) => {
+	const sourceref = env[control.sourceid];
+	const eventtype = control.event;
+	const rs = env.registersubscription;
+	if (!control.sourceid || !eventtype || !rs) {
+	    logwarn('[control:TRIGGER] missing source/event/registersubscription for stage:', id);
+	    return {};
+	}
+	rs(control.sourceid, eventtype, async (e) => {
+	    env.eventtarget = e.target;
+	    if (stage.output !== null && stage.output !== undefined) {
+		env[stage.output] = deepcloneevent(e);
+	    }
+	    await executeChildren(children, env, id);
+	    if (control.rerunfrom !== undefined && typeof env._rerunStages === 'function') {
+		await env._rerunStages(control.rerunfrom);
+	    }
+	});
+	return {};
+    };
+};
+
+const loopRunner = (id, control, children) => {
+    return async (env) => {
+	const controlprops = {};
+	for (const key of Object.keys(control)) {
+	    if (key !== 'fn' && key !== 'inputs' && key !== 'command') {
+		controlprops[key] = control[key];
+	    }
+	}
+	const inputaccessors = (control.inputs || []).map(k => compilepathaccessor(k));
+	while (true) {
+	    if (!env.rngactive) break;
+	    await executeChildren(children, env, id);
+	    const inputargs = inputaccessors.map(fn => fn(env));
+	    const fnargs = [controlprops].concat(inputargs);
+	    const shouldcontinue = await control.fn(...fnargs);
+	    if (!shouldcontinue) break;
+	}
+	return {};
+    };
+};
+
+const defaultRunner = (id, children) => {
+    return async (env) => {
+	await executeChildren(children, env, id);
+	return {};
+    };
+};
+
+const executeChildren = async (children, env, stageid) => {
+    const spawnOutputs = [];
+    for (const child of children) {
+	try {
+	    const result = await child(env);
+	    if (result && result.dna) {
+		spawnOutputs.push({
+		    dna: result.dna,
+		    containerref: result.containerref,
+		    inheritedenv: result.inheritedenv
+		});
+	    }
+	} catch (err) {
+	    err.message = 'child ' + (stageid || 'unnamed') + '/' + (child.id || 'unnamed') + ': ' + err.message;
+	    throw err;
+	}
+    }
+    if (env.stack && env.stack.agentspawned === stageid) return spawnOutputs;
+    for (const so of spawnOutputs) {
+	var run = await compilepipeline(so.dna.pipeline, null, []);
+	await run.pipeline({ id: so.dna.identity.id, env: { ...so.inheritedenv, containerid: so.containerref, rngactive: true, stack: {}, registersubscription: env.registersubscription, updateworldmap: env.updateworldmap } });
+    }
+    if (env.stack) env.stack.agentspawned = stageid;
+    return spawnOutputs;
+};
+
+const compileElements = (elements) => elements.map(compileElement);
+
+const compileblock = (merged) => {
+    const id = merged.id || 'unnamed';
+    const sig = merged.signature;
+    if (!sig || !Array.isArray(sig.inputs)) {
+	throw new Error('[SIGNATURE] Block "' + id + '" is missing required signature');
+    }
+    if (Array.isArray(sig.outputs)) {
+	sig.outputs = sig.outputs.reduce((acc, k) => { acc[k] = 'any'; return acc; }, {});
+    } else if (!sig.outputs || typeof sig.outputs !== 'object') {
+	throw new Error('[SIGNATURE] Block "' + id + '" is missing required outputs');
+    }
+    const analyzer = BLOCKANALYZERS[merged.type];
+    if (!analyzer) throw new Error('unknown block type: ' + merged.type + ' in block ' + id);
+    const analysis = analyzer(merged);
+    if (!analysis.valid) throw new Error(analysis.errors.join(', '));
+    const compiler = BLOCKCOMPILERS[merged.type];
+    return compiler(merged, id, sig);
+};
+
+const deepcloneevent = (e) => {
+    if (!e) return null;
+    return {
+	type: e.type,
+	timestamp: e.timeStamp,
+	bubbles: e.bubbles,
+	cancelable: e.cancelable,
+	defaultprevented: e.defaultPrevented,
+	istrusted: e.isTrusted,
+	eventphase: e.eventPhase,
+	target: e.target ? {
+	    tagname: e.target.tagName,
+	    id: e.target.id,
+	    classname: e.target.className,
+	    name: e.target.name,
+	    value: e.target.value,
+	    type: e.target.type,
+	    checked: e.target.checked,
+	    href: e.target.href,
+	    src: e.target.src
+	} : null,
+	clientx: e.clientX,
+	clienty: e.clientY,
+	screenx: e.screenX,
+	screeny: e.screenY,
+	pagex: e.pageX,
+	pagey: e.pageY,
+	offsetx: e.offsetX,
+	offsety: e.offsetY,
+	movementx: e.movementX,
+	movementy: e.movementY,
+	button: e.button,
+	buttons: e.buttons,
+	key: e.key,
+	code: e.code,
+	location: e.location,
+	repeat: e.repeat,
+	iscomposing: e.isComposing,
+	altkey: e.altKey,
+	ctrlkey: e.ctrlKey,
+	metakey: e.metaKey,
+	shiftkey: e.shiftKey,
+	data: e.data,
+	inputtype: e.inputType,
+	deltax: e.deltaX,
+	deltay: e.deltaY,
+	deltamode: e.deltaMode,
+	touchescount: e.touches ? e.touches.length : 0
+    };
+};
+
+export const compilepipeline = async (pipeline, accessors, sinks) => {
+    if (!pipeline.elements) {
+	throw new Error('[compilepipeline] pipeline must have elements array');
+    }
+    const compiled = compileElements(pipeline.elements);
+    const compiledpipeline = createpipeline(compiled, sinks);
+    return { pipeline: compiledpipeline };
+};
+
+--- Match: ./js/factory/callwithstack.js ---
+function safeshallowclone(obj) {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+    try {
+        return JSON.parse(JSON.stringify(obj));
+    } catch {
+        const clone = {};
+        for (const key of Object.keys(obj)) {
+            const val = obj[key];
+            if (typeof HTMLElement !== 'undefined' && (val instanceof HTMLElement || val instanceof EventTarget || val instanceof Node)) {
+                clone[key] = '[DOM_NODE]';
+            } else if (typeof val === 'function') {
+                clone[key] = '[FUNCTION]';
+            } else if (typeof val === 'object' && val !== null) {
+                try {
+                    JSON.stringify(val);
+                    clone[key] = safeshallowclone(val);
+                } catch {
+                    clone[key] = '[NON_SERIALIZABLE]';
+                }
+            } else {
+                clone[key] = val;
+            }
+        }
+        return clone;
+    }
+}
+
+function attachdiagnostics(err, evalstack, captured) {
+    if (!err.diagnostic) err.diagnostic = {};
+    if (!err.diagnostic.debugtrace) err.diagnostic.debugtrace = evalstack.snapshot();
+    if (captured && !err.diagnostic.continuation) err.diagnostic.continuation = captured;
+}
+
+function applyccc(fn, typecheck) {
+    if (!typecheck) return fn;
+    const { argrules, resultrule } = typecheck;
+    return function(...args) {
+        if (argrules) {
+            for (let i = 0; i < argrules.length; i++) {
+                const rule = argrules[i];
+                if (rule && !rule(args[i])) {
+                    const err = new Error('[CCC:TYPE_VIOLATION] argument ' + i + ' failed type check');
+                    err.diagnostic = { typecheck: 'arg', index: i, value: args[i], rule: rule.name || 'custom' };
+                    throw err;
+                }
+            }
+        }
+        const result = fn(...args);
+        if (resultrule && result && typeof result.then === 'function') {
+            return result.then(resolved => {
+                if (!resultrule(resolved)) {
+                    const err = new Error('[CCC:TYPE_VIOLATION] return value failed type check');
+                    err.diagnostic = { typecheck: 'result', value: resolved, rule: resultrule.name || 'custom' };
+                    throw err;
+                }
+                return resolved;
+            });
+        }
+        if (resultrule && !(result && typeof result.then === 'function')) {
+            if (!resultrule(result)) {
+                const err = new Error('[CCC:TYPE_VIOLATION] return value failed type check');
+                err.diagnostic = { typecheck: 'result', value: result, rule: resultrule.name || 'custom' };
+                throw err;
+            }
+        }
+        return result;
+    };
+}
+
+export function callwithstack(evalstack, label, type, fn, args, options = {}) {
+    if (label && label.startsWith('fn:') && !options.typecheck) {
+        options = { ...options, typecheck: {
+            resultrule: (v) => v !== null && v !== undefined && typeof v === 'object' && !Array.isArray(v)
+        }};
+    }
+    const { thenfn, catchfn, errk, context, capturecontinuation = true, typecheck } = options;
+    const wrappedfn = applyccc(fn, typecheck);
+    const captured = capturecontinuation ? { fn: wrappedfn, args, label, type, options: { ...options, capturecontinuation: false }, pipestatesnapshot: context?.pipestate ? safeshallowclone(context.pipestate) : null, envsnapshot: context?.env ? safeshallowclone(context.env) : null } : null;
+    const framecontext = { pipestate: context?.pipestate, env: context?.env };
+    let k;
+    const promise = new Promise((resolve, reject) => {
+        k = resolve;
+        const meta = { label };
+        if (context?.callerid) meta.callerid = context.callerid;
+        evalstack.pushframe(wrappedfn, args, framecontext.pipestate, k, meta);
+        const onsuccess = (result) => {
+            evalstack.popframe();
+            if (captured && result && typeof result === 'object' && !Array.isArray(result)) {
+                result.continuation = captured;
+            }
+            if (thenfn) thenfn(result, context);
+            k(result);
+        };
+        const onfailure = (err) => {
+            attachdiagnostics(err, evalstack, captured);
+            evalstack.popframe();
+            if (catchfn) catchfn(err, context);
+            if (typeof errk === 'function') {
+                try {
+                    const errkresult = errk(err);
+                    if (errkresult && typeof errkresult.then === 'function') {
+                        errkresult.then(function(val) { k(val); });
+                        return;
+                    }
+                    k(errkresult);
+                    return;
+                } catch (e) { }
+            }
+            reject(err);
+        };
+        try {
+            if (type === 'sync') { onsuccess(wrappedfn(...args)); return; }
+            const p = wrappedfn(...args);
+            if (!p || typeof p.then !== 'function') { onsuccess(p); return; }
+            p.then(onsuccess).catch(onfailure);
+        } catch (err) { onfailure(err); }
+    });
+    promise.cont = k;
+    return promise;
+}
+export function runwithstack(p) { return p; }
+
+--- Match: ./js/factory/stylizerutilities.js ---
+
+
+export function rewritestyleattrs(html, rules) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var body = doc.body;
+    function cameltohyphen(str) {
+	return str.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); });
+    }
+    for (var ri = 0; ri < rules.length; ri++) {
+	var rule = rules[ri];
+	let selector ;
+	let els = [];
+	if (rule.id) {
+	    els = [doc.getElementById(rule.id)];
+	}
+	if (rule.tag) {
+	    els = doc.getElementsByTagName(rule.tag);
+	}
+	if (rule.classname) {
+	    els = doc.getElementsByClassName(rule.classname);
+	}
+	if (rule.name) {
+	    els = [doc.getElementByName(rule.name)];
+	}
+	let eli=-1;
+	while(eli<els.length) {
+	    eli=eli+1;
+	    const el = els[eli];
+	    if (!el) continue;
+	    var newstyle = rule.style;
+	    if (newstyle) {
+		var newkeys = Object.keys(newstyle);
+		for (var ni = 0; ni < newkeys.length; ni++) {
+		    try{
+			el.style[newkeys[ni]] = newstyle[newkeys[ni]];
+		    }catch(e) {
+			console.log({e});
+		    }
+		}
+	    }
+	}
+    }
+    return body.innerHTML;
+}
+
+export function computecolorscheme(pos, tilecols, cellw, cellh, gridcols) {
+  var colstart = Math.max(0, Math.min(Math.floor((pos.clientx || 0) / cellw), gridcols - 1));
+  var rowstart = Math.max(0, Math.min(Math.floor((pos.clienty || 0) / cellh), gridcols - 1));
+  var colend = Math.max(1, Math.min(Math.ceil(((pos.clientx || 0) + (pos.width || cellw)) / cellw), gridcols));
+  var rowend = Math.max(1, Math.min(Math.ceil(((pos.clienty || 0) + (pos.height || cellh)) / cellh), gridcols));
+  var sumh = 0, sums = 0, suml = 0, count = 0;
+  for (var r = rowstart; r < rowend; r++) {
+    for (var c = colstart; c < colend; c++) {
+      var idx = r * gridcols + c;
+      if (idx < tilecols.length) {
+        sumh += tilecols[idx].h;
+        sums += tilecols[idx].s;
+        suml += tilecols[idx].l;
+        count++;
+      }
+    }
+  }
+  var avgh = count ? (sumh / count) % 360 : 0;
+  var avgs = count ? sums / count : 50;
+  var avgl = count ? suml / count : 50;
+  var offset = (Math.floor((pos.clientx || 0) / 50) * 7 + Math.floor((pos.clienty || 0) / 50) * 13) % 60;
+  var huecont = (avgh + 180 + offset) % 360;
+  var satcont = avgs < 30 ? 75 : (avgs >= 50 ? 50 : 60);
+  var bglight = avgl < 50 ? 75 : 25;
+  var fglight = avgl < 50 ? 15 : 90;
+  var borderlight = Math.round((bglight + fglight) / 2);
+  return {
+    background: 'hsl(' + huecont + ', ' + satcont + '%, ' + bglight + '%)',
+    color: 'hsl(' + huecont + ', ' + Math.max(satcont - 10, 10) + '%, ' + fglight + '%)',
+    borderColor: 'hsl(' + huecont + ', ' + satcont + '%, ' + borderlight + '%)'
+  };
+}
+
+--- Match: ./js/actors/actorkernel.js ---
+export const createactor = (behavior, initialstate) => {
+    let currentstate = initialstate;
+    const mailbox = [];
+    let scheduled = false;
+    let drainpromise = null;
+    let drainresolve = null;
+
+    const drain = () => {
+        if (mailbox.length === 0) {
+            scheduled = false;
+            if (drainresolve) {
+                const res = drainresolve;
+                drainresolve = null;
+                drainpromise = null;
+                res(currentstate);
+            }
+            return;
+        }
+        const message = mailbox.shift();
+        currentstate = behavior(currentstate, message);
+        queueMicrotask(drain);
+    };
+
+    const send = (message) => {
+        mailbox.push(message);
+        if (!scheduled) {
+            scheduled = true;
+            queueMicrotask(drain);
+        }
+    };
+
+    const waitforemptymailbox = () => {
+        if (!scheduled && mailbox.length === 0) return Promise.resolve(currentstate);
+        if (!drainpromise) {
+            drainpromise = new Promise(resolve => { drainresolve = resolve; });
+        }
+        return drainpromise;
+    };
+
+    const getstate = () => currentstate;
+
+    return Object.freeze({ send, getstate, waitforemptymailbox });
+};
+
+--- Match: ./js/actors/apiactor.js ---
+import { createactor } from './actorkernel.js';
+import { APIBASE } from '../utils.js';
+
+const MESSAGETYPES = Object.freeze({
+    FETCH: 'fetch'
+});
+
+const MESSAGEINTERFACES = Object.freeze({
+    [MESSAGETYPES.FETCH]: { endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', resolve: 'function', reject: 'function?' }
+});
+
+const validatemessage = (message) => {
+    if (!message || typeof message !== 'object') {
+        return { valid: false, error: 'message must be a non-null object' };
+    }
+    var type = message.type;
+    if (!type || typeof type !== 'string') {
+        return { valid: false, error: 'message type must be a string' };
+    }
+    var iface = MESSAGEINTERFACES[type];
+    if (!iface) {
+        return { valid: false, error: 'unknown message type: ' + type };
+    }
+    var keys = Object.keys(iface);
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var spec = iface[key];
+        var optional = spec.charAt(spec.length - 1) === '?';
+        var expectedtype = optional ? spec.slice(0, -1) : spec;
+        if (message[key] === undefined || message[key] === null) {
+            if (!optional) {
+                return { valid: false, error: 'type "' + type + '" missing required field "' + key + '" (' + expectedtype + ')' };
+            }
+            continue;
+        }
+        if (expectedtype === 'any') continue;
+        var actualtype = typeof message[key];
+        if (actualtype !== expectedtype) {
+            return { valid: false, error: 'type "' + type + '" field "' + key + '" expected ' + expectedtype + ' got ' + actualtype };
+        }
+    }
+    return { valid: true, error: null };
+};
+
+const apibehavior = (state, message) => {
+    var check = validatemessage(message);
+    if (!check.valid) {
+        console.error('[APIACTOR:INVALID] ' + check.error);
+        return state;
+    }
+    if (message.type === MESSAGETYPES.FETCH) {
+        var url = APIBASE + '/' + message.endpoint;
+        fetch(url, {
+            method: message.method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + (message.token || '')
+            },
+            body: JSON.stringify(message.payload || {})
+        })
+        .then(function(response) {
+            var status = response.status;
+	    if(!message.textual) {
+            return response.json().then(function(data) {
+                if (typeof message.resolve === 'function') {
+                    message.resolve({ status: status, data: data });
+                }
+            });
+	    } else {
+            return response.text().then(function(data) {
+                if (typeof message.resolve === 'function') {
+                    message.resolve({ status: status, data: data });
+                }
+            });
+	    }
+        })
+        .catch(function(err) {
+            if (typeof message.reject === 'function') {
+                message.reject(err);
+            }
+        });
+    }
+    return state;
+};
+
+export const APIACTOR = createactor(apibehavior, {});
+
+export const enqueueapi = function(endpoint, method, payload, options) {
+    return new Promise(function(resolve, reject) {
+        APIACTOR.send({
+            type: MESSAGETYPES.FETCH,
+            endpoint: endpoint,
+            method: method,
+            payload: payload || {},
+            token: (options && options.token) || '',
+            textual: (options && options.textual) || false,
+            resolve: resolve,
+            reject: reject
+        });
+    });
+};
+
+export { MESSAGETYPES };
+
+--- Match: ./js/actors/renderactor.js ---
+import { createactor } from './actorkernel.js';
+import { CREATEDOMREF } from '../fundamental/domref.js';
+
+export const MESSAGETYPES = Object.freeze({
+  RENDER: 'render',
+  CLEAR: 'clear',
+  HTML: 'html',
+  REMOVE: 'remove',
+  SETSTYLES: 'setstyles',
+  SETATTR: 'setattr',
+  TOGGLECLASS: 'toggleclass',
+  CRYPTO: 'crypto',
+  GEOLOCATION: 'geolocation',
+  PERSISTENCE: 'persistence',
+  CREATEELEMENT: 'createelement',
+  CREATECONTAINER: 'createcontainer',
+    CREATEFROMHTML: 'createfromhtml',
+    PROPERTY: 'property',
+    GETHTML: 'gethtml',
+    GETVALUE: 'getvalue',
+    GETSTYLE: 'getstyle',
+    GETPOSITION: 'getposition',
+    GETLAYOUT: 'getlayout',
+    SETHTML: 'sethtml',
+    SETPOSITION: 'setposition',
+    SETSTYLE: 'setstyle',
+    SETVALUE: 'setvalue',
+    SETLAYOUT: 'setlayout'
+});
+
+var MESSAGEINTERFACES = Object.freeze({
+  [MESSAGETYPES.RENDER]: { id: 'string', renderer: 'function', data: 'any', env: 'object', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.CLEAR]: { id: 'string', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.HTML]: { id: 'string', markup: 'string', append: 'boolean', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.REMOVE]: { id: 'string', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.SETSTYLES]: { id: 'string', styles: 'object', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.SETATTR]: { id: 'string', name: 'string', value: 'string', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.TOGGLECLASS]: { id: 'string', classname: 'string', force: 'boolean', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.CRYPTO]: { bytes: 'number', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.GEOLOCATION]: { enablehighaccuracy: 'boolean', timeout: 'number', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.PERSISTENCE]: { action: 'string', key: 'string?', value: 'string?', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.CREATEELEMENT]: { tag: 'string', props: 'object?', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.CREATECONTAINER]: { resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.CREATEFROMHTML]: { html: 'string', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.PROPERTY]: { id: 'string', name: 'string', arguments: 'array?', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.GETHTML]: { id: 'string', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.GETVALUE]: { id: 'string', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.GETSTYLE]: { id: 'string', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.GETPOSITION]: { id: 'string', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.GETLAYOUT]: { id: 'string', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.SETHTML]: { id: 'string', value: 'string', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.SETPOSITION]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.SETSTYLE]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.SETVALUE]: { id: 'string', value: 'any', resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.SETLAYOUT]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' }
+});
+
+export const validatemessage = (message) => {
+  if (!message || typeof message !== 'object') {
+    return { valid: false, error: 'message must be a non-null object', type: 'null' };
+  }
+  var type = message.type;
+  if (!type || typeof type !== 'string') {
+    return { valid: false, error: 'message type must be a string, got: ' + typeof type, type: String(type) };
+  }
+  var iface = MESSAGEINTERFACES[type];
+  if (!iface) {
+    return { valid: false, error: 'unknown message type: ' + type, type: type };
+  }
+  var keys = Object.keys(iface);
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    var spec = iface[key];
+    var optional = spec.charAt(spec.length - 1) === '?';
+    var expectedtype = optional ? spec.slice(0, -1) : spec;
+    if (message[key] === undefined || message[key] === null) {
+      if (!optional) {
+        return { valid: false, error: 'type "' + type + '" missing required field "' + key + '" (' + expectedtype + ')', type: type };
+      }
+      continue;
+    }
+    if (expectedtype === 'any') continue;
+    var actualtype = typeof message[key];
+    if (actualtype !== expectedtype) {
+      return { valid: false, error: 'type "' + type + '" field "' + key + '" expected ' + expectedtype + ' got ' + actualtype, type: type };
+    }
+  }
+  return { valid: true, error: null, type: type };
+};
+
+var renderbehavior = function(state, message) {
+  var check = validatemessage(message);
+  if (!check.valid) {
+    console.error('[RENDERACTOR:UNKNOWNTYPE] type=' + check.type + ' error=' + check.error);
+    return state;
+  }
+  if (message.type === MESSAGETYPES.RENDER) {
+    var target = message.id ? document.getElementById(message.id) : null;
+    if (typeof message.renderer === 'function') {
+      try {
+        message.renderer(target, message.data, message.env || {});
+      } catch (err) {
+        console.error('[RENDERACTOR] Renderer error:', err);
+        throw err;
+      }
+    }
+  } else if (message.type === MESSAGETYPES.CLEAR) {
+    var target = document.getElementById(message.id);
+    if (target) target.innerHTML = '';
+  } else if (message.type === MESSAGETYPES.HTML) {
+    var target = document.getElementById(message.id);
+    if (!target) {
+      if (typeof message.resolve === 'function') {
+        message.resolve();
+      }
+      return;
+    }
+    if (message.append) {
+      target.insertAdjacentHTML('beforeend', message.markup);
+    } else {
+      target.innerHTML = message.markup;
+    }
+    if (typeof message.resolve === 'function') {
+      message.resolve();
+    }
+  } else if (message.type === MESSAGETYPES.REMOVE) {
+    var target = document.getElementById(message.id);
+    if (target) target.remove();
+  } else if (message.type === MESSAGETYPES.SETSTYLES) {
+    var target = document.getElementById(message.id);
+    if (target && message.styles && typeof message.styles === 'object') {
+      var stykeys = Object.keys(message.styles);
+      for (var si = 0; si < stykeys.length; si++) {
+        target.style[stykeys[si]] = message.styles[stykeys[si]];
+      }
+    }
+  } else if (message.type === MESSAGETYPES.SETATTR) {
+    var target = document.getElementById(message.id);
+    if (target && typeof message.name === 'string') {
+      target.setAttribute(message.name, message.value);
+    }
+  } else if (message.type === MESSAGETYPES.TOGGLECLASS) {
+    var target = document.getElementById(message.id);
+    if (target && typeof message.classname === 'string') {
+      target.classList.toggle(message.classname, message.force);
+    }
+  } else if (message.type === MESSAGETYPES.CRYPTO) {
+    var win = typeof window !== 'undefined' ? window : globalThis;
+    var array = new Uint8Array(message.bytes);
+    win.crypto.getRandomValues(array);
+    if (typeof message.resolve === 'function') {
+      message.resolve(Array.from(array));
+    }
+  } else if (message.type === MESSAGETYPES.GEOLOCATION) {
+    var win = typeof window !== 'undefined' ? window : globalThis;
+    var geo = win.navigator && win.navigator.geolocation;
+    if (!geo) {
+      if (typeof message.reject === 'function') message.reject(new Error('geolocation API unavailable'));
+      return state;
+    }
+    geo.getCurrentPosition(
+      function(pos) {
+        var coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
+        if (typeof message.resolve === 'function') message.resolve(coords);
+      },
+      function(err) {
+        if (typeof message.reject === 'function') message.reject(new Error('geolocation failed: ' + err.message));
+      },
+      { enablehighaccuracy: message.enablehighaccuracy || false, timeout: message.timeout || 5000 }
+    );
+    return state;
+  } else if (message.type === MESSAGETYPES.PERSISTENCE) {
+    var storagewin = typeof window !== 'undefined' ? window : globalThis;
+    var storage = storagewin.localStorage;
+    if (!storage) {
+      if (typeof message.reject === 'function') message.reject(new Error('localStorage unavailable'));
+      return state;
+    }
+    try {
+      var presult;
+      if (message.action === 'getItem') {
+        presult = { value: storage.getItem(message.key) };
+      } else if (message.action === 'setItem') {
+        storage.setItem(message.key, message.value);
+        presult = { success: true };
+      } else if (message.action === 'removeItem') {
+        storage.removeItem(message.key);
+        presult = { success: true };
+      } else if (message.action === 'clear') {
+        storage.clear();
+        presult = { success: true };
+      } else {
+        if (typeof message.reject === 'function') message.reject(new Error('unknown persistence action: ' + message.action));
+        return state;
+      }
+      if (typeof message.resolve === 'function') message.resolve(presult);
+    } catch (err) {
+      if (typeof message.reject === 'function') message.reject(err);
+    }
+  } else if (message.type === MESSAGETYPES.CREATEELEMENT) {
+    try {
+      var el = document.createElement(message.tag);
+      if (message.props && typeof message.props === 'object') {
+        var pkeys = Object.keys(message.props);
+        for (var pi = 0; pi < pkeys.length; pi++) {
+          el[pkeys[pi]] = message.props[pkeys[pi]];
+        }
+      }
+      if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(el));
+    } catch (err) {
+      if (typeof message.reject === 'function') message.reject(err);
+    }
+  } else if (message.type === MESSAGETYPES.CREATECONTAINER) {
+    try {
+      var container = document.createElement('div');
+      if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(container));
+    } catch (err) {
+      if (typeof message.reject === 'function') message.reject(err);
+    }
+  } else if (message.type === MESSAGETYPES.CREATEFROMHTML) {
+    try {
+      var wrapper = document.createElement('div');
+      wrapper.innerHTML = message.html;
+      var child = wrapper.firstElementChild;
+      if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(child || wrapper));
+    } catch (err) {
+      if (typeof message.reject === 'function') message.reject(err);
+    }
+  } else if (message.type === MESSAGETYPES.PROPERTY) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    var fn = el[message.name];
+    if (typeof fn !== 'function') {
+      if (typeof message.reject === 'function') message.reject(new Error('property "' + message.name + '" is not a function on element ' + message.id));
+      return state;
+    }
+    try {
+      var result = fn.apply(el, message.arguments || []);
+      if (typeof message.resolve === 'function') message.resolve(result);
+    } catch (e) {
+      if (typeof message.reject === 'function') message.reject(e);
+    }
+  } else if (message.type === MESSAGETYPES.GETHTML) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (typeof message.resolve === 'function') {
+      message.resolve({ tag: el.tagName.toLowerCase(), innerHTML: el.innerHTML });
+    }
+  } else if (message.type === MESSAGETYPES.GETVALUE) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (typeof message.resolve === 'function') {
+      message.resolve(el.value);
+    }
+  } else if (message.type === MESSAGETYPES.GETSTYLE) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (typeof message.resolve === 'function') {
+      var computed = window.getComputedStyle(el);
+      var styleobj = {};
+      for (var si = 0; si < computed.length; si++) {
+        styleobj[computed[si]] = computed.getPropertyValue(computed[si]);
+      }
+      message.resolve(styleobj);
+    }
+  } else if (message.type === MESSAGETYPES.GETPOSITION) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (typeof message.resolve === 'function') {
+      var rect = el.getBoundingClientRect();
+      message.resolve({ x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
+    }
+  } else if (message.type === MESSAGETYPES.GETLAYOUT) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (typeof message.resolve === 'function') {
+      message.resolve({
+        offsetWidth: el.offsetWidth,
+        offsetHeight: el.offsetHeight,
+        offsetLeft: el.offsetLeft,
+        offsetTop: el.offsetTop,
+        scrollWidth: el.scrollWidth,
+        scrollHeight: el.scrollHeight,
+        clientWidth: el.clientWidth,
+        clientHeight: el.clientHeight
+      });
+    }
+  } else if (message.type === MESSAGETYPES.SETHTML) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    el.innerHTML = message.value;
+    if (typeof message.resolve === 'function') message.resolve();
+  } else if (message.type === MESSAGETYPES.SETPOSITION) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (message.value && typeof message.value === 'object') {
+      var oldstyle = el.getAttribute('style') || '';
+      var pairs = oldstyle.split(';');
+      var stylemap = {};
+      for (var pi = 0; pi < pairs.length; pi++) {
+        var ci = pairs[pi].indexOf(':');
+        if (ci > 0) {
+          stylemap[pairs[pi].slice(0, ci).trim()] = pairs[pi].slice(ci + 1).trim();
+        } else if (pairs[pi].trim()) {
+          stylemap[pairs[pi].trim()] = '';
+        }
+      }
+      var keys = Object.keys(message.value);
+      for (var ki = 0; ki < keys.length; ki++) {
+        stylemap[keys[ki]] = message.value[keys[ki]];
+      }
+      var mergedkeys = Object.keys(stylemap);
+      var merged = '';
+      for (var mi = 0; mi < mergedkeys.length; mi++) {
+        if (mi > 0) merged += ';';
+        merged += mergedkeys[mi] + ':' + stylemap[mergedkeys[mi]];
+      }
+      el.setAttribute('style', merged);
+    }
+    if (typeof message.resolve === 'function') message.resolve();
+  } else if (message.type === MESSAGETYPES.SETSTYLE) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (message.value && typeof message.value === 'object') {
+      var keys = Object.keys(message.value);
+      for (var i = 0; i < keys.length; i++) {
+        el.style[keys[i]] = message.value[keys[i]];
+      }
+    }
+    if (typeof message.resolve === 'function') message.resolve();
+  } else if (message.type === MESSAGETYPES.SETVALUE) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    el.value = message.value;
+    if (typeof message.resolve === 'function') message.resolve();
+  } else if (message.type === MESSAGETYPES.SETLAYOUT) {
+    var el = document.getElementById(message.id);
+    if (!el) {
+      if (typeof message.reject === 'function') message.reject(new Error('element not found: ' + message.id));
+      return state;
+    }
+    if (message.value && typeof message.value === 'object') {
+      var keys = Object.keys(message.value);
+      for (var li = 0; li < keys.length; li++) {
+        el[keys[li]] = message.value[keys[li]];
+      }
+    }
+    if (typeof message.resolve === 'function') message.resolve();
+  }
+  return state;
+};
+
+export const RENDERACTOR = createactor(renderbehavior, {});
+
+export const enqueuerender = function(id, renderer, data, env) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuerender] id must be a non-empty string')); return; }
+    if (typeof renderer !== 'function') { reject(new Error('[enqueuerender] renderer must be a function')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuerender] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.RENDER, id: id, renderer: renderer, data: data, env: env, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueueclear = function(id) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueueclear] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueueclear] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.CLEAR, id: id, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuehtml = function(id, markup, append) {
+  append = append || false;
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuehtml] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuehtml] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.HTML, id: id, markup: markup, append: append, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueueremove = function(id) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueueremove] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueueremove] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.REMOVE, id: id, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuestyles = function(id, styles) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuestyles] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuestyles] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.SETSTYLES, id: id, styles: styles, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuesetattr = function(id, name, value) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuesetattr] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuesetattr] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.SETATTR, id: id, name: name, value: value, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuetoggleclass = function(id, classname, force) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuetoggleclass] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuetoggleclass] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.TOGGLECLASS, id: id, classname: classname, force: force, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuecreateelement = function(tag, props) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.CREATEELEMENT, tag: tag, props: props || null, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuecreatecontainer = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.CREATECONTAINER, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuecreatefromhtml = function(html) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.CREATEFROMHTML, html: html, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuegethtml = function(id) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuegethtml] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuegethtml] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.GETHTML, id: id, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuegetvalue = function(id) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuegetvalue] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuegetvalue] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.GETVALUE, id: id, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuegetstyle = function(id) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuegetstyle] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuegetstyle] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.GETSTYLE, id: id, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuegetposition = function(id) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuegetposition] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuegetposition] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.GETPOSITION, id: id, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuesethtml = function(id, value) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuesethtml] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuesethtml] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.SETHTML, id: id, value: value, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuesetposition = function(id, value) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuesetposition] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuesetposition] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.SETPOSITION, id: id, value: value, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuesetstyle = function(id, value) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuesetstyle] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuesetstyle] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.SETSTYLE, id: id, value: value, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuesetvalue = function(id, value) {
+  return new Promise(function(resolve, reject) {
+    if (!id || typeof id !== 'string') { reject(new Error('[enqueuesetvalue] id must be a non-empty string')); return; }
+    var target = document.getElementById(id);
+    if (!target) { reject(new Error('[enqueuesetvalue] element not found: ' + id)); return; }
+    RENDERACTOR.send({ type: MESSAGETYPES.SETVALUE, id: id, value: value, resolve: resolve, reject: reject });
+  });
+};
+
+export const DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
+export const DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
+export const DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
+
+export const enqueueproperty = function(id, name, args) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.PROPERTY, id: id, name: name, arguments: args, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueuegetlayout = function(id) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.GETLAYOUT, id: id, resolve: resolve, reject: reject });
+  });
+};
+
+export const enqueusetlayout = function(id, value) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.SETLAYOUT, id: id, value: value, resolve: resolve, reject: reject });
+  });
+};
+
+export const expectelement = function(id, timeout) {
+  timeout = timeout || 30000;
+  return new Promise(function(resolve, reject) {
+    var existing = document.getElementById(id);
+    if (existing) {
+      resolve(CREATEDOMREF(existing));
+      return;
+    }
+    var observer = null;
+    var timeoutid = null;
+    var cleanup = function() {
+      if (observer) observer.disconnect();
+      if (timeoutid) clearTimeout(timeoutid);
+    };
+    var onfound = function(el) {
+      cleanup();
+      resolve(CREATEDOMREF(el));
+    };
+    var ontimeout = function() {
+      cleanup();
+      reject(new Error('[expectelement] element not found: ' + id));
+    };
+    timeoutid = setTimeout(ontimeout, timeout);
+    observer = new MutationObserver(function() {
+      var el = document.getElementById(id);
+      if (el) onfound(el);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+};
+
+export const handlefilereaderrequest = function(payload) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function(event) {
+      resolve({ text: event.target.result });
+    };
+    reader.onerror = function() {
+      reject(new Error('[renderactor] FileReader error'));
+    };
+    reader.readAsText(payload.file);
+  });
+};
+
+--- Match: ./js/actors/worldmapactor.js ---
+import { createactor } from './actorkernel.js';
+
+const UPDATE    = 'update';
+const OBSERVE   = 'observe';
+const UNOBSERVE = 'unobserve';
+
+const deepmerge = (target, patch) => {
+    if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+    if (target === null || typeof target !== 'object' || Array.isArray(target)) return patch;
+    return Object.keys(patch).reduce((acc, key) => {
+        const targetval = acc[key];
+        const patchval  = patch[key];
+        const bothobjects = (
+            patchval  !== null && typeof patchval  === 'object' && !Array.isArray(patchval) &&
+            targetval !== null && typeof targetval === 'object' && !Array.isArray(targetval)
+        );
+        return { ...acc, [key]: bothobjects ? deepmerge(targetval, patchval) : patchval };
+    }, target);
+};
+
+const worldmapbehavior = (state, message) => {
+    if (message.type === UPDATE) {
+        const nextworldmap = deepmerge(state.worldmap, message.patch);
+        state.observers.forEach(observer => observer(nextworldmap));
+        return { worldmap: nextworldmap, observers: state.observers };
+    }
+    if (message.type === OBSERVE) {
+        return { ...state, observers: [...state.observers, message.observer] };
+    }
+    if (message.type === UNOBSERVE) {
+        return { ...state, observers: state.observers.filter(obs => obs !== message.observer) };
+    }
+    return state;
+};
+
+const WORLDMAPACTOR = createactor(worldmapbehavior, { worldmap: {}, observers: [] });
+
+export const updateworldmap = (patch) => WORLDMAPACTOR.send({ type: UPDATE, patch });
+export const observeworldmap = (observer) => WORLDMAPACTOR.send({ type: OBSERVE, observer });
+export const unobserveworldmap = (observer) => WORLDMAPACTOR.send({ type: UNOBSERVE, observer });
+export const getworldmap = () => WORLDMAPACTOR.getstate().worldmap;
+
+--- Match: ./js/appinit.js ---
+import { compilepipeline } from './factory/blockcompiler.js';
+import { updateworldmap } from './context.js';
+
+import { installdebugagent } from './debugagent.js';
+import { loginfo, getverbosity, setverbosity, getverbosityname, VERBOSITY } from './verbosity.js';
+import shelldna from '../oracles/shell.js';
+
+const sinks = [{ fn: updateworldmap, args: [] }];
+
+installdebugagent();
+
+
+const createstatusbar = () => {
+  const statusbar = document.createElement('div');
+  statusbar.id = 'verbosity-statusbar';
+  statusbar.style.cssText = 'position:fixed; bottom:10px; right:10px; background:rgba(0,0,0,0.8); color:#fff; padding:5px 10px; border-radius:5px; font-family:monospace; font-size:12px; z-index:9999; cursor:pointer;';
+  statusbar.title = 'Click to cycle verbosity level';
+  
+  const updatedisplay = () => {
+    const level = getverbosity();
+    const name = getverbosityname(level);
+    statusbar.textContent = 'Verbosity: ' + name + ' (' + level + ')';
+  };
+  
+  statusbar.onclick = () => {
+    const current = getverbosity();
+    const next = (current + 1) % (VERBOSITY.DEBUG + 1);
+    setverbosity(next);
+    updatedisplay();
+    loginfo('[APPINIT] Verbosity changed to:', getverbosityname(next));
+  };
+  
+  updatedisplay();
+  document.body.appendChild(statusbar);
+};
+
+createstatusbar();
+
+var env = {
+  registersubscription: function(sourceId, eventType, handler) {
+    var el = document.getElementById(sourceId);
+    if (el) el.addEventListener(eventType, handler);
+  },
+  rngactive: true,
+  stack: {},
+  updateworldmap: updateworldmap,
+  containerid: 'approot'
+};
+var compiled = await compilepipeline(shelldna.pipeline, null, sinks);
+await compiled.pipeline({ id: 'shell', env: env });
+loginfo('[APPINIT] SHELL AGENT STARTED');
+
+--- Match: ./js/context.js ---
+import { updateworldmap as actormirror, observeworldmap as actorobserve, getworldmap } from './actors/worldmapactor.js';
+
+const isobject = (item) => (item && typeof item === 'object' && !Array.isArray(item));
+
+export const deepmerge = (target, source) => {
+  const output = { ...target };
+  if (isobject(target) && isobject(source)) {
+    Object.keys(source).forEach(key => {
+      if (isobject(source[key])) {
+        if (!(key in target)) {
+          Object.assign(output, { [key]: source[key] });
+        } else {
+          output[key] = deepmerge(target[key], source[key]);
+        }
+      } else {
+        Object.assign(output, { [key]: source[key] });
+      }
+    });
+  }
+  return output;
+};
+
+export const createinitialworldmap = (envoverrides = {}) => {
+  const dpr = window.devicePixelRatio || 1;
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  return {
+    env: {
+      locale: document.documentElement.lang || 'en',
+      theme: theme,
+      dpr: dpr,
+      breakpoint: 'desktop',
+      ...envoverrides
+    },
+    entropy: { seed: null, bits: 0, iscomplete: false },
+    transit: { inputs: {}, outputs: {} },
+    data: {},
+    layout: {
+      currenttemplate: 'default',
+      isloading: false,
+      error: null,
+      activestage: null,
+      progress: 0,
+      messages: []
+    }
+  };
+};
+
+export const updateworldmap = (update) => {
+  const current = getworldmap();
+  const patch = typeof update === 'function' ? update(current) : update;
+  actormirror(patch);
+};
+
+export const observeworldmap = (observer) => actorobserve(observer);
+export const select = (selectorfn) => (state) => selectorfn(state);
+
+--- Match: ./js/debugagent.js ---
+
+import { frames } from './evalstack.js';
+import { formatdebugtrace } from './debugformatter.js';
+import { logdebug, logwarn } from './verbosity.js';
+
+let currentcontinuation = null;
+
+const getbyid = (id) => document.getElementById(id);
+
+export function installdebugagent(overlayid = 'debugoverlay') {
+    let overlay = getbyid(overlayid);
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = overlayid;
+        overlay.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.95); z-index:10000; display:none; flex-direction: column;';
+        document.body.appendChild(overlay);
+    }
+
+    const show = (error, continuation) => {
+        currentcontinuation = continuation;
+        const tracedata = error?.diagnostic?.debugtrace || frames;
+        overlay.innerHTML = formatdebugtrace(error, tracedata);
+        
+        const actions = document.createElement('div');
+        actions.style.cssText = 'position: fixed; bottom: 40px; right: 40px; display:flex; gap:20px;';
+        
+        if (continuation) {
+            const retrybtn = document.createElement('button');
+            retrybtn.textContent = 'RETRY STAGE';
+            retrybtn.style.cssText = 'background: #00ff00; color: #000; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold;';
+            retrybtn.onclick = () => {
+                logdebug('[DebugAgent] Retrying stage with captured continuation...');
+                hide();
+                if (continuation && typeof continuation.fn === 'function') {
+                    continuation.fn(...continuation.args)
+                        .catch(err => show(err, err.diagnostic?.continuation || null));
+                } else {
+                    logdebug('[DebugAgent] continuation.fn is not callable:', continuation);
+                }
+            };
+            actions.appendChild(retrybtn);
+
+            const continuebtn = document.createElement('button');
+            continuebtn.textContent = 'CONTINUE';
+            continuebtn.style.cssText = 'background: #4488ff; color: #fff; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold;';
+            continuebtn.onclick = () => {
+                hide();
+                const env = continuation?.args?.[0];
+                const resume = env && typeof env === 'object'
+                    ? env.pipelineresume
+                    : null;
+                if (typeof resume === 'function') {
+                    resume();
+                } else {
+                    logwarn('[DebugAgent] No pipeline.resume service on stack. Cannot continue past this stage.');
+                }
+            };
+            actions.appendChild(continuebtn);
+        }
+
+        const abortbtn = document.createElement('button');
+        abortbtn.textContent = 'ABORT';
+        abortbtn.style.cssText = 'background: #ff5555; color: #fff; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold;';
+        abortbtn.onclick = hide;
+        actions.appendChild(abortbtn);
+        
+        overlay.appendChild(actions);
+        overlay.style.display = 'flex';
+    };
+
+    const hide = () => {
+        overlay.style.display = 'none';
+        overlay.innerHTML = '';
+    };
+
+    window.debugagentshow = show;
+    window.addEventListener('unhandledrejection', (event) => {
+        const reason = event.reason;
+        if (reason && reason.diagnostic) {
+            show(reason, reason.diagnostic.continuation || null);
+            event.preventDefault();
+        }
+    });
+    window.addEventListener('error', (event) => {
+        show(event.error || event, null);
+        event.preventDefault();
+    });
+}
+
+--- Match: ./js/debugformatter.js ---
+import { frames } from './evalstack.js';
+
+export function formatdebugtrace(error, framelist = frames) {
+    const framelistcopy = [...framelist];
+    let html = ''
+    + '<div class="debug-trace" style="font-family:monospace; background:#111; color:#eee; padding:2rem; overflow-y:auto; height:100vh; font-size: 14px; line-height: 1.6;">\n'
+    + '  <h3 style="color:#ff5555; border-bottom: 2px solid #ff5555; padding-bottom: 0.5rem; margin-top: 0;">FATAL EXCEPTION :: SYSTEM_HALT</h3>\n'
+    + '  <p style="font-size: 1.2em; color: #fff;"><strong>Error:</strong> ' + error.message + '</p>\n'
+    + '  <div style="margin-top: 1.5rem; color: #888; text-transform: uppercase; font-size: 0.8em; letter-spacing: 1px;">Pervasive Continuation Trace</div>\n'
+    + '  <ul style="list-style:none; padding:0; margin-top: 1rem;">';
+
+    framelistcopy.reverse().forEach((frame, idx) => {
+        const fnname = frame.meta?.label || frame.fn.name || 'anonymous';
+        const callerid = frame.meta?.callerid || 'unknown';
+
+        const argarray = Array.isArray(frame.args) ? frame.args : [frame.args];
+        const safeargs = argarray.map(a => {
+            if (a === null) return 'null';
+            if (typeof a === 'undefined') return 'undefined';
+            if (typeof a === 'object') {
+                try { 
+                    const str = JSON.stringify(a, (key, value) => {
+                        if (key === 'container' || key === 'canvas' || value instanceof HTMLElement) return '[DOM_NODE]';
+                        return value;
+                    });
+                    return str.length > 120 ? str.slice(0, 120) + '...' : str;
+                } catch { return '{…}'; }
+            }
+            return String(a).slice(0, 120);
+        }).join(', ');
+
+        const pipestatekeys = frame.pipestate ? Object.keys(frame.pipestate).join(', ') : 'none';
+
+        html += ''
+        + '\n        <li style="margin-bottom:1.5rem; border-left:4px solid #333; padding-left:1rem; position: relative;">\n'
+        + '          <span style="color:#f0f; font-weight: bold;">#' + (framelistcopy.length - 1 - idx) + '</span>\n'
+        + '          <span style="color:#0ff; font-weight: bold; margin-left: 0.5rem;">' + fnname + '</span>\n'
+        + '          <span style="color:#aa0; font-size:0.8rem; margin-left: 0.5rem;">[' + callerid + ']</span>\n'
+        + '          <div style="margin-top:0.3rem; color:#666; font-size: 0.9em;">Args: <span style="color: #aaa;">(' + safeargs + ')</span></div>\n'
+        + '          <div style="color:#666; font-size: 0.9em;">Pipe State: <span style="color: #888;">{' + pipestatekeys + '}</span></div>\n'
+        + '        </li>';
+    });
+
+    html += '</ul></div>';
+    return html;
+}
+
+--- Match: ./js/evalstack.js ---
+export function createevalstack() {
+    const stack = [];
+    return {
+        get frames() { return stack; },
+        pushframe(fn, args, pipestate, k, meta = {}) {
+            stack.push({
+                fn, args,
+                pipestate: pipestate || null,
+                cont: typeof k === 'function' ? k : (v) => v,
+                meta, ts: Date.now()
+            });
+        },
+        popframe() { return stack.pop(); },
+        peekframe() { return stack[stack.length - 1]; },
+        snapshot() { return [...stack]; },
+        restore(saved) {
+            stack.length = 0;
+            stack.push(...saved);
+        },
+        currentcontinuation() {
+            if (stack.length === 0) return (v) => v;
+            const frame = stack[stack.length - 1];
+            return typeof frame.cont === 'function' ? frame.cont : (v) => v;
+        },
+        chaincontinuations() {
+            if (stack.length === 0) return (v) => v;
+            return stack.slice().reverse().reduce((inner, frame) => {
+                const k = typeof frame.cont === 'function' ? frame.cont : (v) => v;
+                return (v) => k(inner(v));
+            }, (v) => v);
+        },
+        getcurrentcallerid() {
+            const frame = this.peekframe();
+            return frame?.meta?.callerid || 'system';
+        }
+    };
+}
+
+export const EVALSTACK = createevalstack();
+export const frames = EVALSTACK.frames;
+
+export function pushframe(fn, args, pipestate, cont, meta = {}) {
+    EVALSTACK.pushframe(fn, args, pipestate, cont, meta);
+}
+export function popframe() { return EVALSTACK.popframe(); }
+export function peekframe() { return EVALSTACK.peekframe(); }
+export function snapshotstack() { return EVALSTACK.snapshot(); }
+export function restorestack(saved) { EVALSTACK.restore(saved); }
+export function currentcontinuation() { return EVALSTACK.currentcontinuation(); }
+export function chaincontinuations() { return EVALSTACK.chaincontinuations(); }
+
+--- Match: ./js/functorial/maybe.js ---
+export const JUST = (value) => ({
+    tag: "JUST",
+    value,
+    map: (fn) => JUST(fn(value)),
+    chain: (fn) => fn(value),
+    getorelse: (defaultvalue) => {
+        if (typeof defaultvalue === 'function') {
+            throw new Error(
+                '[JUST.getorelse] Invalid call: argument is a function. ' +
+                'getorelse expects a value, not a function. ' +
+                'Use chain() or map() for function composition.'
+            );
+        }
+        return value;
+    }
+});
+
+export const NOTHING = () => ({
+    tag: "NOTHING",
+    map: () => NOTHING(),
+    chain: () => NOTHING(),
+    getorelse: (defaultvalue) => {
+        if (typeof defaultvalue === 'function') {
+            throw new Error(
+                '[NOTHING.getorelse] Invalid call: argument is a function. ' +
+                'getorelse expects a value, not a function. ' +
+                'Use getorelselazy() if lazy evaluation is required.'
+            );
+        }
+        if (defaultvalue === undefined) {
+            console.warn('[NOTHING.getorelse] Called with undefined default value – returning undefined');
+        }
+        return defaultvalue;
+    }
+});
+
+export const of = JUST;
+export const fromnullable = (val) => (val === null || val === undefined) ? NOTHING() : JUST(val);
+
+export const getorelselazy = (maybe, fn) => {
+    if (maybe.tag === 'JUST') return maybe.value;
+    if (typeof fn !== 'function') {
+        throw new Error('[getorelselazy] Second argument must be a function');
+    }
+    return fn();
+};
+
+export const MAYBEALGEBRA = Object.freeze({
+  type: 'Maybe',
+  typeconstructor: 'T → Maybe<T>',
+  unit: 'JUST',
+  bind: 'chain',
+  map: 'map',
+  leftidentity: 'PROVEN',
+  rightidentity: 'PROVEN',
+  associativity: 'PROVEN',
+  functorlaw: 'PROVEN',
+  verificationmethod: 'KLEISLI audit §3.1'
+});
+
+--- Match: ./js/fundamental/domref.js ---
+import { RENDERACTOR } from '../actors/renderactor.js';
+
+const RAWMAP = new WeakMap();
+
+export function GETRAWELEMENT(ref) {
+  if (!ref || typeof ref !== 'object' || !RAWMAP.has(ref)) {
+    throw new Error('[GETRAWELEMENT] Invalid domref');
+  }
+  return RAWMAP.get(ref);
+}
+
+export function CREATEDOMREF(rawelement) {
+  if (!rawelement || !(rawelement instanceof HTMLElement)) {
+    throw new Error('[CREATEDOMREF] Invalid element');
+  }
+  const ref = {
+    project: (renderer, data, env) => {
+      RENDERACTOR.send({ type: 'render', id: null, renderer: renderer, data: data, env: env || {} });
+    },
+    appendchild: (childref) => {
+      RENDERACTOR.send({ type: 'render', id: null, renderer: () => {
+        const parent = GETRAWELEMENT(ref);
+        const child = GETRAWELEMENT(childref);
+        if (parent && child) parent.appendChild(child);
+      }, data: {} });
+    },
+    remove: () => {
+      RENDERACTOR.send({ type: 'render', id: null, renderer: () => {
+        const el = GETRAWELEMENT(ref);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }, data: {} });
+    }
+  };
+  RAWMAP.set(ref, rawelement);
+  return ref;
+}
+
+export function ISVALIDDOMREF(ref) {
+  return ref && typeof ref === 'object' && typeof ref.project === 'function';
+}
+
+--- Match: ./js/pipe.js ---
+import { callwithstack } from "./factory/callwithstack.js";
+import { EVALSTACK } from "./evalstack.js";
+import { validatestageflow } from "./typesystem.js";
+import { logdebug } from "./verbosity.js";
+
+export const createpipeline = (stages, sinks = [], onprogress) => {
+  if (!Array.isArray(stages)) throw new Error("[PIPELINE] Stages must be an array.");
+  const stagecontracts = stages.length > 0 ? validatestageflow(stages) : [];
+  return async (agent) => {
+    const env = agent.env;
+    if (!env || typeof env !== 'object') {
+      throw new Error('[PIPELINE] agent.env is required');
+    }
+    env._rerunStages = async (fromIndex) => {
+      for (let idx = fromIndex; idx < stages.length; idx++) {
+        const stage = stages[idx];
+        await callwithstack(EVALSTACK, 'rerun-' + idx, 'asyncawait', async () => {
+          const patch = await stage(env);
+          if (patch && typeof patch === 'object') {
+            const updateworldmap = env.updateworldmap;
+            if (updateworldmap) updateworldmap(patch);
+          }
+        }, [], { context: { env } });
+      }
+    };
+    for (let idx = 0; idx < stages.length; idx++) {
+      const stage = stages[idx];
+      const stageid = stage.id || 'stage_' + idx;
+      const callerid = agent.id + ':' + stageid;
+      if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP') {
+        if (stage.control.fn) {
+          const shouldexecute = await stage.control.fn(env);
+          if (!shouldexecute) {
+            logdebug('[PIPELINE] Skipping stage:', stageid, 'control condition false');
+            continue;
+          }
+        }
+      }
+      logdebug('[PIPELINE] Executing stage:', stageid, 'for agent:', agent.id);
+      await callwithstack(EVALSTACK, 'stage-' + idx + ':' + (stage.intent || "unnamed"), "asyncawait", async () => {
+        const patch = await stage(env);
+        if (patch && typeof patch === "object") {
+          const updateworldmap = env.updateworldmap;
+          if (updateworldmap) updateworldmap(patch);
+        }
+        return env;
+      }, [], {
+        context: { env, pipestate: env.pipestate, callerid },
+        errk: (err) => {
+          err.diagnostic = err.diagnostic || {};
+          err.diagnostic.pipelinestage = stageid;
+          throw err;
+        }
+      });
+    }
+    return env;
+  };
+};
+
+--- Match: ./js/typesystem.js ---
+import { DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES } from './actors/renderactor.js';
+
+const extractstagesblocks = (pipeline) => {
+    if (pipeline.elements) {
+        const stages = [];
+        const blocks = [];
+        for (const el of pipeline.elements) {
+            if (el.element === 'STAGE') {
+                stages.push({ id: el.id, control: el.control || null, blocks: (el.elements || []).filter(e => e.element === 'BLOCK') });
+            } else if (el.element === 'BLOCK') {
+                blocks.push(el);
+            }
+        }
+        return { stages, blocks };
+    } else if (pipeline.stages) {
+        return { stages: pipeline.stages, blocks: [] };
+    }
+    return { stages: [], blocks: [] };
+};
+
+export const TYPESCHEMA = {
+  agent: { 
+    dna: { type: 'object', required: true }, 
+    pipeline: { type: 'function', required: true } 
+  },
+  oracledna: { 
+    identity: { type: 'object', required: true }, 
+    pipeline: { type: 'object', required: true }, 
+    presentation: { type: 'object', required: false } 
+  },
+  layoutcomponent: { 
+    key: { type: 'string', required: true }, 
+    parent: { type: 'string', required: false }, 
+    id: { type: 'string', required: false }, 
+    datapath: { type: 'string', required: false } 
+  },
+  pipeline: {
+    stages: { type: 'array', required: true }
+  },
+  stage: {
+    id: { type: 'string', required: true },
+    type: { type: 'string', required: true },
+    intent: { type: 'string', required: false },
+    blocks: { type: 'array', required: false }
+  },
+  block: {
+    id: { type: 'string', required: true },
+    type: { type: 'string', required: true },
+    ref: { type: 'string', required: false },
+    intent: { type: 'string', required: false },
+    args: { type: 'array', required: false },
+    output: { type: 'string', required: false },
+    target: { type: 'string', required: false },
+    datapath: { type: 'string', required: false },
+    mappings: { type: 'object', required: false }
+  },
+  rewriterspec: {
+    rewriter: { type: 'function', required: true },
+    label: { type: 'string', required: true }
+  },
+  responseadapter: {
+    functionname: { type: 'string', required: true },
+    registerkey: { type: 'string', required: true },
+    pipelinesource: { type: 'string', required: true },
+    targetapiref: { type: 'string', required: true },
+    validatedfields: { type: 'array', required: false }
+  },
+  paramadapter: {
+    functionname: { type: 'string', required: true },
+    registerkey: { type: 'string', required: true },
+    pipelinesource: { type: 'string', required: true },
+    targetapiref: { type: 'string', required: true },
+    readkeys: { type: 'array', required: true }
+  },
+  blockcontract: {
+    id: { type: 'string', required: true },
+    type: { type: 'string', required: true },
+    reads: { type: 'array', required: false },
+    ref: { type: 'string', required: false },
+    schemaref: { type: 'string', required: false },
+    responseadapterref: { type: 'string', required: false },
+    paramsfrom: { type: 'string', required: false },
+    resultto: { type: 'string', required: false },
+    datalabel: { type: 'string', required: false },
+    targetlabel: { type: 'string', required: false },
+    stylizer: { type: 'function', required: false },
+    output: { type: 'string', required: false }
+  }
+};
+
+
+export const validate = (value, schemaname) => {
+    const schema = TYPESCHEMA[schemaname];
+    if (!schema) return { tag: 'success' };
+
+    if (value === null || value === undefined) {
+        return { tag: 'failure', message: 'VALUE FOR SCHEMA "' + schemaname + '" IS NULL OR UNDEFINED' };
+    }
+
+    for (const [key, rules] of Object.entries(schema)) {
+        const propvalue = value[key];
+        
+        if (rules.required && (propvalue === undefined || propvalue === null)) {
+            return { tag: 'failure', message: 'REQUIRED PROPERTY "' + key + '" IS MISSING IN SCHEMA "' + schemaname + '"' };
+        }
+
+        if (propvalue !== undefined && propvalue !== null) {
+            const actualtype = Array.isArray(propvalue) ? 'array' : typeof propvalue;
+            if (actualtype !== rules.type) {
+                return { tag: 'failure', message: 'PROPERTY "' + key + '" MUST BE OF TYPE ' + rules.type + ' (GOT ' + actualtype + ') IN SCHEMA "' + schemaname + '"' };
+            }
+        }
+    }
+    return { tag: 'success' };
+};
+
+export const validatecall = (schema, fn, functionname = 'anonymous') => {
+  return (...args) => {
+    for (let i = 0; i < schema.length; i++) {
+      const arg = args[i];
+      const rule = schema[i];
+      if (rule.required && (arg === undefined || arg === null)) {
+        throw new Error('[TYPESYSTEM] REQUIRED ARGUMENT "' + rule.name + '" IS MISSING IN ' + functionname + '.');
+      }
+      if (arg !== undefined && rule.type) {
+        const actualtype = Array.isArray(arg) ? 'array' : typeof arg;
+        if (actualtype !== rule.type) {
+          throw new Error('[TYPESYSTEM] ARGUMENT "' + rule.name + '" IN ' + functionname + ' MUST BE OF TYPE ' + rule.type + ' (GOT ' + actualtype + ').');
+        }
+      }
+    }
+    return fn(...args);
+  };
+};
+
+export async function validateschema(value, schema, context = 'stream', registry = new Map(), strict = false) {
+    const errors = [];
+    
+    let currentschema = typeof schema === 'string' ? registry.get(schema) : schema;
+    if (currentschema?.schemaref) currentschema = registry.get(currentschema.schemaref);
+    
+    if (!currentschema) return errors;
+
+    if (currentschema.type && currentschema.type !== 'any') {
+      const actualtype = Array.isArray(value) ? 'array' : typeof value;
+      if (actualtype !== currentschema.type) {
+        if (currentschema.type === 'integer' && actualtype === 'number' && Number.isInteger(value)) {
+        } else {
+          errors.push(context + ': TYPE MISMATCH. EXPECTED ' + currentschema.type + ', GOT ' + actualtype);
+          return errors;
+        }
+      }
+    }
+
+    if (currentschema.oneof) {
+      const branchresults = await Promise.all(
+        currentschema.oneof.map(async (s, i) => {
+          const label = s.required ? 'variant with keys [' + s.required.join(', ') + ']' : 'variant ' + i;
+          const errs = await validateschema(value, s, context + '<oneOf:' + i + '>', registry, strict);
+          return { label, errs };
+        })
+      );
+      
+      const winner = branchresults.find(b => b.errs.length === 0);
+      if (winner) return [];
+
+      const branchreport = branchresults.map(b => '  · ' + b.label + ': ' + b.errs.join('; ')).join('\\n');
+      errors.push(context + ': NO MATCHING VARIANT IN ONEOF.\\n' + branchreport);
+      return errors;
+    }
+
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      if (strict && currentschema.strict !== false) {
+        const allowed = new Set([
+          ...(currentschema.required || []), 
+          ...(currentschema.optional || []),
+          ...Object.keys(currentschema.properties || {})
+        ]);
+        for (const key of Object.keys(value)) {
+          if (!allowed.has(key)) {
+            errors.push(context + ': UNEXPECTED PROPERTY "' + key + '"');
+          }
+        }
+      }
+
+      if (currentschema.required) {
+        for (const reqkey of currentschema.required) {
+          if (!(reqkey in value)) {
+            errors.push(context + ': MISSING REQUIRED PROPERTY "' + reqkey + '"');
+          }
+        }
+      }
+
+      if (currentschema.properties) {
+        for (const [key, propvalue] of Object.entries(value)) {
+          const propschema = currentschema.properties[key];
+          if (propschema) {
+            const properrors = await validateschema(propvalue, propschema, context + '.' + key, registry, strict);
+            errors.push(...properrors);
+          }
+        }
+      }
+    }
+
+    if (currentschema.items && Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        const itemerrors = await validateschema(value[i], currentschema.items, context + '[' + i + ']', registry, strict);
+        errors.push(...itemerrors);
+      }
+    }
+
+    if (currentschema.validators) {
+      for (const validator of currentschema.validators) {
+        errors.push(...validator(value, context));
+      }
+    }
+
+    return errors;
+}
+
+
+export function validateformalblock(block, registries = {}) {
+    const errors = [];
+    if (!Array.isArray(block.reads)) errors.push('FORMAL: block "' + block.id + '" missing reads[]');
+    if (!Array.isArray(block.writes)) errors.push('FORMAL: block "' + block.id + '" missing writes[]');
+    if (block.type === 'api') {
+        if (!block.schemaref) errors.push('FORMAL: api block "' + block.id + '" missing schemaref');
+        if (!block.paramsfrom) errors.push('FORMAL: api block "' + block.id + '" missing paramsfrom');
+        if (!block.resultto) errors.push('FORMAL: api block "' + block.id + '" missing resultto');
+    }
+
+    if (block.contract) {
+        if (block.contract.inputschema && typeof block.contract.inputschema !== 'object') errors.push('FORMAL: block "' + block.id + '" contract.inputschema must be an object');
+        if (block.contract.outputschema && typeof block.contract.outputschema !== 'object') errors.push('FORMAL: block "' + block.id + '" contract.outputschema must be an object');
+    }
+    return errors;
+}
+
+export function validatestageflow(stages) {
+  const contracts = [];
+  const cumulativewrites = new Set();
+  const injectedservices = new Set([
+    'containerref', 'domlens', 'callapi', 'callwriter', 'callfn',
+    'registersubscription', 'spawnagent', 'updateworldmap', 'getworldmap',
+    'openapischemas', 'validateschema', 'schemaadapter',
+    'createnodefromtemplate', 'authsessionaccesstoken', 'agents', 'rituals',
+  ]);
+  injectedservices.forEach(s => cumulativewrites.add(s));
+
+  for (const stage of stages) {
+    const stagereads = new Set();
+    const stagewrites = new Set();
+    for (const block of (stage.blocks || [])) {
+      (block.reads || []).forEach(k => { stagereads.add(k); });
+      (block.writes || []).forEach(k => { stagewrites.add(k); cumulativewrites.add(k); });
+    }
+    const missing = [...stagereads].filter(k => !cumulativewrites.has(k));
+    contracts.push({
+      stageid: stage.id,
+      stagereads: [...stagereads],
+      stagewrites: [...stagewrites],
+      cumulativereads: [...stagereads],
+      cumulativewrites: [...cumulativewrites],
+      missingkeys: missing,
+      resolved: missing.length === 0
+    });
+  }
+  return contracts;
+}
+
+export function validatemonadalgebra(name, impl) {
+  return {
+    type: name,
+    hasunit: typeof impl.of === 'function' || typeof impl.pure === 'function' || typeof impl.JUST === 'function',
+    hasbind: typeof impl.chain === 'function' || typeof impl.bind === 'function',
+    hasmap: typeof impl.map === 'function',
+    lawstatus: 'ASSUMED'
+  };
+}
+
+export function validateblockio(block, cumulativewrites) {
+    const errors = [];
+    const reads = block.reads || [];
+    for (const key of reads) {
+        if (!cumulativewrites.has(key)) {
+            errors.push('BLOCK IO: block "' + block.id + '" reads "' + key + '" but it has not been written yet');
+        }
+    }
+    return errors;
+}
+
+export function validateblockfnio(block) {
+    const errors = [];
+    if (block.type !== 'fn') return errors;
+    const sig = block.signature;
+    if (!sig) return errors;
+    const fn = block.fn;
+    if (!fn) return errors;
+    const paramcount = fn.length;
+    const inputcount = (sig.inputs || []).length;
+    const outputcount = (sig.outputs || []).length;
+    if (paramcount > 0 && paramcount !== inputcount) {
+        errors.push('FN IO: block "' + block.id + '" fn expects ' + paramcount + ' params but signature declares ' + inputcount + ' inputs');
+    }
+    if (inputcount === 0 && paramcount > 0) {
+        errors.push('FN IO: block "' + block.id + '" has 0 inputs but fn expects ' + paramcount + ' params');
+    }
+    return errors;
+}
+
+export function validatecontainerrefs(pipeline) {
+    const errors = [];
+    const refsproduced = new Set();
+    const { stages } = extractstagesblocks(pipeline);
+    for (const stage of stages) {
+        for (const block of (stage.blocks || [])) {
+            if (block.type === 'writer' || block.type === 'fn') {
+                const outputs = block.signature ? (block.signature.outputs || []) : [];
+                outputs.forEach(k => refsproduced.add(k));
+            }
+        }
+    }
+    for (const stage of stages) {
+        for (const block of (stage.blocks || [])) {
+            if (block.type === 'spawn') {
+                const containerkey = block.container;
+                if (containerkey && !refsproduced.has(containerkey)) {
+                    errors.push('SPAWN: block "' + block.id + '" references container "' + containerkey + '" which is not produced by any preceding stage');
+                }
+                if (!block.dna && !block.dnaref) {
+                    errors.push('SPAWN: block "' + block.id + '" must have either \'dna\' or \'dnaref\' property');
+                }
+                if (block.dnaref && block.dnaref.from === 'eventTarget' && !block.dnaref.attr && !block.dnaref.key) {
+                    errors.push('SPAWN: block "' + block.id + '" dnaref with from:eventTarget must specify attr or key');
+                }
+            }
+        }
+    }
+    return errors;
+}
+
+export function validatespawncontracts(pipeline) {
+    const errors = [];
+    const { stages } = extractstagesblocks(pipeline);
+    for (const stage of stages) {
+        for (const block of (stage.blocks || [])) {
+            if (block.type !== 'spawn') continue;
+            const hasdna = !!block.dna;
+            const hasdnaref = !!block.dnaref;
+            if (!hasdna && !hasdnaref) {
+                errors.push('SPAWN CONTRACT: block "' + block.id + '" requires dna or dnaref');
+            }
+            if (hasdna && hasdnaref) {
+                errors.push('SPAWN CONTRACT: block "' + block.id + '" has both dna and dnaref; use one');
+            }
+            if (block.container && typeof block.container !== 'string') {
+                errors.push('SPAWN CONTRACT: block "' + block.id + '" container must be a string (env key)');
+            }
+        }
+    }
+    return errors;
+}
+
+export function validateblocktype(block) {
+    const errors = [];
+    const validtypes = ['fn', 'api', 'writer', 'domquery', 'spawn', 'io', 'crypto', 'wait'];
+    if (!block.type || !validtypes.includes(block.type)) {
+        errors.push('BLOCK TYPE: block "' + block.id + '" has invalid type: ' + block.type + '. Valid types: ' + validtypes.join(', '));
+    }
+    return errors;
+}
+
+export function validatedomqueryblock(block) {
+    const errors = [];
+    if (block.type !== 'domquery') return errors;
+    if (!block.command || !block.command.COMMAND) {
+        errors.push('DOMQUERY: block "' + block.id + '" requires command with COMMAND');
+        return errors;
+    }
+    const getters = DOMQUERYGETTERS;
+    const setters = DOMQUERYSETTERS;
+    if (!DOMQUERYMESSAGES.includes(block.command.COMMAND)) {
+        errors.push('DOMQUERY: block "' + block.id + '" unknown COMMAND: ' + block.command.COMMAND);
+    }
+    const cmdprops = block.command.properties;
+    if (!cmdprops || !cmdprops.id || typeof cmdprops.id !== 'string') {
+        errors.push('DOMQUERY: block "' + block.id + '" command requires properties.id (string)');
+    }
+    if (setters.includes(block.command.COMMAND) && cmdprops && cmdprops.value === undefined) {
+        errors.push('DOMQUERY: block "' + block.id + '" setter requires command.properties.value');
+    }
+    return errors;
+}
+
+  export function validateblockproperties(block) {
+      const errors = [];
+      if (block.type === 'domquery') {
+          const cmdprops = block.command && block.command.properties;
+          if (!cmdprops) {
+              errors.push('DOMQUERY: block "' + block.id + '" requires command.properties block');
+          } else if (typeof cmdprops !== 'object') {
+              errors.push('DOMQUERY: block "' + block.id + '" command.properties must be an object');
+          }
+      }
+      return errors;
+  }
+
+--- Match: ./js/utils.js ---
+
+export const APIBASE = 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1';
+
+export function escapehtml(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/[&<>'"]/g,
+        tag => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        }[tag] || tag)
+    );
+}
+
+export function markdowntohtml(md) {
+    if (!md) return '';
+    let html = escapehtml(md);
+
+    html = html.replace(/^### (.*$)/gim, '<h4>$1</h4>');
+    html = html.replace(/^## (.*$)/gim, '<h3>$1</h3>');
+    html = html.replace(/^# (.*$)/gim, '<h2>$1</h2>');
+
+    html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    html = html.replace(/^\s*[-*+]\s+(.*)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+    const paragraphs = html.split(/\n\s*\n/);
+    html = paragraphs.map(p => {
+        if (p.startsWith('<h') || p.startsWith('<ul') || p.startsWith('<ol')) return p;
+        return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+    }).join('\n');
+
+    return html;
+}
+
+export function formataitext(text) {
+    if (!text) return '';
+    return text
+        .split(/\n\n+/)
+        .map(para => para.trim())
+        .filter(para => para.length > 0)
+        .map(para => {
+            const content = para.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            return '<p>' + content.replace(/\n/g, '<br>') + '</p>';
+        })
+        .join('');
+}
+
+import { validate } from './typesystem.js';
+
+export const resolvepath = (path, source) => {
+  if (!path || typeof path !== 'string') return source;
+  const keys = path.split('.');
+  let current = source;
+  for (const key of keys) {
+    if (current == null || typeof current !== 'object') return null;
+    current = current[key];
+  }
+  return current;
+};
+
+export const getprop = (path, source, schemaname = null) => {
+    const value = resolvepath(path, source);
+    if (schemaname) {
+        const result = validate(value, schemaname);
+        if (result.tag === 'failure') {
+            throw new Error('[TypeSystem] Property "' + path + '" failed validation: ' + result.message);
+        }
+    }
+    return value;
+};
+
+import { JUST, NOTHING } from './functorial/maybe.js';
+
+export const getproperty = (obj, prop) =>
+  (obj && prop in obj && typeof obj[prop] !== 'function')
+    ? JUST(obj[prop])
+    : NOTHING();
+
+export const getfunction = (obj, prop) =>
+  (obj && typeof obj[prop] === 'function')
+    ? JUST(obj[prop])
+    : NOTHING();
+
+export const setproperty = (obj, prop, value) => ({
+  ...obj,
+  [prop]: value
+});
+
+export const createnodefromtemplate = (templateobj) => {
+    if (!templateobj) return NOTHING();
+    
+    const { html, tagname = 'div', attributes = {} } = templateobj;
+    const container = document.createElement(tagname);
+    
+    Object.entries(attributes).forEach(([k, v]) => {
+        if (k === 'class') {
+            container.className = v;
+        } else {
+            container.setAttribute(k, v);
+        }
+    });
+    
+    if (html) container.innerHTML = html;
+    return JUST(container);
+};
+
+--- Match: ./js/verbosity.js ---
+export const VERBOSITY = {
+  NONE: 0,
+  ERROR: 1,
+  WARN: 2,
+  INFO: 3,
+  DEBUG: 4
+};
+
+let currentverbosity = VERBOSITY.DEBUG;
+
+export function getverbosity() {
+  return currentverbosity;
+}
+
+export function setverbosity(level) {
+  if (level >= VERBOSITY.NONE && level <= VERBOSITY.DEBUG) {
+    currentverbosity = level;
+    return true;
+  }
+  return false;
+}
+
+export function logerror(message, ...args) {
+  if (currentverbosity >= VERBOSITY.ERROR) {
+    console.error(message, ...args);
+  }
+}
+
+export function logwarn(message, ...args) {
+  if (currentverbosity >= VERBOSITY.WARN) {
+    console.warn(message, ...args);
+  }
+}
+
+export function loginfo(message, ...args) {
+  if (currentverbosity >= VERBOSITY.INFO) {
+    console.log(message, ...args);
+  }
+}
+
+export function logdebug(message, ...args) {
+  if (currentverbosity >= VERBOSITY.DEBUG) {
+    console.log(message, ...args);
+  }
+}
+
+export function getverbosityname(level) {
+  switch (level) {
+    case VERBOSITY.NONE: return 'NONE';
+    case VERBOSITY.ERROR: return 'ERROR';
+    case VERBOSITY.WARN: return 'WARN';
+    case VERBOSITY.INFO: return 'INFO';
+    case VERBOSITY.DEBUG: return 'DEBUG';
+    default: return 'UNKNOWN';
+  }
+}

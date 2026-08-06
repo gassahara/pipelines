@@ -1,49 +1,53 @@
-
+import { resolvePath } from '../layoutpath.js';
 
 export function rewritestyleattrs(html, rules) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
     var body = doc.body;
     function cameltohyphen(str) {
-	return str.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); });
+        return str.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); });
     }
     for (var ri = 0; ri < rules.length; ri++) {
-	var rule = rules[ri];
-	let selector ;
-	let els = [];
-	if (rule.id) {
-	    els = [doc.getElementById(rule.id)];
-	}
-	if (rule.tag) {
-	    els = doc.getElementsByTagName(rule.tag);
-	}
-	if (rule.classname) {
-	    els = doc.getElementsByClassName(rule.classname);
-	}
-	if (rule.name) {
-	    els = [doc.getElementByName(rule.name)];
-	}
-	let eli=-1;
-	while(eli<els.length) {
-	    eli=eli+1;
-	    const el = els[eli];
-	    if (!el) continue;
-	    var newstyle = rule.style;
-	    if (newstyle) {
-		var newkeys = Object.keys(newstyle);
-		for (var ni = 0; ni < newkeys.length; ni++) {
-		    try{
-			el.style[newkeys[ni]] = newstyle[newkeys[ni]];
-		    }catch(e) {
-			console.log({e});
-		    }
-		}
-	    }
-	}
+        var rule = rules[ri];
+        let els = [];
+        if (rule.path) {
+            els = resolvePath(body, rule.path);
+        } else {
+            if (rule.id) {
+                els = [doc.getElementById(rule.id)];
+            }
+            if (rule.tag) {
+                els = doc.getElementsByTagName(rule.tag);
+            }
+            if (rule.classname) {
+                els = doc.getElementsByClassName(rule.classname);
+            }
+            if (rule.name) {
+                els = [doc.getElementByName(rule.name)];
+            }
+        }
+        let eli=-1;
+        while(eli<els.length) {
+            eli=eli+1;
+            const el = els[eli];
+            if (!el) continue;
+            var newstyle = rule.style;
+            if (newstyle) {
+                var newkeys = Object.keys(newstyle);
+                for (var ni = 0; ni < newkeys.length; ni++) {
+                    try{
+                        el.style[newkeys[ni]] = newstyle[newkeys[ni]];
+                    }catch(e) {
+                        console.log({e});
+                    }
+                }
+            }
+        }
     }
     return body.innerHTML;
 }
 
 export function computecolorscheme(pos, tilecols, cellw, cellh, gridcols) {
+  // (unchanged)
   var colstart = Math.max(0, Math.min(Math.floor((pos.clientx || 0) / cellw), gridcols - 1));
   var rowstart = Math.max(0, Math.min(Math.floor((pos.clienty || 0) / cellh), gridcols - 1));
   var colend = Math.max(1, Math.min(Math.ceil(((pos.clientx || 0) + (pos.width || cellw)) / cellw), gridcols));
