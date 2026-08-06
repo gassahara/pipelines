@@ -1,3 +1,4 @@
+import { logdebug, getverbosity, VERBOSITY } from '../verbosity.js';
 import { resolvePath } from '../layoutpath.js';
 
 export function rewritestyleattrs(html, rules) {
@@ -25,9 +26,16 @@ export function rewritestyleattrs(html, rules) {
                 els = [doc.getElementByName(rule.name)];
             }
         }
-        let eli=-1;
-        while(eli<els.length) {
-            eli=eli+1;
+
+        if (getverbosity() >= VERBOSITY.DEBUG) {
+            logdebug('[rewritestyleattrs] Rule #' + ri + ': ' +
+                (rule.path ? 'path:' + JSON.stringify(rule.path) : 'id:' + rule.id) +
+                ' matched ' + els.length + ' elements');
+        }
+
+        let eli = -1;
+        while(eli < els.length) {
+            eli = eli + 1;
             const el = els[eli];
             if (!el) continue;
             var newstyle = rule.style;
@@ -35,6 +43,9 @@ export function rewritestyleattrs(html, rules) {
                 var newkeys = Object.keys(newstyle);
                 for (var ni = 0; ni < newkeys.length; ni++) {
                     try{
+        if (getverbosity() >= VERBOSITY.DEBUG) {
+            logdebug('[rewritestyleattrs] Rule #' + ri + ': ' + ">" + el.style[newkeys[ni]] + ">" + newstyle[newkeys[ni]] );
+        }
                         el.style[newkeys[ni]] = newstyle[newkeys[ni]];
                     }catch(e) {
                         console.log({e});
@@ -47,7 +58,6 @@ export function rewritestyleattrs(html, rules) {
 }
 
 export function computecolorscheme(pos, tilecols, cellw, cellh, gridcols) {
-  // (unchanged)
   var colstart = Math.max(0, Math.min(Math.floor((pos.clientx || 0) / cellw), gridcols - 1));
   var rowstart = Math.max(0, Math.min(Math.floor((pos.clienty || 0) / cellh), gridcols - 1));
   var colend = Math.max(1, Math.min(Math.ceil(((pos.clientx || 0) + (pos.width || cellw)) / cellw), gridcols));
