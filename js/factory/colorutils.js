@@ -63,7 +63,6 @@ export function emphasize(color, bg, intensity=1) {
   if(lDiff<40) fgHsl.l=fgHsl.l>bgHsl.l?Math.min(100,fgHsl.l+20):Math.max(0,fgHsl.l-20);
   return rgbToHex(...hslToRgb(fgHsl.h,fgHsl.s,fgHsl.l));
 }
-export function extractColor(styleObj, prop, fallback) {
-  const val = styleObj[prop];
-  return typeof val === 'string' && val.length ? val : fallback;
+export function extractInlineStyle(el, prop) {
+  return el.style[prop] || '';
 }
