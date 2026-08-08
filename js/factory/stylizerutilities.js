@@ -213,3 +213,44 @@ export function computecolorscheme(pos, tilecols, cellw, cellh, gridcols) {
     borderColor: 'hsl(' + huecont + ', ' + satcont + '%, ' + borderlight + '%)'
   };
 }
+
+// ==================== NEW: Responsive Styles Injection ====================
+export function injectResponsiveStyles(html, breakpointRules) {
+  if (!breakpointRules || breakpointRules.length === 0) return html;
+  let css = '<style data-responsive="true">';
+  for (const bp of breakpointRules) {
+    const min = bp.minWidth !== undefined ? `(min-width: ${bp.minWidth}px)` : '';
+    const max = bp.maxWidth !== undefined ? `(max-width: ${bp.maxWidth}px)` : '';
+    const cond = [min, max].filter(Boolean).join(' and ');
+    css += `@media ${cond} {\n`;
+    for (const rule of bp.rules) {
+      // Build selector: prefer id, then class, then tag, else '*'
+      let selector;
+      if (rule.id) {
+        selector = `#${rule.id}`;
+      } else if (rule.class) {
+        selector = `.${rule.class}`;
+      } else if (rule.tag) {
+        selector = rule.tag;
+      } else {
+        selector = '*';
+      }
+      css += `  ${selector} {\n`;
+      for (const [prop, val] of Object.entries(rule.style)) {
+        // Convert camelCase to kebab-case for CSS properties
+        const kebabProp = prop.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+        css += `    ${kebabProp}: ${val};\n`;
+      }
+      css += `  }\n`;
+    }
+    css += `}\n`;
+  }
+  css += '</style>';
+
+  // Append before the last closing </div> if possible, otherwise at the end
+  const lastDivIdx = html.lastIndexOf('</div>');
+  if (lastDivIdx !== -1) {
+    return html.slice(0, lastDivIdx) + css + html.slice(lastDivIdx);
+  }
+  return html + css;
+}
