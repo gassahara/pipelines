@@ -1,6 +1,6 @@
 import { createactor } from './actorkernel.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
-import { revalidateAll } from './triggerregistry.js';   // NEW IMPORT
+import { revalidateAll } from './trigerregistry.js';   // NEW IMPORT
 
 export const MESSAGETYPES = Object.freeze({
   RENDER: 'render',
