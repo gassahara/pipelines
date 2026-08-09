@@ -4,7 +4,7 @@ import { callwithstack } from './callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import { enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue, enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition, enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout, enqueusetlayout, DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES } from '../actors/renderactor.js';
 import { logwarn, logdebug } from '../verbosity.js';
-import { registerTrigger } from '../actors/triggerregistry.js';   // NEW IMPORT
+import { registerTrigger } from '../actors/trigerregistry.js';   // NEW IMPORT
 
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
