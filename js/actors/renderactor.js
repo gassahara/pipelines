@@ -1,5 +1,6 @@
 import { createactor } from './actorkernel.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
+import { revalidateAll } from './triggerregistry.js';   // NEW IMPORT
 
 export const MESSAGETYPES = Object.freeze({
   RENDER: 'render',
@@ -107,18 +108,20 @@ var renderbehavior = function(state, message) {
   } else if (message.type === MESSAGETYPES.CLEAR) {
     var target = document.getElementById(message.id);
     if (target) target.innerHTML = '';
+    revalidateAll();   // NEW: innerHTML cleared
   } else if (message.type === MESSAGETYPES.HTML) {
     var target = document.getElementById(message.id);
     if (!target) {
       if (typeof message.resolve === 'function') {
         message.resolve();
       }
-      return;
+      return state;
     }
     if (message.append) {
       target.insertAdjacentHTML('beforeend', message.markup);
     } else {
       target.innerHTML = message.markup;
+      revalidateAll();   // NEW: innerHTML replaced
     }
     if (typeof message.resolve === 'function') {
       message.resolve();
@@ -126,6 +129,7 @@ var renderbehavior = function(state, message) {
   } else if (message.type === MESSAGETYPES.REMOVE) {
     var target = document.getElementById(message.id);
     if (target) target.remove();
+    revalidateAll();   // NEW: element removed
   } else if (message.type === MESSAGETYPES.SETSTYLES) {
     var target = document.getElementById(message.id);
     if (target && message.styles && typeof message.styles === 'object') {
@@ -310,6 +314,7 @@ var renderbehavior = function(state, message) {
       return state;
     }
     el.innerHTML = message.value;
+    revalidateAll();   // NEW: innerHTML changed
     if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.SETPOSITION) {
     var el = document.getElementById(message.id);

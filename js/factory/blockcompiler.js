@@ -4,6 +4,7 @@ import { callwithstack } from './callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import { enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue, enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition, enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout, enqueusetlayout, DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES } from '../actors/renderactor.js';
 import { logwarn, logdebug } from '../verbosity.js';
+import { registerTrigger } from '../actors/triggerregistry.js';   // NEW IMPORT
 
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
@@ -628,7 +629,8 @@ const triggerRunner = (id, control, children, stage) => {
 	    logwarn('[control:TRIGGER] missing source/event/registersubscription for stage:', id);
 	    return {};
 	}
-	rs(control.sourceid, eventtype, async (e) => {
+	// Define handler so we can register it in the global map
+	const handler = async (e) => {
 	    env.eventtarget = e.target;
 	    if (stage.output !== null && stage.output !== undefined) {
 		env[stage.output] = deepcloneevent(e);
@@ -637,7 +639,9 @@ const triggerRunner = (id, control, children, stage) => {
 	    if (control.rerunfrom !== undefined && typeof env._rerunStages === 'function') {
 		await env._rerunStages(control.rerunfrom);
 	    }
-	});
+	};
+	rs(control.sourceid, eventtype, handler);
+	registerTrigger(control.sourceid, eventtype, handler);   // NEW: store for later revalidation
 	return {};
     };
 };
