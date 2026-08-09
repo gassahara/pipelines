@@ -66,3 +66,131 @@ export function emphasize(color, bg, intensity=1) {
 export function extractInlineStyle(el, prop) {
   return el.style[prop] || '';
 }
+
+
+
+
+
+export function complementary(hex) {
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var newH = (hsl.h + 180) % 360;
+  var newRgb = hslToRgb(newH, hsl.s, hsl.l);
+  return [rgbToHex(newRgb[0], newRgb[1], newRgb[2])];
+}
+
+export function analogous(hex, count, step) {
+  if (count === undefined) count = 3;
+  if (step === undefined) step = 30;
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var startH = hsl.h - (step * (count - 1)) / 2;
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    var hue = ((startH + i * step) % 360 + 360) % 360;
+    var newRgb = hslToRgb(hue, hsl.s, hsl.l);
+    result.push(rgbToHex(newRgb[0], newRgb[1], newRgb[2]));
+  }
+  return result;
+}
+
+export function triadic(hex) {
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var h1 = (hsl.h + 120) % 360;
+  var h2 = (hsl.h + 240) % 360;
+  var rgb1 = hslToRgb(h1, hsl.s, hsl.l);
+  var rgb2 = hslToRgb(h2, hsl.s, hsl.l);
+  return [hex,
+    rgbToHex(rgb1[0], rgb1[1], rgb1[2]),
+    rgbToHex(rgb2[0], rgb2[1], rgb2[2])];
+}
+
+export function splitComplementary(hex) {
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var h1 = (hsl.h + 150) % 360;
+  var h2 = (hsl.h + 210) % 360;
+  var rgb1 = hslToRgb(h1, hsl.s, hsl.l);
+  var rgb2 = hslToRgb(h2, hsl.s, hsl.l);
+  return [hex,
+    rgbToHex(rgb1[0], rgb1[1], rgb1[2]),
+    rgbToHex(rgb2[0], rgb2[1], rgb2[2])];
+}
+
+export function tetradic(hex) {
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var h1 = (hsl.h + 60) % 360;
+  var h2 = (hsl.h + 180) % 360;
+  var h3 = (hsl.h + 240) % 360;
+  var rgb1 = hslToRgb(h1, hsl.s, hsl.l);
+  var rgb2 = hslToRgb(h2, hsl.s, hsl.l);
+  var rgb3 = hslToRgb(h3, hsl.s, hsl.l);
+  return [hex,
+    rgbToHex(rgb1[0], rgb1[1], rgb1[2]),
+    rgbToHex(rgb2[0], rgb2[1], rgb2[2]),
+    rgbToHex(rgb3[0], rgb3[1], rgb3[2])];
+}
+
+export function monochromatic(hex, count, lightnessRange) {
+  if (count === undefined) count = 5;
+  if (lightnessRange === undefined) lightnessRange = 60;
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var startL = Math.max(0, hsl.l - lightnessRange / 2);
+  var endL = Math.min(100, hsl.l + lightnessRange / 2);
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    var newL = startL + ((endL - startL) * i) / (count - 1);
+    var newRgb = hslToRgb(hsl.h, hsl.s, newL);
+    result.push(rgbToHex(newRgb[0], newRgb[1], newRgb[2]));
+  }
+  return result;
+}
+
+export function shades(hex, count) {
+  if (count === undefined) count = 5;
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    var newL = hsl.l - (hsl.l * i) / (count - 1);
+    var newRgb = hslToRgb(hsl.h, hsl.s, newL);
+    result.push(rgbToHex(newRgb[0], newRgb[1], newRgb[2]));
+  }
+  return result;
+}
+
+export function tints(hex, count) {
+  if (count === undefined) count = 5;
+  var rgb = hexToRgb(hex);
+  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    var newL = hsl.l + ((100 - hsl.l) * i) / (count - 1);
+    var newRgb = hslToRgb(hsl.h, hsl.s, newL);
+    result.push(rgbToHex(newRgb[0], newRgb[1], newRgb[2]));
+  }
+  return result;
+}
+
+export function pick(colors, index) {
+  var i = Math.max(0, Math.min(index, colors.length - 1));
+  return colors[i];
+}
+
+export function contrastingLevel(colors, bg, level) {
+  if (level === undefined) level = 50;
+  var sorted = colors.slice().sort(function(a, b) {
+    return contrastRatio(a, bg) - contrastRatio(b, bg);
+  });
+  var idx = Math.round((level / 100) * (sorted.length - 1));
+  return sorted[idx];
+}
+
+export function emphaticLevel(color, bg, level) {
+  if (level === undefined) level = 50;
+  var intensity = (level / 100) * 2;
+  return emphasize(color, bg, intensity);
+}
