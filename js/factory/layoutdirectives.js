@@ -197,3 +197,242 @@ export function generateCSSFromDirectives(elementId, directives, breakpointMap =
 
     return { inline: inlineStyles, css };
 }
+
+// ==================== LAYOUT OPTIMIZATION ENGINE ====================
+
+/**
+ * @param {string} html
+ * @param {Array} goals
+ * @param {number} [maxIterations=5]
+ * @returns {string}
+ */
+export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
+    const parser = new DOMParser();
+    let doc = parser.parseFromString(html, 'text/html');
+    for (let iter = 0; iter < maxIterations; iter++) {
+        let anyCorrection = false;
+        for (const goal of goals) {
+            switch (goal.type) {
+                case 'minVerticalGap': {
+                    const minGap = goal.options?.minGap ?? 12;
+                    const violations = checkSpacingDoc(doc, minGap);
+                    if (violations.length) {
+                        correctSpacing(doc, minGap);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+                case 'preventOverlap': {
+                    const violations = checkOverlapDoc(doc);
+                    if (violations.length) {
+                        correctOverlap(doc);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+                case 'overflow': {
+                    const violations = checkOverflowDoc(doc);
+                    if (violations.length) {
+                        correctOverflow(doc);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+                case 'scrollability': {
+                    const violations = checkScrollabilityDoc(doc);
+                    if (violations.length) {
+                        correctScrollability(doc);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+                case 'controlledOverlay': {
+                    const violations = checkControlledOverlayDoc(doc);
+                    if (violations.length) {
+                        correctControlledOverlay(doc);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!anyCorrection) break;
+    }
+    return doc.body.innerHTML;
+}
+
+function checkSpacingDoc(doc, minGap) {
+    const violations = [];
+    const walk = (parent) => {
+        const children = Array.from(parent.children).filter(el => {
+            const display = el.style.display || 'inline';
+            return display === 'block' || display === 'flex' || display === 'grid' ||
+                   ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li'].includes(el.tagName.toLowerCase());
+        });
+        for (let i = 0; i < children.length - 1; i++) {
+            const a = children[i], b = children[i + 1];
+            const mb = parseFloat(a.style.marginBottom) || 0;
+            const mt = parseFloat(b.style.marginTop) || 0;
+            if (mb + mt < minGap) violations.push({ a, b, gap: mb + mt });
+            walk(b);
+        }
+    };
+    walk(doc.body);
+    return violations;
+}
+
+function correctSpacing(doc, minGap) {
+    const walk = (parent) => {
+        const children = Array.from(parent.children).filter(el => {
+            const display = el.style.display || 'inline';
+            return display === 'block' || display === 'flex' || display === 'grid' ||
+                   ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li'].includes(el.tagName.toLowerCase());
+        });
+        for (let i = 0; i < children.length - 1; i++) {
+            const a = children[i], b = children[i + 1];
+            const mb = parseFloat(a.style.marginBottom) || 0;
+            const mt = parseFloat(b.style.marginTop) || 0;
+            if (mb + mt < minGap) {
+                b.style.marginTop = (minGap - mb) + 'px';
+            }
+        }
+        for (const child of children) {
+            walk(child);
+        }
+    };
+    walk(doc.body);
+}
+
+function checkOverlapDoc(doc) {
+    const violations = [];
+    const positioned = Array.from(doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]'));
+    for (let i = 0; i < positioned.length; i++) {
+        for (let j = i + 1; j < positioned.length; j++) {
+            const a = positioned[i], b = positioned[j];
+            const aTop = parseFloat(a.style.top) || 0;
+            const aLeft = parseFloat(a.style.left) || 0;
+            const aWidth = parseFloat(a.style.width) || 0;
+            const aHeight = parseFloat(a.style.height) || 0;
+            const bTop = parseFloat(b.style.top) || 0;
+            const bLeft = parseFloat(b.style.left) || 0;
+            const bWidth = parseFloat(b.style.width) || 0;
+            const bHeight = parseFloat(b.style.height) || 0;
+            if (aWidth && aHeight && bWidth && bHeight) {
+                if (aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
+                    aTop < bTop + bHeight && aTop + aHeight > bTop) {
+                    violations.push({ elA: a, elB: b });
+                }
+            }
+        }
+    }
+    return violations;
+}
+
+function correctOverlap(doc) {
+    const positioned = Array.from(doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]'));
+    for (let i = 0; i < positioned.length; i++) {
+        for (let j = i + 1; j < positioned.length; j++) {
+            const a = positioned[i], b = positioned[j];
+            const aTop = parseFloat(a.style.top) || 0;
+            const aLeft = parseFloat(a.style.left) || 0;
+            const aWidth = parseFloat(a.style.width) || 0;
+            const aHeight = parseFloat(a.style.height) || 0;
+            const bTop = parseFloat(b.style.top) || 0;
+            const bLeft = parseFloat(b.style.left) || 0;
+            const bWidth = parseFloat(b.style.width) || 0;
+            const bHeight = parseFloat(b.style.height) || 0;
+            if (aWidth && aHeight && bWidth && bHeight) {
+                if (aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
+                    aTop < bTop + bHeight && aTop + aHeight > bTop) {
+                    const overlapY = (aTop + aHeight) - bTop;
+                    if (overlapY > 0) {
+                        b.style.top = (bTop + overlapY + 2) + 'px';
+                    }
+                }
+            }
+        }
+    }
+}
+
+function checkOverflowDoc(doc) {
+    const violations = [];
+    const walk = (el) => {
+        const style = el.style;
+        const width = parseFloat(style.width) || 0;
+        const height = parseFloat(style.height) || 0;
+        if (width || height) {
+            const overflow = style.overflow || style.overflowX || style.overflowY;
+            if (!overflow || overflow === 'visible') {
+                let contentExceeds = false;
+                for (const child of el.children) {
+                    const cw = parseFloat(child.style.width) || 0;
+                    const ch = parseFloat(child.style.height) || 0;
+                    if ((width && cw > width) || (height && ch > height)) {
+                        contentExceeds = true;
+                        break;
+                    }
+                }
+                if (contentExceeds) violations.push(el);
+            }
+        }
+        for (const child of el.children) walk(child);
+    };
+    walk(doc.body);
+    return violations;
+}
+
+function correctOverflow(doc) {
+    const walk = (el) => {
+        const width = parseFloat(el.style.width) || 0;
+        const height = parseFloat(el.style.height) || 0;
+        if (width || height) {
+            const overflow = el.style.overflow || '';
+            if (!overflow || overflow === 'visible') {
+                let shouldSet = false;
+                for (const child of el.children) {
+                    const cw = parseFloat(child.style.width) || 0;
+                    const ch = parseFloat(child.style.height) || 0;
+                    if ((width && cw > width) || (height && ch > height)) {
+                        shouldSet = true;
+                        break;
+                    }
+                }
+                if (shouldSet) el.style.overflow = 'auto';
+            }
+        }
+        for (const child of el.children) walk(child);
+    };
+    walk(doc.body);
+}
+
+function checkScrollabilityDoc(doc) {
+    const violations = [];
+    const scrollable = doc.querySelectorAll('[style*="overflow: auto"], [style*="overflow: scroll"]');
+    scrollable.forEach(el => {
+        if (!el.style.touchAction) violations.push(el);
+    });
+    return violations;
+}
+
+function correctScrollability(doc) {
+    const scrollable = doc.querySelectorAll('[style*="overflow: auto"], [style*="overflow: scroll"]');
+    scrollable.forEach(el => {
+        if (!el.style.touchAction) el.style.touchAction = 'pan-y';
+    });
+}
+
+function checkControlledOverlayDoc(doc) {
+    const violations = [];
+    const overlays = doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]');
+    overlays.forEach(el => {
+        if (!el.style.zIndex) violations.push(el);
+    });
+    return violations;
+}
+
+function correctControlledOverlay(doc) {
+    const overlays = doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]');
+    overlays.forEach(el => {
+        if (!el.style.zIndex) el.style.zIndex = 'auto';
+    });
+}

@@ -261,7 +261,6 @@ export function consolidateStyles(html) {
 
 // ==================== COLOR UTILITIES (internal) ====================
 
-/** Convert a CSS color string (rgb() or hex) to hex. */
 function toHex(color) {
     if (!color) return '#000000';
     if (color.startsWith('rgb')) {
@@ -271,16 +270,13 @@ function toHex(color) {
         }
         return '#000000';
     }
-    // assume already hex
     return color;
 }
 
-/** Extract a color from the `background` shorthand if `backgroundColor` is missing. */
 function extractBgFromShorthand(el) {
     if (el.style.backgroundColor) return el.style.backgroundColor;
     const bg = el.style.background;
     if (!bg) return null;
-    // Simple extraction: looks for a color value (#... or rgb(...))
     const hexMatch = bg.match(/#[0-9a-fA-F]{3,6}/);
     if (hexMatch) return hexMatch[0];
     const rgbMatch = bg.match(/rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)/);
@@ -288,7 +284,7 @@ function extractBgFromShorthand(el) {
     return null;
 }
 
-// ==================== STYLE VERIFICATION ====================
+// ==================== STYLE VERIFICATION (original functions) ====================
 
 export function verifyContrast(html, minRatio = 4.5) {
     const parser = new DOMParser();
@@ -413,7 +409,7 @@ export function verifyHarmony(html, options = {}) {
     return { html: options.autoCorrect ? doc.body.innerHTML : html, violations };
 }
 
-// ==================== LAYOUT VERIFICATION ====================
+// ==================== LAYOUT VERIFICATION (original functions) ====================
 
 export function checkSpacing(html, minGap = 12) {
     const violations = [];
@@ -588,4 +584,182 @@ export function runVerification(html, goals = []) {
         }
     }
     return result;
+}
+
+// ==================== STYLE OPTIMIZATION ENGINE ====================
+
+export function optimizeStyleHTML(html, goals, maxIterations = 5) {
+    const parser = new DOMParser();
+    let doc = parser.parseFromString(html, 'text/html');
+    for (let iter = 0; iter < maxIterations; iter++) {
+        let anyCorrection = false;
+        for (const goal of goals) {
+            switch (goal.type) {
+                case 'contrast': {
+                    const minRatio = goal.options?.minRatio ?? 4.5;
+                    const violations = verifyContrastDoc(doc, minRatio);
+                    if (violations.length) {
+                        correctContrast(doc, minRatio);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+                case 'harmony': {
+                    const violations = verifyHarmonyDoc(doc);
+                    if (violations.length) {
+                        correctHarmony(doc);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+                case 'textVisibility': {
+                    const violations = verifyTextVisibilityDoc(doc, goal.options);
+                    if (violations.length) {
+                        correctTextVisibility(doc, goal.options);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+                case 'buttonVisibility': {
+                    const violations = verifyButtonVisibilityDoc(doc);
+                    if (violations.length) {
+                        correctButtonVisibility(doc);
+                        anyCorrection = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!anyCorrection) break;
+    }
+    return doc.body.innerHTML;
+}
+
+function verifyContrastDoc(doc, minRatio) {
+    const corrections = [];
+    const elements = doc.querySelectorAll('*');
+    elements.forEach(el => {
+        if (el.textContent.trim() && el.style.color) {
+            const fg = el.style.color;
+            const bg = getEffectiveBackground(el);
+            if (fg && bg && contrastRatio(toHex(fg), toHex(bg)) < minRatio) {
+                corrections.push(el);
+            }
+        }
+    });
+    return corrections;
+}
+
+function correctContrast(doc, minRatio) {
+    const elements = doc.querySelectorAll('*');
+    elements.forEach(el => {
+        if (el.textContent.trim() && el.style.color) {
+            const fg = el.style.color;
+            const bg = getEffectiveBackground(el);
+            if (fg && bg) {
+                const ratio = contrastRatio(toHex(fg), toHex(bg));
+                if (ratio < minRatio) {
+                    const palette = getContrastingPalette(toHex(bg), minRatio);
+                    if (palette.length) {
+                        el.style.color = palette[0];
+                    } else {
+                        el.style.color = computeForeground(toHex(fg), toHex(bg), minRatio);
+                    }
+                }
+            }
+        }
+    });
+}
+
+function verifyHarmonyDoc(doc) {
+    const violations = [];
+    const elements = doc.querySelectorAll('*');
+    elements.forEach(el => {
+        if (el.textContent.trim() && el.style.color) {
+            const fg = toHex(el.style.color);
+            const bg = toHex(getEffectiveBackground(el));
+            const score = colorHarmonyScore(fg, bg);
+            if (score < 0.5) violations.push(el);
+        }
+    });
+    return violations;
+}
+
+function correctHarmony(doc) {
+    const elements = doc.querySelectorAll('*');
+    elements.forEach(el => {
+        if (el.textContent.trim() && el.style.color) {
+            const bg = getEffectiveBackground(el);
+            const palette = getHarmoniousPalette(toHex(bg), 3, { scheme: 'analogous' });
+            if (palette.length) {
+                el.style.color = palette[0];
+            }
+        }
+    });
+}
+
+function verifyTextVisibilityDoc(doc, options) {
+    const violations = [];
+    const minFontSize = options?.minFontSize ?? 12;
+    const minLineHeight = options?.minLineHeight ?? 1.2;
+    const elements = doc.querySelectorAll('*');
+    elements.forEach(el => {
+        if (el.textContent.trim()) {
+            const fontSize = parseFloat(el.style.fontSize) || 0;
+            const lineHeight = parseFloat(el.style.lineHeight) || 0;
+            if (fontSize && fontSize < minFontSize) violations.push(el);
+            if (lineHeight && lineHeight < minLineHeight) violations.push(el);
+        }
+    });
+    return violations;
+}
+
+function correctTextVisibility(doc, options) {
+    const minFontSize = options?.minFontSize ?? 12;
+    const minLineHeight = options?.minLineHeight ?? 1.2;
+    const elements = doc.querySelectorAll('*');
+    elements.forEach(el => {
+        if (el.textContent.trim()) {
+            const fontSize = parseFloat(el.style.fontSize) || 0;
+            if (fontSize < minFontSize) el.style.fontSize = minFontSize + 'px';
+            const lineHeight = parseFloat(el.style.lineHeight) || 0;
+            if (lineHeight < minLineHeight) el.style.lineHeight = minLineHeight.toString();
+        }
+    });
+}
+
+function verifyButtonVisibilityDoc(doc) {
+    const violations = [];
+    const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
+    buttons.forEach(btn => {
+        const width = parseFloat(btn.style.width) || 0;
+        const height = parseFloat(btn.style.height) || 0;
+        if (width < 44 || height < 44) violations.push(btn);
+    });
+    return violations;
+}
+
+function correctButtonVisibility(doc) {
+    const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
+    buttons.forEach(btn => {
+        const width = parseFloat(btn.style.width) || 0;
+        const height = parseFloat(btn.style.height) || 0;
+        if (width < 44) btn.style.width = '44px';
+        if (height < 44) btn.style.height = '44px';
+        if (!btn.style.cursor) btn.style.cursor = 'pointer';
+    });
+}
+
+function getEffectiveBackground(el) {
+    let bg = extractBgFromShorthand(el);
+    if (bg) return bg;
+    let parent = el.parentNode;
+    while (parent && parent !== el.ownerDocument) {
+        if (parent.style) {
+            bg = extractBgFromShorthand(parent);
+            if (bg) return bg;
+        }
+        parent = parent.parentNode;
+    }
+    return '#ffffff';
 }
