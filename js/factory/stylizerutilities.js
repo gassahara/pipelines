@@ -212,7 +212,7 @@ export function injectResponsiveStyles(html, breakpointRules) {
     return html + css;
 }
 
-// ==================== NEW: TAG STYLE EXTRACTION ====================
+// ==================== TAG STYLE EXTRACTION ====================
 
 export function extractAllTagStyles(referenceHTML) {
     const parser = new DOMParser();
@@ -232,7 +232,7 @@ export function extractAllTagStyles(referenceHTML) {
     return map;
 }
 
-// ==================== NEW: STYLE CONSOLIDATION ====================
+// ==================== STYLE CONSOLIDATION ====================
 
 export function consolidateStyles(html) {
     const parser = new DOMParser();
@@ -259,39 +259,87 @@ export function consolidateStyles(html) {
     return doc.body.innerHTML;
 }
 
+// ==================== COLOR UTILITIES (internal) ====================
+
+/** Convert a CSS color string (rgb() or hex) to hex. */
+function toHex(color) {
+    if (!color) return '#000000';
+    if (color.startsWith('rgb')) {
+        const match = color.match(/\d+/g);
+        if (match && match.length >= 3) {
+            return rgbToHex(parseInt(match[0]), parseInt(match[1]), parseInt(match[2]));
+        }
+        return '#000000';
+    }
+    // assume already hex
+    return color;
+}
+
+/** Extract a color from the `background` shorthand if `backgroundColor` is missing. */
+function extractBgFromShorthand(el) {
+    if (el.style.backgroundColor) return el.style.backgroundColor;
+    const bg = el.style.background;
+    if (!bg) return null;
+    // Simple extraction: looks for a color value (#... or rgb(...))
+    const hexMatch = bg.match(/#[0-9a-fA-F]{3,6}/);
+    if (hexMatch) return hexMatch[0];
+    const rgbMatch = bg.match(/rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)/);
+    if (rgbMatch) return rgbMatch[0];
+    return null;
+}
+
 // ==================== STYLE VERIFICATION ====================
 
 export function verifyContrast(html, minRatio = 4.5) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
+    const corrections = [];
+
     function getEffectiveBackground(el) {
-        let bg = el.style.backgroundColor;
+        let bg = extractBgFromShorthand(el);
+        if (bg) return bg;
         let parent = el.parentNode;
-        while ((!bg || bg === 'transparent' || bg === '') && parent && parent !== doc) {
-            if (parent.style) bg = parent.style.backgroundColor;
+        while (parent && parent !== doc) {
+            if (parent.style) {
+                bg = extractBgFromShorthand(parent);
+                if (bg) return bg;
+            }
             parent = parent.parentNode;
         }
-        return bg || '#ffffff';
+        return '#ffffff';
     }
+
     function walk(el) {
         if (el.nodeType === 1 && el.textContent.trim()) {
-            const color = el.style.color;
+            const fg = el.style.color;
             const bg = getEffectiveBackground(el);
-            if (color && bg) {
-                const ratio = contrastRatio(color, bg);
+            if (fg && bg) {
+                const fgHex = toHex(fg);
+                const bgHex = toHex(bg);
+                const ratio = contrastRatio(fgHex, bgHex);
                 if (ratio < minRatio) {
-                    const palette = getContrastingPalette(bg, minRatio);
-                    if (palette.length > 0) {
-                        el.style.color = palette[0];
-                    } else {
-                        el.style.color = computeForeground(color, bg, minRatio);
-                    }
+                    const palette = getContrastingPalette(bgHex, minRatio);
+                    const newFg = palette.length ? palette[0] : computeForeground(fgHex, bgHex, minRatio);
+                    el.style.color = newFg;
+                    corrections.push({
+                        element: el.tagName + (el.id ? '#' + el.id : ''),
+                        originalColor: fgHex,
+                        correctedColor: newFg
+                    });
                 }
             }
         }
-        for (const child of el.children) walk(child);
+        for (const child of el.children) {
+            walk(child);
+        }
     }
+
     walk(doc.body);
+
+    if (corrections.length) {
+        console.warn('[verifyContrast] Contrast corrections applied:', corrections);
+    }
+
     return doc.body.innerHTML;
 }
 
@@ -347,14 +395,14 @@ export function verifyHarmony(html, options = {}) {
     const allElements = doc.querySelectorAll('*');
     allElements.forEach(el => {
         if (!el.textContent.trim()) return;
-        const bg = el.style.backgroundColor;
+        const bg = extractBgFromShorthand(el) || '#ffffff';
         const color = el.style.color;
-        if (bg && color) {
-            const score = colorHarmonyScore(color, bg);
+        if (color) {
+            const score = colorHarmonyScore(toHex(color), toHex(bg));
             if (score < 0.5) {
-                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), score, color, bg });
+                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), score, color: toHex(color), bg: toHex(bg) });
                 if (options.autoCorrect) {
-                    const palette = getHarmoniousPalette(bg, 3, { scheme: 'analogous' });
+                    const palette = getHarmoniousPalette(toHex(bg), 3, { scheme: 'analogous' });
                     if (palette.length > 0) {
                         el.style.color = palette[0];
                     }
