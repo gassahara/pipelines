@@ -67,9 +67,7 @@ export function extractInlineStyle(el, prop) {
   return el.style[prop] || '';
 }
 
-
-
-
+// ==================== COLOR WHEEL & HARMONY ====================
 
 export function complementary(hex) {
   var rgb = hexToRgb(hex);
@@ -193,4 +191,72 @@ export function emphaticLevel(color, bg, level) {
   if (level === undefined) level = 50;
   var intensity = (level / 100) * 2;
   return emphasize(color, bg, intensity);
+}
+
+// ==================== NEW: Vector Color Palettes ====================
+
+/**
+ * Returns an array of contrasting foreground colors for a given background,
+ * sorted by increasing contrast ratio.
+ * @param {string} baseHex - background color
+ * @param {number} minContrast - minimum acceptable ratio (default 4.5)
+ * @param {object} options - { hueShift, saturationShift, lightnessRange }
+ * @returns {string[]} array of hex colors
+ */
+export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) {
+  const bgHsl = rgbToHsl(...hexToRgb(baseHex));
+  const step = bgHsl.l > 50 ? -5 : 5;
+  const candidates = [];
+  // start from base lightness and move toward extremes
+  let lightness = bgHsl.l;
+  for (let i = 0; i < 30; i++) {
+    lightness = Math.max(5, Math.min(95, lightness + step));
+    const fgRgb = hslToRgb(bgHsl.h, bgHsl.s, lightness);
+    const fgHex = rgbToHex(...fgRgb);
+    const ratio = contrastRatio(fgHex, baseHex);
+    if (ratio >= minContrast) {
+      candidates.push({ hex: fgHex, ratio, lightness });
+    }
+  }
+  // sort by contrast ascending
+  candidates.sort((a, b) => a.ratio - b.ratio);
+  return candidates.map(c => c.hex);
+}
+
+/**
+ * Returns a harmonious palette based on color wheel relationships.
+ * @param {string} baseHex
+ * @param {number} count - desired number of colors
+ * @param {object} options - { scheme: 'analogous'|'complementary'|'triadic'|'split'|'tetradic', saturationShift, lightnessShift }
+ * @returns {string[]}
+ */
+export function getHarmoniousPalette(baseHex, count = 3, options = {}) {
+  const scheme = options.scheme || 'analogous';
+  switch (scheme) {
+    case 'complementary': return complementary(baseHex).slice(0, count);
+    case 'triadic': return triadic(baseHex).slice(0, count);
+    case 'split': return splitComplementary(baseHex).slice(0, count);
+    case 'tetradic': return tetradic(baseHex).slice(0, count);
+    case 'analogous':
+    default: return analogous(baseHex, count, options.step);
+  }
+}
+
+/**
+ * Quantifies how harmonious a pair of colors is based on color wheel distance.
+ * @param {string} fgHex - foreground
+ * @param {string} bgHex - background
+ * @returns {number} score from 0 (clash) to 1 (perfect harmony)
+ */
+export function colorHarmonyScore(fgHex, bgHex) {
+  const fgHsl = rgbToHsl(...hexToRgb(fgHex));
+  const bgHsl = rgbToHsl(...hexToRgb(bgHex));
+  const hueDist = Math.abs(fgHsl.h - bgHsl.h);
+  const normalizedDist = hueDist > 180 ? 360 - hueDist : hueDist;
+  // complementary (~180°) scores high, analogous (30-60) high, clashing (90-120) lower
+  if (normalizedDist < 30) return 1;                 // very close hue – harmonious
+  if (normalizedDist < 60) return 0.9;
+  if (normalizedDist > 150 && normalizedDist < 180) return 0.95; // complementary range
+  if (normalizedDist > 90 && normalizedDist < 120) return 0.4;  // clashing
+  return 0.7; // moderate
 }
