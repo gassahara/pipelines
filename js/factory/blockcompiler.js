@@ -2,7 +2,7 @@ import { enqueueapi } from '../actors/apiactor.js';
 import { createpipeline } from '../pipe.js';
 import { callwithstack } from './callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
-import { enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue, enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition, enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout, enqueusetlayout, DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES } from '../actors/renderactor.js';
+import { enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue, enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition, enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout, enqueusetlayout, DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport, enqueuegetscreen, enqueuematchmedia } from '../actors/renderactor.js';
 import { logwarn, logdebug } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';   // NEW IMPORT
 
@@ -506,10 +506,32 @@ const BLOCKCOMPILERS = {
 	    }
 	    const getters = DOMQUERYGETTERS;
 	    const setters = DOMQUERYSETTERS;
-	    if (!DOMQUERYMESSAGES.includes(messages)) {
+	    // Extend local set of valid messages with viewport commands
+	    const ALL_DOMQUERY_MESSAGES = DOMQUERYMESSAGES.concat(['getviewport', 'getscreen', 'matchmedia']);
+	    if (!ALL_DOMQUERY_MESSAGES.includes(messages)) {
 		throw new Error('[DOMQUERY] Block "' + id + '" unknown COMMAND type: ' + messages);
 	    }
 	    const props = command.properties;
+	    // --- new viewport handlers (no id required) ---
+	    if (messages === 'getviewport') {
+		const result = await enqueuegetviewport();
+		writeoutputs(sig, env, result);
+		return;
+	    }
+	    if (messages === 'getscreen') {
+		const result = await enqueuegetscreen();
+		writeoutputs(sig, env, result);
+		return;
+	    }
+	    if (messages === 'matchmedia') {
+		if (!props || !props.query || typeof props.query !== 'string') {
+		    throw new Error('[DOMQUERY] Block "' + id + '" matchmedia requires command.properties.query (string)');
+		}
+		const result = await enqueuematchmedia(props.query);
+		writeoutputs(sig, env, result);
+		return;
+	    }
+	    // --- existing handlers ---
 	    if (!props || !props.id || typeof props.id !== 'string') {
 		throw new Error('[DOMQUERY] Block "' + id + '" command requires properties.id field (string)');
 	    }
@@ -629,7 +651,6 @@ const triggerRunner = (id, control, children, stage) => {
 	    logwarn('[control:TRIGGER] missing source/event/registersubscription for stage:', id);
 	    return {};
 	}
-	// Define handler so we can register it in the global map
 	const handler = async (e) => {
 	    env.eventtarget = e.target;
 	    if (stage.output !== null && stage.output !== undefined) {
@@ -641,7 +662,7 @@ const triggerRunner = (id, control, children, stage) => {
 	    }
 	};
 	rs(control.sourceid, eventtype, handler);
-	registerTrigger(control.sourceid, eventtype, handler);   // NEW: store for later revalidation
+	registerTrigger(control.sourceid, eventtype, handler);
 	return {};
     };
 };

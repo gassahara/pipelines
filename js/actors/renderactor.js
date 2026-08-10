@@ -26,7 +26,11 @@ export const MESSAGETYPES = Object.freeze({
     SETPOSITION: 'setposition',
     SETSTYLE: 'setstyle',
     SETVALUE: 'setvalue',
-    SETLAYOUT: 'setlayout'
+    SETLAYOUT: 'setlayout',
+    // NEW: viewport & screen getters
+    GETVIEWPORT: 'getviewport',
+    GETSCREEN: 'getscreen',
+    MATCHMEDIA: 'matchmedia'
 });
 
 var MESSAGEINTERFACES = Object.freeze({
@@ -53,7 +57,11 @@ var MESSAGEINTERFACES = Object.freeze({
   [MESSAGETYPES.SETPOSITION]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
   [MESSAGETYPES.SETSTYLE]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
   [MESSAGETYPES.SETVALUE]: { id: 'string', value: 'any', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.SETLAYOUT]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' }
+  [MESSAGETYPES.SETLAYOUT]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
+  // NEW interfaces
+  [MESSAGETYPES.GETVIEWPORT]: { resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.GETSCREEN]:   { resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.MATCHMEDIA]:  { query: 'string', resolve: 'function', reject: 'function?' }
 });
 
 export const validatemessage = (message) => {
@@ -108,28 +116,24 @@ var renderbehavior = function(state, message) {
   } else if (message.type === MESSAGETYPES.CLEAR) {
     var target = document.getElementById(message.id);
     if (target) target.innerHTML = '';
-    revalidateAll();   // NEW: innerHTML cleared
+    revalidateAll();
   } else if (message.type === MESSAGETYPES.HTML) {
     var target = document.getElementById(message.id);
     if (!target) {
-      if (typeof message.resolve === 'function') {
-        message.resolve();
-      }
+      if (typeof message.resolve === 'function') message.resolve();
       return state;
     }
     if (message.append) {
       target.insertAdjacentHTML('beforeend', message.markup);
     } else {
       target.innerHTML = message.markup;
-      revalidateAll();   // NEW: innerHTML replaced
+      revalidateAll();
     }
-    if (typeof message.resolve === 'function') {
-      message.resolve();
-    }
+    if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.REMOVE) {
     var target = document.getElementById(message.id);
     if (target) target.remove();
-    revalidateAll();   // NEW: element removed
+    revalidateAll();
   } else if (message.type === MESSAGETYPES.SETSTYLES) {
     var target = document.getElementById(message.id);
     if (target && message.styles && typeof message.styles === 'object') {
@@ -314,7 +318,7 @@ var renderbehavior = function(state, message) {
       return state;
     }
     el.innerHTML = message.value;
-    revalidateAll();   // NEW: innerHTML changed
+    revalidateAll();
     if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.SETPOSITION) {
     var el = document.getElementById(message.id);
@@ -381,6 +385,31 @@ var renderbehavior = function(state, message) {
       }
     }
     if (typeof message.resolve === 'function') message.resolve();
+  }
+  // ==================== NEW HANDLERS ====================
+  else if (message.type === MESSAGETYPES.GETVIEWPORT) {
+    var vpWidth  = document.documentElement.clientWidth;
+    var vpHeight = document.documentElement.clientHeight;
+    if (typeof message.resolve === 'function') {
+      message.resolve({ viewportWidth: vpWidth, viewportHeight: vpHeight });
+    }
+  }
+  else if (message.type === MESSAGETYPES.GETSCREEN) {
+    var scr = window.screen;
+    if (typeof message.resolve === 'function') {
+      message.resolve({
+        screenWidth:  scr.width,
+        screenHeight: scr.height,
+        availWidth:   scr.availWidth,
+        availHeight:  scr.availHeight
+      });
+    }
+  }
+  else if (message.type === MESSAGETYPES.MATCHMEDIA) {
+    var mq = window.matchMedia(message.query);
+    if (typeof message.resolve === 'function') {
+      message.resolve({ matches: mq.matches });
+    }
   }
   return state;
 };
@@ -546,6 +575,9 @@ export const DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle',
 export const DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
 export const DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
 
+// NOTE: DOMQUERYMESSAGES is later extended in blockcompiler to include the new viewport messages,
+// but we can also add them here if we want. For now, they remain separate and will be added in blockcompiler.
+
 export const enqueueproperty = function(id, name, args) {
   return new Promise(function(resolve, reject) {
     RENDERACTOR.send({ type: MESSAGETYPES.PROPERTY, id: id, name: name, arguments: args, resolve: resolve, reject: reject });
@@ -605,5 +637,25 @@ export const handlefilereaderrequest = function(payload) {
       reject(new Error('[renderactor] FileReader error'));
     };
     reader.readAsText(payload.file);
+  });
+};
+
+// ==================== NEW CONVENIENCE FUNCTIONS ====================
+
+export const enqueuegetviewport = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.GETVIEWPORT, resolve, reject });
+  });
+};
+
+export const enqueuegetscreen = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.GETSCREEN, resolve, reject });
+  });
+};
+
+export const enqueuematchmedia = function(query) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.MATCHMEDIA, query: query, resolve, reject });
   });
 };
