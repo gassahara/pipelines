@@ -148,12 +148,6 @@ export function rewritestyleattrs(html, rules) {
       if (rule.name)    els = [doc.getElementByName(rule.name)];
     }
 
-    if (getverbosity() >= VERBOSITY.DEBUG) {
-      logdebug('[rewritestyleattrs] Rule #' + ri + ': ' +
-        (rule.path ? 'path:' + JSON.stringify(rule.path) : 'id:' + rule.id) +
-        ' matched ' + els.length + ' elements');
-    }
-
     var eli = -1;
     while (eli < els.length) {
       eli = eli + 1;
@@ -164,10 +158,6 @@ export function rewritestyleattrs(html, rules) {
         var newkeys = Object.keys(newstyle);
         for (var ni = 0; ni < newkeys.length; ni++) {
           try {
-            if (getverbosity() >= VERBOSITY.DEBUG) {
-              logdebug('[rewritestyleattrs] Rule #' + ri + ': ' +
-                '>' + el.style[newkeys[ni]] + '>' + newstyle[newkeys[ni]]);
-            }
             el.style[newkeys[ni]] = newstyle[newkeys[ni]];
           } catch(e) {
             console.log({e});
