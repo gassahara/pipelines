@@ -3,6 +3,7 @@ import {
     contrastRatio, computeForeground, emphasize,
     complementary, analogous, monochromatic, pick,
     getContrastingPalette, getHarmoniousPalette, colorHarmonyScore,
+    getOptimalForeground,   // NEW from P26
     hexToRgb, rgbToHsl, hslToRgb, rgbToHex,
     extractInlineStyle
 } from './colorutils.js';
@@ -212,7 +213,7 @@ export function injectResponsiveStyles(html, breakpointRules) {
     return html + css;
 }
 
-// ==================== TAG STYLE EXTRACTION ====================
+// ==================== TAG STYLE EXTRACTION (UPDATED P12) ====================
 
 export function extractAllTagStyles(referenceHTML) {
     const parser = new DOMParser();
@@ -220,6 +221,18 @@ export function extractAllTagStyles(referenceHTML) {
     const refRoot = doc.getElementById('theme-reference');
     if (!refRoot) return {};
     const map = {};
+
+    // 1. Extract base styles from the root element itself (P12)
+    const rootStyle = {};
+    for (let i = 0; i < refRoot.style.length; i++) {
+        const prop = refRoot.style[i];
+        rootStyle[prop] = refRoot.style[prop];
+    }
+    if (Object.keys(rootStyle).length > 0) {
+        map['root'] = rootStyle;
+    }
+
+    // 2. Extract child styles by tag name (existing behavior)
     for (const el of refRoot.children) {
         const tag = el.tagName.toLowerCase();
         const styleObj = {};
@@ -227,8 +240,16 @@ export function extractAllTagStyles(referenceHTML) {
             const prop = el.style[i];
             styleObj[prop] = el.style[prop];
         }
-        if (Object.keys(styleObj).length > 0) map[tag] = styleObj;
+        if (Object.keys(styleObj).length > 0) {
+            if (map[tag]) {
+                // Merge: child overrides root if both exist
+                map[tag] = { ...map[tag], ...styleObj };
+            } else {
+                map[tag] = styleObj;
+            }
+        }
     }
+
     return map;
 }
 
@@ -284,7 +305,7 @@ function extractBgFromShorthand(el) {
     return null;
 }
 
-// ==================== STYLE VERIFICATION (original functions) ====================
+// ==================== STYLE VERIFICATION (UPDATED P26) ====================
 
 export function verifyContrast(html, minRatio = 4.5) {
     const parser = new DOMParser();
@@ -314,8 +335,8 @@ export function verifyContrast(html, minRatio = 4.5) {
                 const bgHex = toHex(bg);
                 const ratio = contrastRatio(fgHex, bgHex);
                 if (ratio < minRatio) {
-                    const palette = getContrastingPalette(bgHex, minRatio);
-                    const newFg = palette.length ? palette[0] : computeForeground(fgHex, bgHex, minRatio);
+                    // Use new HSV-based optimal foreground (P26)
+                    const newFg = getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
                     el.style.color = newFg;
                     corrections.push({
                         element: el.tagName + (el.id ? '#' + el.id : ''),
@@ -409,7 +430,7 @@ export function verifyHarmony(html, options = {}) {
     return { html: options.autoCorrect ? doc.body.innerHTML : html, violations };
 }
 
-// ==================== LAYOUT VERIFICATION (original functions) ====================
+// ==================== LAYOUT VERIFICATION (original) ====================
 
 export function checkSpacing(html, minGap = 12) {
     const violations = [];
@@ -586,44 +607,52 @@ export function runVerification(html, goals = []) {
     return result;
 }
 
-// ==================== STYLE OPTIMIZATION ENGINE ====================
+// ==================== STYLE OPTIMIZATION ENGINE (UPDATED P13, P18, P23, P26) ====================
 
-export function optimizeStyleHTML(html, goals, maxIterations = 5) {
+/**
+ * Optimizes style HTML by applying contrast, harmony, text visibility, button visibility.
+ * Now accepts themeStyles for semantic corrections and returns rules (P23).
+ * Returns { html, rules }.
+ */
+export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations = 5) {
     const parser = new DOMParser();
     let doc = parser.parseFromString(html, 'text/html');
+    const allRules = [];
+
     for (let iter = 0; iter < maxIterations; iter++) {
         let anyCorrection = false;
         for (const goal of goals) {
             switch (goal.type) {
                 case 'contrast': {
                     const minRatio = goal.options?.minRatio ?? 4.5;
-                    const violations = verifyContrastDoc(doc, minRatio);
-                    if (violations.length) {
-                        correctContrast(doc, minRatio);
+                    const newRules = correctContrastDoc(doc, minRatio);
+                    if (newRules.length) {
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
                 }
                 case 'harmony': {
-                    const violations = verifyHarmonyDoc(doc);
-                    if (violations.length) {
-                        correctHarmony(doc);
+                    const newRules = correctHarmonyDoc(doc);
+                    if (newRules.length) {
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
                 }
                 case 'textVisibility': {
-                    const violations = verifyTextVisibilityDoc(doc, goal.options);
-                    if (violations.length) {
-                        correctTextVisibility(doc, goal.options);
+                    const options = goal.options || {};
+                    const newRules = correctTextVisibilityDoc(doc, themeStyles, options);
+                    if (newRules.length) {
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
                 }
                 case 'buttonVisibility': {
-                    const violations = verifyButtonVisibilityDoc(doc);
-                    if (violations.length) {
-                        correctButtonVisibility(doc);
+                    const newRules = correctButtonVisibilityDoc(doc);
+                    if (newRules.length) {
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
@@ -632,122 +661,107 @@ export function optimizeStyleHTML(html, goals, maxIterations = 5) {
         }
         if (!anyCorrection) break;
     }
-    return doc.body.innerHTML;
+    return { html: doc.body.innerHTML, rules: allRules };
 }
 
-function verifyContrastDoc(doc, minRatio) {
-    const corrections = [];
+// Internal corrected functions that produce rules (P23)
+
+function correctContrastDoc(doc, minRatio) {
+    const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
         if (el.textContent.trim() && el.style.color) {
-            const fg = el.style.color;
             const bg = getEffectiveBackground(el);
-            if (fg && bg && contrastRatio(toHex(fg), toHex(bg)) < minRatio) {
-                corrections.push(el);
+            if (bg) {
+                const fg = el.style.color;
+                const ratio = contrastRatio(toHex(fg), toHex(bg));
+                if (ratio < minRatio) {
+                    const newFg = getOptimalForeground(toHex(bg), minRatio, { scheme: 'complementary' });
+                    const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
+                    rules.push({ selector, styles: { color: newFg } });
+                    el.style.color = newFg;
+                }
             }
         }
     });
-    return corrections;
+    return rules;
 }
 
-function correctContrast(doc, minRatio) {
+function correctHarmonyDoc(doc) {
+    const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
         if (el.textContent.trim() && el.style.color) {
-            const fg = el.style.color;
             const bg = getEffectiveBackground(el);
-            if (fg && bg) {
-                const ratio = contrastRatio(toHex(fg), toHex(bg));
-                if (ratio < minRatio) {
-                    const palette = getContrastingPalette(toHex(bg), minRatio);
+            if (bg) {
+                const fg = toHex(el.style.color);
+                const bgHex = toHex(bg);
+                const score = colorHarmonyScore(fg, bgHex);
+                if (score < 0.5) {
+                    const palette = getHarmoniousPalette(bgHex, 3, { scheme: 'analogous' });
                     if (palette.length) {
-                        el.style.color = palette[0];
-                    } else {
-                        el.style.color = computeForeground(toHex(fg), toHex(bg), minRatio);
+                        const newColor = palette[0];
+                        const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
+                        rules.push({ selector, styles: { color: newColor } });
+                        el.style.color = newColor;
                     }
                 }
             }
         }
     });
+    return rules;
 }
 
-function verifyHarmonyDoc(doc) {
-    const violations = [];
+// Semantic text visibility using themeStyles (P13, P18)
+function correctTextVisibilityDoc(doc, themeStyles, options) {
+    const rules = [];
+    const minLineHeight = options.minLineHeight ?? 1.2;
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
-        if (el.textContent.trim() && el.style.color) {
-            const fg = toHex(el.style.color);
-            const bg = toHex(getEffectiveBackground(el));
-            const score = colorHarmonyScore(fg, bg);
-            if (score < 0.5) violations.push(el);
-        }
-    });
-    return violations;
-}
-
-function correctHarmony(doc) {
-    const elements = doc.querySelectorAll('*');
-    elements.forEach(el => {
-        if (el.textContent.trim() && el.style.color) {
-            const bg = getEffectiveBackground(el);
-            const palette = getHarmoniousPalette(toHex(bg), 3, { scheme: 'analogous' });
-            if (palette.length) {
-                el.style.color = palette[0];
+        if (el.textContent.trim()) {
+            const tag = el.tagName.toLowerCase();
+            // Use tag-specific font size from theme as minimum (P13)
+            const themeFontSize = themeStyles[tag]?.fontSize || themeStyles['p']?.fontSize || '16px';
+            const minSize = parseFloat(themeFontSize) || 12;
+            const currentSize = parseFloat(el.style.fontSize) || 0;
+            const lineHeight = parseFloat(el.style.lineHeight) || 0;
+            let needsUpdate = false;
+            const styles = {};
+            if (currentSize < minSize) {
+                styles.fontSize = minSize + 'px';
+                needsUpdate = true;
+            }
+            if (lineHeight && lineHeight < minLineHeight) {
+                styles.lineHeight = minLineHeight.toString();
+                needsUpdate = true;
+            }
+            if (needsUpdate) {
+                const selector = el.id ? { id: el.id } : { tag: tag };
+                rules.push({ selector, styles });
+                Object.assign(el.style, styles);
             }
         }
     });
+    return rules;
 }
 
-function verifyTextVisibilityDoc(doc, options) {
-    const violations = [];
-    const minFontSize = options?.minFontSize ?? 12;
-    const minLineHeight = options?.minLineHeight ?? 1.2;
-    const elements = doc.querySelectorAll('*');
-    elements.forEach(el => {
-        if (el.textContent.trim()) {
-            const fontSize = parseFloat(el.style.fontSize) || 0;
-            const lineHeight = parseFloat(el.style.lineHeight) || 0;
-            if (fontSize && fontSize < minFontSize) violations.push(el);
-            if (lineHeight && lineHeight < minLineHeight) violations.push(el);
-        }
-    });
-    return violations;
-}
-
-function correctTextVisibility(doc, options) {
-    const minFontSize = options?.minFontSize ?? 12;
-    const minLineHeight = options?.minLineHeight ?? 1.2;
-    const elements = doc.querySelectorAll('*');
-    elements.forEach(el => {
-        if (el.textContent.trim()) {
-            const fontSize = parseFloat(el.style.fontSize) || 0;
-            if (fontSize < minFontSize) el.style.fontSize = minFontSize + 'px';
-            const lineHeight = parseFloat(el.style.lineHeight) || 0;
-            if (lineHeight < minLineHeight) el.style.lineHeight = minLineHeight.toString();
-        }
-    });
-}
-
-function verifyButtonVisibilityDoc(doc) {
-    const violations = [];
+function correctButtonVisibilityDoc(doc) {
+    const rules = [];
     const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
     buttons.forEach(btn => {
         const width = parseFloat(btn.style.width) || 0;
         const height = parseFloat(btn.style.height) || 0;
-        if (width < 44 || height < 44) violations.push(btn);
+        const styles = {};
+        if (width < 44) styles.width = '44px';
+        if (height < 44) styles.height = '44px';
+        if (!btn.style.cursor) styles.cursor = 'pointer';
+        if (Object.keys(styles).length) {
+            const selector = btn.id ? { id: btn.id } : { tag: btn.tagName.toLowerCase() };
+            rules.push({ selector, styles });
+            Object.assign(btn.style, styles);
+        }
     });
-    return violations;
-}
-
-function correctButtonVisibility(doc) {
-    const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
-    buttons.forEach(btn => {
-        const width = parseFloat(btn.style.width) || 0;
-        const height = parseFloat(btn.style.height) || 0;
-        if (width < 44) btn.style.width = '44px';
-        if (height < 44) btn.style.height = '44px';
-        if (!btn.style.cursor) btn.style.cursor = 'pointer';
-    });
+    return rules;
 }
 
 function getEffectiveBackground(el) {

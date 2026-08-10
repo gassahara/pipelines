@@ -260,3 +260,47 @@ export function colorHarmonyScore(fgHex, bgHex) {
   if (normalizedDist > 90 && normalizedDist < 120) return 0.4;  // clashing
   return 0.7; // moderate
 }
+
+// ==================== NEW (P26): Optimal Foreground ====================
+
+/**
+ * Returns an optimal foreground color that is both sufficiently contrasting
+ * and harmonious with the background, using HSV wheel theory.
+ * @param {string} bgHex - background color (hex)
+ * @param {number} minRatio - minimum contrast ratio (default 4.5)
+ * @param {object} options - { scheme, preference }
+ * @returns {string} hex color
+ */
+export function getOptimalForeground(bgHex, minRatio = 4.5, options = {}) {
+    const scheme = options.scheme || 'complementary';
+    const preference = options.preference || 'balanced';
+
+    // Generate a harmonious palette
+    let palette = getHarmoniousPalette(bgHex, 5, { scheme });
+    // Ensure we have at least 5 colors; pad if needed
+    while (palette.length < 5) {
+        palette = getHarmoniousPalette(bgHex, 5, { scheme: 'analogous' });
+    }
+
+    const candidates = palette.map(c => ({
+        hex: c,
+        ratio: contrastRatio(c, bgHex),
+        harmony: colorHarmonyScore(c, bgHex)
+    })).filter(c => c.ratio >= minRatio);
+
+    if (candidates.length === 0) {
+        // Fallback to lightness adjustment
+        const lightPalette = getContrastingPalette(bgHex, minRatio);
+        if (lightPalette.length) return lightPalette[0];
+        return computeForeground('#ffffff', bgHex, minRatio);
+    }
+
+    if (preference === 'contrast') {
+        candidates.sort((a, b) => b.ratio - a.ratio);
+    } else if (preference === 'harmony') {
+        candidates.sort((a, b) => b.harmony - a.harmony);
+    } else { // balanced
+        candidates.sort((a, b) => (b.ratio * 0.5 + b.harmony * 0.5) - (a.ratio * 0.5 + a.harmony * 0.5));
+    }
+    return candidates[0].hex;
+}

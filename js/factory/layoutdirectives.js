@@ -1,3 +1,5 @@
+import { rewritestyleattrs } from './stylizerutilities.js';
+
 export function parseDirectives(str) {
     if (!str) return [];
     return str.split(';').map(s => s.trim()).filter(Boolean).map(part => {
@@ -68,7 +70,7 @@ export function parseDirectives(str) {
                 directive.corner = params[0];
                 break;
             default:
-                directive.params = params;
+                directive.raw = { property: type, value: rest };
                 break;
         }
 
@@ -77,62 +79,116 @@ export function parseDirectives(str) {
 }
 
 export function generateCSSFromDirectives(elementId, directives, breakpointMap = {}) {
-    let css = '';
     const inlineStyles = {};
-
-    const normal = directives.filter(d => !d.breakpoint);
-    const responsive = directives.filter(d => d.breakpoint);
 
     const applyDirective = (d) => {
         switch (d.type) {
             case 'left-of':
-                css += `#${elementId} { order: -1; margin-right: ${d.offset||0}${d.unit||'px'}; }\n`;
+                inlineStyles.order = -1;
+                inlineStyles.marginRight = (d.offset || 0) + (d.unit || 'px');
                 break;
             case 'right-of':
-                css += `#${elementId} { order: 1; margin-left: ${d.offset||0}${d.unit||'px'}; }\n`;
+                inlineStyles.order = 1;
+                inlineStyles.marginLeft = (d.offset || 0) + (d.unit || 'px');
                 break;
             case 'above':
-                css += `#${elementId} { margin-bottom: ${d.offset||0}${d.unit||'px'}; }\n`;
+                inlineStyles.marginBottom = (d.offset || 0) + (d.unit || 'px');
                 break;
             case 'below':
-                css += `#${elementId} { margin-top: ${d.offset||0}${d.unit||'px'}; }\n`;
+                inlineStyles.marginTop = (d.offset || 0) + (d.unit || 'px');
                 break;
             case 'between':
-                css += `#${elementId} { order: 0; }\n`;
-                css += `#${d.target1} { order: -1; }\n`;
-                css += `#${d.target2} { order: 1; }\n`;
+                // Handled at flex/grid level elsewhere
                 break;
             case 'align':
-                css += `#${elementId} { display:flex; justify-content:${d.value}; }\n`;
+                inlineStyles.display = 'flex';
+                inlineStyles.justifyContent = d.value;
                 break;
             case 'justify':
-                css += `#${elementId} { text-align:${d.value.replace('text-','')}; }\n`;
+                inlineStyles.textAlign = d.value.replace('text-', '');
                 break;
             case 'immerse':
-                css += `#${elementId} { display:flex; align-items:center; justify-content:center; }\n`;
-                css += `#${elementId} > * { width:fit-content; margin:auto; }\n`;
+                inlineStyles.display = 'flex';
+                inlineStyles.alignItems = 'center';
+                inlineStyles.justifyContent = 'center';
                 break;
             case 'position':
                 switch (d.value) {
-                    case 'top': Object.assign(inlineStyles, { position: 'relative', top: '0' }); break;
-                    case 'bottom': Object.assign(inlineStyles, { position: 'relative', bottom: '0' }); break;
-                    case 'left': Object.assign(inlineStyles, { position: 'relative', left: '0' }); break;
-                    case 'right': Object.assign(inlineStyles, { position: 'relative', right: '0' }); break;
-                    case 'middle': Object.assign(inlineStyles, { position: 'relative', top: '50%', transform: 'translateY(-50%)' }); break;
-                    case 'center': Object.assign(inlineStyles, { position: 'relative', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }); break;
-                    case 'top-left': Object.assign(inlineStyles, { position: 'relative', top: '0', left: '0' }); break;
-                    case 'top-right': Object.assign(inlineStyles, { position: 'relative', top: '0', right: '0' }); break;
-                    case 'bottom-left': Object.assign(inlineStyles, { position: 'relative', bottom: '0', left: '0' }); break;
-                    case 'bottom-right': Object.assign(inlineStyles, { position: 'relative', bottom: '0', right: '0' }); break;
-                    case 'screen-top-left': Object.assign(inlineStyles, { position: 'fixed', top: '0', left: '0' }); break;
-                    case 'screen-top-right': Object.assign(inlineStyles, { position: 'fixed', top: '0', right: '0' }); break;
-                    case 'screen-bottom-left': Object.assign(inlineStyles, { position: 'fixed', bottom: '0', left: '0' }); break;
-                    case 'screen-bottom-right': Object.assign(inlineStyles, { position: 'fixed', bottom: '0', right: '0' }); break;
-                    case 'screen-center': Object.assign(inlineStyles, { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }); break;
+                    case 'top':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.top = '0';
+                        break;
+                    case 'bottom':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.bottom = '0';
+                        break;
+                    case 'left':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.left = '0';
+                        break;
+                    case 'right':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.right = '0';
+                        break;
+                    case 'middle':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.top = '50%';
+                        inlineStyles.transform = 'translateY(-50%)';
+                        break;
+                    case 'center':
+                        inlineStyles.maxWidth = '960px';
+                        inlineStyles.margin = '0 auto';
+                        break;
+                    case 'top-left':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.top = '0';
+                        inlineStyles.left = '0';
+                        break;
+                    case 'top-right':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.top = '0';
+                        inlineStyles.right = '0';
+                        break;
+                    case 'bottom-left':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.bottom = '0';
+                        inlineStyles.left = '0';
+                        break;
+                    case 'bottom-right':
+                        inlineStyles.position = 'relative';
+                        inlineStyles.bottom = '0';
+                        inlineStyles.right = '0';
+                        break;
+                    case 'screen-top-left':
+                        inlineStyles.position = 'fixed';
+                        inlineStyles.top = '0';
+                        inlineStyles.left = '0';
+                        break;
+                    case 'screen-top-right':
+                        inlineStyles.position = 'fixed';
+                        inlineStyles.top = '0';
+                        inlineStyles.right = '0';
+                        break;
+                    case 'screen-bottom-left':
+                        inlineStyles.position = 'fixed';
+                        inlineStyles.bottom = '0';
+                        inlineStyles.left = '0';
+                        break;
+                    case 'screen-bottom-right':
+                        inlineStyles.position = 'fixed';
+                        inlineStyles.bottom = '0';
+                        inlineStyles.right = '0';
+                        break;
+                    case 'screen-center':
+                        inlineStyles.position = 'fixed';
+                        inlineStyles.top = '50%';
+                        inlineStyles.left = '50%';
+                        inlineStyles.transform = 'translate(-50%, -50%)';
+                        break;
                 }
                 break;
             case 'anchor':
-                Object.assign(inlineStyles, { position: 'absolute' });
+                inlineStyles.position = 'absolute';
                 inlineStyles._anchor = { targetId: d.targetId, myCorner: d.myCorner, targetCorner: d.targetCorner };
                 break;
             case 'z-stack':
@@ -152,63 +208,55 @@ export function generateCSSFromDirectives(elementId, directives, breakpointMap =
                 break;
             case 'overlap':
                 if (d.mode === 'prevent') {
-                    Object.assign(inlineStyles, { position: 'static', clear: 'both' });
+                    inlineStyles.position = 'static';
+                    inlineStyles.clear = 'both';
                 }
                 break;
             case 'overflow':
                 inlineStyles.overflow = d.mode;
+                if (d.mode === 'auto' || d.mode === 'scroll') {
+                    inlineStyles.overflowWrap = 'break-word';
+                    inlineStyles.wordWrap = 'break-word';
+                }
                 break;
             case 'respect-margins':
                 if (d.value && !inlineStyles.margin) inlineStyles.margin = '0.5rem';
                 break;
             case 'overflow-margins':
                 if (d.mode === 'include') {
-                    Object.assign(inlineStyles, { overflow: 'visible' });
+                    inlineStyles.overflow = 'visible';
                 }
                 break;
             case 'screen-corner':
                 switch (d.corner) {
-                    case 'top-left': Object.assign(inlineStyles, { position: 'fixed', top: '0', left: '0' }); break;
-                    case 'top-right': Object.assign(inlineStyles, { position: 'fixed', top: '0', right: '0' }); break;
-                    case 'bottom-left': Object.assign(inlineStyles, { position: 'fixed', bottom: '0', left: '0' }); break;
-                    case 'bottom-right': Object.assign(inlineStyles, { position: 'fixed', bottom: '0', right: '0' }); break;
+                    case 'top-left': inlineStyles.position = 'fixed'; inlineStyles.top = '0'; inlineStyles.left = '0'; break;
+                    case 'top-right': inlineStyles.position = 'fixed'; inlineStyles.top = '0'; inlineStyles.right = '0'; break;
+                    case 'bottom-left': inlineStyles.position = 'fixed'; inlineStyles.bottom = '0'; inlineStyles.left = '0'; break;
+                    case 'bottom-right': inlineStyles.position = 'fixed'; inlineStyles.bottom = '0'; inlineStyles.right = '0'; break;
+                }
+                break;
+            default:
+                if (d.raw) {
+                    const prop = d.raw.property.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+                    inlineStyles[prop] = d.raw.value;
                 }
                 break;
         }
     };
 
+    const normal = directives.filter(d => !d.breakpoint);
     normal.forEach(applyDirective);
 
-    const bpGroups = {};
-    responsive.forEach(d => {
-        const bp = d.breakpoint;
-        if (!bpGroups[bp]) bpGroups[bp] = [];
-        bpGroups[bp].push(d);
-    });
-
-    for (const [bp, dirs] of Object.entries(bpGroups)) {
-        const px = breakpointMap[bp];
-        if (px) {
-            css += `@media (max-width: ${px}px) {\n`;
-            dirs.forEach(applyDirective);
-            css += `}\n`;
-        }
-    }
-
-    return { inline: inlineStyles, css };
+    return { inline: inlineStyles };
 }
 
 // ==================== LAYOUT OPTIMIZATION ENGINE ====================
 
-/**
- * @param {string} html
- * @param {Array} goals
- * @param {number} [maxIterations=5]
- * @returns {string}
- */
 export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
     const parser = new DOMParser();
     let doc = parser.parseFromString(html, 'text/html');
+    const allRules = [];
+
     for (let iter = 0; iter < maxIterations; iter++) {
         let anyCorrection = false;
         for (const goal of goals) {
@@ -217,7 +265,8 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
                     const minGap = goal.options?.minGap ?? 12;
                     const violations = checkSpacingDoc(doc, minGap);
                     if (violations.length) {
-                        correctSpacing(doc, minGap);
+                        const newRules = correctSpacingDoc(doc, minGap);
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
@@ -225,7 +274,8 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
                 case 'preventOverlap': {
                     const violations = checkOverlapDoc(doc);
                     if (violations.length) {
-                        correctOverlap(doc);
+                        const newRules = correctOverlapDoc(doc);
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
@@ -233,7 +283,8 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
                 case 'overflow': {
                     const violations = checkOverflowDoc(doc);
                     if (violations.length) {
-                        correctOverflow(doc);
+                        const newRules = correctOverflowDoc(doc);
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
@@ -241,7 +292,8 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
                 case 'scrollability': {
                     const violations = checkScrollabilityDoc(doc);
                     if (violations.length) {
-                        correctScrollability(doc);
+                        const newRules = correctScrollabilityDoc(doc);
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
@@ -249,7 +301,8 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
                 case 'controlledOverlay': {
                     const violations = checkControlledOverlayDoc(doc);
                     if (violations.length) {
-                        correctControlledOverlay(doc);
+                        const newRules = correctControlledOverlayDoc(doc);
+                        allRules.push(...newRules);
                         anyCorrection = true;
                     }
                     break;
@@ -258,7 +311,9 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
         }
         if (!anyCorrection) break;
     }
-    return doc.body.innerHTML;
+
+    // Return both the modified HTML and the collected rules
+    return { html: doc.body.innerHTML, rules: allRules };
 }
 
 function checkSpacingDoc(doc, minGap) {
@@ -281,7 +336,8 @@ function checkSpacingDoc(doc, minGap) {
     return violations;
 }
 
-function correctSpacing(doc, minGap) {
+function correctSpacingDoc(doc, minGap) {
+    const rules = [];
     const walk = (parent) => {
         const children = Array.from(parent.children).filter(el => {
             const display = el.style.display || 'inline';
@@ -293,7 +349,10 @@ function correctSpacing(doc, minGap) {
             const mb = parseFloat(a.style.marginBottom) || 0;
             const mt = parseFloat(b.style.marginTop) || 0;
             if (mb + mt < minGap) {
-                b.style.marginTop = (minGap - mb) + 'px';
+                const newMt = minGap - mb;
+                const selector = b.id ? { id: b.id } : { tag: b.tagName.toLowerCase() };
+                rules.push({ selector, styles: { marginTop: newMt + 'px' } });
+                b.style.marginTop = newMt + 'px';
             }
         }
         for (const child of children) {
@@ -301,6 +360,7 @@ function correctSpacing(doc, minGap) {
         }
     };
     walk(doc.body);
+    return rules;
 }
 
 function checkOverlapDoc(doc) {
@@ -328,7 +388,8 @@ function checkOverlapDoc(doc) {
     return violations;
 }
 
-function correctOverlap(doc) {
+function correctOverlapDoc(doc) {
+    const rules = [];
     const positioned = Array.from(doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]'));
     for (let i = 0; i < positioned.length; i++) {
         for (let j = i + 1; j < positioned.length; j++) {
@@ -346,33 +407,33 @@ function correctOverlap(doc) {
                     aTop < bTop + bHeight && aTop + aHeight > bTop) {
                     const overlapY = (aTop + aHeight) - bTop;
                     if (overlapY > 0) {
-                        b.style.top = (bTop + overlapY + 2) + 'px';
+                        const newTop = bTop + overlapY + 2;
+                        const selector = b.id ? { id: b.id } : { tag: b.tagName.toLowerCase() };
+                        rules.push({ selector, styles: { top: newTop + 'px' } });
+                        b.style.top = newTop + 'px';
                     }
                 }
             }
         }
     }
+    return rules;
 }
 
+// Improved overflow detection with text overflow (P25)
 function checkOverflowDoc(doc) {
     const violations = [];
     const walk = (el) => {
         const style = el.style;
         const width = parseFloat(style.width) || 0;
-        const height = parseFloat(style.height) || 0;
-        if (width || height) {
-            const overflow = style.overflow || style.overflowX || style.overflowY;
-            if (!overflow || overflow === 'visible') {
-                let contentExceeds = false;
-                for (const child of el.children) {
-                    const cw = parseFloat(child.style.width) || 0;
-                    const ch = parseFloat(child.style.height) || 0;
-                    if ((width && cw > width) || (height && ch > height)) {
-                        contentExceeds = true;
-                        break;
-                    }
-                }
-                if (contentExceeds) violations.push(el);
+        const maxWidth = parseFloat(style.maxWidth) || 0;
+        const hasFixedWidth = width > 0 || maxWidth > 0;
+        if (hasFixedWidth) {
+            const text = el.textContent || '';
+            const words = text.split(/\s+/).filter(Boolean);
+            const hasLongWord = words.some(w => w.length > 30);
+            const totalLength = text.length;
+            if (hasLongWord || (totalLength > 100 && maxWidth < 400)) {
+                violations.push(el);
             }
         }
         for (const child of el.children) walk(child);
@@ -381,28 +442,31 @@ function checkOverflowDoc(doc) {
     return violations;
 }
 
-function correctOverflow(doc) {
+function correctOverflowDoc(doc) {
+    const rules = [];
     const walk = (el) => {
-        const width = parseFloat(el.style.width) || 0;
-        const height = parseFloat(el.style.height) || 0;
-        if (width || height) {
-            const overflow = el.style.overflow || '';
-            if (!overflow || overflow === 'visible') {
-                let shouldSet = false;
-                for (const child of el.children) {
-                    const cw = parseFloat(child.style.width) || 0;
-                    const ch = parseFloat(child.style.height) || 0;
-                    if ((width && cw > width) || (height && ch > height)) {
-                        shouldSet = true;
-                        break;
-                    }
-                }
-                if (shouldSet) el.style.overflow = 'auto';
-            }
+        const style = el.style;
+        const overflow = style.overflow || '';
+        if (!overflow || overflow === 'visible') {
+            const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
+            const styles = {
+                overflow: 'auto',
+                overflowWrap: 'break-word',
+                wordWrap: 'break-word',
+                maxWidth: '100%',
+                whiteSpace: 'normal'
+            };
+            rules.push({ selector, styles });
+            el.style.overflow = 'auto';
+            el.style.overflowWrap = 'break-word';
+            el.style.wordWrap = 'break-word';
+            el.style.maxWidth = '100%';
+            el.style.whiteSpace = 'normal';
         }
         for (const child of el.children) walk(child);
     };
     walk(doc.body);
+    return rules;
 }
 
 function checkScrollabilityDoc(doc) {
@@ -414,11 +478,17 @@ function checkScrollabilityDoc(doc) {
     return violations;
 }
 
-function correctScrollability(doc) {
+function correctScrollabilityDoc(doc) {
+    const rules = [];
     const scrollable = doc.querySelectorAll('[style*="overflow: auto"], [style*="overflow: scroll"]');
     scrollable.forEach(el => {
-        if (!el.style.touchAction) el.style.touchAction = 'pan-y';
+        if (!el.style.touchAction) {
+            const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
+            rules.push({ selector, styles: { touchAction: 'pan-y' } });
+            el.style.touchAction = 'pan-y';
+        }
     });
+    return rules;
 }
 
 function checkControlledOverlayDoc(doc) {
@@ -430,9 +500,24 @@ function checkControlledOverlayDoc(doc) {
     return violations;
 }
 
-function correctControlledOverlay(doc) {
+function correctControlledOverlayDoc(doc) {
+    const rules = [];
     const overlays = doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]');
     overlays.forEach(el => {
-        if (!el.style.zIndex) el.style.zIndex = 'auto';
+        if (!el.style.zIndex) {
+            const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
+            rules.push({ selector, styles: { zIndex: 'auto' } });
+            el.style.zIndex = 'auto';
+        }
     });
+    return rules;
+}
+
+// ==================== NEW: Selector-based Directive Application (P21) ====================
+
+export function applyDirectiveToSelector(html, selector, directiveString) {
+    const directives = parseDirectives(directiveString);
+    const { inline } = generateCSSFromDirectives(null, directives, {});
+    const rule = { ...selector, style: inline };
+    return rewritestyleattrs(html, [rule]);
 }
