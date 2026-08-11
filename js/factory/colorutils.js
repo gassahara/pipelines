@@ -404,7 +404,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
         const rgb = hslToRgb(hue, sat, mid);
         const hex = rgbToHex(rgb);
         const ratio = contrastRatio(hex, bgRgb);
-	console.log({mid, rgb, hex, ratio, i, minContrast});
+	//console.log({mid, rgb, hex, ratio, i, minContrast});
 
         if (ratio >= minContrast) {
             if (ratio > bestRatio) {
