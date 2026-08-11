@@ -423,7 +423,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
             }
         }
     }
-    console.log({high, low, bestLight});
+    console.log({high, low, bestLight, bestRatio});
     return bestLight;
 }
 
