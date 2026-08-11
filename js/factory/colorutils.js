@@ -346,7 +346,7 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
             if (bestLight === null) continue;
 
             // Fine‑tune saturation around the found lightness
-            const tuned = fineTuneSaturation(hue, bestLight, sat, bgRgb, minContrast);
+            const tuned = fineTuneSaturation(hue, bestLight, sat, baseHex, minContrast);
 	    console.log({tuned});
             const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
 	    //console.log({fgHex});
