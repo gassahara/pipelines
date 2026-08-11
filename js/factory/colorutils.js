@@ -320,9 +320,11 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
     const bgRgb = hexToRgb(baseHex);
     const bgHsl = rgbToHsl(...bgRgb);          // {h, s, l}
     const bgLum = relativeLuminance(bgRgb);    // quick luminance comparison
+    console.log({bgRgb, bgHsl, bgLum});
 
     // 1. Generate candidate hue angles using harmony rules
     const candidateHues = gatherHarmonyHues(bgHsl.h);
+    console.log({candidateHues});
 
     // 2. For each candidate, try a few saturations and optimise lightness
     const results = [];
