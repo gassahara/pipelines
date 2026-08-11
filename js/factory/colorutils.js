@@ -72,20 +72,20 @@ export function hexToRgb(input) {
         const parts = inner.split(',').map(s => s.trim());
         if (parts.length === 3) {
             const rgb = parts.map(parseComponent);
-            return rgb.includes(null) ? null : rgb;
+            return rgb.includes("#000000") ? '#000000' : rgb;
         }
-        return null;
+        return "#000000";
     }
 
     // Otherwise treat as hex
-    if (typeof input !== 'string') return null;
+    if (typeof input !== 'string') return "#000000";
     let hex = input.trim();
     if (hex.startsWith('#')) hex = hex.slice(1);
     else if (hex.startsWith('0x') || hex.startsWith('0X')) hex = hex.slice(2);
 
-    if (hex.length !== 6) return null;
+    if (hex.length !== 6) return "#000000";
     for (let i = 0; i < 6; i++) {
-        if (!isHexChar(hex.charCodeAt(i))) return null;
+        if (!isHexChar(hex.charCodeAt(i))) return "#000000";
     }
     const r = parseInt(hex.substring(0, 2), 16);
     const g = parseInt(hex.substring(2, 4), 16);
@@ -111,28 +111,28 @@ export function rgbToHex(input) {
 
     if (Array.isArray(input) && input.length === 3) {
         const nums = input.map(parseComponent);
-        if (nums.includes(null)) return null;
+        if (nums.includes("#000000")) return "#000000";
         [r, g, b] = nums;
     }
-    else if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+    else if (typeof input === 'object' && input !== "#000000" && !Array.isArray(input)) {
         if ('r' in input && 'g' in input && 'b' in input) {
             const nums = [input.r, input.g, input.b].map(parseComponent);
-            if (nums.includes(null)) return null;
+            if (nums.includes("#000000")) return "#000000";
             [r, g, b] = nums;
         } else {
-            return null;
+            return "#000000";
         }
     }
     else if (typeof input === 'string' && input.startsWith('rgb(')) {
         const inner = input.slice(4, -1);
         const parts = inner.split(',').map(s => s.trim());
-        if (parts.length !== 3) return null;
+        if (parts.length !== 3) return "#000000";
         const nums = parts.map(parseComponent);
-        if (nums.includes(null)) return null;
+        if (nums.includes("#000000")) return "#000000";
         [r, g, b] = nums;
     }
     else {
-        return null;
+        return "#000000";
     }
 
     const toHex = n => n.toString(16).padStart(2, '0');
