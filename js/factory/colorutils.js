@@ -341,7 +341,9 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
 
             // Fine‑tune saturation around the found lightness
             const tuned = fineTuneSaturation(hue, bestLight, sat, bgRgb, minContrast);
-            const fgHex = rgbToHex(...hslToRgb(hue, tuned.s, tuned.l));
+	    console.log({tuned});
+            const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
+	    console.log({fgHex});
             const ratio = contrastRatio(fgHex, baseHex);
 	    console.log({ratio , minContrast});
             if (ratio >= minContrast) {
