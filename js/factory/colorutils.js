@@ -347,7 +347,7 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
 
             // Fine‑tune saturation around the found lightness
             const tuned = fineTuneSaturation(hue, bestLight, sat, bgRgb, minContrast);
-	    //console.log({tuned});
+	    console.log({tuned});
             const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
 	    //console.log({fgHex});
             const ratio = contrastRatio(fgHex, baseHex);
@@ -437,11 +437,11 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 function fineTuneSaturation(hue, light, baseSat, bgRgb, minContrast) {
     let best = { s: baseSat, l: light };
     const torgb = hslToRgb(hue, baseSat, light);    
-    //console.log({torgb});
+    console.log({torgb});
     const hex = rgbToHex(torgb);
-    //console.log({hex});
+    console.log({hex});
     let bestRatio = contrastRatio(hex, bgRgb);
-    //console.log({bestRatio});
+    console.log({bestRatio});
     for (const ds of [-20, -10, 0, 10, 20]) {
         const s = Math.max(0, Math.min(100, baseSat + ds));
         const hex = rgbToHex(hslToRgb(hue, s, light));
