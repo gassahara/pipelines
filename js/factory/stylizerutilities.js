@@ -285,10 +285,11 @@ function toHex(color) {
     if (!color) return '#000001';
     if (color.startsWith('rgb')) {
         const match = color.match(/\d+/g);
+	console.log({match});
         if (match && match.length >= 3) {
             return rgbToHex(parseInt(match[0]), parseInt(match[1]), parseInt(match[2]));
         }
-        return '#000000';
+        return '#000002';
     }
     return color;
 }
