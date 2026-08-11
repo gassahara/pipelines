@@ -71,7 +71,8 @@ export function extractInlineStyle(el, prop) {
 
 export function complementary(hex) {
   var rgb = hexToRgb(hex);
-  var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+    var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+    console.log({rgb, hsl});
   var newH = (hsl.h + 180) % 360;
   var newRgb = hslToRgb(newH, hsl.s, hsl.l);
   return [rgbToHex(newRgb[0], newRgb[1], newRgb[2])];
