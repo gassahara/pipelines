@@ -197,8 +197,8 @@ export function computeForeground(desired, bg, minRatio=4.5) {
   let fgHex=desired;
   let ratio=contrastRatio(fgHex,bg);
   if(ratio>=minRatio) return fgHex;
-  let fgHsl=rgbToHsl(...hexToRgb(fgHex));
-  let bgHsl=rgbToHsl(...hexToRgb(bg));
+  let fgHsl=rgbToHsl(hexToRgb(fgHex));
+  let bgHsl=rgbToHsl(hexToRgb(bg));
   const step=bgHsl.l>50?-5:5;
   for(let i=0;i<20;i++){
     fgHsl.l=Math.max(0,Math.min(100,fgHsl.l+step));
@@ -209,13 +209,13 @@ export function computeForeground(desired, bg, minRatio=4.5) {
   return fgHex;
 }
 export function emphasize(color, bg, intensity=1) {
-  const fgHsl=rgbToHsl(...hexToRgb(color));
-  const bgHsl=rgbToHsl(...hexToRgb(bg));
+  const fgHsl=rgbToHsl(hexToRgb(color));
+  const bgHsl=rgbToHsl(hexToRgb(bg));
   if(Math.abs(fgHsl.h-bgHsl.h)<30) fgHsl.h=(fgHsl.h+30)%360;
   fgHsl.s=Math.min(100,fgHsl.s+15*intensity);
   const lDiff=Math.abs(fgHsl.l-bgHsl.l);
   if(lDiff<40) fgHsl.l=fgHsl.l>bgHsl.l?Math.min(100,fgHsl.l+20):Math.max(0,fgHsl.l-20);
-  return rgbToHex(...hslToRgb(fgHsl.h,fgHsl.s,fgHsl.l));
+  return rgbToHex(hslToRgb(fgHsl.h,fgHsl.s,fgHsl.l));
 }
 export function extractInlineStyle(el, prop) {
   return el.style[prop] || '';
@@ -505,8 +505,8 @@ export function getHarmoniousPalette(baseHex, count = 3, options = {}) {
  * @returns {number} score from 0 (clash) to 1 (perfect harmony)
  */
 export function colorHarmonyScore(fgHex, bgHex) {
-  const fgHsl = rgbToHsl(...hexToRgb(fgHex));
-  const bgHsl = rgbToHsl(...hexToRgb(bgHex));
+  const fgHsl = rgbToHsl(hexToRgb(fgHex));
+  const bgHsl = rgbToHsl(hexToRgb(bgHex));
   const hueDist = Math.abs(fgHsl.h - bgHsl.h);
   const normalizedDist = hueDist > 180 ? 360 - hueDist : hueDist;
   // complementary (~180°) scores high, analogous (30-60) high, clashing (90-120) lower
