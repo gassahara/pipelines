@@ -316,7 +316,7 @@ export function emphaticLevel(color, bg, level) {
 
 export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) {
     const { maxColors } = options;
-
+    console.log({baseHex});
     const bgRgb = hexToRgb(baseHex);
     const bgHsl = rgbToHsl(...bgRgb);          // {h, s, l}
     const bgLum = relativeLuminance(bgRgb);    // quick luminance comparison
