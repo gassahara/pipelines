@@ -396,7 +396,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
     for (let i = 0; i < 20; i++) {   // binary search, 20 iterations max
         const mid = (low + high) / 2;
         const rgb = hslToRgb(hue, sat, mid);
-        const hex = rgbToHex(...rgb);
+        const hex = rgbToHex(rgb);
         const ratio = contrastRatio(hex, bgRgb);
 
         if (ratio >= minContrast) {
