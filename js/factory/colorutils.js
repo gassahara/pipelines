@@ -8,6 +8,7 @@ export function hexToRgb(hex) {
 export function rgbToHex(r,g,b) {
   return '#' + [r,g,b].map(x => x.toString(16).padStart(2,'0')).join('');
 }
+*/
 export function rgbToHsl(r,g,b) {
   r/=255; g/=255; b/=255;
   const max=Math.max(r,g,b), min=Math.min(r,g,b);
@@ -23,7 +24,7 @@ export function rgbToHsl(r,g,b) {
   }
   return {h:Math.round(h*360), s:Math.round(s*100), l:Math.round(l*100)};
 }
-*/
+
 
 
 /**
