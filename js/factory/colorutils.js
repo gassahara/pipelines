@@ -34,6 +34,7 @@ export function rgbToHsl(r,g,b) {
  * - Returns null for any other input.
  */
 export function hexToRgb(input) {
+    console.log({input});
     // Already in output format?
     if (Array.isArray(input) && input.length === 3 &&
         input.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) {
