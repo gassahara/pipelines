@@ -209,8 +209,10 @@ export function computeForeground(desired, bg, minRatio=4.5) {
   return fgHex;
 }
 export function emphasize(color, bg, intensity=1) {
+    console.log({color, bg});
   const fgHsl=rgbToHsl(hexToRgb(color));
   const bgHsl=rgbToHsl(hexToRgb(bg));
+    console.log({fgHsl, bgHsl});
   if(Math.abs(fgHsl.h-bgHsl.h)<30) fgHsl.h=(fgHsl.h+30)%360;
   fgHsl.s=Math.min(100,fgHsl.s+15*intensity);
   const lDiff=Math.abs(fgHsl.l-bgHsl.l);
