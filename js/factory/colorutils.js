@@ -402,11 +402,9 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
     for (let i = 0; i < 120; i++) {   // binary search, 20 iterations max
         const mid = ((low + high)%255) / 2;
         const rgb = hslToRgb(hue, sat, mid);
-	console.log({mid, rgb});
         const hex = rgbToHex(rgb);
-	//console.log({hex});
         const ratio = contrastRatio(hex, bgRgb);
-	//console.log({ratio});
+	console.log({mid, rgb, hex, ratio});
 
         if (ratio >= minContrast) {
             // Found acceptable contrast; try to get closer to target (lower ratio)
@@ -425,9 +423,9 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
         } else {
             // Not enough contrast – move in the opposite direction
             if (direction === 'lighter') {
-                low = mid;  // need lighter
+                low += mid;  // need lighter
             } else {
-                high = mid; // need darker
+                high += mid; // need darker
             }
         }
         if (high - low < 0.5) break;
