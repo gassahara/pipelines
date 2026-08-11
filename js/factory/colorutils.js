@@ -429,10 +429,12 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 // ─── Helper: fine‑tune saturation by ±20% to reduce excess contrast ──
 function fineTuneSaturation(hue, light, baseSat, bgRgb, minContrast) {
     let best = { s: baseSat, l: light };
-    let bestRatio = contrastRatio(rgbToHex(...hslToRgb(hue, baseSat, light)), bgRgb);
+    let bestRatio = contrastRatio(rgbToHex(hslToRgb(hue, baseSat, light)), bgRgb);
+    console.log({bestRatio});
     for (const ds of [-20, -10, 0, 10, 20]) {
         const s = Math.max(0, Math.min(100, baseSat + ds));
-        const hex = rgbToHex(...hslToRgb(hue, s, light));
+        const hex = rgbToHex(hslToRgb(hue, s, light));
+	console.log({hex});
         const ratio = contrastRatio(hex, bgRgb);
         if (ratio >= minContrast && ratio < bestRatio) {
             bestRatio = ratio;
