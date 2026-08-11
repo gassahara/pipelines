@@ -152,7 +152,6 @@ export function hslToRgb(h,s,l) {
   return [Math.round(f(0)*255),Math.round(f(8)*255),Math.round(f(4)*255)];
 }
 export function contrastRatio(color1, color2) {
-    console.log({color1, color2});
   function luminance(r,g,b){
     const a=[r,g,b].map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);});
     return 0.2126*a[0]+0.7152*a[1]+0.0722*a[2];
@@ -408,14 +407,12 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 	console.log({mid, rgb, hex, ratio, i, minContrast});
 
         if (ratio >= minContrast) {
-            // Found acceptable contrast; try to get closer to target (lower ratio)
             if (ratio > bestRatio) {
                 bestRatio = ratio;
                 bestLight = mid;
+		break;
             }
-	    break;
         } else {
-            // Not enough contrast – move in the opposite direction
             if (direction === 'lighter') {
                 low = parseInt((low+mid))%255;  // need lighter
             } else {
