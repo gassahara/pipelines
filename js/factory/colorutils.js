@@ -196,9 +196,11 @@ export function contrastRatio(color1, color2) {
 export function computeForeground(desired, bg, minRatio=4.5) {
   let fgHex=desired;
   let ratio=contrastRatio(fgHex,bg);
-  if(ratio>=minRatio) return fgHex;
-  let fgHsl=rgbToHsl(hexToRgb(fgHex));
-  let bgHsl=rgbToHsl(hexToRgb(bg));
+    if(ratio>=minRatio) return fgHex;
+    const fgRGB = hexToRgb(fgHex);
+    const bgRGB = hexToRgb(bgHex);
+    let fgHsl=rgbToHsl(fgRGB[0], fgRGB[1], fgRGB[2] );
+  let bgHsl=rgbToHsl(bgRGB[0], bgRGB[1], bgRGB[2]);
   const step=bgHsl.l>50?-5:5;
   for(let i=0;i<20;i++){
     fgHsl.l=Math.max(0,Math.min(100,fgHsl.l+step));
