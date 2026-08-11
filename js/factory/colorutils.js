@@ -35,7 +35,7 @@ export function rgbToHsl(r, g, b) {
   };
 }
 
-function hslToRgb(h, s, l) {
+export function hslToRgb(h, s, l) {
   // Normalize values: h to [0, 1], s and l to [0, 1]
   h /= 360;
   s /= 100;
