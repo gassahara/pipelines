@@ -429,9 +429,8 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
                 high = (high+mid)%255; // need darker
             }
         }
-        if (high - low < 0.5) break;
     }
-    cosnole.log({high, low, mid, bestLight});
+    console.log({high, low, mid, bestLight});
     return bestLight;
 }
 
