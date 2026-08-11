@@ -320,15 +320,15 @@ export function emphaticLevel(color, bg, level) {
 
 export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) {
     const { maxColors } = options;
-    console.log({baseHex});
+    //console.log({baseHex});
     const bgRgb = hexToRgb(baseHex);
     const bgHsl = rgbToHsl(...bgRgb);          // {h, s, l}
     const bgLum = relativeLuminance(bgRgb);    // quick luminance comparison
-    console.log({bgRgb, bgHsl, bgLum});
+    //console.log({bgRgb, bgHsl, bgLum});
 
     // 1. Generate candidate hue angles using harmony rules
     const candidateHues = gatherHarmonyHues(bgHsl.h);
-    console.log({candidateHues});
+    //console.log({candidateHues});
 
     // 2. For each candidate, try a few saturations and optimise lightness
     const results = [];
@@ -341,16 +341,16 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
             const bestLight = optimizeLightness(
                 hue, sat, direction, baseHex, minContrast
             );
-	    console.log({bestLight});
+	    //console.log({bestLight});
             if (bestLight === null) continue;
 
             // Fine‑tune saturation around the found lightness
             const tuned = fineTuneSaturation(hue, bestLight, sat, bgRgb, minContrast);
-	    console.log({tuned});
+	    //console.log({tuned});
             const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
-	    console.log({fgHex});
+	    //console.log({fgHex});
             const ratio = contrastRatio(fgHex, baseHex);
-	    console.log({ratio , minContrast});
+	    //console.log({ratio , minContrast});
             if (ratio >= minContrast) {
                 results.push({ hex: fgHex, ratio, h: hue, s: tuned.s, l: tuned.l });
             }
@@ -401,11 +401,11 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
     for (let i = 0; i < 20; i++) {   // binary search, 20 iterations max
         const mid = (low + high) / 2;
         const rgb = hslToRgb(hue, sat, mid);
-	console.log({mid, rgb});
+	//console.log({mid, rgb});
         const hex = rgbToHex(rgb);
-	console.log({hex});
+	//console.log({hex});
         const ratio = contrastRatio(hex, bgRgb);
-	console.log({ratio});
+	//console.log({ratio});
 
         if (ratio >= minContrast) {
             // Found acceptable contrast; try to get closer to target (lower ratio)
@@ -438,15 +438,15 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 function fineTuneSaturation(hue, light, baseSat, bgRgb, minContrast) {
     let best = { s: baseSat, l: light };
     const torgb = hslToRgb(hue, baseSat, light);    
-    console.log({torgb});
+    //console.log({torgb});
     const hex = rgbToHex(torgb);
-    console.log({hex});
+    //console.log({hex});
     let bestRatio = contrastRatio(hex, bgRgb);
-    console.log({bestRatio});
+    //console.log({bestRatio});
     for (const ds of [-20, -10, 0, 10, 20]) {
         const s = Math.max(0, Math.min(100, baseSat + ds));
         const hex = rgbToHex(hslToRgb(hue, s, light));
-	console.log({hex});
+	//console.log({hex});
         const ratio = contrastRatio(hex, bgRgb);
         if (ratio >= minContrast && ratio < bestRatio) {
             bestRatio = ratio;
