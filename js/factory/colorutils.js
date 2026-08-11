@@ -203,7 +203,7 @@ export function computeForeground(desired, bg, minRatio=4.5) {
   for(let i=0;i<20;i++){
     fgHsl.l=Math.max(0,Math.min(100,fgHsl.l+step));
     const newRgb=hslToRgb(fgHsl.h,fgHsl.s,fgHsl.l);
-    fgHex=rgbToHex(...newRgb);
+      fgHex=rgbToHex([newRgb.r, newRgb.g, newRgb.b]);
     if(contrastRatio(fgHex,bg)>=minRatio) break;
   }
   return fgHex;
