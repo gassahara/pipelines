@@ -381,7 +381,7 @@ function gatherHarmonyHues(baseHue) {
 
 // ─── Helper: binary search lightness to meet minContrast ─────
 function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
-    let low = 0, high = 100;
+    let low = 0, high = 65;
     if (direction === 'lighter') {
         low = 25;   // start searching from middle towards lighter
     } else {
@@ -393,6 +393,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 
     for (let i = 0; i < 60; i++) {   // binary search, 20 iterations max
         const mid = parseInt((low + high) / 2)%255;
+	console.log({mid});
         const rgb = hslToRgb(hue, sat, mid);
         const hex = rgbToHex(rgb);
 	console.log({hex, bgRgb});
