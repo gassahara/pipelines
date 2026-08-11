@@ -322,7 +322,7 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
     const { maxColors } = options;
     //console.log({baseHex});
     const bgRgb = hexToRgb(baseHex);
-    const bgHsl = rgbToHsl(...bgRgb);          // {h, s, l}
+    const bgHsl = rgbToHsl(bgRgb);          // {h, s, l}
     const bgLum = relativeLuminance(bgRgb);    // quick luminance comparison
   //console.log({bgRgb, bgHsl, bgLum});
 
@@ -341,12 +341,12 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
             const bestLight = optimizeLightness(
                 hue, sat, direction, baseHex, minContrast
             );
-	  //console.log({bestLight});
+	  console.log({bestLight});
             if (bestLight === null) continue;
 
             // Fine‑tune saturation around the found lightness
             const tuned = fineTuneSaturation(hue, bestLight, sat, baseHex, minContrast);
-	  //console.log({tuned});
+	  console.log({tuned});
             const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
 	  //console.log({fgHex});
             const ratio = contrastRatio(fgHex, baseHex);
