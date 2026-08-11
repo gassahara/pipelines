@@ -339,7 +339,7 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
     for (const hue of candidateHues) {
         for (const sat of saturations) {
             const bestLight = optimizeLightness(
-                hue, sat, direction, bgRgb, minContrast
+                hue, sat, direction, baseHex, minContrast
             );
 	    console.log({bestLight});
             if (bestLight === null) continue;
