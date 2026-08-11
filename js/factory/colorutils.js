@@ -193,7 +193,6 @@ export function complementary(hex) {
     var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
   var newH = (hsl.h + 180) % 360;
   var newRgb = hslToRgb(newH, hsl.s, hsl.l);
-    console.log({hex, rgb, hsl, newH, newRgb});
   return [rgbToHex(newRgb)];
 }
 
@@ -315,32 +314,137 @@ export function emphaticLevel(color, bg, level) {
 
 // ==================== NEW: Vector Color Palettes ====================
 
-/**
- * Returns an array of contrasting foreground colors for a given background,
- * sorted by increasing contrast ratio.
- * @param {string} baseHex - background color
- * @param {number} minContrast - minimum acceptable ratio (default 4.5)
- * @param {object} options - { hueShift, saturationShift, lightnessRange }
- * @returns {string[]} array of hex colors
- */
 export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) {
-  const bgHsl = rgbToHsl(...hexToRgb(baseHex));
-  const step = bgHsl.l > 50 ? -5 : 5;
-  const candidates = [];
-  // start from base lightness and move toward extremes
-  let lightness = bgHsl.l;
-  for (let i = 0; i < 30; i++) {
-    lightness = Math.max(5, Math.min(95, lightness + step));
-    const fgRgb = hslToRgb(bgHsl.h, bgHsl.s, lightness);
-    const fgHex = rgbToHex(...fgRgb);
-    const ratio = contrastRatio(fgHex, baseHex);
-    if (ratio >= minContrast) {
-      candidates.push({ hex: fgHex, ratio, lightness });
+    const { maxColors } = options;
+
+    const bgRgb = hexToRgb(baseHex);
+    const bgHsl = rgbToHsl(...bgRgb);          // {h, s, l}
+    const bgLum = relativeLuminance(bgRgb);    // quick luminance comparison
+
+    // 1. Generate candidate hue angles using harmony rules
+    const candidateHues = gatherHarmonyHues(bgHsl.h);
+
+    // 2. For each candidate, try a few saturations and optimise lightness
+    const results = [];
+    const saturations = [100, 80, 60, 40];      // try vibrant to muted
+    // Start lightness opposite to background luminance
+    const direction = bgLum > 0.4 ? 'lighter' : 'darker';
+
+    for (const hue of candidateHues) {
+        for (const sat of saturations) {
+            const bestLight = optimizeLightness(
+                hue, sat, direction, bgRgb, minContrast
+            );
+            if (bestLight === null) continue;
+
+            // Fine‑tune saturation around the found lightness
+            const tuned = fineTuneSaturation(hue, bestLight, sat, bgRgb, minContrast);
+            const fgHex = rgbToHex(...hslToRgb(hue, tuned.s, tuned.l));
+            const ratio = contrastRatio(fgHex, baseHex);
+            if (ratio >= minContrast) {
+                results.push({ hex: fgHex, ratio, h: hue, s: tuned.s, l: tuned.l });
+            }
+        }
     }
-  }
-  // sort by contrast ascending
-  candidates.sort((a, b) => a.ratio - b.ratio);
-  return candidates.map(c => c.hex);
+
+    // 3. Deduplicate and sort by contrast ascending
+    const unique = [];
+    const seen = new Set();
+    for (const r of results) {
+        const key = r.hex.toLowerCase();
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(r);
+        }
+    }
+    unique.sort((a, b) => a.ratio - b.ratio);
+
+    const output = maxColors != null ? unique.slice(0, maxColors) : unique;
+    return output.map(c => c.hex);
+}
+
+// ─── Helper: collect hue candidates from colour harmonies ─────
+function gatherHarmonyHues(baseHue) {
+    const shifts = [
+        180,                          // complementary
+        150, 210,                     // split complementary
+        120, 240,                     // triadic
+        60, 300,                      // analogous with contrast (60° away)
+        90, 270                       // square / tetradic
+    ];
+    const hues = shifts.map(s => (baseHue + s) % 360);
+    return [...new Set(hues)];
+}
+
+// ─── Helper: binary search lightness to meet minContrast ─────
+function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
+    let low = 0, high = 100;
+    if (direction === 'lighter') {
+        low = 50;   // start searching from middle towards lighter
+    } else {
+        high = 50;  // towards darker
+    }
+
+    let bestLight = null;
+    let bestRatio = Infinity;
+
+    for (let i = 0; i < 20; i++) {   // binary search, 20 iterations max
+        const mid = (low + high) / 2;
+        const rgb = hslToRgb(hue, sat, mid);
+        const hex = rgbToHex(...rgb);
+        const ratio = contrastRatio(hex, bgRgb);
+
+        if (ratio >= minContrast) {
+            // Found acceptable contrast; try to get closer to target (lower ratio)
+            if (ratio < bestRatio) {
+                bestRatio = ratio;
+                bestLight = mid;
+            }
+            // If we're already very close, stop
+            if (ratio - minContrast <= 0.01) break;
+            // Move towards less contrast (adjust search bounds)
+            if (direction === 'lighter') {
+                high = mid;  // ratio is enough, we can try lower lightness
+            } else {
+                low = mid;   // ratio is enough, try higher lightness
+            }
+        } else {
+            // Not enough contrast – move in the opposite direction
+            if (direction === 'lighter') {
+                low = mid;  // need lighter
+            } else {
+                high = mid; // need darker
+            }
+        }
+        if (high - low < 0.5) break;
+    }
+    return bestLight;
+}
+
+// ─── Helper: fine‑tune saturation by ±20% to reduce excess contrast ──
+function fineTuneSaturation(hue, light, baseSat, bgRgb, minContrast) {
+    let best = { s: baseSat, l: light };
+    let bestRatio = contrastRatio(rgbToHex(...hslToRgb(hue, baseSat, light)), bgRgb);
+    for (const ds of [-20, -10, 0, 10, 20]) {
+        const s = Math.max(0, Math.min(100, baseSat + ds));
+        const hex = rgbToHex(...hslToRgb(hue, s, light));
+        const ratio = contrastRatio(hex, bgRgb);
+        if (ratio >= minContrast && ratio < bestRatio) {
+            bestRatio = ratio;
+            best = { s, l: light };
+        }
+    }
+    return best;
+}
+
+// ─── Helper: relative luminance for quick decision ────────────
+function relativeLuminance(rgb) {
+    const [r, g, b] = rgb;
+    const toLinear = c => {
+        c /= 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
 }
 
 /**
