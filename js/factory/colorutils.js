@@ -405,7 +405,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
         const rgb = hslToRgb(hue, sat, mid);
         const hex = rgbToHex(rgb);
         const ratio = contrastRatio(hex, bgRgb);
-	console.log({mid, rgb, hex, ratio});
+	console.log({mid, rgb, hex, ratio, i. minContrast});
 
         if (ratio >= minContrast) {
             // Found acceptable contrast; try to get closer to target (lower ratio)
@@ -414,7 +414,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
                 bestLight = mid;
             }
             // If we're already very close, stop
-            if (ratio - minContrast <= 0.01) break;
+            if (ratio - (minContrast*1) <= 0.01) break;
             // Move towards less contrast (adjust search bounds)
             if (direction === 'lighter') {
                 high = mid;  // ratio is enough, we can try lower lightness
