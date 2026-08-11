@@ -324,11 +324,11 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
     const bgRgb = hexToRgb(baseHex);
     const bgHsl = rgbToHsl(...bgRgb);          // {h, s, l}
     const bgLum = relativeLuminance(bgRgb);    // quick luminance comparison
-   console.log({bgRgb, bgHsl, bgLum});
+  //console.log({bgRgb, bgHsl, bgLum});
 
     // 1. Generate candidate hue angles using harmony rules
     const candidateHues = gatherHarmonyHues(bgHsl.h);
-    console.log({candidateHues});
+   //console.log({candidateHues});
 
     // 2. For each candidate, try a few saturations and optimise lightness
     const results = [];
@@ -342,16 +342,16 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
             const bestLight = optimizeLightness(
                 hue, sat, direction, baseHex, minContrast
             );
-	   console.log({bestLight});
+	  //console.log({bestLight});
             if (bestLight === null) continue;
 
             // Fine‑tune saturation around the found lightness
             const tuned = fineTuneSaturation(hue, bestLight, sat, baseHex, minContrast);
-	   console.log({tuned});
+	  //console.log({tuned});
             const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
-	   console.log({fgHex});
+	  //console.log({fgHex});
             const ratio = contrastRatio(fgHex, baseHex);
-	   console.log({ratio , minContrast});
+	  //console.log({ratio , minContrast});
             if (ratio >= minContrast) {
                 results.push({ hex: fgHex, ratio, h: hue, s: tuned.s, l: tuned.l });
             }
