@@ -97,7 +97,7 @@ export function hexToRgb(input) {
 // Also accepts already‑formatted hex strings and returns them as‑is (lowercased)
 export function rgbToHex(input) {
     // Already a "#rrggbb" string? Return it (validated)
-   //console.log({input});
+   console.log({input});
     if (typeof input === 'string') {
 	if( input?.startsWith('#') && input?.length === 7) {
             const hex = input.slice(1);
@@ -116,8 +116,7 @@ export function rgbToHex(input) {
         const nums = input.map(parseComponent);
         if (nums.includes("#000000")) return "#000000";
         [r, g, b] = nums;
-    }
-    else if (typeof input === 'object' && input !== "#000000" && !Array.isArray(input)) {
+    } else if (typeof input === 'object' && input !== "#000000" && !Array.isArray(input)) {
         if ('r' in input && 'g' in input && 'b' in input) {
             const nums = [input.r, input.g, input.b].map(parseComponent);
             if (nums.includes("#000000")) return "#000000";
@@ -125,8 +124,7 @@ export function rgbToHex(input) {
         } else {
             return "#000000";
         }
-    }
-    else if (typeof input === 'string' && input.startsWith('rgb(')) {
+    } else if (typeof input === 'string' && input.startsWith('rgb(')) {
         const inner = input.slice(4, -1);
         const parts = inner.split(',').map(s => s.trim());
         if (parts.length !== 3) return "#000000";
@@ -393,8 +391,9 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 
     for (let i = 0; i < 60; i++) {   // binary search, 20 iterations max
         const mid = parseInt((low + high) / 2)%255;
-	console.log({mid});
+	console.log({hue, sat, mid});
         const rgb = hslToRgb(hue, sat, mid);
+	console.log({hue, sat, mid, rgb});
         const hex = rgbToHex(rgb);
 	console.log({hex, bgRgb});
         const ratio = contrastRatio(hex, bgRgb);
