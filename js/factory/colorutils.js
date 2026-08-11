@@ -137,7 +137,7 @@ export function hexToRgb(input) {
 // Also accepts already‑formatted hex strings and returns them as‑is (lowercased)
 export function rgbToHex(input) {
     // Already a "#rrggbb" string? Return it (validated)
-   console.log({input});
+  //console.log({input});
     if (typeof input === 'string') {
 	if( input?.startsWith('#') && input?.length === 7) {
             const hex = input.slice(1);
@@ -211,12 +211,12 @@ export function computeForeground(desired, bg, minRatio=4.5) {
   return fgHex;
 }
 export function emphasize(color, bg, intensity=1) {
-    console.log({color, bg});
+   //console.log({color, bg});
     const fgRGB = hexToRgb(""+color);
     const bgRGB =hexToRgb(""+bg);
     const fgHsl=rgbToHsl(fgRGB[0], fgRGB[1], fgRGB[2] );
   const bgHsl=rgbToHsl(bgRGB[0], bgRGB[1], bgRGB[2]);
-    console.log({fgHsl, bgHsl}, hexToRgb(""+color));
+   //console.log({fgHsl, bgHsl}, hexToRgb(""+color));
   if(Math.abs(fgHsl.h-bgHsl.h)<30) fgHsl.h=(fgHsl.h+30)%360;
   fgHsl.s=Math.min(100,fgHsl.s+15*intensity);
   const lDiff=Math.abs(fgHsl.l-bgHsl.l);
@@ -358,9 +358,9 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
     const bgRgb = hexToRgb(baseHex);
     const bgHsl = rgbToHsl(bgRgb[0], bgRgb[1], bgRgb[2] );          // {h, s, l}
     const bgLum = relativeLuminance(bgRgb);    // quick luminance comparison
-    console.log({baseHex, bgRgb, bgHsl, bgLum});
+   //console.log({baseHex, bgRgb, bgHsl, bgLum});
     const candidateHues = gatherHarmonyHues(bgHsl.h);
-    console.log({candidateHues});
+   //console.log({candidateHues});
 
     const results = [];
     const saturations = [100, 80, 60, 40];      // try vibrant to muted
@@ -371,16 +371,16 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
             const bestLight = optimizeLightness(
                 hue, sat, direction, baseHex, minContrast
             );
-	    console.log({bestLight});
+	   //console.log({bestLight});
             if (bestLight === null) continue;
 
             // Fine‑tune saturation around the found lightness
             const tuned = fineTuneSaturation(hue, bestLight, sat, baseHex, minContrast);
-	    console.log({tuned});
+	   //console.log({tuned});
             const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
-	    console.log({fgHex, baseHex});
+	   //console.log({fgHex, baseHex});
             const ratio = contrastRatio(fgHex, baseHex);
-	    console.log({ratio , minContrast});
+	   //console.log({ratio , minContrast});
             if (ratio >= minContrast) {
                 results.push({ hex: fgHex, ratio, h: hue, s: tuned.s, l: tuned.l });
             }
@@ -449,7 +449,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
             }
         }
     }
-   console.log({high, low, bestLight, bestRatio});
+  //console.log({high, low, bestLight, bestRatio});
     return bestLight;
 }
 
