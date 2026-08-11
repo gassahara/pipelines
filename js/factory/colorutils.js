@@ -97,7 +97,7 @@ export function hexToRgb(input) {
 // Also accepts already‑formatted hex strings and returns them as‑is (lowercased)
 export function rgbToHex(input) {
     // Already a "#rrggbb" string? Return it (validated)
-    console.log({input});
+   //console.log({input});
     if (typeof input === 'string') {
 	if( input?.startsWith('#') && input?.length === 7) {
             const hex = input.slice(1);
@@ -139,7 +139,7 @@ export function rgbToHex(input) {
     }
 
     const toHex = n => n.toString(16).padStart(2, '0');
-    console.log(toHex);
+   //console.log(toHex);
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
