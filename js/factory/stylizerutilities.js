@@ -282,7 +282,7 @@ export function consolidateStyles(html) {
 // ==================== COLOR UTILITIES (internal) ====================
 
 function toHex(color) {
-    if (!color) return '#000000';
+    if (!color) return '#000001';
     if (color.startsWith('rgb')) {
         const match = color.match(/\d+/g);
         if (match && match.length >= 3) {
