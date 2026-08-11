@@ -194,7 +194,7 @@ export function complementary(hex) {
   var newH = (hsl.h + 180) % 360;
   var newRgb = hslToRgb(newH, hsl.s, hsl.l);
     console.log({hex, rgb, hsl, newH, newRgb});
-  return [rgbToHex(newRgb[0], newRgb[1], newRgb[2])];
+  return [rgbToHex(newRgb)];
 }
 
 export function analogous(hex, count, step) {
