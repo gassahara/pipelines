@@ -98,13 +98,15 @@ export function hexToRgb(input) {
 export function rgbToHex(input) {
     // Already a "#rrggbb" string? Return it (validated)
     console.log({input});
-    if (typeof input === 'string' && input?.startsWith('#') && input?.length === 7) {
-        const hex = input.slice(1);
-        let ok = true;
-        for (let i = 0; i < 6; i++) {
-            if (!isHexChar(hex.charCodeAt(i))) { ok = false; break; }
-        }
-        if (ok) return input.toLowerCase();
+    if (typeof input === 'string') {
+	if( input?.startsWith('#') && input?.length === 7) {
+            const hex = input.slice(1);
+            let ok = true;
+            for (let i = 0; i < 6; i++) {
+		if (!isHexChar(hex.charCodeAt(i))) { ok = false; break; }
+            }
+            if (ok) return input.toLowerCase();
+	}
     }
 
     // Extract r, g, b from various formats
