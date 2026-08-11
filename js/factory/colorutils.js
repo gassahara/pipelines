@@ -350,7 +350,7 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
             const fgHex = rgbToHex(hslToRgb(hue, tuned.s, tuned.l));
 	    //console.log({fgHex});
             const ratio = contrastRatio(fgHex, baseHex);
-	    //console.log({ratio , minContrast});
+	    console.log({ratio , minContrast});
             if (ratio >= minContrast) {
                 results.push({ hex: fgHex, ratio, h: hue, s: tuned.s, l: tuned.l });
             }
