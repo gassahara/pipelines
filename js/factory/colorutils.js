@@ -428,13 +428,13 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
     let bestRatio = 0;
     for (let i = 0; i < 60; i++) {   // binary search, 20 iterations max
         const mid = parseInt((low + high) / 2)%100;
-	console.log({hue, sat, mid});
+//console.log({hue, sat, mid});
         const rgb = hslToRgb(hue, sat, mid);
-	console.log({hue, sat, mid, rgb});
+//console.log({hue, sat, mid, rgb});
         const hex = rgbToHex(rgb);
-	console.log({hex, bgRgb});
+//console.log({hex, bgRgb});
         const ratio = contrastRatio(hex, bgRgb);
-	console.log({mid, rgb, hex, ratio, i, minContrast});
+//console.log({mid, rgb, hex, ratio, i, minContrast});
         if (ratio >= minContrast) {
             if (ratio > bestRatio) {
                 bestRatio = ratio;
