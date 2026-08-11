@@ -337,7 +337,7 @@ export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) 
     const direction = bgLum > 0.4 ? 'lighter' : 'darker';
 
     for (const hue of candidateHues) {
-	cosnole.log({hue});
+	console.log({hue});
         for (const sat of saturations) {
             const bestLight = optimizeLightness(
                 hue, sat, direction, baseHex, minContrast
