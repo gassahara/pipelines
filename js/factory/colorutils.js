@@ -139,6 +139,7 @@ export function rgbToHex(input) {
     }
 
     const toHex = n => n.toString(16).padStart(2, '0');
+    console.log(toHex);
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
