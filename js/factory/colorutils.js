@@ -193,7 +193,7 @@ export function complementary(hex) {
     var hsl = rgbToHsl(rgb[0], rgb[1], rgb[2]);
   var newH = (hsl.h + 180) % 360;
   var newRgb = hslToRgb(newH, hsl.s, hsl.l);
-    console.log({rgb, hsl, newH, newRgb});
+    console.log({hex, rgb, hsl, newH, newRgb});
   return [rgbToHex(newRgb[0], newRgb[1], newRgb[2])];
 }
 
