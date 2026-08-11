@@ -9,20 +9,60 @@ export function rgbToHex(r,g,b) {
   return '#' + [r,g,b].map(x => x.toString(16).padStart(2,'0')).join('');
 }
 */
-export function rgbToHsl(r,g,b) {
-  r/=255; g/=255; b/=255;
-  const max=Math.max(r,g,b), min=Math.min(r,g,b);
-  let h=0,s=0,l=(max+min)/2;
-  if(max!==min){
-    const d=max-min;
-    s=l>0.5?d/(2-max-min):d/(max+min);
-    switch(max){
-      case r: h=((g-b)/d+(g<b?6:0))/6; break;
-      case g: h=((b-r)/d+2)/6; break;
-      case b: h=((r-g)/d+4)/6; break;
+export function rgbToHsl(r, g, b) {
+  r /= 255; 
+  g /= 255; 
+  b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) {
+    h = s = 0; // achromatic/gray
+  } else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
     }
+    h /= 6;
   }
-  return {h:Math.round(h*360), s:Math.round(s*100), l:Math.round(l*100)};
+  return {
+    h: Math.round(h * 360),
+    s: Math.round(s * 100),
+    l: Math.round(l * 100)
+  };
+}
+
+function hslToRgb(h, s, l) {
+  // Normalize values: h to [0, 1], s and l to [0, 1]
+  h /= 360;
+  s /= 100;
+  l /= 100;
+  let r, g, b;
+  if (s === 0) {
+    r = g = b = l; // Achromatic / shade of gray
+  } else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return {
+    r: Math.round(r * 255),
+    g: Math.round(g * 255),
+    b: Math.round(b * 255)
+  };
 }
 
 
@@ -142,13 +182,6 @@ export function rgbToHex(input) {
 }
 
 
-export function hslToRgb(h,s,l) {
-  s/=100; l/=100;
-  const k=n=>(n+h/30)%12;
-  const a=s*Math.min(l,1-l);
-  const f=n=>l-a*Math.max(-1,Math.min(k(n)-3,9-k(n),1));
-  return [Math.round(f(0)*255),Math.round(f(8)*255),Math.round(f(4)*255)];
-}
 export function contrastRatio(color1, color2) {
   function luminance(r,g,b){
     const a=[r,g,b].map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);});
@@ -379,18 +412,16 @@ function gatherHarmonyHues(baseHue) {
 
 // ─── Helper: binary search lightness to meet minContrast ─────
 function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
-    let low = 0, high = 65;
+    let low = 0, high = 75;
     if (direction === 'lighter') {
         low = 25;   // start searching from middle towards lighter
     } else {
         high = 25;  // towards darker
     }
-
     let bestLight = 0;
     let bestRatio = 0;
-
     for (let i = 0; i < 60; i++) {   // binary search, 20 iterations max
-        const mid = parseInt((low + high) / 2)%255;
+        const mid = parseInt((low + high) / 2)%100;
 	console.log({hue, sat, mid});
         const rgb = hslToRgb(hue, sat, mid);
 	console.log({hue, sat, mid, rgb});
@@ -398,7 +429,6 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 	console.log({hex, bgRgb});
         const ratio = contrastRatio(hex, bgRgb);
 	console.log({mid, rgb, hex, ratio, i, minContrast});
-
         if (ratio >= minContrast) {
             if (ratio > bestRatio) {
                 bestRatio = ratio;
@@ -407,9 +437,9 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
             }
         } else {
             if (direction === 'lighter') {
-                low = (low+mid)%255;  // need lighter
+                low = (low+mid)%100;  // need lighter
             } else {
-                high = (high+mid)%255; // need darker
+                high = (high+mid)%100; // need darker
             }
         }
     }
