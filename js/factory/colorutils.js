@@ -409,11 +409,15 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
 
         if (ratio >= minContrast) {
             // Found acceptable contrast; try to get closer to target (lower ratio)
-            if (ratio < bestRatio) {
+            if (ratio > bestRatio) {
                 bestRatio = ratio;
                 bestLight = mid;
             }
-	    break;
+            if (direction === 'lighter') {
+                high = mid;  
+            } else {
+                low = mid;   
+            }
         } else {
             // Not enough contrast – move in the opposite direction
             if (direction === 'lighter') {
