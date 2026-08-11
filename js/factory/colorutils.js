@@ -27,146 +27,116 @@ export function rgbToHsl(r,g,b) {
 
 
 
-/**
- * Converts a hex colour string to an RGB array.
- * - Accepts: "#RRGGBB", "RRGGBB", "0xRRGGBB" (case-insensitive)
- * - If the input is already an array of three numbers, it is returned unchanged.
- * - Returns null for any other input.
- */
-export function hexToRgb(input) {
-    console.log({input});
-    // Already in output format?
-    if (Array.isArray(input) && input.length === 3 &&
-        input.every(n => Number.isInteger(n) && n >= 0 && n <= 255)) {
-        return [...input];                 // return a copy
+// Helper: character checks
+function isDigit(c)  { return c >= 48 && c <= 57; }      // 0-9
+function isHexUpper(c){ return c >= 65 && c <= 70; }      // A-F
+function isHexLower(c){ return c >= 97 && c <= 102; }     // a-f
+function isHexChar(c) { return isDigit(c) || isHexUpper(c) || isHexLower(c); }
+
+// Parse a single colour component (string or number) to integer 0-255, or null
+function parseComponent(comp) {
+    if (typeof comp === 'number') {
+        return Number.isInteger(comp) && comp >= 0 && comp <= 255 ? comp : null;
     }
+    if (typeof comp === 'string') {
+        let s = comp.trim();
+        if (s.startsWith('0x') || s.startsWith('0X')) s = s.slice(2);
+        if (s.length === 0) return null;
 
-    if (typeof input !== 'string') return null;
-
-    // Remove optional '#' or '0x' / '0X' prefix
-    let hex = input;
-    if (hex.startsWith('#')) {
-        hex = hex.slice(1);
-    } else if (hex.startsWith('0x') || hex.startsWith('0X')) {
-        hex = hex.slice(2);
-    }
-
-    // Must now be exactly 6 characters
-    if (hex.length !== 6) return null;
-
-    // Validate that every character is a hex digit (0-9, a-f, A-F)
-    for (let i = 0; i < 6; i++) {
-        const ch = hex.charCodeAt(i);
-        const isDigit = ch >= 48 && ch <= 57;      // '0'..'9'
-        const isUpper = ch >= 65 && ch <= 70;      // 'A'..'F'
-        const isLower = ch >= 97 && ch <= 102;     // 'a'..'f'
-        if (!isDigit && !isUpper && !isLower) {
-            return null;
+        // Decide base: if any a-f present → hex, else decimal
+        let base = 10;
+        for (let i = 0; i < s.length; i++) {
+            if (isHexUpper(s.charCodeAt(i)) || isHexLower(s.charCodeAt(i))) {
+                base = 16;
+                break;
+            }
         }
+        // Validate all characters
+        for (let i = 0; i < s.length; i++) {
+            const ch = s.charCodeAt(i);
+            if (base === 10 && !isDigit(ch)) return null;
+            if (base === 16 && !isHexChar(ch)) return null;
+        }
+        const val = parseInt(s, base);
+        return (isNaN(val) || val < 0 || val > 255) ? null : val;
+    }
+    return null;
+}
+
+// Convert hex string (#, 0x, or bare) to RGB array [r, g, b]
+// Also parses "rgb(R,G,B)" strings (already formatted input) → array
+export function hexToRgb(input) {
+    // If input is a string that's already "rgb(...)", parse it as RGB
+    if (typeof input === 'string' && input.trim().startsWith('rgb(')) {
+        const inner = input.trim().slice(4, -1);
+        const parts = inner.split(',').map(s => s.trim());
+        if (parts.length === 3) {
+            const rgb = parts.map(parseComponent);
+            return rgb.includes(null) ? null : rgb;
+        }
+        return null;
     }
 
-    // Parse the three components
+    // Otherwise treat as hex
+    if (typeof input !== 'string') return null;
+    let hex = input.trim();
+    if (hex.startsWith('#')) hex = hex.slice(1);
+    else if (hex.startsWith('0x') || hex.startsWith('0X')) hex = hex.slice(2);
+
+    if (hex.length !== 6) return null;
+    for (let i = 0; i < 6; i++) {
+        if (!isHexChar(hex.charCodeAt(i))) return null;
+    }
     const r = parseInt(hex.substring(0, 2), 16);
     const g = parseInt(hex.substring(2, 4), 16);
     const b = parseInt(hex.substring(4, 6), 16);
-
     return [r, g, b];
 }
 
-/**
- * Converts an RGB colour to a hex string "#RRGGBB".
- * - Accepts:
- *     * an array of three numbers (0-255)       → [26,43,60]
- *     * an array of three hex strings            → ["1a","2b","3c"]
- *     * a CSS string "rgb(R,G,B)" or "rgb(hexR,hexG,hexB)"
- * - If the input is already a valid hex string "#RRGGBB", it is returned unchanged.
- * - Returns null for any other input.
- */
+// Convert RGB array, object {r,g,b}, or "rgb(R,G,B)" string → "#rrggbb"
+// Also accepts already‑formatted hex strings and returns them as‑is (lowercased)
 export function rgbToHex(input) {
-    // Already in output format?
+    // Already a "#rrggbb" string? Return it (validated)
     if (typeof input === 'string' && input.startsWith('#') && input.length === 7) {
-        // Quick sanity check: the remaining 6 chars must be hex digits
-        const hexPart = input.slice(1);
-        if (hexPart.length === 6) {
-            let valid = true;
-            for (let i = 0; i < 6; i++) {
-                const ch = hexPart.charCodeAt(i);
-                const isDigit = ch >= 48 && ch <= 57;
-                const isUpper = ch >= 65 && ch <= 70;
-                const isLower = ch >= 97 && ch <= 102;
-                if (!isDigit && !isUpper && !isLower) { valid = false; break; }
-            }
-            if (valid) return input.toLowerCase();  // ensure lowercase
+        const hex = input.slice(1);
+        let ok = true;
+        for (let i = 0; i < 6; i++) {
+            if (!isHexChar(hex.charCodeAt(i))) { ok = false; break; }
         }
+        if (ok) return input.toLowerCase();
     }
 
-    // Determine what we actually received
+    // Extract r, g, b from various formats
     let r, g, b;
 
     if (Array.isArray(input) && input.length === 3) {
-        // Array of numbers or hex strings
         const nums = input.map(parseComponent);
         if (nums.includes(null)) return null;
         [r, g, b] = nums;
-    } else if (typeof input === 'string') {
-        // Try to parse "rgb(...)" string
-        if (!input.startsWith('rgb(') || !input.endsWith(')')) return null;
-        const inner = input.slice(4, -1); // remove rgb( and )
+    }
+    else if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+        if ('r' in input && 'g' in input && 'b' in input) {
+            const nums = [input.r, input.g, input.b].map(parseComponent);
+            if (nums.includes(null)) return null;
+            [r, g, b] = nums;
+        } else {
+            return null;
+        }
+    }
+    else if (typeof input === 'string' && input.startsWith('rgb(')) {
+        const inner = input.slice(4, -1);
         const parts = inner.split(',').map(s => s.trim());
         if (parts.length !== 3) return null;
         const nums = parts.map(parseComponent);
         if (nums.includes(null)) return null;
         [r, g, b] = nums;
-    } else {
+    }
+    else {
         return null;
     }
 
-    // Convert each channel to 2-digit hex and assemble
-    const toHex = (n) => n.toString(16).padStart(2, '0');
-    return '#' + toHex(r) + toHex(g) + toHex(b);
-}
-
-/**
- * Helper: parse a single colour component from a string or number.
- * - Numbers must be integers 0-255.
- * - Strings are interpreted as hex if they contain any a-f/A-F,
- *   otherwise as decimal.
- * Returns the integer value or null on failure.
- */
-function parseComponent(comp) {
-    if (typeof comp === 'number') {
-        return Number.isInteger(comp) && comp >= 0 && comp <= 255 ? comp : null;
-    }
-
-    if (typeof comp === 'string') {
-        // Trim and remove optional "0x" prefix
-        let s = comp.trim();
-        if (s.startsWith('0x') || s.startsWith('0X')) s = s.slice(2);
-
-        // Empty string is invalid
-        if (s.length === 0) return null;
-
-        // Determine base: if any letter a-f/A-F is present, treat as hex
-        const isHex = /[a-fA-F]/.test(s); // <-- Small regex only for base detection;
-                                           //     can be rewritten without regex if strictly required.
-        const base = isHex ? 16 : 10;
-
-        // All characters must be valid for that base
-        for (let i = 0; i < s.length; i++) {
-            const ch = s.charCodeAt(i);
-            const isDigit = ch >= 48 && ch <= 57;
-            const isUpper = ch >= 65 && ch <= 70;
-            const isLower = ch >= 97 && ch <= 102;
-            if (base === 10 && !isDigit) return null;
-            if (base === 16 && !(isDigit || isUpper || isLower)) return null;
-        }
-
-        const val = parseInt(s, base);
-        if (isNaN(val) || val < 0 || val > 255) return null;
-        return val;
-    }
-
-    return null;
+    const toHex = n => n.toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
 
