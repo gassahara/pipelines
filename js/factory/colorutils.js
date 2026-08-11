@@ -431,6 +431,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
         }
         if (high - low < 0.5) break;
     }
+    cosnole.log({high, low, mid, bestLight});
     return bestLight;
 }
 
