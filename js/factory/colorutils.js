@@ -391,9 +391,9 @@ function gatherHarmonyHues(baseHue) {
 function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
     let low = 0, high = 100;
     if (direction === 'lighter') {
-        low = 50;   // start searching from middle towards lighter
+        low = 25;   // start searching from middle towards lighter
     } else {
-        high = 50;  // towards darker
+        high = 25;  // towards darker
     }
 
     let bestLight = null;
@@ -423,9 +423,9 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
         } else {
             // Not enough contrast – move in the opposite direction
             if (direction === 'lighter') {
-                low += mid;  // need lighter
+                low = (low+mid)%255;  // need lighter
             } else {
-                high += mid; // need darker
+                high = (high+mid)%255; // need darker
             }
         }
         if (high - low < 0.5) break;
