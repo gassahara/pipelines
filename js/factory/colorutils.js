@@ -407,13 +407,13 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
             }
         } else {
             if (direction === 'lighter') {
-                low = parseInt((low+mid))%255;  // need lighter
+                low = (low+mid)%255;  // need lighter
             } else {
-                high = parseInt((high+mid))%255; // need darker
+                high = (high+mid)%255; // need darker
             }
         }
     }
-   //console.log({high, low, bestLight, bestRatio});
+   console.log({high, low, bestLight, bestRatio});
     return bestLight;
 }
 
