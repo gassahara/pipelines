@@ -401,7 +401,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
     let bestRatio = Infinity;
 
     for (let i = 0; i < 120; i++) {   // binary search, 20 iterations max
-        const mid = parseInt(((low + high)%255) / 2);
+        const mid = parseInt((low + high) / 2)%255;
         const rgb = hslToRgb(hue, sat, mid);
         const hex = rgbToHex(rgb);
         const ratio = contrastRatio(hex, bgRgb);
@@ -413,17 +413,13 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
                 bestRatio = ratio;
                 bestLight = mid;
             }
-            if (direction === 'lighter') {
-                high = mid;  
-            } else {
-                low = mid;   
-            }
+	    break;
         } else {
             // Not enough contrast – move in the opposite direction
             if (direction === 'lighter') {
-                low = parseInt((low+mid)%255);  // need lighter
+                low = parseInt((low+mid))%255;  // need lighter
             } else {
-                high = parseInt((high+mid)%255); // need darker
+                high = parseInt((high+mid))%255; // need darker
             }
         }
     }
