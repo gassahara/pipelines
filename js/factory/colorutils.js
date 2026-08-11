@@ -397,7 +397,7 @@ function optimizeLightness(hue, sat, direction, bgRgb, minContrast) {
         high = 25;  // towards darker
     }
 
-    let bestLight = null;
+    let bestLight = 0;
     let bestRatio = Infinity;
 
     for (let i = 0; i < 120; i++) {   // binary search, 20 iterations max
