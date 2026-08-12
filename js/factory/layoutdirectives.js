@@ -5,6 +5,7 @@ import {
     buildLayoutPropertyMap,
     computeIntrinsicSize
 } from './stylizerutilities.js';
+import { logdebug, logwarn } from '../verbosity.js';
 
 // ==================== CHARACTER HELPERS (NO REGEX) ====================
 
@@ -336,12 +337,112 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {})
     // 2. Run overflow detection/correction exactly once
     const overflowViolations = checkOverflowDoc(doc, viewportWidth, containerWidths);
     if (overflowViolations.length) {
-        const newRules = correctOverflowDoc(doc);
+        const newRules = correctOverflowDoc(doc, overflowViolations);
         allRules.push(...newRules);
     }
 
     return { html: doc.body.innerHTML, rules: allRules };
 }
+
+// ==================== CANDIDATE WHITE‑LIST ====================
+
+export function getCandidateElements(doc) {
+    const candidates = [];
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+
+    for (const el of allDescendants) {
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'table' || tag === 'pre' || tag === 'img') {
+            candidates.push(el);
+        } else if (tag === 'div') {
+            const style = el.style || {};
+            if (style.width || style.maxWidth) {
+                candidates.push(el);
+            }
+        }
+    }
+    return candidates;
+}
+
+// ==================== CHECK STAGE ====================
+
+export function checkOverflowDoc(doc, viewportWidth, containerWidths) {
+    const violations = [];
+    const propertyMap = buildLayoutPropertyMap(doc.body, viewportWidth);
+    const candidates = getCandidateElements(doc);
+
+    for (const el of candidates) {
+        // Skip if already inside a wrapper (ancestor div with width and overflow: scroll)
+        let parent = el.parentElement;
+        let alreadyWrapped = false;
+        while (parent) {
+            const style = parent.style || {};
+            if (parent.tagName.toLowerCase() === 'div' &&
+                (style.width || style.maxWidth) &&
+                style.overflow === 'scroll') {
+                alreadyWrapped = true;
+                break;
+            }
+            parent = parent.parentElement;
+        }
+        if (alreadyWrapped) continue;
+
+        const props = propertyMap.get(el);
+        if (!props) {
+            logdebug('[checkOverflowDoc] Missing property map entry for candidate:', el.tagName + (el.id ? '#' + el.id : ''));
+            continue;
+        }
+
+        try {
+            const size = computeIntrinsicSize(el, propertyMap, props);
+            if (size.width > props.availableWidth) {
+                violations.push(el);
+            }
+        } catch (err) {
+            logwarn('[checkOverflowDoc] Failed to compute intrinsic size for candidate:', el.tagName + (el.id ? '#' + el.id : ''), err);
+            // In a strict environment, we could rethrow; for now log and skip.
+        }
+    }
+    return violations;
+}
+
+// ==================== CORRECTION STAGE ====================
+
+export function correctOverflowDoc(doc, overflowElements) {
+    const rules = [];
+
+    for (const el of overflowElements) {
+        // Re-check wrapper ancestry (in case something changed)
+        let parent = el.parentElement;
+        let alreadyWrapped = false;
+        while (parent) {
+            const style = parent.style || {};
+            if (parent.tagName.toLowerCase() === 'div' &&
+                (style.width || style.maxWidth) &&
+                style.overflow === 'scroll') {
+                alreadyWrapped = true;
+                break;
+            }
+            parent = parent.parentElement;
+        }
+        if (alreadyWrapped) continue;
+
+        // Create wrapper div with width: 80%; overflow: scroll; no margin, no attribute.
+        const wrapper = doc.createElement('div');
+        wrapper.style.width = '80%';
+        wrapper.style.overflow = 'scroll';
+
+        el.parentNode.insertBefore(wrapper, el);
+        wrapper.appendChild(el);
+
+        const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
+        rules.push({ selector, styles: { wrapped: 'true' } });
+    }
+
+    return rules;
+}
+
+// ==================== SPACING / OVERLAP HELPERS ====================
 
 function checkSpacingDoc(doc, minGap) {
     const violations = [];
@@ -441,83 +542,6 @@ function correctOverlapDoc(doc) {
                     b.style.top = newTop + 'px';
                 }
             }
-        }
-    }
-    return rules;
-}
-
-function checkOverflowDoc(doc, viewportWidth, containerWidths) {
-    const violations = [];
-    const propertyMap = buildLayoutPropertyMap(doc.body, viewportWidth);
-    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
-
-    for (const el of allDescendants) {
-        // Skip elements already inside an overflow wrapper
-        let p = el.parentElement;
-        let inWrapper = false;
-        while (p) {
-            if (p.getAttribute && p.getAttribute('data-overflow-wrapper') === 'true') {
-                inWrapper = true;
-                break;
-            }
-            p = p.parentElement;
-        }
-        if (inWrapper) continue;
-
-        const props = propertyMap.get(el);
-        if (!props) continue;
-
-        try {
-            const size = computeIntrinsicSize(el, propertyMap, props);
-            if (size.width > props.availableWidth) {
-                violations.push(el);
-            }
-        } catch (e) {
-            // skip elements whose intrinsic size cannot be measured
-        }
-    }
-    return violations;
-}
-
-function correctOverflowDoc(doc) {
-    const rules = [];
-    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
-
-    for (const el of allDescendants) {
-        // Skip if already inside wrapper
-        let p = el.parentElement;
-        let inWrapper = false;
-        while (p) {
-            if (p.getAttribute && p.getAttribute('data-overflow-wrapper') === 'true') {
-                inWrapper = true;
-                break;
-            }
-            p = p.parentElement;
-        }
-        if (inWrapper) continue;
-
-        // Skip inline elements
-        const tag = el.tagName.toLowerCase();
-        const display = el.style ? el.style.display : '';
-        const inlineTags = new Set([
-            'span', 'strong', 'em', 'b', 'i', 'u', 's', 'small', 'sub', 'sup',
-            'a', 'label', 'abbr', 'cite', 'code', 'kbd', 'samp', 'q', 'mark'
-        ]);
-        if (inlineTags.has(tag) || display === 'inline' || display === 'inline-block') {
-            continue;
-        }
-
-        const style = el.style;
-        const overflow = style.overflow || '';
-        if (!overflow || overflow === 'visible') {
-            const wrapper = doc.createElement('div');
-            wrapper.setAttribute('data-overflow-wrapper', 'true');
-            wrapper.style.overflow = 'auto';
-            wrapper.style.maxWidth = '100%';
-            el.parentNode.insertBefore(wrapper, el);
-            wrapper.appendChild(el);
-            const selector = el.id ? { id: el.id } : { tag: tag };
-            rules.push({ selector, styles: { wrapped: 'true' } });
         }
     }
     return rules;
