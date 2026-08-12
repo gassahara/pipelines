@@ -96,6 +96,11 @@ function findRgbColor(str) {
 export function parseLength(value, referencePx) {
     if (typeof value === 'number') return value;
     if (!value) return 0;
+    if(value == "auto") value = referencePx;
+    if(value == "medium") value = referencePx * 1.3;
+    if(value == "large") value = referencePx * 1.5;
+    if(value == "small") value = referencePx * 0.7;
+    if(value == "tiny") value = referencePx * 0.5; 
     const str = String(value).trim();
     let i = 0;
     let sign = 1;
