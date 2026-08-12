@@ -10,7 +10,7 @@ import {
 
 // ==================== RECURSIVE PATH ENGINE ====================
 
-export function  getAncestors(el, acc) {
+function getAncestors(el, acc) {
     if (!acc) acc = [];
     var p = el.parentNode;
     if (!p) return acc;
@@ -26,7 +26,7 @@ export function getAllDescendants(el) {
     }, []);
 }
 
-export function  getNextSiblings(el, acc) {
+function getNextSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.nextSibling;
     if (!sib) return acc;
@@ -34,7 +34,7 @@ export function  getNextSiblings(el, acc) {
     return getNextSiblings(sib, newAcc);
 }
 
-export function  getPreviousSiblings(el, acc) {
+function getPreviousSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.previousSibling;
     if (!sib) return acc;
@@ -42,19 +42,12 @@ export function  getPreviousSiblings(el, acc) {
     return getPreviousSiblings(sib, newAcc);
 }
 
-export function  getDepth(ancestor, descendant) {
+function getDepth(ancestor, descendant) {
     if (!descendant || descendant === ancestor) return 0;
     if (descendant.nodeType !== 1) return getDepth(ancestor, descendant.parentNode);
     return 1 + getDepth(ancestor, descendant.parentNode);
 }
 
-/**
- * Traverses a set of nodes according to a path step.
- * @param {Array<Node>} nodes - Starting nodes.
- * @param {Object} step - Step descriptor: { axis, tag, class, id, index, depth, skip, content }.
- * @param {Function} [filterFn] - Optional post-filter for candidates.
- * @returns {Array<Node>}
- */
 export function applyStep(nodes, step, filterFn = null) {
     return nodes.reduce(function(next, node) {
         var candidates = [];
@@ -114,41 +107,35 @@ export function applyStep(nodes, step, filterFn = null) {
     }, []);
 }
 
-export function  resolvePath(root, steps) {
+function resolvePath(root, steps) {
     return steps.reduce(function(currentNodes, step) { return applyStep(currentNodes, step); }, [root]);
 }
 
 // ==================== UNIT CONVERSION & PROPERTY MAP ====================
 
-export function parseLength(value, referencePx) {
-    if (typeof value === 'number') return value;    
+export function parseLength(value, referencePx) { 
+    if (typeof value === 'number') return value;
     if (!value) return 0;
     if(value == "auto") value = referencePx;
     if(value == "medium") value = referencePx * 1.3;
     if(value == "large") value = referencePx * 1.5;
     if(value == "small") value = referencePx * 0.7;
-    if(value == "tiny") value = referencePx * 0.5;
+    if(value == "tiny") value = referencePx * 0.5; 
     const str = String(value).trim();
     const match = str.match(/^(-?[\d.]+)(px|%|em|rem|pt)?$/i);
     if (!match) throw new Error('[parseLength] Invalid length value: ' + value);
     const num = parseFloat(match[1]);
     const unit = (match[2] || 'px').toLowerCase();
     switch (unit) {
-        case 'px': return num;
-        case '%': return (num / 100) * referencePx;
-        case 'em': return num * referencePx;
-        case 'rem': return num * 16;
-        case 'pt': return num * 1.333;
-        default: throw new Error('[parseLength] Unknown unit: ' + unit);
+    case 'px': return num;
+    case '%': return (num / 100) * referencePx;
+    case 'em': return num * referencePx;
+    case 'rem': return num * 16;
+    case 'pt': return num * 1.333; 
+    default: throw new Error('[parseLength] Unknown unit: ' + unit);
     }
-}
+}  
 
-/**
- * Computes viewport-scaled base spacing values.
- * @param {number} viewportWidth - Current viewport width in pixels.
- * @param {number} baseFontSize - Reference font size, not currently used.
- * @returns {Object}
- */
 export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
     const scale = Math.min(1, (viewportWidth || 960) / 960);
     const round = (v) => Math.round(v);
@@ -163,6 +150,20 @@ export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
         gap: round(8 * scale),
         scale: scale
     };
+}
+
+function parseShorthandLengths(value, referencePx) {
+    if (!value) return null;
+    const parts = String(value).trim().split(/\s+/);
+    if (parts.length === 0) return null;
+    const nums = parts.map(p => parseLength(p, referencePx));
+    switch (nums.length) {
+        case 1: return { top: nums[0], right: nums[0], bottom: nums[0], left: nums[0] };
+        case 2: return { top: nums[0], right: nums[1], bottom: nums[0], left: nums[1] };
+        case 3: return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[1] };
+        case 4: return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[3] };
+        default: return null;
+    }
 }
 
 export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize = 16) {
@@ -196,6 +197,8 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
         if (style.maxWidth) props.maxWidth = parseLength(style.maxWidth, parentAvailableWidth);
         if (style.minWidth) props.minWidth = parseLength(style.minWidth, parentAvailableWidth);
         if (style.height) props.height = parseLength(style.height, parentAvailableWidth);
+
+        // Longhand margins/paddings/borders (if present)
         if (style.marginTop) props.marginTop = parseLength(style.marginTop, parentAvailableWidth);
         if (style.marginBottom) props.marginBottom = parseLength(style.marginBottom, parentAvailableWidth);
         if (style.marginLeft) props.marginLeft = parseLength(style.marginLeft, parentAvailableWidth);
@@ -208,6 +211,37 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
         if (style.borderBottomWidth) props.borderBottomWidth = parseLength(style.borderBottomWidth, parentAvailableWidth);
         if (style.borderLeftWidth) props.borderLeftWidth = parseLength(style.borderLeftWidth, parentAvailableWidth);
         if (style.borderRightWidth) props.borderRightWidth = parseLength(style.borderRightWidth, parentAvailableWidth);
+
+        // Shorthand overrides (OW-FIX4)
+        if (style.margin) {
+            const sh = parseShorthandLengths(style.margin, parentAvailableWidth);
+            if (sh) {
+                props.marginTop = sh.top;
+                props.marginRight = sh.right;
+                props.marginBottom = sh.bottom;
+                props.marginLeft = sh.left;
+            }
+        }
+        if (style.padding) {
+            const sh = parseShorthandLengths(style.padding, parentAvailableWidth);
+            if (sh) {
+                props.paddingTop = sh.top;
+                props.paddingRight = sh.right;
+                props.paddingBottom = sh.bottom;
+                props.paddingLeft = sh.left;
+            }
+        }
+        if (style.border) {
+            // Extract first length token from border shorthand (e.g. "1px solid red")
+            const borderMatch = String(style.border).match(/(-?[\d.]+(?:px|em|rem|pt|%))/i);
+            if (borderMatch) {
+                const bw = parseLength(borderMatch[1], parentAvailableWidth);
+                props.borderTopWidth = bw;
+                props.borderRightWidth = bw;
+                props.borderBottomWidth = bw;
+                props.borderLeftWidth = bw;
+            }
+        }
 
         const contentWidth = Math.max(0, parentAvailableWidth - props.paddingLeft - props.paddingRight - props.borderLeftWidth - props.borderRightWidth);
         let selfAvailable = contentWidth;
@@ -280,7 +314,7 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
 
     if (tag === 'table') {
         if (props.width !== null) return { width: props.width, height: props.height || 0 };
-        const rows = applyStep([node], { axis: 'child', tag: 'tr' });
+        const rows = applyStep([node], { axis: 'descendant', tag: 'tr' }); // OW-FIX3: recursive rows
         if (rows.length === 0) return { width: 0, height: 0 };
         const columnMax = {};
         let totalHeight = 0;
@@ -480,7 +514,7 @@ export function consolidateStyles(html) {
 
 // ==================== IMPROVED BACKGROUND EXTRACTION ====================
 
-export function  extractBgFromShorthand(el) {
+function extractBgFromShorthand(el) {
     if (el.style.backgroundColor) return el.style.backgroundColor;
     const bg = el.style.background;
     if (!bg) return null;
@@ -498,7 +532,7 @@ export function  extractBgFromShorthand(el) {
 
 // ==================== SAFE STYLE MERGE HELPER ====================
 
-export function  mergeAndApplyStyles(el, newStyles) {
+function mergeAndApplyStyles(el, newStyles) {
     const currentStyleAttr = el.getAttribute('style') || '';
     const currentStyles = {};
     if (currentStyleAttr.trim()) {
@@ -865,7 +899,7 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
 
 // ==================== CORRECTORS ====================
 
-export function  correctContrastDoc(doc, minRatio) {
+function correctContrastDoc(doc, minRatio) {
     const rules = [];
     const allElements = Array.from(doc.getElementsByTagName('*'));
     allElements.forEach(el => {
@@ -886,7 +920,7 @@ export function  correctContrastDoc(doc, minRatio) {
     return rules;
 }
 
-export function  correctHarmonyDoc(doc) {
+function correctHarmonyDoc(doc) {
     const rules = [];
     const allElements = Array.from(doc.getElementsByTagName('*'));
     allElements.forEach(el => {
@@ -911,7 +945,7 @@ export function  correctHarmonyDoc(doc) {
     return rules;
 }
 
-export function  correctTextVisibilityDoc(doc, themeStyles, options) {
+function correctTextVisibilityDoc(doc, themeStyles, options) {
     const rules = [];
     const minLineHeight = options.minLineHeight ?? 1.2;
     const allElements = Array.from(doc.getElementsByTagName('*'));
@@ -942,7 +976,7 @@ export function  correctTextVisibilityDoc(doc, themeStyles, options) {
     return rules;
 }
 
-export function  correctButtonVisibilityDoc(doc) {
+function correctButtonVisibilityDoc(doc) {
     const rules = [];
     const allElements = Array.from(doc.getElementsByTagName('*'));
     const buttons = allElements.filter(el => {
@@ -971,7 +1005,7 @@ export function  correctButtonVisibilityDoc(doc) {
 
 // ==================== BACKGROUND HELPER ====================
 
-export function  getEffectiveBackground(el) {
+function getEffectiveBackground(el) {
     let bg = extractBgFromShorthand(el);
     if (bg) return bg;
     let parent = el.parentNode;

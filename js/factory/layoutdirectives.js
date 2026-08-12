@@ -143,6 +143,7 @@ export function generateCSSFromDirectives(elementId, directives, breakpointMap =
                         break;
                     case 'center':
                         inlineStyles.maxWidth = '960px';
+                        inlineStyles.margin = '0 auto';
                         break;
                     case 'top-left':
                         inlineStyles.position = 'relative';
@@ -263,9 +264,11 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {})
     const allRules = [];
     const { viewportWidth = 1024, containerWidths = {} } = options;
 
+    // 1. Run non-overflow optimisation goals iteratively
     for (let iter = 0; iter < maxIterations; iter++) {
         let anyCorrection = false;
         for (const goal of goals) {
+            if (goal.type === 'overflow') continue; // OW-FIX6: handled separately after loop
             switch (goal.type) {
                 case 'minVerticalGap': {
                     const minGap = goal.options?.minGap ?? 12;
@@ -281,15 +284,6 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {})
                     const violations = checkOverlapDoc(doc);
                     if (violations.length) {
                         const newRules = correctOverlapDoc(doc);
-                        allRules.push(...newRules);
-                        anyCorrection = true;
-                    }
-                    break;
-                }
-                case 'overflow': {
-                    const violations = checkOverflowDoc(doc, viewportWidth, containerWidths);
-                    if (violations.length) {
-                        const newRules = correctOverflowDoc(doc);
                         allRules.push(...newRules);
                         anyCorrection = true;
                     }
@@ -316,6 +310,13 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {})
             }
         }
         if (!anyCorrection) break;
+    }
+
+    // 2. Run overflow detection/correction exactly once (OW-FIX6)
+    const overflowViolations = checkOverflowDoc(doc, viewportWidth, containerWidths);
+    if (overflowViolations.length) {
+        const newRules = correctOverflowDoc(doc);
+        allRules.push(...newRules);
     }
 
     return { html: doc.body.innerHTML, rules: allRules };
@@ -383,11 +384,10 @@ function checkOverlapDoc(doc) {
             const bLeft = parseFloat(b.style.left) || 0;
             const bWidth = parseFloat(b.style.width) || 0;
             const bHeight = parseFloat(b.style.height) || 0;
-            if (aWidth && aHeight && bWidth && bHeight) {
-                if (aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
-                    aTop < bTop + bHeight && aTop + aHeight > bTop) {
-                    violations.push({ elA: a, elB: b });
-                }
+            if (aWidth && aHeight && bWidth && bHeight &&
+                aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
+                aTop < bTop + bHeight && aTop + aHeight > bTop) {
+                violations.push({ elA: a, elB: b });
             }
         }
     }
@@ -409,16 +409,15 @@ function correctOverlapDoc(doc) {
             const bLeft = parseFloat(b.style.left) || 0;
             const bWidth = parseFloat(b.style.width) || 0;
             const bHeight = parseFloat(b.style.height) || 0;
-            if (aWidth && aHeight && bWidth && bHeight) {
-                if (aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
-                    aTop < bTop + bHeight && aTop + aHeight > bTop) {
-                    const overlapY = (aTop + aHeight) - bTop;
-                    if (overlapY > 0) {
-                        const newTop = bTop + overlapY + 2;
-                        const selector = b.id ? { id: b.id } : { tag: b.tagName.toLowerCase() };
-                        rules.push({ selector, styles: { top: newTop + 'px' } });
-                        b.style.top = newTop + 'px';
-                    }
+            if (aWidth && aHeight && bWidth && bHeight &&
+                aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
+                aTop < bTop + bHeight && aTop + aHeight > bTop) {
+                const overlapY = (aTop + aHeight) - bTop;
+                if (overlapY > 0) {
+                    const newTop = bTop + overlapY + 2;
+                    const selector = b.id ? { id: b.id } : { tag: b.tagName.toLowerCase() };
+                    rules.push({ selector, styles: { top: newTop + 'px' } });
+                    b.style.top = newTop + 'px';
                 }
             }
         }
@@ -430,18 +429,31 @@ function checkOverflowDoc(doc, viewportWidth, containerWidths) {
     const violations = [];
     const propertyMap = buildLayoutPropertyMap(doc.body, viewportWidth);
     const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+
     for (const el of allDescendants) {
-        if (el.parentElement && el.parentElement.getAttribute('data-overflow-wrapper') === 'true') continue;
+        // Skip elements already inside an overflow wrapper
+        let p = el.parentElement;
+        let inWrapper = false;
+        while (p) {
+            if (p.getAttribute && p.getAttribute('data-overflow-wrapper') === 'true') {
+                inWrapper = true;
+                break;
+            }
+            p = p.parentElement;
+        }
+        if (inWrapper) continue;
+
         const props = propertyMap.get(el);
         if (!props) continue;
+
+        // OW-FIX2: only flag if we can compute reliably; skip on error
         try {
             const size = computeIntrinsicSize(el, propertyMap, props);
             if (size.width > props.availableWidth) {
                 violations.push(el);
             }
         } catch (e) {
-            // If a required property cannot be resolved, we conservatively flag for wrapping.
-            violations.push(el);
+            // skip elements whose intrinsic size cannot be measured
         }
     }
     return violations;
@@ -450,8 +462,31 @@ function checkOverflowDoc(doc, viewportWidth, containerWidths) {
 function correctOverflowDoc(doc) {
     const rules = [];
     const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+
     for (const el of allDescendants) {
-        if (el.parentElement && el.parentElement.getAttribute('data-overflow-wrapper') === 'true') continue;
+        // OW-FIX5: skip if already inside wrapper
+        let p = el.parentElement;
+        let inWrapper = false;
+        while (p) {
+            if (p.getAttribute && p.getAttribute('data-overflow-wrapper') === 'true') {
+                inWrapper = true;
+                break;
+            }
+            p = p.parentElement;
+        }
+        if (inWrapper) continue;
+
+        // OW-FIX1: skip inline elements
+        const tag = el.tagName.toLowerCase();
+        const display = el.style ? el.style.display : '';
+        const inlineTags = new Set([
+            'span', 'strong', 'em', 'b', 'i', 'u', 's', 'small', 'sub', 'sup',
+            'a', 'label', 'abbr', 'cite', 'code', 'kbd', 'samp', 'q', 'mark'
+        ]);
+        if (inlineTags.has(tag) || display === 'inline' || display === 'inline-block') {
+            continue;
+        }
+
         const style = el.style;
         const overflow = style.overflow || '';
         if (!overflow || overflow === 'visible') {
@@ -461,7 +496,7 @@ function correctOverflowDoc(doc) {
             wrapper.style.maxWidth = '100%';
             el.parentNode.insertBefore(wrapper, el);
             wrapper.appendChild(el);
-            const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
+            const selector = el.id ? { id: el.id } : { tag: tag };
             rules.push({ selector, styles: { wrapped: 'true' } });
         }
     }
@@ -516,7 +551,7 @@ function correctControlledOverlayDoc(doc) {
     return rules;
 }
 
-// ==================== NEW: Selector-based Directive Application (P21) ====================
+// ==================== NEW: Selector-based Directive Application ====================
 
 export function applyDirectiveToSelector(html, selector, directiveString) {
     const directives = parseDirectives(directiveString);
