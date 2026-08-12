@@ -1,4 +1,5 @@
 import { logdebug, getverbosity, VERBOSITY } from '../verbosity.js';
+
 import {
     contrastRatio, computeForeground, emphasize,
     complementary, analogous, monochromatic, pick,
@@ -8,8 +9,6 @@ import {
     extractInlineStyle
 } from './colorutils.js';
 
-// ==================== RECURSIVE PATH ENGINE (unchanged) ====================
-
 function getAncestors(el, acc) {
     if (!acc) acc = [];
     var p = el.parentNode;
@@ -17,7 +16,6 @@ function getAncestors(el, acc) {
     var newAcc = p.nodeType === 1 ? acc.concat(p) : acc;
     return getAncestors(p, newAcc);
 }
-
 function getAllDescendants(el) {
     var children = Array.from(el.children || []);
     if (children.length === 0) return [];
@@ -710,7 +708,6 @@ export function checkOverflow(html) {
     walk(doc.body);
     return violations;
 }
-
 export function checkScrollability(html) {
     const violations = [];
     const parser = new DOMParser();
