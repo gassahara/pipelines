@@ -10,7 +10,7 @@ import {
 
 // ==================== RECURSIVE PATH ENGINE (unchanged) ====================
 
-export function  getAncestors(el, acc) {
+function getAncestors(el, acc) {
     if (!acc) acc = [];
     var p = el.parentNode;
     if (!p) return acc;
@@ -18,7 +18,7 @@ export function  getAncestors(el, acc) {
     return getAncestors(p, newAcc);
 }
 
-export function  getAllDescendants(el) {
+function getAllDescendants(el) {
     var children = Array.from(el.children || []);
     if (children.length === 0) return [];
     return children.reduce(function(all, child) {
@@ -26,7 +26,7 @@ export function  getAllDescendants(el) {
     }, []);
 }
 
-export function  getNextSiblings(el, acc) {
+function getNextSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.nextSibling;
     if (!sib) return acc;
@@ -34,7 +34,7 @@ export function  getNextSiblings(el, acc) {
     return getNextSiblings(sib, newAcc);
 }
 
-export function  getPreviousSiblings(el, acc) {
+function getPreviousSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.previousSibling;
     if (!sib) return acc;
@@ -42,13 +42,13 @@ export function  getPreviousSiblings(el, acc) {
     return getPreviousSiblings(sib, newAcc);
 }
 
-export function  getDepth(ancestor, descendant) {
+function getDepth(ancestor, descendant) {
     if (!descendant || descendant === ancestor) return 0;
     if (descendant.nodeType !== 1) return getDepth(ancestor, descendant.parentNode);
     return 1 + getDepth(ancestor, descendant.parentNode);
 }
 
-export function  applyStep(nodes, step) {
+function applyStep(nodes, step) {
     return nodes.reduce(function(next, node) {
         var candidates = [];
         switch (step.axis || 'child') {
@@ -103,7 +103,7 @@ export function  applyStep(nodes, step) {
     }, []);
 }
 
-export function  resolvePath(root, steps) {
+function resolvePath(root, steps) {
     return steps.reduce(function(currentNodes, step) { return applyStep(currentNodes, step); }, [root]);
 }
 
@@ -281,7 +281,7 @@ export function consolidateStyles(html) {
 
 // ==================== IMPROVED BACKGROUND EXTRACTION (P5) ====================
 
-export function  extractBgFromShorthand(el) {
+function extractBgFromShorthand(el) {
     if (el.style.backgroundColor) return el.style.backgroundColor;
     const bg = el.style.background;
     if (!bg) return null;
@@ -300,7 +300,7 @@ export function  extractBgFromShorthand(el) {
 
 // ==================== SAFE STYLE MERGE HELPER (P3) ====================
 
-export function  mergeAndApplyStyles(el, newStyles) {
+function mergeAndApplyStyles(el, newStyles) {
     const currentStyleAttr = el.getAttribute('style') || '';
     const currentStyles = {};
     if (currentStyleAttr.trim()) {
@@ -425,55 +425,85 @@ export function computeTextMetrics(el) {
     return { charWidth, wordWidth, blockWidth };
 }
 
-// ==================== generateAlgorithmicLayoutRules (RP14) ====================
+// ==================== NEW: getElementIntrinsicWidth (IS1) ====================
 
-export function generateAlgorithmicLayoutRules(html, containerWidths, viewportWidth, themeStyles) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const rules = [];
-
-    const getAvailableWidth = (element) => {
-        const id = element.id || element.tagName.toLowerCase();
-        if (containerWidths[id]) return containerWidths[id];
-        let parent = element.parentElement;
-        while (parent) {
-            const pid = parent.id || parent.tagName.toLowerCase();
-            if (containerWidths[pid]) return containerWidths[pid];
-            parent = parent.parentElement;
-        }
-        return viewportWidth || 1024;
-    };
-
-    const allElements = doc.querySelectorAll('*');
-    for (const el of allElements) {
-        if (!el.tagName) continue;
-
-        const contentWidth = estimateRecursiveBounds(el);
-        const availableWidth = getAvailableWidth(el);
-
-        if (el.tagName.toLowerCase() === 'img') {
-            let imgWidth = parseFloat(el.style.width || el.getAttribute('width') || 0);
-            if (imgWidth > availableWidth) {
-                const selector = el.id ? { id: el.id } : { tag: 'img' };
-                rules.push({ selector, styles: { maxWidth: '100%', height: 'auto' } });
+export function getElementIntrinsicWidth(el) {
+    if (!el) return 0;
+    // Text node
+    if (el.nodeType === 3) {
+        return computeTextMetrics(el.parentElement || el).blockWidth;
+    }
+    // Element node
+    if (el.nodeType !== 1) return 0;
+    const tag = el.tagName.toLowerCase();
+    // Image
+    if (tag === 'img' || tag === 'svg') {
+        const attrW = parseInt(el.getAttribute('width'));
+        if (!isNaN(attrW)) return attrW;
+        const styleW = parseFloat(el.style.width);
+        if (!isNaN(styleW)) return styleW;
+        return 300; // fallback
+    }
+    // Table
+    if (tag === 'table') {
+        let total = 0;
+        const cols = el.querySelectorAll('col');
+        if (cols.length > 0) {
+            for (const col of cols) {
+                const w = parseInt(col.getAttribute('width')) || parseFloat(col.style.width) || 0;
+                total += w;
             }
-            continue;
+            if (total > 0) return total;
         }
-
-        const tag = el.tagName.toLowerCase();
-        if (['div', 'p', 'li', 'pre', 'blockquote', 'table', 'th', 'td', 'ul', 'ol'].includes(tag)) {
-            let marginBottom = 6;
-            let padding = 8;
-            const scale = Math.min(1, viewportWidth / 960);
-            marginBottom = Math.round(marginBottom * scale);
-            padding = Math.round(padding * scale);
-
-            const selector = el.id ? { id: el.id } : { tag: tag };
-            rules.push({ selector, styles: { marginBottom: marginBottom + 'px', padding: padding + 'px' } });
+        // Estimate from first row cells
+        const firstRow = el.querySelector('tr');
+        if (firstRow) {
+            for (const cell of firstRow.children) {
+                total += getElementIntrinsicWidth(cell);
+            }
+        }
+        return total || 200; // fallback
+    }
+    // Block / inline: max or sum of children
+    const children = Array.from(el.childNodes);
+    if (children.length === 0) {
+        const metrics = computeTextMetrics(el);
+        return Math.max(metrics.blockWidth, 0);
+    }
+    const display = el.style.display || '';
+    const isFlexRow = display === 'flex' && (el.style.flexDirection === 'row' || !el.style.flexDirection);
+    let total = 0;
+    let maxChild = 0;
+    for (const child of children) {
+        const cw = getElementIntrinsicWidth(child);
+        if (isFlexRow) {
+            total += cw;
+        } else {
+            if (cw > maxChild) maxChild = cw;
         }
     }
+    const ownPad = (parseFloat(el.style.paddingLeft) || 0) + (parseFloat(el.style.paddingRight) || 0);
+    const ownBorder = (parseFloat(el.style.borderLeftWidth) || 0) + (parseFloat(el.style.borderRightWidth) || 0);
+    const result = (isFlexRow ? total : maxChild) + ownPad + ownBorder;
+    return result;
+}
 
-    return rules;
+// ==================== NEW: computeBaseSpacing (IS2) ====================
+
+export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
+    const scale = Math.min(1, (viewportWidth || 960) / 960);
+    const round = (v) => Math.round(v);
+    return {
+        pad: round(16 * scale),
+        margin: round(8 * scale),
+        listIndent: round(24 * scale),
+        codePad: round(12 * scale),
+        cardPad: round(12 * scale),
+        btnPadV: round(8 * scale),
+        btnPadH: round(16 * scale),
+        gap: round(8 * scale),
+        scale: scale
+    };
 }
 
 // ==================== STYLE VERIFICATION (with P26 contrast) ====================
@@ -832,7 +862,7 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
 
 // ==================== CORRECTORS (Internal) ====================
 
-export function  correctContrastDoc(doc, minRatio) {
+function correctContrastDoc(doc, minRatio) {
     const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
@@ -853,7 +883,7 @@ export function  correctContrastDoc(doc, minRatio) {
     return rules;
 }
 
-export function  correctHarmonyDoc(doc) {
+function correctHarmonyDoc(doc) {
     const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
@@ -878,7 +908,7 @@ export function  correctHarmonyDoc(doc) {
     return rules;
 }
 
-export function  correctTextVisibilityDoc(doc, themeStyles, options) {
+function correctTextVisibilityDoc(doc, themeStyles, options) {
     const rules = [];
     const minLineHeight = options.minLineHeight ?? 1.2;
     const elements = doc.querySelectorAll('*');
@@ -909,7 +939,7 @@ export function  correctTextVisibilityDoc(doc, themeStyles, options) {
     return rules;
 }
 
-export function  correctButtonVisibilityDoc(doc) {
+function correctButtonVisibilityDoc(doc) {
     const rules = [];
     const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
     buttons.forEach(btn => {
@@ -939,7 +969,7 @@ export function  correctButtonVisibilityDoc(doc) {
 
 // ==================== BACKGROUND HELPER ====================
 
-export function  getEffectiveBackground(el) {
+function getEffectiveBackground(el) {
     let bg = extractBgFromShorthand(el);
     if (bg) return bg;
     let parent = el.parentNode;

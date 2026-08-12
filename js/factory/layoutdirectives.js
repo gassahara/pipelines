@@ -1,6 +1,5 @@
-// File #1: layoutdirectives.js (updated)
 import { rewritestyleattrs } from './stylizerutilities.js';
-import { getAllDescendants, applyStep } from './stylizerutilities.js';
+import { getAllDescendants, applyStep, getElementIntrinsicWidth } from './stylizerutilities.js';
 
 export function parseDirectives(str) {
     if (!str) return [];
@@ -254,10 +253,11 @@ export function generateCSSFromDirectives(elementId, directives, breakpointMap =
 
 // ==================== LAYOUT OPTIMIZATION ENGINE ====================
 
-export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
+export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {}) {
     const parser = new DOMParser();
     let doc = parser.parseFromString(html, 'text/html');
     const allRules = [];
+    const { viewportWidth = 1024, containerWidths = {} } = options;
 
     for (let iter = 0; iter < maxIterations; iter++) {
         let anyCorrection = false;
@@ -283,7 +283,7 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
                     break;
                 }
                 case 'overflow': {
-                    const violations = checkOverflowDoc(doc);
+                    const violations = checkOverflowDoc(doc, viewportWidth, containerWidths);
                     if (violations.length) {
                         const newRules = correctOverflowDoc(doc);
                         allRules.push(...newRules);
@@ -314,7 +314,6 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
         if (!anyCorrection) break;
     }
 
-    // Return both the modified HTML and the collected rules
     return { html: doc.body.innerHTML, rules: allRules };
 }
 
@@ -421,23 +420,32 @@ function correctOverlapDoc(doc) {
     return rules;
 }
 
-function checkOverflowDoc(doc) {
+function checkOverflowDoc(doc, viewportWidth, containerWidths) {
     const violations = [];
-    // Use applyStep with axis 'descendant' to traverse all descendants
     const allDescendants = applyStep([doc.body], { axis: 'descendant' });
     for (const el of allDescendants) {
-        const style = el.style;
-        const width = parseFloat(style.width) || 0;
-        const maxWidth = parseFloat(style.maxWidth) || 0;
-        const hasFixedWidth = width > 0 || maxWidth > 0;
-        if (hasFixedWidth) {
-            const text = el.textContent || '';
-            const words = text.split(/\s+/).filter(Boolean);
-            const hasLongWord = words.some(w => w.length > 30);
-            const totalLength = text.length;
-            if (hasLongWord || (totalLength > 100 && maxWidth < 400)) {
-                violations.push(el);
+        // Skip elements already inside an overflow wrapper
+        if (el.parentElement && el.parentElement.getAttribute('data-overflow-wrapper') === 'true') continue;
+        const iw = getElementIntrinsicWidth(el);
+        if (iw === 0) continue;
+
+        // Determine available width for this element
+        let aw = viewportWidth;
+        let parent = el.parentElement;
+        while (parent) {
+            const pid = parent.id || parent.tagName.toLowerCase();
+            if (containerWidths[pid]) {
+                aw = Math.min(aw, containerWidths[pid]);
+                break;
             }
+            parent = parent.parentElement;
+        }
+        // Consider own max-width if set
+        const ownMaxWidth = parseFloat(el.style.maxWidth) || 0;
+        if (ownMaxWidth > 0) aw = Math.min(aw, ownMaxWidth);
+
+        if (iw > aw) {
+            violations.push(el);
         }
     }
     return violations;
@@ -447,7 +455,6 @@ function correctOverflowDoc(doc) {
     const rules = [];
     const allDescendants = applyStep([doc.body], { axis: 'descendant' });
     for (const el of allDescendants) {
-        // Skip elements already inside an overflow wrapper
         if (el.parentElement && el.parentElement.getAttribute('data-overflow-wrapper') === 'true') continue;
         const style = el.style;
         const overflow = style.overflow || '';
@@ -457,11 +464,8 @@ function correctOverflowDoc(doc) {
             wrapper.setAttribute('data-overflow-wrapper', 'true');
             wrapper.style.overflow = 'auto';
             wrapper.style.maxWidth = '100%';
-            // Insert wrapper before the element
             el.parentNode.insertBefore(wrapper, el);
-            // Move element inside wrapper
             wrapper.appendChild(el);
-            // Record a rule for reporting
             const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
             rules.push({ selector, styles: { wrapped: 'true' } });
         }
@@ -512,8 +516,6 @@ function correctControlledOverlayDoc(doc) {
     });
     return rules;
 }
-
-// ==================== NEW: Selector-based Directive Application (P21) ====================
 
 export function applyDirectiveToSelector(html, selector, directiveString) {
     const directives = parseDirectives(directiveString);
