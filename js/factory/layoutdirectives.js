@@ -1,5 +1,10 @@
 import { rewritestyleattrs } from './stylizerutilities.js';
-import { getAllDescendants, applyStep, getElementIntrinsicWidth } from './stylizerutilities.js';
+import {
+    applyStep,
+    getAllDescendants,
+    buildLayoutPropertyMap,
+    computeIntrinsicSize
+} from './stylizerutilities.js';
 
 export function parseDirectives(str) {
     if (!str) return [];
@@ -366,7 +371,8 @@ function correctSpacingDoc(doc, minGap) {
 
 function checkOverlapDoc(doc) {
     const violations = [];
-    const positioned = Array.from(doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]'));
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    const positioned = allDescendants.filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
     for (let i = 0; i < positioned.length; i++) {
         for (let j = i + 1; j < positioned.length; j++) {
             const a = positioned[i], b = positioned[j];
@@ -391,7 +397,8 @@ function checkOverlapDoc(doc) {
 
 function correctOverlapDoc(doc) {
     const rules = [];
-    const positioned = Array.from(doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]'));
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    const positioned = allDescendants.filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
     for (let i = 0; i < positioned.length; i++) {
         for (let j = i + 1; j < positioned.length; j++) {
             const a = positioned[i], b = positioned[j];
@@ -422,29 +429,19 @@ function correctOverlapDoc(doc) {
 
 function checkOverflowDoc(doc, viewportWidth, containerWidths) {
     const violations = [];
+    const propertyMap = buildLayoutPropertyMap(doc.body, viewportWidth);
     const allDescendants = applyStep([doc.body], { axis: 'descendant' });
     for (const el of allDescendants) {
-        // Skip elements already inside an overflow wrapper
         if (el.parentElement && el.parentElement.getAttribute('data-overflow-wrapper') === 'true') continue;
-        const iw = getElementIntrinsicWidth(el);
-        if (iw === 0) continue;
-
-        // Determine available width for this element
-        let aw = viewportWidth;
-        let parent = el.parentElement;
-        while (parent) {
-            const pid = parent.id || parent.tagName.toLowerCase();
-            if (containerWidths[pid]) {
-                aw = Math.min(aw, containerWidths[pid]);
-                break;
+        const props = propertyMap.get(el);
+        if (!props) continue;
+        try {
+            const size = computeIntrinsicSize(el, propertyMap, props);
+            if (size.width > props.availableWidth) {
+                violations.push(el);
             }
-            parent = parent.parentElement;
-        }
-        // Consider own max-width if set
-        const ownMaxWidth = parseFloat(el.style.maxWidth) || 0;
-        if (ownMaxWidth > 0) aw = Math.min(aw, ownMaxWidth);
-
-        if (iw > aw) {
+        } catch (e) {
+            // If a required property cannot be resolved, we conservatively flag for wrapping.
             violations.push(el);
         }
     }
@@ -459,7 +456,6 @@ function correctOverflowDoc(doc) {
         const style = el.style;
         const overflow = style.overflow || '';
         if (!overflow || overflow === 'visible') {
-            // Create wrapper div
             const wrapper = doc.createElement('div');
             wrapper.setAttribute('data-overflow-wrapper', 'true');
             wrapper.style.overflow = 'auto';
@@ -475,7 +471,8 @@ function correctOverflowDoc(doc) {
 
 function checkScrollabilityDoc(doc) {
     const violations = [];
-    const scrollable = doc.querySelectorAll('[style*="overflow: auto"], [style*="overflow: scroll"]');
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    const scrollable = allDescendants.filter(el => el.style && (el.style.overflow === 'auto' || el.style.overflow === 'scroll'));
     scrollable.forEach(el => {
         if (!el.style.touchAction) violations.push(el);
     });
@@ -484,7 +481,8 @@ function checkScrollabilityDoc(doc) {
 
 function correctScrollabilityDoc(doc) {
     const rules = [];
-    const scrollable = doc.querySelectorAll('[style*="overflow: auto"], [style*="overflow: scroll"]');
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    const scrollable = allDescendants.filter(el => el.style && (el.style.overflow === 'auto' || el.style.overflow === 'scroll'));
     scrollable.forEach(el => {
         if (!el.style.touchAction) {
             const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
@@ -497,7 +495,8 @@ function correctScrollabilityDoc(doc) {
 
 function checkControlledOverlayDoc(doc) {
     const violations = [];
-    const overlays = doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]');
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    const overlays = allDescendants.filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
     overlays.forEach(el => {
         if (!el.style.zIndex) violations.push(el);
     });
@@ -506,7 +505,8 @@ function checkControlledOverlayDoc(doc) {
 
 function correctControlledOverlayDoc(doc) {
     const rules = [];
-    const overlays = doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]');
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    const overlays = allDescendants.filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
     overlays.forEach(el => {
         if (!el.style.zIndex) {
             const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
@@ -516,6 +516,8 @@ function correctControlledOverlayDoc(doc) {
     });
     return rules;
 }
+
+// ==================== NEW: Selector-based Directive Application (P21) ====================
 
 export function applyDirectiveToSelector(html, selector, directiveString) {
     const directives = parseDirectives(directiveString);

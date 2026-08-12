@@ -1,5 +1,4 @@
 import { logdebug, getverbosity, VERBOSITY } from '../verbosity.js';
-
 import {
     contrastRatio, computeForeground, emphasize,
     complementary, analogous, monochromatic, pick,
@@ -9,6 +8,8 @@ import {
     extractInlineStyle
 } from './colorutils.js';
 
+// ==================== RECURSIVE PATH ENGINE (extended) ====================
+
 export function  getAncestors(el, acc) {
     if (!acc) acc = [];
     var p = el.parentNode;
@@ -16,6 +17,7 @@ export function  getAncestors(el, acc) {
     var newAcc = p.nodeType === 1 ? acc.concat(p) : acc;
     return getAncestors(p, newAcc);
 }
+
 export function  getAllDescendants(el) {
     var children = Array.from(el.children || []);
     if (children.length === 0) return [];
@@ -46,7 +48,14 @@ export function  getDepth(ancestor, descendant) {
     return 1 + getDepth(ancestor, descendant.parentNode);
 }
 
-export function  applyStep(nodes, step) {
+/**
+ * Traverses a set of nodes according to a path step.
+ * @param {Array<Node>} nodes - Starting nodes.
+ * @param {Object} step - Step descriptor: { axis, tag, class, id, index, depth, skip, content }.
+ * @param {Function} [filterFn] - Optional post-filter for candidates.
+ * @returns {Array<Node>}
+ */
+export function  applyStep(nodes, step, filterFn = null) {
     return nodes.reduce(function(next, node) {
         var candidates = [];
         switch (step.axis || 'child') {
@@ -96,6 +105,10 @@ export function  applyStep(nodes, step) {
             });
         }
 
+        if (typeof filterFn === 'function') {
+            candidates = candidates.filter(filterFn);
+        }
+
         candidates.forEach(function(c) { if (next.indexOf(c) === -1) next.push(c); });
         return next;
     }, []);
@@ -103,6 +116,231 @@ export function  applyStep(nodes, step) {
 
 export function  resolvePath(root, steps) {
     return steps.reduce(function(currentNodes, step) { return applyStep(currentNodes, step); }, [root]);
+}
+
+// ==================== UNIT CONVERSION & PROPERTY MAP ====================
+
+/**
+ * Converts a CSS length value to pixels.
+ * @param {string|number} value - The CSS length (e.g., '16px', '100%', '1.5em', '12pt').
+ * @param {number} referencePx - The reference value in pixels (parent width for %, font size for em).
+ * @returns {number}
+ */
+export function parseLength(value, referencePx) {
+    if (typeof value === 'number') return value;
+    if (!value) return 0;
+    const str = String(value).trim();
+    const match = str.match(/^(-?[\d.]+)(px|%|em|rem|pt)?$/i);
+    if (!match) throw new Error('[parseLength] Invalid length value: ' + value);
+    const num = parseFloat(match[1]);
+    const unit = (match[2] || 'px').toLowerCase();
+    switch (unit) {
+        case 'px': return num;
+        case '%': return (num / 100) * referencePx;
+        case 'em': return num * referencePx;
+        case 'rem': return num * 16; // root font size
+        case 'pt': return num * 1.333;
+        default: throw new Error('[parseLength] Unknown unit: ' + unit);
+    }
+}
+
+/**
+ * Builds a map of layout properties for every element in the subtree.
+ * @param {Element} rootEl - Root element.
+ * @param {number} viewportWidth - Viewport width in pixels.
+ * @param {number} inheritedFontSize - Initial font size in pixels (default 16).
+ * @returns {Map<Element, Object>}
+ */
+export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize = 16) {
+    const map = new Map();
+
+    function walk(el, parentAvailableWidth, parentFontSize) {
+        const style = el.style || {};
+        const props = {
+            fontSize: parentFontSize,
+            width: null,
+            maxWidth: null,
+            minWidth: null,
+            height: null,
+            marginTop: 0,
+            marginBottom: 0,
+            marginLeft: 0,
+            marginRight: 0,
+            paddingTop: 0,
+            paddingBottom: 0,
+            paddingLeft: 0,
+            paddingRight: 0,
+            borderTopWidth: 0,
+            borderBottomWidth: 0,
+            borderLeftWidth: 0,
+            borderRightWidth: 0,
+            availableWidth: parentAvailableWidth
+        };
+
+        // Font size
+        if (style.fontSize) {
+            props.fontSize = parseLength(style.fontSize, parentFontSize);
+        }
+
+        // Box properties
+        if (style.width) {
+            props.width = parseLength(style.width, parentAvailableWidth);
+        }
+        if (style.maxWidth) {
+            props.maxWidth = parseLength(style.maxWidth, parentAvailableWidth);
+        }
+        if (style.minWidth) {
+            props.minWidth = parseLength(style.minWidth, parentAvailableWidth);
+        }
+        if (style.height) {
+            props.height = parseLength(style.height, parentAvailableWidth); // rough
+        }
+        if (style.marginTop) props.marginTop = parseLength(style.marginTop, parentAvailableWidth);
+        if (style.marginBottom) props.marginBottom = parseLength(style.marginBottom, parentAvailableWidth);
+        if (style.marginLeft) props.marginLeft = parseLength(style.marginLeft, parentAvailableWidth);
+        if (style.marginRight) props.marginRight = parseLength(style.marginRight, parentAvailableWidth);
+        if (style.paddingTop) props.paddingTop = parseLength(style.paddingTop, parentAvailableWidth);
+        if (style.paddingBottom) props.paddingBottom = parseLength(style.paddingBottom, parentAvailableWidth);
+        if (style.paddingLeft) props.paddingLeft = parseLength(style.paddingLeft, parentAvailableWidth);
+        if (style.paddingRight) props.paddingRight = parseLength(style.paddingRight, parentAvailableWidth);
+        if (style.borderTopWidth) props.borderTopWidth = parseLength(style.borderTopWidth, parentAvailableWidth);
+        if (style.borderBottomWidth) props.borderBottomWidth = parseLength(style.borderBottomWidth, parentAvailableWidth);
+        if (style.borderLeftWidth) props.borderLeftWidth = parseLength(style.borderLeftWidth, parentAvailableWidth);
+        if (style.borderRightWidth) props.borderRightWidth = parseLength(style.borderRightWidth, parentAvailableWidth);
+
+        // Content area width for children
+        const contentWidth = Math.max(0, parentAvailableWidth - props.paddingLeft - props.paddingRight - props.borderLeftWidth - props.borderRightWidth);
+        // Available width for self is constrained by own max/min/width
+        let selfAvailable = contentWidth;
+        if (props.maxWidth !== null) selfAvailable = Math.min(selfAvailable, props.maxWidth);
+        if (props.width !== null) selfAvailable = Math.min(selfAvailable, props.width);
+        if (props.minWidth !== null) selfAvailable = Math.max(selfAvailable, props.minWidth);
+        props.availableWidth = selfAvailable;
+
+        map.set(el, props);
+
+        // Recurse children
+        const children = applyStep([el], { axis: 'child' });
+        for (const child of children) {
+            walk(child, selfAvailable, props.fontSize);
+        }
+    }
+
+    walk(rootEl, viewportWidth, inheritedFontSize);
+    return map;
+}
+
+// ==================== INTRINSIC SIZE CALCULATOR ====================
+
+/**
+ * Computes the intrinsic width and height of a node, using the property map.
+ * @param {Node} node - Element or text node.
+ * @param {Map} propertyMap - Map from buildLayoutPropertyMap.
+ * @param {Object} inheritedProps - Props of the parent element (for text nodes).
+ * @returns {{width: number, height: number}}
+ */
+export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
+    if (!node) return { width: 0, height: 0 };
+
+    // Text node
+    if (node.nodeType === 3) {
+        const txt = node.nodeValue.trim();
+        if (!txt) return { width: 0, height: 0 };
+        const fontSize = inheritedProps.fontSize || 16;
+        const charWidth = fontSize * 0.6;
+        const whiteSpace = inheritedProps.whiteSpace || 'normal';
+        const wordBreak = inheritedProps.wordBreak || 'normal';
+        const lines = txt.split('\n');
+        let maxLineLen = 0;
+        for (const line of lines) {
+            const words = (whiteSpace === 'nowrap' || whiteSpace === 'pre') ? [line] : line.split(/\s+/).filter(Boolean);
+            if (words.length === 0) continue;
+            if (whiteSpace === 'nowrap' || whiteSpace === 'pre') {
+                const len = line.length * charWidth;
+                if (len > maxLineLen) maxLineLen = len;
+            } else {
+                let lineWidth = 0;
+                for (let i = 0; i < words.length; i++) {
+                    const wordLen = words[i].length * charWidth;
+                    lineWidth += wordLen + (i > 0 ? charWidth : 0); // spaces approximated
+                }
+                if (lineWidth > maxLineLen) maxLineLen = lineWidth;
+            }
+        }
+        const lineHeight = inheritedProps.fontSize * 1.2 || 19.2;
+        return { width: maxLineLen, height: lines.length * lineHeight };
+    }
+
+    // Element node
+    if (node.nodeType !== 1) return { width: 0, height: 0 };
+    const props = propertyMap.get(node);
+    if (!props) throw new Error('[computeIntrinsicSize] Missing property map entry for element: ' + node.tagName + (node.id ? '#' + node.id : ''));
+
+    const tag = node.tagName.toLowerCase();
+    const ownPadL = props.paddingLeft || 0;
+    const ownPadR = props.paddingRight || 0;
+    const ownPadT = props.paddingTop || 0;
+    const ownPadB = props.paddingBottom || 0;
+    const ownBorderL = props.borderLeftWidth || 0;
+    const ownBorderR = props.borderRightWidth || 0;
+
+    // Image
+    if (tag === 'img' || tag === 'svg') {
+        if (props.width !== null) {
+            return { width: props.width, height: props.height || (props.width * 0.75) };
+        }
+        throw new Error('[computeIntrinsicSize] Image without explicit width: ' + node.outerHTML);
+    }
+
+    // Table
+    if (tag === 'table') {
+        if (props.width !== null) {
+            return { width: props.width, height: props.height || 0 };
+        }
+        const rows = applyStep([node], { axis: 'child', tag: 'tr' });
+        if (rows.length === 0) return { width: 0, height: 0 };
+        const columnMax = {};
+        let totalHeight = 0;
+        for (const row of rows) {
+            const cells = applyStep([row], { axis: 'child' });
+            let rowHeight = 0;
+            cells.forEach((cell, colIdx) => {
+                const childSize = computeIntrinsicSize(cell, propertyMap, props);
+                columnMax[colIdx] = Math.max(columnMax[colIdx] || 0, childSize.width);
+                rowHeight = Math.max(rowHeight, childSize.height);
+            });
+            totalHeight += rowHeight;
+        }
+        const totalWidth = Object.values(columnMax).reduce((sum, w) => sum + w, 0) + ownPadL + ownPadR + ownBorderL + ownBorderR;
+        return { width: totalWidth, height: totalHeight + ownPadT + ownPadB };
+    }
+
+    // General block/inline
+    const children = Array.from(node.childNodes);
+    if (children.length === 0) {
+        // Empty element
+        return { width: ownPadL + ownPadR + ownBorderL + ownBorderR, height: ownPadT + ownPadB };
+    }
+
+    const display = node.style ? node.style.display : '';
+    const isFlexRow = display === 'flex' && (node.style.flexDirection === 'row' || !node.style.flexDirection);
+    let totalWidth = 0;
+    let maxChildWidth = 0;
+    let totalHeight = 0;
+    for (const child of children) {
+        const childSize = computeIntrinsicSize(child, propertyMap, props);
+        if (isFlexRow) {
+            totalWidth += childSize.width;
+            totalHeight = Math.max(totalHeight, childSize.height);
+        } else {
+            if (childSize.width > maxChildWidth) maxChildWidth = childSize.width;
+            totalHeight += childSize.height;
+        }
+    }
+    const contentWidth = isFlexRow ? totalWidth : maxChildWidth;
+    const width = contentWidth + ownPadL + ownPadR + ownBorderL + ownBorderR;
+    const height = (isFlexRow ? totalHeight : totalHeight) + ownPadT + ownPadB;
+    return { width, height };
 }
 
 // ==================== STYLIZER FUNCTION (unchanged) ====================
@@ -257,7 +495,8 @@ export function consolidateStyles(html) {
     const doc = parser.parseFromString(html, 'text/html');
     const safeProps = new Set([
         'color', 'font-family', 'font-size', 'font-weight', 'font-style',
-        'line-height', 'text-align', 'cursor', 'letter-spacing', 'word-spacing'
+        'line-height', 'text-align', 'cursor', 'letter-spacing', 'word-spacing',
+        'text-transform', 'text-decoration', 'font-variant'
     ]);
     function walk(el) {
         for (const child of el.children) {
@@ -324,9 +563,12 @@ export function  mergeAndApplyStyles(el, newStyles) {
     el.setAttribute('style', cssString);
 }
 
-// ==================== DYNAMIC BOUNDING ESTIMATOR (P1‑V3) ====================
+// ==================== DYNAMIC BOUNDING ESTIMATOR (kept for backward compat) ====================
 
 export function estimateRecursiveBounds(node) {
+    // Simple wrapper around computeIntrinsicSize with default map?
+    // For compatibility, we'll just call computeIntrinsicSize if property map available.
+    // But this function is rarely used now; we keep a naive version.
     if (node.nodeType === 3) {
         let txt = node.nodeValue.trim();
         if (!txt) return 0;
@@ -370,138 +612,6 @@ export function estimateRecursiveBounds(node) {
         return totalWidth;
     }
     return 0;
-}
-
-// ==================== computeTextMetrics (RP12) ====================
-
-export function computeTextMetrics(el) {
-    function getFontSizePx(element) {
-        if (!element || !element.style) return 16;
-        let raw = element.style.fontSize || element.style.getPropertyValue('font-size');
-        if (!raw) {
-            return element.parentElement ? getFontSizePx(element.parentElement) : 16;
-        }
-        raw = raw.trim();
-        let val = parseFloat(raw);
-        if (isNaN(val)) return 16;
-        if (raw.endsWith('pt')) val = val * 1.333;
-        else if (raw.endsWith('em') || raw.endsWith('rem')) val = val * 16;
-        else if (raw.endsWith('%')) {
-            const parentSize = element.parentElement ? getFontSizePx(element.parentElement) : 16;
-            val = (val / 100) * parentSize;
-        }
-        return val;
-    }
-    const fontSizePx = getFontSizePx(el);
-    const charWidth = fontSizePx * 0.6;
-
-    const text = el.textContent || '';
-    const whiteSpace = el.style.whiteSpace || 'normal';
-    const wordBreak = el.style.wordBreak || 'normal';
-    const isPre = whiteSpace === 'pre' || whiteSpace === 'pre-wrap' || whiteSpace === 'nowrap';
-    const isCode = wordBreak === 'break-all' || wordBreak === 'break-word';
-
-    let wordWidth = 0;
-    let blockWidth = 0;
-    if (isPre || isCode) {
-        const lines = text.split('\n');
-        let maxLineLen = 0;
-        for (const line of lines) {
-            const len = line.length;
-            if (len > maxLineLen) maxLineLen = len;
-        }
-        wordWidth = maxLineLen * charWidth;
-        blockWidth = wordWidth;
-    } else {
-        const words = text.split(/\s+/).filter(w => w.length > 0);
-        for (const w of words) {
-            const wWidth = w.length * charWidth;
-            if (wWidth > wordWidth) wordWidth = wWidth;
-        }
-        blockWidth = wordWidth;
-    }
-    return { charWidth, wordWidth, blockWidth };
-}
-
-// ==================== NEW: getElementIntrinsicWidth (IS1) ====================
-
-export function getElementIntrinsicWidth(el) {
-    if (!el) return 0;
-    // Text node
-    if (el.nodeType === 3) {
-        return computeTextMetrics(el.parentElement || el).blockWidth;
-    }
-    // Element node
-    if (el.nodeType !== 1) return 0;
-    const tag = el.tagName.toLowerCase();
-    // Image
-    if (tag === 'img' || tag === 'svg') {
-        const attrW = parseInt(el.getAttribute('width'));
-        if (!isNaN(attrW)) return attrW;
-        const styleW = parseFloat(el.style.width);
-        if (!isNaN(styleW)) return styleW;
-        return 300; // fallback
-    }
-    // Table
-    if (tag === 'table') {
-        let total = 0;
-        const cols = el.querySelectorAll('col');
-        if (cols.length > 0) {
-            for (const col of cols) {
-                const w = parseInt(col.getAttribute('width')) || parseFloat(col.style.width) || 0;
-                total += w;
-            }
-            if (total > 0) return total;
-        }
-        // Estimate from first row cells
-        const firstRow = el.querySelector('tr');
-        if (firstRow) {
-            for (const cell of firstRow.children) {
-                total += getElementIntrinsicWidth(cell);
-            }
-        }
-        return total || 200; // fallback
-    }
-    // Block / inline: max or sum of children
-    const children = Array.from(el.childNodes);
-    if (children.length === 0) {
-        const metrics = computeTextMetrics(el);
-        return Math.max(metrics.blockWidth, 0);
-    }
-    const display = el.style.display || '';
-    const isFlexRow = display === 'flex' && (el.style.flexDirection === 'row' || !el.style.flexDirection);
-    let total = 0;
-    let maxChild = 0;
-    for (const child of children) {
-        const cw = getElementIntrinsicWidth(child);
-        if (isFlexRow) {
-            total += cw;
-        } else {
-            if (cw > maxChild) maxChild = cw;
-        }
-    }
-    const ownPad = (parseFloat(el.style.paddingLeft) || 0) + (parseFloat(el.style.paddingRight) || 0);
-    const ownBorder = (parseFloat(el.style.borderLeftWidth) || 0) + (parseFloat(el.style.borderRightWidth) || 0);
-    const result = (isFlexRow ? total : maxChild) + ownPad + ownBorder;
-    return result;
-}
-
-// ==================== NEW: computeBaseSpacing (IS2) ====================
-
-export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
-    const scale = Math.min(1, (viewportWidth || 960) / 960);
-    const round = (v) => Math.round(v);
-    return {
-        pad: round(16 * scale),
-        margin: round(8 * scale),
-        listIndent: round(24 * scale),
-        codePad: round(12 * scale),
-        cardPad: round(12 * scale),
-        btnPadV: round(8 * scale),
-        btnPadH: round(16 * scale),
-        gap: round(8 * scale),
-        scale: scale
-    };
 }
 
 // ==================== STYLE VERIFICATION (with P26 contrast) ====================
@@ -708,6 +818,7 @@ export function checkOverflow(html) {
     walk(doc.body);
     return violations;
 }
+
 export function checkScrollability(html) {
     const violations = [];
     const parser = new DOMParser();
