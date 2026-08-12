@@ -279,20 +279,6 @@ export function consolidateStyles(html) {
     return doc.body.innerHTML;
 }
 
-// ==================== COLOR UTILITIES (internal) ====================
-
-function toHex(color) {
-    if (!color) return '#000000';
-    if (color.startsWith('rgb')) {
-        const match = color.match(/\d+/g);
-        if (match && match.length >= 3) {
-            return rgbToHex(parseInt(match[0]), parseInt(match[1]), parseInt(match[2]));
-        }
-        return '#000000';
-    }
-    return color;
-}
-
 // ==================== IMPROVED BACKGROUND EXTRACTION (P5) ====================
 
 function extractBgFromShorthand(el) {
@@ -315,9 +301,7 @@ function extractBgFromShorthand(el) {
 // ==================== SAFE STYLE MERGE HELPER (P3) ====================
 
 function mergeAndApplyStyles(el, newStyles) {
-    // 1. Get current style attribute string
     const currentStyleAttr = el.getAttribute('style') || '';
-    // 2. Parse current styles into an object (kebab-case keys)
     const currentStyles = {};
     if (currentStyleAttr.trim()) {
         currentStyleAttr.split(';').forEach(decl => {
@@ -331,26 +315,21 @@ function mergeAndApplyStyles(el, newStyles) {
             }
         });
     }
-    // 3. Merge new styles (override existing)
-    // Convert camelCase keys to kebab-case for CSS attribute
     const merged = { ...currentStyles };
     Object.keys(newStyles).forEach(camelProp => {
         const kebabProp = camelProp.replace(/([A-Z])/g, '-$1').toLowerCase();
         merged[kebabProp] = newStyles[camelProp];
     });
-    // 4. Build CSS string
     const cssString = Object.entries(merged)
         .map(([prop, val]) => `${prop}: ${val}`)
         .join('; ');
-    // 5. Set attribute
     el.setAttribute('style', cssString);
 }
 
 // ==================== DYNAMIC BOUNDING ESTIMATOR (P1‑V3) ====================
 
-function estimateRecursiveBounds(node) {
+export function estimateRecursiveBounds(node) {
     if (node.nodeType === 3) {
-        // Text node
         let txt = node.nodeValue.trim();
         if (!txt) return 0;
         let parent = node.parentElement;
@@ -373,7 +352,6 @@ function estimateRecursiveBounds(node) {
         }
         let charPx = (fSize || 16) * 0.6;
         if (isNowrap) return txt.length * charPx;
-        
         let words = txt.split(/\s+/);
         return Math.max(0, ...words.map(w => w.length)) * charPx;
     }
@@ -383,7 +361,6 @@ function estimateRecursiveBounds(node) {
         }
         let totalWidth = 0;
         let isFlexRow = node.style.display === 'flex' && (node.style.flexDirection === 'row' || !node.style.flexDirection);
-        
         for (let child of node.childNodes) {
             let childWidth = estimateRecursiveBounds(child);
             if (isFlexRow) {
@@ -395,6 +372,176 @@ function estimateRecursiveBounds(node) {
         return totalWidth;
     }
     return 0;
+}
+
+// ==================== NEW: computeTextMetrics (RP12) ====================
+
+export function computeTextMetrics(el) {
+    // Compute effective font size in px
+    function getFontSizePx(element) {
+        if (!element || !element.style) return 16;
+        let raw = element.style.fontSize || element.style.getPropertyValue('font-size');
+        if (!raw) {
+            // try parent
+            return element.parentElement ? getFontSizePx(element.parentElement) : 16;
+        }
+        raw = raw.trim();
+        let val = parseFloat(raw);
+        if (isNaN(val)) return 16;
+        if (raw.endsWith('pt')) val = val * 1.333;
+        else if (raw.endsWith('em') || raw.endsWith('rem')) val = val * 16;
+        else if (raw.endsWith('%')) {
+            const parentSize = element.parentElement ? getFontSizePx(element.parentElement) : 16;
+            val = (val / 100) * parentSize;
+        }
+        return val;
+    }
+    const fontSizePx = getFontSizePx(el);
+    const charWidth = fontSizePx * 0.6; // approximation
+
+    // Determine text content and wrapping behaviour
+    const text = el.textContent || '';
+    const whiteSpace = el.style.whiteSpace || 'normal';
+    const wordBreak = el.style.wordBreak || 'normal';
+    const isPre = whiteSpace === 'pre' || whiteSpace === 'pre-wrap' || whiteSpace === 'nowrap';
+    const isCode = wordBreak === 'break-all' || wordBreak === 'break-word';
+
+    let wordWidth = 0;
+    let blockWidth = 0;
+    if (isPre || isCode) {
+        // Non-wrapping: calculate max line length
+        const lines = text.split('\n');
+        let maxLineLen = 0;
+        for (const line of lines) {
+            const len = line.length;
+            if (len > maxLineLen) maxLineLen = len;
+        }
+        wordWidth = maxLineLen * charWidth;
+        blockWidth = wordWidth;
+    } else {
+        // Wrapping: split into words, find max word length
+        const words = text.split(/\s+/).filter(w => w.length > 0);
+        for (const w of words) {
+            const wWidth = w.length * charWidth;
+            if (wWidth > wordWidth) wordWidth = wWidth;
+        }
+        // Block width is constrained by container, but we return wordWidth as worst-case
+        blockWidth = wordWidth;
+    }
+    return { charWidth, wordWidth, blockWidth };
+}
+
+// ==================== NEW: generateAlgorithmicLayoutRules (RP14) ====================
+
+export function generateAlgorithmicLayoutRules(html, containerWidths, viewportWidth, themeStyles) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const rules = [];
+
+    // Compute available width for each container from the map or fallback to viewportWidth
+    const getAvailableWidth = (element) => {
+        const id = element.id || element.tagName.toLowerCase();
+        if (containerWidths[id]) return containerWidths[id];
+        // Try parent
+        let parent = element.parentElement;
+        while (parent) {
+            const pid = parent.id || parent.tagName.toLowerCase();
+            if (containerWidths[pid]) return containerWidths[pid];
+            parent = parent.parentElement;
+        }
+        return viewportWidth || 1024;
+    };
+
+    // For all block-level children, compute spacing
+    const allElements = doc.querySelectorAll('*');
+    for (const el of allElements) {
+        // Skip text nodes; only elements
+        if (!el.tagName) continue;
+
+        const contentWidth = estimateRecursiveBounds(el); // approximate content width
+        const availableWidth = getAvailableWidth(el);
+
+        // Image resizing (RP16)
+        if (el.tagName.toLowerCase() === 'img') {
+            let imgWidth = parseFloat(el.style.width || el.getAttribute('width') || 0);
+            if (imgWidth > availableWidth) {
+                const selector = el.id ? { id: el.id } : { tag: 'img' };
+                rules.push({ selector, styles: { maxWidth: '100%', height: 'auto' } });
+            }
+            continue;
+        }
+
+        // Adjust margins/paddings for block containers
+        const tag = el.tagName.toLowerCase();
+        if (['div', 'p', 'li', 'pre', 'blockquote', 'table', 'th', 'td', 'ul', 'ol'].includes(tag)) {
+            let marginBottom = 6;
+            let padding = 8;
+            // Scale based on viewport width: smaller screens get smaller spacing
+            const scale = Math.min(1, viewportWidth / 960);
+            marginBottom = Math.round(marginBottom * scale);
+            padding = Math.round(padding * scale);
+
+            const selector = el.id ? { id: el.id } : { tag: tag };
+            // Only push if not already set? We'll push and let rewritestyleattrs merge
+            rules.push({ selector, styles: { marginBottom: marginBottom + 'px', padding: padding + 'px' } });
+        }
+    }
+
+    return rules;
+}
+
+// ==================== NEW: wrapOverflowingElements (RP13) ====================
+
+export function wrapOverflowingElements(html, containerWidths, viewportWidth) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const availableWidth = viewportWidth || 1024;
+
+    // Helper to check if an element should be wrapped
+    function shouldWrap(el) {
+        const contentWidth = estimateRecursiveBounds(el);
+        // Get parent container width if available, else viewport
+        let parentWidth = availableWidth;
+        let parentEl = el.parentElement;
+        while (parentEl) {
+            const pid = parentEl.id || parentEl.tagName.toLowerCase();
+            if (containerWidths[pid]) {
+                parentWidth = containerWidths[pid];
+                break;
+            }
+            parentEl = parentEl.parentElement;
+        }
+        const effectiveMax = Math.min(parentWidth, availableWidth);
+        return contentWidth > effectiveMax;
+    }
+
+    // Traverse all elements that are direct children of body or known containers
+    const targets = doc.querySelectorAll('body > *');
+    for (const target of targets) {
+        if (shouldWrap(target)) {
+            const wrapper = doc.createElement('div');
+            wrapper.style.overflow = 'auto';
+            wrapper.style.maxWidth = '100%';
+            // Move the target inside wrapper
+            target.parentNode.insertBefore(wrapper, target);
+            wrapper.appendChild(target);
+        }
+    }
+
+    // Also handle nested cases: for any element with fixed width or long content
+    const allElements = doc.querySelectorAll('*');
+    for (const el of allElements) {
+        if (el === doc.body) continue;
+        if (shouldWrap(el) && el.parentElement) {
+            const wrapper = doc.createElement('div');
+            wrapper.style.overflow = 'auto';
+            wrapper.style.maxWidth = '100%';
+            el.parentNode.insertBefore(wrapper, el);
+            wrapper.appendChild(el);
+        }
+    }
+
+    return doc.body.innerHTML;
 }
 
 // ==================== STYLE VERIFICATION (with P26 contrast) ====================
@@ -423,12 +570,11 @@ export function verifyContrast(html, minRatio = 4.5) {
             const fg = el.style.color;
             const bg = getEffectiveBackground(el);
             if (fg && bg) {
-                const fgHex = toHex(fg);
-                const bgHex = toHex(bg);
+                const fgHex = rgbToHex(fg);
+                const bgHex = rgbToHex(bg);
                 const ratio = contrastRatio(fgHex, bgHex);
                 if (ratio < minRatio) {
                     const newFg = getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
-                    // Use safe style merge (P3) to apply the new color
                     mergeAndApplyStyles(el, { color: newFg });
                     corrections.push({
                         element: el.tagName + (el.id ? '#' + el.id : ''),
@@ -507,11 +653,11 @@ export function verifyHarmony(html, options = {}) {
         const bg = extractBgFromShorthand(el) || '#ffffff';
         const color = el.style.color;
         if (color) {
-            const score = colorHarmonyScore(toHex(color), toHex(bg));
+            const score = colorHarmonyScore(rgbToHex(color), rgbToHex(bg));
             if (score < 0.5) {
-                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), score, color: toHex(color), bg: toHex(bg) });
+                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), score, color: rgbToHex(color), bg: rgbToHex(bg) });
                 if (options.autoCorrect) {
-                    const palette = getHarmoniousPalette(toHex(bg), 3, { scheme: 'analogous' });
+                    const palette = getHarmoniousPalette(rgbToHex(bg), 3, { scheme: 'analogous' });
                     if (palette.length > 0) {
                         const newColor = palette[0];
                         mergeAndApplyStyles(el, { color: newColor });
@@ -702,11 +848,6 @@ export function runVerification(html, goals = []) {
 
 // ==================== STYLE OPTIMIZATION ENGINE (UPDATED) ====================
 
-/**
- * Optimizes style HTML by applying contrast, harmony, text visibility, button visibility.
- * Now accepts themeStyles for semantic corrections and returns rules (P23).
- * Returns { html, rules }.
- */
 export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations = 5) {
     const parser = new DOMParser();
     let doc = parser.parseFromString(html, 'text/html');
@@ -767,12 +908,12 @@ function correctContrastDoc(doc, minRatio) {
             const bg = getEffectiveBackground(el);
             if (bg) {
                 const fg = el.style.color;
-                const ratio = contrastRatio(toHex(fg), toHex(bg));
+                const ratio = contrastRatio(rgbToHex(fg), rgbToHex(bg));
                 if (ratio < minRatio) {
-                    const newFg = getOptimalForeground(toHex(bg), minRatio, { scheme: 'complementary' });
+                    const newFg = getOptimalForeground(rgbToHex(bg), minRatio, { scheme: 'complementary' });
                     const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
                     rules.push({ selector, styles: { color: newFg } });
-                    mergeAndApplyStyles(el, { color: newFg }); // P3
+                    mergeAndApplyStyles(el, { color: newFg });
                 }
             }
         }
@@ -787,8 +928,8 @@ function correctHarmonyDoc(doc) {
         if (el.textContent.trim() && el.style.color) {
             const bg = getEffectiveBackground(el);
             if (bg) {
-                const fg = toHex(el.style.color);
-                const bgHex = toHex(bg);
+                const fg = rgbToHex(el.style.color);
+                const bgHex = rgbToHex(bg);
                 const score = colorHarmonyScore(fg, bgHex);
                 if (score < 0.5) {
                     const palette = getHarmoniousPalette(bgHex, 3, { scheme: 'analogous' });
@@ -805,8 +946,6 @@ function correctHarmonyDoc(doc) {
     return rules;
 }
 
-// ==================== UPDATED TEXT VISIBILITY (P2, P3) ====================
-
 function correctTextVisibilityDoc(doc, themeStyles, options) {
     const rules = [];
     const minLineHeight = options.minLineHeight ?? 1.2;
@@ -820,7 +959,6 @@ function correctTextVisibilityDoc(doc, themeStyles, options) {
             const lineHeight = parseFloat(el.style.lineHeight) || 0;
             let needsUpdate = false;
             const styles = {};
-            // P2: only modify if explicit inline font-size exists and is below minimum
             if (el.style.fontSize && currentSize > 0 && currentSize < minSize) {
                 styles.fontSize = minSize + 'px';
                 needsUpdate = true;
@@ -832,14 +970,12 @@ function correctTextVisibilityDoc(doc, themeStyles, options) {
             if (needsUpdate) {
                 const selector = el.id ? { id: el.id } : { tag: tag };
                 rules.push({ selector, styles });
-                mergeAndApplyStyles(el, styles); // P3
+                mergeAndApplyStyles(el, styles);
             }
         }
     });
     return rules;
 }
-
-// ==================== UPDATED BUTTON VISIBILITY (P1‑V3, P3) ====================
 
 function correctButtonVisibilityDoc(doc) {
     const rules = [];
@@ -848,9 +984,8 @@ function correctButtonVisibilityDoc(doc) {
         const width = parseFloat(btn.style.width) || 0;
         const height = parseFloat(btn.style.height) || 0;
         const styles = {};
-        
-        // P1‑V3: dynamic min-width estimation
-        const estimatedTextBoundPx = typeof estimateRecursiveBounds === 'function' ? estimateRecursiveBounds(btn) : 0;
+
+        const estimatedTextBoundPx = estimateRecursiveBounds(btn);
         const requiredMinimumBounds = Math.max(44, estimatedTextBoundPx + 24);
         if (width < requiredMinimumBounds) {
             styles.minWidth = requiredMinimumBounds + 'px';
@@ -864,7 +999,7 @@ function correctButtonVisibilityDoc(doc) {
         if (Object.keys(styles).length) {
             const selector = btn.id ? { id: btn.id } : { tag: btn.tagName.toLowerCase() };
             rules.push({ selector, styles });
-            mergeAndApplyStyles(btn, styles); // P3
+            mergeAndApplyStyles(btn, styles);
         }
     });
     return rules;

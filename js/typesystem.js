@@ -88,28 +88,40 @@ export const TYPESCHEMA = {
   }
 };
 
+// =============== FC10: Unified field validator ===============
+
+/**
+ * Validates a value against a field specification object.
+ * Returns an array of error strings (empty if valid).
+ */
+export function validateFields(value, fieldSpecs) {
+    const errors = [];
+    if (value === null || value === undefined) {
+        errors.push('VALUE IS NULL OR UNDEFINED');
+        return errors;
+    }
+    for (const [key, rules] of Object.entries(fieldSpecs)) {
+        const propvalue = value[key];
+        if (rules.required && (propvalue === undefined || propvalue === null)) {
+            errors.push('REQUIRED PROPERTY "' + key + '" IS MISSING');
+            continue;
+        }
+        if (propvalue !== undefined && propvalue !== null) {
+            const actualtype = Array.isArray(propvalue) ? 'array' : typeof propvalue;
+            if (rules.type && actualtype !== rules.type) {
+                errors.push('PROPERTY "' + key + '" MUST BE OF TYPE ' + rules.type + ' (GOT ' + actualtype + ')');
+            }
+        }
+    }
+    return errors;
+}
 
 export const validate = (value, schemaname) => {
     const schema = TYPESCHEMA[schemaname];
     if (!schema) return { tag: 'success' };
-
-    if (value === null || value === undefined) {
-        return { tag: 'failure', message: 'VALUE FOR SCHEMA "' + schemaname + '" IS NULL OR UNDEFINED' };
-    }
-
-    for (const [key, rules] of Object.entries(schema)) {
-        const propvalue = value[key];
-        
-        if (rules.required && (propvalue === undefined || propvalue === null)) {
-            return { tag: 'failure', message: 'REQUIRED PROPERTY "' + key + '" IS MISSING IN SCHEMA "' + schemaname + '"' };
-        }
-
-        if (propvalue !== undefined && propvalue !== null) {
-            const actualtype = Array.isArray(propvalue) ? 'array' : typeof propvalue;
-            if (actualtype !== rules.type) {
-                return { tag: 'failure', message: 'PROPERTY "' + key + '" MUST BE OF TYPE ' + rules.type + ' (GOT ' + actualtype + ') IN SCHEMA "' + schemaname + '"' };
-            }
-        }
+    const errors = validateFields(value, schema);
+    if (errors.length > 0) {
+        return { tag: 'failure', message: 'VALIDATION FAILED FOR SCHEMA "' + schemaname + '": ' + errors.join('; ') };
     }
     return { tag: 'success' };
 };
@@ -217,7 +229,6 @@ export async function validateschema(value, schema, context = 'stream', registry
 
     return errors;
 }
-
 
 export function validateformalblock(block, registries = {}) {
     const errors = [];
@@ -392,15 +403,15 @@ export function validatedomqueryblock(block) {
     return errors;
 }
 
-  export function validateblockproperties(block) {
-      const errors = [];
-      if (block.type === 'domquery') {
-          const cmdprops = block.command && block.command.properties;
-          if (!cmdprops) {
-              errors.push('DOMQUERY: block "' + block.id + '" requires command.properties block');
-          } else if (typeof cmdprops !== 'object') {
-              errors.push('DOMQUERY: block "' + block.id + '" command.properties must be an object');
-          }
-      }
-      return errors;
-  }
+export function validateblockproperties(block) {
+    const errors = [];
+    if (block.type === 'domquery') {
+        const cmdprops = block.command && block.command.properties;
+        if (!cmdprops) {
+            errors.push('DOMQUERY: block "' + block.id + '" requires command.properties block');
+        } else if (typeof cmdprops !== 'object') {
+            errors.push('DOMQUERY: block "' + block.id + '" command.properties must be an object');
+        }
+    }
+    return errors;
+}

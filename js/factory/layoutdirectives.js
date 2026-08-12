@@ -1,4 +1,5 @@
 import { rewritestyleattrs } from './stylizerutilities.js';
+import { getAllDescendants, applyStep } from './stylizerutilities.js'; // FC4: import path helpers
 
 export function parseDirectives(str) {
     if (!str) return [];
@@ -319,7 +320,8 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
 function checkSpacingDoc(doc, minGap) {
     const violations = [];
     const walk = (parent) => {
-        const children = Array.from(parent.children).filter(el => {
+        // Use getAllDescendants to get children that are block-level
+        const children = getAllDescendants(parent).filter(el => {
             const display = el.style.display || 'inline';
             return display === 'block' || display === 'flex' || display === 'grid' ||
                    ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li'].includes(el.tagName.toLowerCase());
@@ -339,7 +341,7 @@ function checkSpacingDoc(doc, minGap) {
 function correctSpacingDoc(doc, minGap) {
     const rules = [];
     const walk = (parent) => {
-        const children = Array.from(parent.children).filter(el => {
+        const children = getAllDescendants(parent).filter(el => {
             const display = el.style.display || 'inline';
             return display === 'block' || display === 'flex' || display === 'grid' ||
                    ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li'].includes(el.tagName.toLowerCase());
@@ -419,10 +421,11 @@ function correctOverlapDoc(doc) {
     return rules;
 }
 
-// Improved overflow detection with text overflow (P25)
 function checkOverflowDoc(doc) {
     const violations = [];
-    const walk = (el) => {
+    // Use applyStep with axis 'descendant' to traverse all descendants
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    for (const el of allDescendants) {
         const style = el.style;
         const width = parseFloat(style.width) || 0;
         const maxWidth = parseFloat(style.maxWidth) || 0;
@@ -436,15 +439,14 @@ function checkOverflowDoc(doc) {
                 violations.push(el);
             }
         }
-        for (const child of el.children) walk(child);
-    };
-    walk(doc.body);
+    }
     return violations;
 }
 
 function correctOverflowDoc(doc) {
     const rules = [];
-    const walk = (el) => {
+    const allDescendants = applyStep([doc.body], { axis: 'descendant' });
+    for (const el of allDescendants) {
         const style = el.style;
         const overflow = style.overflow || '';
         if (!overflow || overflow === 'visible') {
@@ -463,9 +465,7 @@ function correctOverflowDoc(doc) {
             el.style.maxWidth = '100%';
             el.style.whiteSpace = 'normal';
         }
-        for (const child of el.children) walk(child);
-    };
-    walk(doc.body);
+    }
     return rules;
 }
 
