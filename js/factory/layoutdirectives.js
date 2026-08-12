@@ -143,7 +143,6 @@ export function generateCSSFromDirectives(elementId, directives, breakpointMap =
                         break;
                     case 'center':
                         inlineStyles.maxWidth = '960px';
-                        inlineStyles.margin = '0 auto';
                         break;
                     case 'top-left':
                         inlineStyles.position = 'relative';
