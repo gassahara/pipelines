@@ -8,7 +8,7 @@ import {
     extractInlineStyle
 } from './colorutils.js';
 
-// ==================== RECURSIVE PATH ENGINE (extended) ====================
+// ==================== RECURSIVE PATH ENGINE ====================
 
 export function  getAncestors(el, acc) {
     if (!acc) acc = [];
@@ -18,7 +18,7 @@ export function  getAncestors(el, acc) {
     return getAncestors(p, newAcc);
 }
 
-export function  getAllDescendants(el) {
+export function getAllDescendants(el) {
     var children = Array.from(el.children || []);
     if (children.length === 0) return [];
     return children.reduce(function(all, child) {
@@ -55,7 +55,7 @@ export function  getDepth(ancestor, descendant) {
  * @param {Function} [filterFn] - Optional post-filter for candidates.
  * @returns {Array<Node>}
  */
-export function  applyStep(nodes, step, filterFn = null) {
+export function applyStep(nodes, step, filterFn = null) {
     return nodes.reduce(function(next, node) {
         var candidates = [];
         switch (step.axis || 'child') {
@@ -120,12 +120,6 @@ export function  resolvePath(root, steps) {
 
 // ==================== UNIT CONVERSION & PROPERTY MAP ====================
 
-/**
- * Converts a CSS length value to pixels.
- * @param {string|number} value - The CSS length (e.g., '16px', '100%', '1.5em', '12pt').
- * @param {number} referencePx - The reference value in pixels (parent width for %, font size for em).
- * @returns {number}
- */
 export function parseLength(value, referencePx) {
     if (typeof value === 'number') return value;
     if (!value) return 0;
@@ -138,19 +132,34 @@ export function parseLength(value, referencePx) {
         case 'px': return num;
         case '%': return (num / 100) * referencePx;
         case 'em': return num * referencePx;
-        case 'rem': return num * 16; // root font size
+        case 'rem': return num * 16;
         case 'pt': return num * 1.333;
         default: throw new Error('[parseLength] Unknown unit: ' + unit);
     }
 }
 
 /**
- * Builds a map of layout properties for every element in the subtree.
- * @param {Element} rootEl - Root element.
- * @param {number} viewportWidth - Viewport width in pixels.
- * @param {number} inheritedFontSize - Initial font size in pixels (default 16).
- * @returns {Map<Element, Object>}
+ * Computes viewport-scaled base spacing values.
+ * @param {number} viewportWidth - Current viewport width in pixels.
+ * @param {number} baseFontSize - Reference font size, not currently used.
+ * @returns {Object}
  */
+export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
+    const scale = Math.min(1, (viewportWidth || 960) / 960);
+    const round = (v) => Math.round(v);
+    return {
+        pad: round(16 * scale),
+        margin: round(8 * scale),
+        listIndent: round(24 * scale),
+        codePad: round(12 * scale),
+        cardPad: round(12 * scale),
+        btnPadV: round(8 * scale),
+        btnPadH: round(16 * scale),
+        gap: round(8 * scale),
+        scale: scale
+    };
+}
+
 export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize = 16) {
     const map = new Map();
 
@@ -177,24 +186,11 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
             availableWidth: parentAvailableWidth
         };
 
-        // Font size
-        if (style.fontSize) {
-            props.fontSize = parseLength(style.fontSize, parentFontSize);
-        }
-
-        // Box properties
-        if (style.width) {
-            props.width = parseLength(style.width, parentAvailableWidth);
-        }
-        if (style.maxWidth) {
-            props.maxWidth = parseLength(style.maxWidth, parentAvailableWidth);
-        }
-        if (style.minWidth) {
-            props.minWidth = parseLength(style.minWidth, parentAvailableWidth);
-        }
-        if (style.height) {
-            props.height = parseLength(style.height, parentAvailableWidth); // rough
-        }
+        if (style.fontSize) props.fontSize = parseLength(style.fontSize, parentFontSize);
+        if (style.width) props.width = parseLength(style.width, parentAvailableWidth);
+        if (style.maxWidth) props.maxWidth = parseLength(style.maxWidth, parentAvailableWidth);
+        if (style.minWidth) props.minWidth = parseLength(style.minWidth, parentAvailableWidth);
+        if (style.height) props.height = parseLength(style.height, parentAvailableWidth);
         if (style.marginTop) props.marginTop = parseLength(style.marginTop, parentAvailableWidth);
         if (style.marginBottom) props.marginBottom = parseLength(style.marginBottom, parentAvailableWidth);
         if (style.marginLeft) props.marginLeft = parseLength(style.marginLeft, parentAvailableWidth);
@@ -208,9 +204,7 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
         if (style.borderLeftWidth) props.borderLeftWidth = parseLength(style.borderLeftWidth, parentAvailableWidth);
         if (style.borderRightWidth) props.borderRightWidth = parseLength(style.borderRightWidth, parentAvailableWidth);
 
-        // Content area width for children
         const contentWidth = Math.max(0, parentAvailableWidth - props.paddingLeft - props.paddingRight - props.borderLeftWidth - props.borderRightWidth);
-        // Available width for self is constrained by own max/min/width
         let selfAvailable = contentWidth;
         if (props.maxWidth !== null) selfAvailable = Math.min(selfAvailable, props.maxWidth);
         if (props.width !== null) selfAvailable = Math.min(selfAvailable, props.width);
@@ -219,7 +213,6 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
 
         map.set(el, props);
 
-        // Recurse children
         const children = applyStep([el], { axis: 'child' });
         for (const child of children) {
             walk(child, selfAvailable, props.fontSize);
@@ -230,19 +223,9 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
     return map;
 }
 
-// ==================== INTRINSIC SIZE CALCULATOR ====================
-
-/**
- * Computes the intrinsic width and height of a node, using the property map.
- * @param {Node} node - Element or text node.
- * @param {Map} propertyMap - Map from buildLayoutPropertyMap.
- * @param {Object} inheritedProps - Props of the parent element (for text nodes).
- * @returns {{width: number, height: number}}
- */
 export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
     if (!node) return { width: 0, height: 0 };
 
-    // Text node
     if (node.nodeType === 3) {
         const txt = node.nodeValue.trim();
         if (!txt) return { width: 0, height: 0 };
@@ -262,7 +245,7 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
                 let lineWidth = 0;
                 for (let i = 0; i < words.length; i++) {
                     const wordLen = words[i].length * charWidth;
-                    lineWidth += wordLen + (i > 0 ? charWidth : 0); // spaces approximated
+                    lineWidth += wordLen + (i > 0 ? charWidth : 0);
                 }
                 if (lineWidth > maxLineLen) maxLineLen = lineWidth;
             }
@@ -271,7 +254,6 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
         return { width: maxLineLen, height: lines.length * lineHeight };
     }
 
-    // Element node
     if (node.nodeType !== 1) return { width: 0, height: 0 };
     const props = propertyMap.get(node);
     if (!props) throw new Error('[computeIntrinsicSize] Missing property map entry for element: ' + node.tagName + (node.id ? '#' + node.id : ''));
@@ -284,7 +266,6 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
     const ownBorderL = props.borderLeftWidth || 0;
     const ownBorderR = props.borderRightWidth || 0;
 
-    // Image
     if (tag === 'img' || tag === 'svg') {
         if (props.width !== null) {
             return { width: props.width, height: props.height || (props.width * 0.75) };
@@ -292,11 +273,8 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
         throw new Error('[computeIntrinsicSize] Image without explicit width: ' + node.outerHTML);
     }
 
-    // Table
     if (tag === 'table') {
-        if (props.width !== null) {
-            return { width: props.width, height: props.height || 0 };
-        }
+        if (props.width !== null) return { width: props.width, height: props.height || 0 };
         const rows = applyStep([node], { axis: 'child', tag: 'tr' });
         if (rows.length === 0) return { width: 0, height: 0 };
         const columnMax = {};
@@ -315,12 +293,8 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
         return { width: totalWidth, height: totalHeight + ownPadT + ownPadB };
     }
 
-    // General block/inline
     const children = Array.from(node.childNodes);
-    if (children.length === 0) {
-        // Empty element
-        return { width: ownPadL + ownPadR + ownBorderL + ownBorderR, height: ownPadT + ownPadB };
-    }
+    if (children.length === 0) return { width: ownPadL + ownPadR + ownBorderL + ownBorderR, height: ownPadT + ownPadB };
 
     const display = node.style ? node.style.display : '';
     const isFlexRow = display === 'flex' && (node.style.flexDirection === 'row' || !node.style.flexDirection);
@@ -339,11 +313,11 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
     }
     const contentWidth = isFlexRow ? totalWidth : maxChildWidth;
     const width = contentWidth + ownPadL + ownPadR + ownBorderL + ownBorderR;
-    const height = (isFlexRow ? totalHeight : totalHeight) + ownPadT + ownPadB;
+    const height = totalHeight + ownPadT + ownPadB;
     return { width, height };
 }
 
-// ==================== STYLIZER FUNCTION (unchanged) ====================
+// ==================== STYLIZER FUNCTION ====================
 
 export function rewritestyleattrs(html, rules) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -375,7 +349,7 @@ export function rewritestyleattrs(html, rules) {
     return body.innerHTML;
 }
 
-// ==================== COLOR SCHEME UTILITY (unchanged) ====================
+// ==================== COLOR SCHEME UTILITY ====================
 
 export function computecolorscheme(pos, tilecols, cellw, cellh, gridcols) {
     var colstart = Math.max(0, Math.min(Math.floor((pos.clientx || 0) / cellw), gridcols - 1));
@@ -422,15 +396,10 @@ export function injectResponsiveStyles(html, breakpointRules) {
         css += `@media ${cond} {\n`;
         for (const rule of bp.rules) {
             let selector;
-            if (rule.id) {
-                selector = `#${rule.id}`;
-            } else if (rule.class) {
-                selector = `.${rule.class}`;
-            } else if (rule.tag) {
-                selector = rule.tag;
-            } else {
-                selector = '*';
-            }
+            if (rule.id) selector = `#${rule.id}`;
+            else if (rule.class) selector = `.${rule.class}`;
+            else if (rule.tag) selector = rule.tag;
+            else selector = '*';
             css += `  ${selector} {\n`;
             for (const [prop, val] of Object.entries(rule.style)) {
                 const kebabProp = prop.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
@@ -441,15 +410,12 @@ export function injectResponsiveStyles(html, breakpointRules) {
         css += `}\n`;
     }
     css += '</style>';
-
     const lastDivIdx = html.lastIndexOf('</div>');
-    if (lastDivIdx !== -1) {
-        return html.slice(0, lastDivIdx) + css + html.slice(lastDivIdx);
-    }
+    if (lastDivIdx !== -1) return html.slice(0, lastDivIdx) + css + html.slice(lastDivIdx);
     return html + css;
 }
 
-// ==================== TAG STYLE EXTRACTION (P12) ====================
+// ==================== TAG STYLE EXTRACTION ====================
 
 export function extractAllTagStyles(referenceHTML) {
     const parser = new DOMParser();
@@ -457,18 +423,13 @@ export function extractAllTagStyles(referenceHTML) {
     const refRoot = doc.getElementById('theme-reference');
     if (!refRoot) return {};
     const map = {};
-
-    // 1. Extract base styles from the root element itself (P12)
     const rootStyle = {};
     for (let i = 0; i < refRoot.style.length; i++) {
         const prop = refRoot.style[i];
         rootStyle[prop] = refRoot.style[prop];
     }
-    if (Object.keys(rootStyle).length > 0) {
-        map['root'] = rootStyle;
-    }
+    if (Object.keys(rootStyle).length > 0) map['root'] = rootStyle;
 
-    // 2. Extract child styles by tag name
     for (const el of refRoot.children) {
         const tag = el.tagName.toLowerCase();
         const styleObj = {};
@@ -477,14 +438,10 @@ export function extractAllTagStyles(referenceHTML) {
             styleObj[prop] = el.style[prop];
         }
         if (Object.keys(styleObj).length > 0) {
-            if (map[tag]) {
-                map[tag] = { ...map[tag], ...styleObj };
-            } else {
-                map[tag] = styleObj;
-            }
+            if (map[tag]) map[tag] = { ...map[tag], ...styleObj };
+            else map[tag] = styleObj;
         }
     }
-
     return map;
 }
 
@@ -516,13 +473,12 @@ export function consolidateStyles(html) {
     return doc.body.innerHTML;
 }
 
-// ==================== IMPROVED BACKGROUND EXTRACTION (P5) ====================
+// ==================== IMPROVED BACKGROUND EXTRACTION ====================
 
 export function  extractBgFromShorthand(el) {
     if (el.style.backgroundColor) return el.style.backgroundColor;
     const bg = el.style.background;
     if (!bg) return null;
-    // P5: handle gradients by extracting first hex fallback
     if (bg.includes('gradient')) {
         const gradHex = bg.match(/#[0-9a-fA-F]{3,6}/);
         if (gradHex) return gradHex[0];
@@ -535,7 +491,7 @@ export function  extractBgFromShorthand(el) {
     return null;
 }
 
-// ==================== SAFE STYLE MERGE HELPER (P3) ====================
+// ==================== SAFE STYLE MERGE HELPER ====================
 
 export function  mergeAndApplyStyles(el, newStyles) {
     const currentStyleAttr = el.getAttribute('style') || '';
@@ -557,37 +513,28 @@ export function  mergeAndApplyStyles(el, newStyles) {
         const kebabProp = camelProp.replace(/([A-Z])/g, '-$1').toLowerCase();
         merged[kebabProp] = newStyles[camelProp];
     });
-    const cssString = Object.entries(merged)
-        .map(([prop, val]) => `${prop}: ${val}`)
-        .join('; ');
+    const cssString = Object.entries(merged).map(([prop, val]) => `${prop}: ${val}`).join('; ');
     el.setAttribute('style', cssString);
 }
 
-// ==================== DYNAMIC BOUNDING ESTIMATOR (kept for backward compat) ====================
+// ==================== DYNAMIC BOUNDING ESTIMATOR (compat) ====================
 
 export function estimateRecursiveBounds(node) {
-    // Simple wrapper around computeIntrinsicSize with default map?
-    // For compatibility, we'll just call computeIntrinsicSize if property map available.
-    // But this function is rarely used now; we keep a naive version.
     if (node.nodeType === 3) {
         let txt = node.nodeValue.trim();
         if (!txt) return 0;
         let parent = node.parentElement;
         let fSize = 16;
         let isNowrap = false;
-        while(parent && parent.style) {
-            if(parent.style.fontSize) {
+        while (parent && parent.style) {
+            if (parent.style.fontSize) {
                 let rawFs = parent.style.fontSize;
-                if (rawFs.includes('rem') || rawFs.includes('em')) {
-                    fSize = parseFloat(rawFs) * 16;
-                } else if (rawFs.includes('%')) {
-                    fSize = (parseFloat(rawFs) / 100) * 16;
-                } else {
-                    fSize = parseFloat(rawFs);
-                }
+                if (rawFs.includes('rem') || rawFs.includes('em')) fSize = parseFloat(rawFs) * 16;
+                else if (rawFs.includes('%')) fSize = (parseFloat(rawFs) / 100) * 16;
+                else fSize = parseFloat(rawFs);
                 break;
             }
-            if(parent.style.whiteSpace === 'nowrap') isNowrap = true;
+            if (parent.style.whiteSpace === 'nowrap') isNowrap = true;
             parent = parent.parentElement;
         }
         let charPx = (fSize || 16) * 0.6;
@@ -603,18 +550,15 @@ export function estimateRecursiveBounds(node) {
         let isFlexRow = node.style.display === 'flex' && (node.style.flexDirection === 'row' || !node.style.flexDirection);
         for (let child of node.childNodes) {
             let childWidth = estimateRecursiveBounds(child);
-            if (isFlexRow) {
-                totalWidth += childWidth;
-            } else {
-                totalWidth = Math.max(totalWidth, childWidth);
-            }
+            if (isFlexRow) totalWidth += childWidth;
+            else totalWidth = Math.max(totalWidth, childWidth);
         }
         return totalWidth;
     }
     return 0;
 }
 
-// ==================== STYLE VERIFICATION (with P26 contrast) ====================
+// ==================== STYLE VERIFICATION ====================
 
 export function verifyContrast(html, minRatio = 4.5) {
     const parser = new DOMParser();
@@ -654,17 +598,10 @@ export function verifyContrast(html, minRatio = 4.5) {
                 }
             }
         }
-        for (const child of el.children) {
-            walk(child);
-        }
+        for (const child of el.children) walk(child);
     }
-
     walk(doc.body);
-
-    if (corrections.length) {
-        console.warn('[verifyContrast] Contrast corrections applied:', corrections);
-    }
-
+    if (corrections.length) console.warn('[verifyContrast] Contrast corrections applied:', corrections);
     return doc.body.innerHTML;
 }
 
@@ -677,15 +614,9 @@ export function verifyTextVisibility(html) {
             const fontSize = parseFloat(el.style.fontSize) || 0;
             const lineHeight = parseFloat(el.style.lineHeight) || 0;
             const color = el.style.color;
-            if (fontSize && fontSize < 12) {
-                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'font-size too small', value: fontSize });
-            }
-            if (lineHeight && lineHeight < 1.2) {
-                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'line-height too tight', value: lineHeight });
-            }
-            if (!color || color === 'transparent') {
-                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'text color not set or transparent' });
-            }
+            if (fontSize && fontSize < 12) violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'font-size too small', value: fontSize });
+            if (lineHeight && lineHeight < 1.2) violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'line-height too tight', value: lineHeight });
+            if (!color || color === 'transparent') violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'text color not set or transparent' });
         }
         for (const child of el.children) walk(child);
     }
@@ -697,18 +628,20 @@ export function verifyButtonVisibility(html) {
     const violations = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    const buttons = allElements.filter(el => {
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute('role');
+        const type = el.getAttribute('type');
+        return tag === 'button' || (role === 'button') || (tag === 'input' && (type === 'submit' || type === 'button'));
+    });
     buttons.forEach(btn => {
         const width = parseFloat(btn.style.width) || 0;
         const height = parseFloat(btn.style.height) || 0;
         const fontSize = parseFloat(btn.style.fontSize) || 0;
         const cursor = btn.style.cursor;
-        if (width < 44 || height < 44) {
-            violations.push({ element: btn.tagName + (btn.id ? '#'+btn.id : ''), issue: 'touch target too small', w: width, h: height });
-        }
-        if (cursor !== 'pointer') {
-            violations.push({ element: btn.tagName + (btn.id ? '#'+btn.id : ''), issue: 'cursor not pointer' });
-        }
+        if (width < 44 || height < 44) violations.push({ element: btn.tagName + (btn.id ? '#'+btn.id : ''), issue: 'touch target too small', w: width, h: height });
+        if (cursor !== 'pointer') violations.push({ element: btn.tagName + (btn.id ? '#'+btn.id : ''), issue: 'cursor not pointer' });
     });
     return violations;
 }
@@ -717,7 +650,7 @@ export function verifyHarmony(html, options = {}) {
     const violations = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const allElements = doc.querySelectorAll('*');
+    const allElements = Array.from(doc.getElementsByTagName('*'));
     allElements.forEach(el => {
         if (!el.textContent.trim()) return;
         const bg = extractBgFromShorthand(el) || '#ffffff';
@@ -739,7 +672,7 @@ export function verifyHarmony(html, options = {}) {
     return { html: options.autoCorrect ? doc.body.innerHTML : html, violations };
 }
 
-// ==================== LAYOUT VERIFICATION (unchanged) ====================
+// ==================== LAYOUT VERIFICATION ====================
 
 export function checkSpacing(html, minGap = 12) {
     const violations = [];
@@ -773,7 +706,8 @@ export function checkOverlap(html) {
     const violations = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const positioned = Array.from(doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]'));
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    const positioned = allElements.filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
     for (let i = 0; i < positioned.length; i++) {
         for (let j = i + 1; j < positioned.length; j++) {
             const a = positioned[i], b = positioned[j];
@@ -785,16 +719,15 @@ export function checkOverlap(html) {
             const bLeft = parseFloat(b.style.left) || 0;
             const bWidth = parseFloat(b.style.width) || 0;
             const bHeight = parseFloat(b.style.height) || 0;
-            if (aWidth && aHeight && bWidth && bHeight) {
-                if (aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
-                    aTop < bTop + bHeight && aTop + aHeight > bTop) {
-                    violations.push({
-                        elementA: a.tagName + (a.id ? '#'+a.id : ''),
-                        elementB: b.tagName + (b.id ? '#'+b.id : ''),
-                        zone: { top: Math.max(aTop, bTop), left: Math.max(aLeft, bLeft),
-                                bottom: Math.min(aTop+aHeight, bTop+bHeight), right: Math.min(aLeft+aWidth, bLeft+bWidth) }
-                    });
-                }
+            if (aWidth && aHeight && bWidth && bHeight &&
+                aLeft < bLeft + bWidth && aLeft + aWidth > bLeft &&
+                aTop < bTop + bHeight && aTop + aHeight > bTop) {
+                violations.push({
+                    elementA: a.tagName + (a.id ? '#'+a.id : ''),
+                    elementB: b.tagName + (b.id ? '#'+b.id : ''),
+                    zone: { top: Math.max(aTop, bTop), left: Math.max(aLeft, bLeft),
+                            bottom: Math.min(aTop+aHeight, bTop+bHeight), right: Math.min(aLeft+aWidth, bLeft+bWidth) }
+                });
             }
         }
     }
@@ -823,7 +756,8 @@ export function checkScrollability(html) {
     const violations = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const scrollable = doc.querySelectorAll('[style*="overflow: auto"], [style*="overflow: scroll"]');
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    const scrollable = allElements.filter(el => el.style && (el.style.overflow === 'auto' || el.style.overflow === 'scroll'));
     scrollable.forEach(el => {
         if (el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth) {
             violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'scrollable container has no overflowing content' });
@@ -839,11 +773,10 @@ export function checkControlledOverlay(html) {
     const violations = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const overlays = doc.querySelectorAll('[style*="position: absolute"], [style*="position: fixed"]');
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    const overlays = allElements.filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
     overlays.forEach(el => {
-        if (!el.style.zIndex) {
-            violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'positioned element lacks z-index' });
-        }
+        if (!el.style.zIndex) violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'positioned element lacks z-index' });
     });
     return violations;
 }
@@ -852,13 +785,17 @@ export function checkFocusVisibility(html) {
     const violations = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const focusable = doc.querySelectorAll('a[href], button, input, select, textarea, [tabindex]');
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    const focusable = allElements.filter(el => {
+        const tag = el.tagName.toLowerCase();
+        const href = el.getAttribute('href');
+        const tabindex = el.getAttribute('tabindex');
+        return tag === 'a' && href || tag === 'button' || tag === 'input' || tag === 'select' || tag === 'textarea' || tabindex !== null;
+    });
     focusable.forEach(el => {
         const hasFocusOutline = el.hasAttribute('onfocus') ||
             (el.style.outline && el.style.outline !== 'none' && el.style.outline !== '0px');
-        if (!hasFocusOutline) {
-            violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'no focus indicator' });
-        }
+        if (!hasFocusOutline) violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), issue: 'no focus indicator' });
     });
     return violations;
 }
@@ -867,56 +804,21 @@ export function runVerification(html, goals = []) {
     const result = { passed: true, violations: [], correctedHtml: html };
     for (const goal of goals) {
         switch (goal) {
-            case 'contrast':
-                result.correctedHtml = verifyContrast(result.correctedHtml);
-                break;
-            case 'spacing': {
-                const v = checkSpacing(result.correctedHtml);
-                if (v.length) { result.passed = false; result.violations.push(...v); }
-                break;
-            }
-            case 'overlap': {
-                const v = checkOverlap(result.correctedHtml);
-                if (v.length) { result.passed = false; result.violations.push(...v); }
-                break;
-            }
-            case 'overflow': {
-                const v = checkOverflow(result.correctedHtml);
-                if (v.length) { result.passed = false; result.violations.push(...v); }
-                break;
-            }
-            case 'scrollability': {
-                const v = checkScrollability(result.correctedHtml);
-                if (v.length) { result.passed = false; result.violations.push(...v); }
-                break;
-            }
-            case 'overlay': {
-                const v = checkControlledOverlay(result.correctedHtml);
-                if (v.length) { result.passed = false; result.violations.push(...v); }
-                break;
-            }
-            case 'textvisibility': {
-                const v = verifyTextVisibility(result.correctedHtml);
-                if (v.length) { result.passed = false; result.violations.push(...v); }
-                break;
-            }
-            case 'buttonvisibility': {
-                const v = verifyButtonVisibility(result.correctedHtml);
-                if (v.length) { result.passed = false; result.violations.push(...v); }
-                break;
-            }
-            case 'harmony': {
-                const res = verifyHarmony(result.correctedHtml, { autoCorrect: true });
-                result.correctedHtml = res.html;
-                if (res.violations.length) { result.passed = false; result.violations.push(...res.violations); }
-                break;
-            }
+            case 'contrast': result.correctedHtml = verifyContrast(result.correctedHtml); break;
+            case 'spacing': { const v = checkSpacing(result.correctedHtml); if (v.length) { result.passed = false; result.violations.push(...v); } break; }
+            case 'overlap': { const v = checkOverlap(result.correctedHtml); if (v.length) { result.passed = false; result.violations.push(...v); } break; }
+            case 'overflow': { const v = checkOverflow(result.correctedHtml); if (v.length) { result.passed = false; result.violations.push(...v); } break; }
+            case 'scrollability': { const v = checkScrollability(result.correctedHtml); if (v.length) { result.passed = false; result.violations.push(...v); } break; }
+            case 'overlay': { const v = checkControlledOverlay(result.correctedHtml); if (v.length) { result.passed = false; result.violations.push(...v); } break; }
+            case 'textvisibility': { const v = verifyTextVisibility(result.correctedHtml); if (v.length) { result.passed = false; result.violations.push(...v); } break; }
+            case 'buttonvisibility': { const v = verifyButtonVisibility(result.correctedHtml); if (v.length) { result.passed = false; result.violations.push(...v); } break; }
+            case 'harmony': { const res = verifyHarmony(result.correctedHtml, { autoCorrect: true }); result.correctedHtml = res.html; if (res.violations.length) { result.passed = false; result.violations.push(...res.violations); } break; }
         }
     }
     return result;
 }
 
-// ==================== STYLE OPTIMIZATION ENGINE (UPDATED) ====================
+// ==================== STYLE OPTIMIZATION ENGINE ====================
 
 export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations = 5) {
     const parser = new DOMParser();
@@ -930,35 +832,23 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
                 case 'contrast': {
                     const minRatio = goal.options?.minRatio ?? 4.5;
                     const newRules = correctContrastDoc(doc, minRatio);
-                    if (newRules.length) {
-                        allRules.push(...newRules);
-                        anyCorrection = true;
-                    }
+                    if (newRules.length) { allRules.push(...newRules); anyCorrection = true; }
                     break;
                 }
                 case 'harmony': {
                     const newRules = correctHarmonyDoc(doc);
-                    if (newRules.length) {
-                        allRules.push(...newRules);
-                        anyCorrection = true;
-                    }
+                    if (newRules.length) { allRules.push(...newRules); anyCorrection = true; }
                     break;
                 }
                 case 'textVisibility': {
                     const options = goal.options || {};
                     const newRules = correctTextVisibilityDoc(doc, themeStyles, options);
-                    if (newRules.length) {
-                        allRules.push(...newRules);
-                        anyCorrection = true;
-                    }
+                    if (newRules.length) { allRules.push(...newRules); anyCorrection = true; }
                     break;
                 }
                 case 'buttonVisibility': {
                     const newRules = correctButtonVisibilityDoc(doc);
-                    if (newRules.length) {
-                        allRules.push(...newRules);
-                        anyCorrection = true;
-                    }
+                    if (newRules.length) { allRules.push(...newRules); anyCorrection = true; }
                     break;
                 }
             }
@@ -968,12 +858,12 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
     return { html: doc.body.innerHTML, rules: allRules };
 }
 
-// ==================== CORRECTORS (Internal) ====================
+// ==================== CORRECTORS ====================
 
 export function  correctContrastDoc(doc, minRatio) {
     const rules = [];
-    const elements = doc.querySelectorAll('*');
-    elements.forEach(el => {
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    allElements.forEach(el => {
         if (el.textContent.trim() && el.style.color) {
             const bg = getEffectiveBackground(el);
             if (bg) {
@@ -993,8 +883,8 @@ export function  correctContrastDoc(doc, minRatio) {
 
 export function  correctHarmonyDoc(doc) {
     const rules = [];
-    const elements = doc.querySelectorAll('*');
-    elements.forEach(el => {
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    allElements.forEach(el => {
         if (el.textContent.trim() && el.style.color) {
             const bg = getEffectiveBackground(el);
             if (bg) {
@@ -1019,8 +909,8 @@ export function  correctHarmonyDoc(doc) {
 export function  correctTextVisibilityDoc(doc, themeStyles, options) {
     const rules = [];
     const minLineHeight = options.minLineHeight ?? 1.2;
-    const elements = doc.querySelectorAll('*');
-    elements.forEach(el => {
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    allElements.forEach(el => {
         if (el.textContent.trim()) {
             const tag = el.tagName.toLowerCase();
             const themeFontSize = themeStyles[tag]?.fontSize || themeStyles['p']?.fontSize || '16px';
@@ -1049,23 +939,22 @@ export function  correctTextVisibilityDoc(doc, themeStyles, options) {
 
 export function  correctButtonVisibilityDoc(doc) {
     const rules = [];
-    const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
+    const allElements = Array.from(doc.getElementsByTagName('*'));
+    const buttons = allElements.filter(el => {
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute('role');
+        const type = el.getAttribute('type');
+        return tag === 'button' || role === 'button' || (tag === 'input' && (type === 'submit' || type === 'button'));
+    });
     buttons.forEach(btn => {
         const width = parseFloat(btn.style.width) || 0;
         const height = parseFloat(btn.style.height) || 0;
         const styles = {};
-
         const estimatedTextBoundPx = estimateRecursiveBounds(btn);
         const requiredMinimumBounds = Math.max(44, estimatedTextBoundPx + 24);
-        if (width < requiredMinimumBounds) {
-            styles.minWidth = requiredMinimumBounds + 'px';
-        }
-        if (height < 44) {
-            styles.minHeight = '44px';
-        }
-        if (!btn.style.cursor) {
-            styles.cursor = 'pointer';
-        }
+        if (width < requiredMinimumBounds) styles.minWidth = requiredMinimumBounds + 'px';
+        if (height < 44) styles.minHeight = '44px';
+        if (!btn.style.cursor) styles.cursor = 'pointer';
         if (Object.keys(styles).length) {
             const selector = btn.id ? { id: btn.id } : { tag: btn.tagName.toLowerCase() };
             rules.push({ selector, styles });
