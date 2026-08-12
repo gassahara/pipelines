@@ -93,7 +93,7 @@ function findRgbColor(str) {
 
 // ==================== UNIT CONVERSION & PARSING ====================
 
-export function parseLength(value, referencePx) {
+export function parseLength(value, referencePx = 16) {
     if (typeof value === 'number') return value;
     if (!value) return 0;
     if(value == "auto") value = referencePx;
@@ -123,9 +123,10 @@ export function parseLength(value, referencePx) {
     }
     if (numStr === '' || numStr === '.') throw new Error('[parseLength] Invalid length value: ' + value);
     const num = sign * parseFloat(numStr);
-    const unit = str.slice(i).toLowerCase();
+    const unit = str.slice(i).toLowerCase().trim();
     switch (unit) {
         case 'px': return num;
+        case '': return num;
         case '%': return (num / 100) * referencePx;
         case 'em': return num * referencePx;
         case 'rem': return num * 16;
