@@ -10,7 +10,7 @@ import {
 
 // ==================== RECURSIVE PATH ENGINE (unchanged) ====================
 
-function getAncestors(el, acc) {
+export function  getAncestors(el, acc) {
     if (!acc) acc = [];
     var p = el.parentNode;
     if (!p) return acc;
@@ -18,7 +18,7 @@ function getAncestors(el, acc) {
     return getAncestors(p, newAcc);
 }
 
-function getAllDescendants(el) {
+export function  getAllDescendants(el) {
     var children = Array.from(el.children || []);
     if (children.length === 0) return [];
     return children.reduce(function(all, child) {
@@ -26,7 +26,7 @@ function getAllDescendants(el) {
     }, []);
 }
 
-function getNextSiblings(el, acc) {
+export function  getNextSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.nextSibling;
     if (!sib) return acc;
@@ -34,7 +34,7 @@ function getNextSiblings(el, acc) {
     return getNextSiblings(sib, newAcc);
 }
 
-function getPreviousSiblings(el, acc) {
+export function  getPreviousSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.previousSibling;
     if (!sib) return acc;
@@ -42,13 +42,13 @@ function getPreviousSiblings(el, acc) {
     return getPreviousSiblings(sib, newAcc);
 }
 
-function getDepth(ancestor, descendant) {
+export function  getDepth(ancestor, descendant) {
     if (!descendant || descendant === ancestor) return 0;
     if (descendant.nodeType !== 1) return getDepth(ancestor, descendant.parentNode);
     return 1 + getDepth(ancestor, descendant.parentNode);
 }
 
-function applyStep(nodes, step) {
+export function  applyStep(nodes, step) {
     return nodes.reduce(function(next, node) {
         var candidates = [];
         switch (step.axis || 'child') {
@@ -103,7 +103,7 @@ function applyStep(nodes, step) {
     }, []);
 }
 
-function resolvePath(root, steps) {
+export function  resolvePath(root, steps) {
     return steps.reduce(function(currentNodes, step) { return applyStep(currentNodes, step); }, [root]);
 }
 
@@ -281,7 +281,7 @@ export function consolidateStyles(html) {
 
 // ==================== IMPROVED BACKGROUND EXTRACTION (P5) ====================
 
-function extractBgFromShorthand(el) {
+export function  extractBgFromShorthand(el) {
     if (el.style.backgroundColor) return el.style.backgroundColor;
     const bg = el.style.background;
     if (!bg) return null;
@@ -300,7 +300,7 @@ function extractBgFromShorthand(el) {
 
 // ==================== SAFE STYLE MERGE HELPER (P3) ====================
 
-function mergeAndApplyStyles(el, newStyles) {
+export function  mergeAndApplyStyles(el, newStyles) {
     const currentStyleAttr = el.getAttribute('style') || '';
     const currentStyles = {};
     if (currentStyleAttr.trim()) {
@@ -900,7 +900,7 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
 
 // ==================== CORRECTORS (Internal) ====================
 
-function correctContrastDoc(doc, minRatio) {
+export function  correctContrastDoc(doc, minRatio) {
     const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
@@ -921,7 +921,7 @@ function correctContrastDoc(doc, minRatio) {
     return rules;
 }
 
-function correctHarmonyDoc(doc) {
+export function  correctHarmonyDoc(doc) {
     const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
@@ -946,7 +946,7 @@ function correctHarmonyDoc(doc) {
     return rules;
 }
 
-function correctTextVisibilityDoc(doc, themeStyles, options) {
+export function  correctTextVisibilityDoc(doc, themeStyles, options) {
     const rules = [];
     const minLineHeight = options.minLineHeight ?? 1.2;
     const elements = doc.querySelectorAll('*');
@@ -977,7 +977,7 @@ function correctTextVisibilityDoc(doc, themeStyles, options) {
     return rules;
 }
 
-function correctButtonVisibilityDoc(doc) {
+export function  correctButtonVisibilityDoc(doc) {
     const rules = [];
     const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
     buttons.forEach(btn => {
@@ -1007,7 +1007,7 @@ function correctButtonVisibilityDoc(doc) {
 
 // ==================== BACKGROUND HELPER ====================
 
-function getEffectiveBackground(el) {
+export function  getEffectiveBackground(el) {
     let bg = extractBgFromShorthand(el);
     if (bg) return bg;
     let parent = el.parentNode;
