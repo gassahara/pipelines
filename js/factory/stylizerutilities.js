@@ -8,6 +8,162 @@ import {
     extractInlineStyle
 } from './colorutils.js';
 
+// ==================== CHARACTER AND STRING HELPERS (NO REGEX) ====================
+
+const DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
+
+function isWhitespace(ch) {
+    return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
+}
+
+function tokenizeWhitespace(str) {
+    const tokens = [];
+    let current = '';
+    for (let i = 0; i < str.length; i++) {
+        const ch = str[i];
+        if (isWhitespace(ch)) {
+            if (current) { tokens.push(current); current = ''; }
+        } else {
+            current += ch;
+        }
+    }
+    if (current) tokens.push(current);
+    return tokens;
+}
+
+function camelToKebab(camel) {
+    let result = '';
+    for (let i = 0; i < camel.length; i++) {
+        const ch = camel[i];
+        if (ch >= 'A' && ch <= 'Z') {
+            result += '-' + ch.toLowerCase();
+        } else {
+            result += ch;
+        }
+    }
+    return result;
+}
+
+function kebabToCamel(kebab) {
+    let result = '';
+    let upperNext = false;
+    for (let i = 0; i < kebab.length; i++) {
+        const ch = kebab[i];
+        if (ch === '-') {
+            upperNext = true;
+        } else if (upperNext) {
+            result += ch.toUpperCase();
+            upperNext = false;
+        } else {
+            result += ch;
+        }
+    }
+    return result;
+}
+
+function isHexDigit(ch) {
+    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+}
+
+function findHexColor(str, startIndex = 0) {
+    for (let i = startIndex; i < str.length; i++) {
+        if (str[i] === '#') {
+            let j = i + 1;
+            let count = 0;
+            while (j < str.length && isHexDigit(str[j]) && count < 6) {
+                j++;
+                count++;
+            }
+            if (count === 3 || count === 6) {
+                return '#' + str.slice(i + 1, j);
+            }
+        }
+    }
+    return null;
+}
+
+function findRgbColor(str) {
+    const marker = 'rgb(';
+    let index = str.indexOf(marker);
+    if (index === -1) return null;
+    let close = str.indexOf(')', index + marker.length);
+    if (close === -1) return null;
+    return str.slice(index, close + 1);
+}
+
+// ==================== UNIT CONVERSION & PARSING ====================
+
+export function parseLength(value, referencePx) {
+    if (typeof value === 'number') return value;
+    if (!value) return 0;
+    const str = String(value).trim();
+    let i = 0;
+    let sign = 1;
+    if (str[i] === '+') { i++; }
+    else if (str[i] === '-') { sign = -1; i++; }
+    let numStr = '';
+    let dotSeen = false;
+    while (i < str.length) {
+        const ch = str[i];
+        if ((ch >= '0' && ch <= '9') || ch === '.') {
+            if (ch === '.') {
+                if (dotSeen) throw new Error('[parseLength] Invalid length value: ' + value);
+                dotSeen = true;
+            }
+            numStr += ch;
+            i++;
+        } else {
+            break;
+        }
+    }
+    if (numStr === '' || numStr === '.') throw new Error('[parseLength] Invalid length value: ' + value);
+    const num = sign * parseFloat(numStr);
+    const unit = str.slice(i).toLowerCase();
+    switch (unit) {
+        case 'px': return num;
+        case '%': return (num / 100) * referencePx;
+        case 'em': return num * referencePx;
+        case 'rem': return num * 16;
+        case 'pt': return num * (96 / 72);
+        case 'pc': return num * 16;
+        case 'in': return num * 96;
+        case 'cm': return num * (96 / 2.54);
+        case 'mm': return num * (96 / 25.4);
+        case 'q': return num * (96 / 101.6);
+        default: throw new Error('[parseLength] Unknown unit: ' + unit);
+    }
+}
+
+export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
+    const scale = Math.min(1, (viewportWidth || 960) / 960);
+    const round = (v) => Math.round(v);
+    return {
+        pad: round(16 * scale),
+        margin: round(8 * scale),
+        listIndent: round(24 * scale),
+        codePad: round(12 * scale),
+        cardPad: round(12 * scale),
+        btnPadV: round(8 * scale),
+        btnPadH: round(16 * scale),
+        gap: round(8 * scale),
+        scale: scale
+    };
+}
+
+function parseShorthandLengths(value, referencePx) {
+    if (!value) return null;
+    const tokens = tokenizeWhitespace(String(value));
+    if (tokens.length === 0) return null;
+    const nums = tokens.map(t => parseLength(t, referencePx));
+    switch (nums.length) {
+        case 1: return { top: nums[0], right: nums[0], bottom: nums[0], left: nums[0] };
+        case 2: return { top: nums[0], right: nums[1], bottom: nums[0], left: nums[1] };
+        case 3: return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[1] };
+        case 4: return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[3] };
+        default: return null;
+    }
+}
+
 // ==================== RECURSIVE PATH ENGINE ====================
 
 function getAncestors(el, acc) {
@@ -111,60 +267,7 @@ function resolvePath(root, steps) {
     return steps.reduce(function(currentNodes, step) { return applyStep(currentNodes, step); }, [root]);
 }
 
-// ==================== UNIT CONVERSION & PROPERTY MAP ====================
-
-export function parseLength(value, referencePx) { 
-    if (typeof value === 'number') return value;
-    if (!value) return 0;
-    if(value == "auto") value = referencePx;
-    if(value == "medium") value = referencePx * 1.3;
-    if(value == "large") value = referencePx * 1.5;
-    if(value == "small") value = referencePx * 0.7;
-    if(value == "tiny") value = referencePx * 0.5; 
-    const str = String(value).trim();
-    const match = str.match(/^(-?[\d.]+)(px|%|em|rem|pt)?$/i);
-    if (!match) throw new Error('[parseLength] Invalid length value: ' + value);
-    const num = parseFloat(match[1]);
-    const unit = (match[2] || 'px').toLowerCase();
-    switch (unit) {
-    case 'px': return num;
-    case '%': return (num / 100) * referencePx;
-    case 'em': return num * referencePx;
-    case 'rem': return num * 16;
-    case 'pt': return num * 1.333; 
-    default: throw new Error('[parseLength] Unknown unit: ' + unit);
-    }
-}  
-
-export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
-    const scale = Math.min(1, (viewportWidth || 960) / 960);
-    const round = (v) => Math.round(v);
-    return {
-        pad: round(16 * scale),
-        margin: round(8 * scale),
-        listIndent: round(24 * scale),
-        codePad: round(12 * scale),
-        cardPad: round(12 * scale),
-        btnPadV: round(8 * scale),
-        btnPadH: round(16 * scale),
-        gap: round(8 * scale),
-        scale: scale
-    };
-}
-
-function parseShorthandLengths(value, referencePx) {
-    if (!value) return null;
-    const parts = String(value).trim().split(/\s+/);
-    if (parts.length === 0) return null;
-    const nums = parts.map(p => parseLength(p, referencePx));
-    switch (nums.length) {
-        case 1: return { top: nums[0], right: nums[0], bottom: nums[0], left: nums[0] };
-        case 2: return { top: nums[0], right: nums[1], bottom: nums[0], left: nums[1] };
-        case 3: return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[1] };
-        case 4: return { top: nums[0], right: nums[1], bottom: nums[2], left: nums[3] };
-        default: return null;
-    }
-}
+// ==================== PROPERTY MAP ====================
 
 export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize = 16) {
     const map = new Map();
@@ -197,8 +300,6 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
         if (style.maxWidth) props.maxWidth = parseLength(style.maxWidth, parentAvailableWidth);
         if (style.minWidth) props.minWidth = parseLength(style.minWidth, parentAvailableWidth);
         if (style.height) props.height = parseLength(style.height, parentAvailableWidth);
-
-        // Longhand margins/paddings/borders (if present)
         if (style.marginTop) props.marginTop = parseLength(style.marginTop, parentAvailableWidth);
         if (style.marginBottom) props.marginBottom = parseLength(style.marginBottom, parentAvailableWidth);
         if (style.marginLeft) props.marginLeft = parseLength(style.marginLeft, parentAvailableWidth);
@@ -212,7 +313,6 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
         if (style.borderLeftWidth) props.borderLeftWidth = parseLength(style.borderLeftWidth, parentAvailableWidth);
         if (style.borderRightWidth) props.borderRightWidth = parseLength(style.borderRightWidth, parentAvailableWidth);
 
-        // Shorthand overrides (OW-FIX4)
         if (style.margin) {
             const sh = parseShorthandLengths(style.margin, parentAvailableWidth);
             if (sh) {
@@ -232,14 +332,18 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
             }
         }
         if (style.border) {
-            // Extract first length token from border shorthand (e.g. "1px solid red")
-            const borderMatch = String(style.border).match(/(-?[\d.]+(?:px|em|rem|pt|%))/i);
-            if (borderMatch) {
-                const bw = parseLength(borderMatch[1], parentAvailableWidth);
-                props.borderTopWidth = bw;
-                props.borderRightWidth = bw;
-                props.borderBottomWidth = bw;
-                props.borderLeftWidth = bw;
+            const tokens = tokenizeWhitespace(String(style.border));
+            for (const token of tokens) {
+                try {
+                    const bw = parseLength(token, parentAvailableWidth);
+                    props.borderTopWidth = bw;
+                    props.borderRightWidth = bw;
+                    props.borderBottomWidth = bw;
+                    props.borderLeftWidth = bw;
+                    break;
+                } catch (e) {
+                    // not a length token; continue
+                }
             }
         }
 
@@ -262,6 +366,8 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
     return map;
 }
 
+// ==================== INTRINSIC SIZE CALCULATOR ====================
+
 export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
     if (!node) return { width: 0, height: 0 };
 
@@ -269,13 +375,12 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
         const txt = node.nodeValue.trim();
         if (!txt) return { width: 0, height: 0 };
         const fontSize = inheritedProps.fontSize || 16;
-        const charWidth = fontSize * 0.6;
+        const charWidth = fontSize; // 1em, conservative
         const whiteSpace = inheritedProps.whiteSpace || 'normal';
-        const wordBreak = inheritedProps.wordBreak || 'normal';
         const lines = txt.split('\n');
         let maxLineLen = 0;
         for (const line of lines) {
-            const words = (whiteSpace === 'nowrap' || whiteSpace === 'pre') ? [line] : line.split(/\s+/).filter(Boolean);
+            const words = (whiteSpace === 'nowrap' || whiteSpace === 'pre') ? [line] : tokenizeWhitespace(line).filter(Boolean);
             if (words.length === 0) continue;
             if (whiteSpace === 'nowrap' || whiteSpace === 'pre') {
                 const len = line.length * charWidth;
@@ -289,7 +394,7 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
                 if (lineWidth > maxLineLen) maxLineLen = lineWidth;
             }
         }
-        const lineHeight = inheritedProps.fontSize * 1.2 || 19.2;
+        const lineHeight = inheritedProps.lineHeight ? inheritedProps.lineHeight : fontSize * DEFAULT_LINE_HEIGHT_FACTOR;
         return { width: maxLineLen, height: lines.length * lineHeight };
     }
 
@@ -314,7 +419,7 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
 
     if (tag === 'table') {
         if (props.width !== null) return { width: props.width, height: props.height || 0 };
-        const rows = applyStep([node], { axis: 'descendant', tag: 'tr' }); // OW-FIX3: recursive rows
+        const rows = applyStep([node], { axis: 'descendant', tag: 'tr' });
         if (rows.length === 0) return { width: 0, height: 0 };
         const columnMax = {};
         let totalHeight = 0;
@@ -441,7 +546,7 @@ export function injectResponsiveStyles(html, breakpointRules) {
             else selector = '*';
             css += `  ${selector} {\n`;
             for (const [prop, val] of Object.entries(rule.style)) {
-                const kebabProp = prop.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+                const kebabProp = camelToKebab(prop);
                 css += `    ${kebabProp}: ${val};\n`;
             }
             css += `  }\n`;
@@ -519,14 +624,14 @@ function extractBgFromShorthand(el) {
     const bg = el.style.background;
     if (!bg) return null;
     if (bg.includes('gradient')) {
-        const gradHex = bg.match(/#[0-9a-fA-F]{3,6}/);
-        if (gradHex) return gradHex[0];
+        const gradHex = findHexColor(bg);
+        if (gradHex) return gradHex;
         return null;
     }
-    const hexMatch = bg.match(/#[0-9a-fA-F]{3,6}/);
-    if (hexMatch) return hexMatch[0];
-    const rgbMatch = bg.match(/rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)/);
-    if (rgbMatch) return rgbMatch[0];
+    const hexMatch = findHexColor(bg);
+    if (hexMatch) return hexMatch;
+    const rgbMatch = findRgbColor(bg);
+    if (rgbMatch) return rgbMatch;
     return null;
 }
 
@@ -549,7 +654,7 @@ function mergeAndApplyStyles(el, newStyles) {
     }
     const merged = { ...currentStyles };
     Object.keys(newStyles).forEach(camelProp => {
-        const kebabProp = camelProp.replace(/([A-Z])/g, '-$1').toLowerCase();
+        const kebabProp = camelToKebab(camelProp);
         merged[kebabProp] = newStyles[camelProp];
     });
     const cssString = Object.entries(merged).map(([prop, val]) => `${prop}: ${val}`).join('; ');
@@ -578,7 +683,7 @@ export function estimateRecursiveBounds(node) {
         }
         let charPx = (fSize || 16) * 0.6;
         if (isNowrap) return txt.length * charPx;
-        let words = txt.split(/\s+/);
+        let words = tokenizeWhitespace(txt);
         return Math.max(0, ...words.map(w => w.length)) * charPx;
     }
     if (node.nodeType === 1) {

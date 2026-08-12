@@ -6,6 +6,27 @@ import {
     computeIntrinsicSize
 } from './stylizerutilities.js';
 
+// ==================== CHARACTER HELPERS (NO REGEX) ====================
+
+function kebabToCamel(kebab) {
+    let result = '';
+    let upperNext = false;
+    for (let i = 0; i < kebab.length; i++) {
+        const ch = kebab[i];
+        if (ch === '-') {
+            upperNext = true;
+        } else if (upperNext) {
+            result += ch.toUpperCase();
+            upperNext = false;
+        } else {
+            result += ch;
+        }
+    }
+    return result;
+}
+
+// ==================== DIRECTIVE PARSING ====================
+
 export function parseDirectives(str) {
     if (!str) return [];
     return str.split(';').map(s => s.trim()).filter(Boolean).map(part => {
@@ -243,7 +264,7 @@ export function generateCSSFromDirectives(elementId, directives, breakpointMap =
                 break;
             default:
                 if (d.raw) {
-                    const prop = d.raw.property.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+                    const prop = kebabToCamel(d.raw.property);
                     inlineStyles[prop] = d.raw.value;
                 }
                 break;
@@ -268,7 +289,7 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {})
     for (let iter = 0; iter < maxIterations; iter++) {
         let anyCorrection = false;
         for (const goal of goals) {
-            if (goal.type === 'overflow') continue; // OW-FIX6: handled separately after loop
+            if (goal.type === 'overflow') continue; // handled separately after loop
             switch (goal.type) {
                 case 'minVerticalGap': {
                     const minGap = goal.options?.minGap ?? 12;
@@ -312,7 +333,7 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {})
         if (!anyCorrection) break;
     }
 
-    // 2. Run overflow detection/correction exactly once (OW-FIX6)
+    // 2. Run overflow detection/correction exactly once
     const overflowViolations = checkOverflowDoc(doc, viewportWidth, containerWidths);
     if (overflowViolations.length) {
         const newRules = correctOverflowDoc(doc);
@@ -446,7 +467,6 @@ function checkOverflowDoc(doc, viewportWidth, containerWidths) {
         const props = propertyMap.get(el);
         if (!props) continue;
 
-        // OW-FIX2: only flag if we can compute reliably; skip on error
         try {
             const size = computeIntrinsicSize(el, propertyMap, props);
             if (size.width > props.availableWidth) {
@@ -464,7 +484,7 @@ function correctOverflowDoc(doc) {
     const allDescendants = applyStep([doc.body], { axis: 'descendant' });
 
     for (const el of allDescendants) {
-        // OW-FIX5: skip if already inside wrapper
+        // Skip if already inside wrapper
         let p = el.parentElement;
         let inWrapper = false;
         while (p) {
@@ -476,7 +496,7 @@ function correctOverflowDoc(doc) {
         }
         if (inWrapper) continue;
 
-        // OW-FIX1: skip inline elements
+        // Skip inline elements
         const tag = el.tagName.toLowerCase();
         const display = el.style ? el.style.display : '';
         const inlineTags = new Set([
@@ -551,7 +571,7 @@ function correctControlledOverlayDoc(doc) {
     return rules;
 }
 
-// ==================== NEW: Selector-based Directive Application ====================
+// ==================== SELECTOR‑BASED DIRECTIVE APPLICATION ====================
 
 export function applyDirectiveToSelector(html, selector, directiveString) {
     const directives = parseDirectives(directiveString);
