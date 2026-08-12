@@ -121,8 +121,9 @@ export function  resolvePath(root, steps) {
 // ==================== UNIT CONVERSION & PROPERTY MAP ====================
 
 export function parseLength(value, referencePx) {
-    if (typeof value === 'number') return value;
+    if (typeof value === 'number') return value;    
     if (!value) return 0;
+    if(value == "auto") value = referencePx;
     const str = String(value).trim();
     const match = str.match(/^(-?[\d.]+)(px|%|em|rem|pt)?$/i);
     if (!match) throw new Error('[parseLength] Invalid length value: ' + value);
