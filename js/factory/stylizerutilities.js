@@ -10,7 +10,7 @@ import {
 
 // ==================== RECURSIVE PATH ENGINE (unchanged) ====================
 
-export function  getAncestors(el, acc) {
+function getAncestors(el, acc) {
     if (!acc) acc = [];
     var p = el.parentNode;
     if (!p) return acc;
@@ -18,7 +18,7 @@ export function  getAncestors(el, acc) {
     return getAncestors(p, newAcc);
 }
 
-export function  getAllDescendants(el) {
+function getAllDescendants(el) {
     var children = Array.from(el.children || []);
     if (children.length === 0) return [];
     return children.reduce(function(all, child) {
@@ -26,7 +26,7 @@ export function  getAllDescendants(el) {
     }, []);
 }
 
-export function  getNextSiblings(el, acc) {
+function getNextSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.nextSibling;
     if (!sib) return acc;
@@ -34,7 +34,7 @@ export function  getNextSiblings(el, acc) {
     return getNextSiblings(sib, newAcc);
 }
 
-export function  getPreviousSiblings(el, acc) {
+function getPreviousSiblings(el, acc) {
     if (!acc) acc = [];
     var sib = el.previousSibling;
     if (!sib) return acc;
@@ -42,13 +42,13 @@ export function  getPreviousSiblings(el, acc) {
     return getPreviousSiblings(sib, newAcc);
 }
 
-export function  getDepth(ancestor, descendant) {
+function getDepth(ancestor, descendant) {
     if (!descendant || descendant === ancestor) return 0;
     if (descendant.nodeType !== 1) return getDepth(ancestor, descendant.parentNode);
     return 1 + getDepth(ancestor, descendant.parentNode);
 }
 
-export function  applyStep(nodes, step) {
+function applyStep(nodes, step) {
     return nodes.reduce(function(next, node) {
         var candidates = [];
         switch (step.axis || 'child') {
@@ -103,7 +103,7 @@ export function  applyStep(nodes, step) {
     }, []);
 }
 
-export function  resolvePath(root, steps) {
+function resolvePath(root, steps) {
     return steps.reduce(function(currentNodes, step) { return applyStep(currentNodes, step); }, [root]);
 }
 
@@ -281,7 +281,7 @@ export function consolidateStyles(html) {
 
 // ==================== IMPROVED BACKGROUND EXTRACTION (P5) ====================
 
-export function  extractBgFromShorthand(el) {
+function extractBgFromShorthand(el) {
     if (el.style.backgroundColor) return el.style.backgroundColor;
     const bg = el.style.background;
     if (!bg) return null;
@@ -300,7 +300,7 @@ export function  extractBgFromShorthand(el) {
 
 // ==================== SAFE STYLE MERGE HELPER (P3) ====================
 
-export function  mergeAndApplyStyles(el, newStyles) {
+function mergeAndApplyStyles(el, newStyles) {
     const currentStyleAttr = el.getAttribute('style') || '';
     const currentStyles = {};
     if (currentStyleAttr.trim()) {
@@ -374,15 +374,13 @@ export function estimateRecursiveBounds(node) {
     return 0;
 }
 
-// ==================== NEW: computeTextMetrics (RP12) ====================
+// ==================== computeTextMetrics (RP12) ====================
 
 export function computeTextMetrics(el) {
-    // Compute effective font size in px
     function getFontSizePx(element) {
         if (!element || !element.style) return 16;
         let raw = element.style.fontSize || element.style.getPropertyValue('font-size');
         if (!raw) {
-            // try parent
             return element.parentElement ? getFontSizePx(element.parentElement) : 16;
         }
         raw = raw.trim();
@@ -397,9 +395,8 @@ export function computeTextMetrics(el) {
         return val;
     }
     const fontSizePx = getFontSizePx(el);
-    const charWidth = fontSizePx * 0.6; // approximation
+    const charWidth = fontSizePx * 0.6;
 
-    // Determine text content and wrapping behaviour
     const text = el.textContent || '';
     const whiteSpace = el.style.whiteSpace || 'normal';
     const wordBreak = el.style.wordBreak || 'normal';
@@ -409,7 +406,6 @@ export function computeTextMetrics(el) {
     let wordWidth = 0;
     let blockWidth = 0;
     if (isPre || isCode) {
-        // Non-wrapping: calculate max line length
         const lines = text.split('\n');
         let maxLineLen = 0;
         for (const line of lines) {
@@ -419,30 +415,26 @@ export function computeTextMetrics(el) {
         wordWidth = maxLineLen * charWidth;
         blockWidth = wordWidth;
     } else {
-        // Wrapping: split into words, find max word length
         const words = text.split(/\s+/).filter(w => w.length > 0);
         for (const w of words) {
             const wWidth = w.length * charWidth;
             if (wWidth > wordWidth) wordWidth = wWidth;
         }
-        // Block width is constrained by container, but we return wordWidth as worst-case
         blockWidth = wordWidth;
     }
     return { charWidth, wordWidth, blockWidth };
 }
 
-// ==================== NEW: generateAlgorithmicLayoutRules (RP14) ====================
+// ==================== generateAlgorithmicLayoutRules (RP14) ====================
 
 export function generateAlgorithmicLayoutRules(html, containerWidths, viewportWidth, themeStyles) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     const rules = [];
 
-    // Compute available width for each container from the map or fallback to viewportWidth
     const getAvailableWidth = (element) => {
         const id = element.id || element.tagName.toLowerCase();
         if (containerWidths[id]) return containerWidths[id];
-        // Try parent
         let parent = element.parentElement;
         while (parent) {
             const pid = parent.id || parent.tagName.toLowerCase();
@@ -452,16 +444,13 @@ export function generateAlgorithmicLayoutRules(html, containerWidths, viewportWi
         return viewportWidth || 1024;
     };
 
-    // For all block-level children, compute spacing
     const allElements = doc.querySelectorAll('*');
     for (const el of allElements) {
-        // Skip text nodes; only elements
         if (!el.tagName) continue;
 
-        const contentWidth = estimateRecursiveBounds(el); // approximate content width
+        const contentWidth = estimateRecursiveBounds(el);
         const availableWidth = getAvailableWidth(el);
 
-        // Image resizing (RP16)
         if (el.tagName.toLowerCase() === 'img') {
             let imgWidth = parseFloat(el.style.width || el.getAttribute('width') || 0);
             if (imgWidth > availableWidth) {
@@ -471,77 +460,20 @@ export function generateAlgorithmicLayoutRules(html, containerWidths, viewportWi
             continue;
         }
 
-        // Adjust margins/paddings for block containers
         const tag = el.tagName.toLowerCase();
         if (['div', 'p', 'li', 'pre', 'blockquote', 'table', 'th', 'td', 'ul', 'ol'].includes(tag)) {
             let marginBottom = 6;
             let padding = 8;
-            // Scale based on viewport width: smaller screens get smaller spacing
             const scale = Math.min(1, viewportWidth / 960);
             marginBottom = Math.round(marginBottom * scale);
             padding = Math.round(padding * scale);
 
             const selector = el.id ? { id: el.id } : { tag: tag };
-            // Only push if not already set? We'll push and let rewritestyleattrs merge
             rules.push({ selector, styles: { marginBottom: marginBottom + 'px', padding: padding + 'px' } });
         }
     }
 
     return rules;
-}
-
-// ==================== NEW: wrapOverflowingElements (RP13) ====================
-
-export function wrapOverflowingElements(html, containerWidths, viewportWidth) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const availableWidth = viewportWidth || 1024;
-
-    // Helper to check if an element should be wrapped
-    function shouldWrap(el) {
-        const contentWidth = estimateRecursiveBounds(el);
-        // Get parent container width if available, else viewport
-        let parentWidth = availableWidth;
-        let parentEl = el.parentElement;
-        while (parentEl) {
-            const pid = parentEl.id || parentEl.tagName.toLowerCase();
-            if (containerWidths[pid]) {
-                parentWidth = containerWidths[pid];
-                break;
-            }
-            parentEl = parentEl.parentElement;
-        }
-        const effectiveMax = Math.min(parentWidth, availableWidth);
-        return contentWidth > effectiveMax;
-    }
-
-    // Traverse all elements that are direct children of body or known containers
-    const targets = doc.querySelectorAll('body > *');
-    for (const target of targets) {
-        if (shouldWrap(target)) {
-            const wrapper = doc.createElement('div');
-            wrapper.style.overflow = 'auto';
-            wrapper.style.maxWidth = '100%';
-            // Move the target inside wrapper
-            target.parentNode.insertBefore(wrapper, target);
-            wrapper.appendChild(target);
-        }
-    }
-
-    // Also handle nested cases: for any element with fixed width or long content
-    const allElements = doc.querySelectorAll('*');
-    for (const el of allElements) {
-        if (el === doc.body) continue;
-        if (shouldWrap(el) && el.parentElement) {
-            const wrapper = doc.createElement('div');
-            wrapper.style.overflow = 'auto';
-            wrapper.style.maxWidth = '100%';
-            el.parentNode.insertBefore(wrapper, el);
-            wrapper.appendChild(el);
-        }
-    }
-
-    return doc.body.innerHTML;
 }
 
 // ==================== STYLE VERIFICATION (with P26 contrast) ====================
@@ -900,7 +832,7 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
 
 // ==================== CORRECTORS (Internal) ====================
 
-export function  correctContrastDoc(doc, minRatio) {
+function correctContrastDoc(doc, minRatio) {
     const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
@@ -921,7 +853,7 @@ export function  correctContrastDoc(doc, minRatio) {
     return rules;
 }
 
-export function  correctHarmonyDoc(doc) {
+function correctHarmonyDoc(doc) {
     const rules = [];
     const elements = doc.querySelectorAll('*');
     elements.forEach(el => {
@@ -946,7 +878,7 @@ export function  correctHarmonyDoc(doc) {
     return rules;
 }
 
-export function  correctTextVisibilityDoc(doc, themeStyles, options) {
+function correctTextVisibilityDoc(doc, themeStyles, options) {
     const rules = [];
     const minLineHeight = options.minLineHeight ?? 1.2;
     const elements = doc.querySelectorAll('*');
@@ -977,7 +909,7 @@ export function  correctTextVisibilityDoc(doc, themeStyles, options) {
     return rules;
 }
 
-export function  correctButtonVisibilityDoc(doc) {
+function correctButtonVisibilityDoc(doc) {
     const rules = [];
     const buttons = doc.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]');
     buttons.forEach(btn => {
@@ -1007,7 +939,7 @@ export function  correctButtonVisibilityDoc(doc) {
 
 // ==================== BACKGROUND HELPER ====================
 
-export function  getEffectiveBackground(el) {
+function getEffectiveBackground(el) {
     let bg = extractBgFromShorthand(el);
     if (bg) return bg;
     let parent = el.parentNode;

@@ -1,5 +1,6 @@
+// File #1: layoutdirectives.js (updated)
 import { rewritestyleattrs } from './stylizerutilities.js';
-import { getAllDescendants, applyStep } from './stylizerutilities.js'; // FC4: import path helpers
+import { getAllDescendants, applyStep } from './stylizerutilities.js';
 
 export function parseDirectives(str) {
     if (!str) return [];
@@ -320,7 +321,6 @@ export function optimizeLayoutHTML(html, goals, maxIterations = 5) {
 function checkSpacingDoc(doc, minGap) {
     const violations = [];
     const walk = (parent) => {
-        // Use getAllDescendants to get children that are block-level
         const children = getAllDescendants(parent).filter(el => {
             const display = el.style.display || 'inline';
             return display === 'block' || display === 'flex' || display === 'grid' ||
@@ -447,23 +447,23 @@ function correctOverflowDoc(doc) {
     const rules = [];
     const allDescendants = applyStep([doc.body], { axis: 'descendant' });
     for (const el of allDescendants) {
+        // Skip elements already inside an overflow wrapper
+        if (el.parentElement && el.parentElement.getAttribute('data-overflow-wrapper') === 'true') continue;
         const style = el.style;
         const overflow = style.overflow || '';
         if (!overflow || overflow === 'visible') {
+            // Create wrapper div
+            const wrapper = doc.createElement('div');
+            wrapper.setAttribute('data-overflow-wrapper', 'true');
+            wrapper.style.overflow = 'auto';
+            wrapper.style.maxWidth = '100%';
+            // Insert wrapper before the element
+            el.parentNode.insertBefore(wrapper, el);
+            // Move element inside wrapper
+            wrapper.appendChild(el);
+            // Record a rule for reporting
             const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
-            const styles = {
-                overflow: 'auto',
-                overflowWrap: 'break-word',
-                wordWrap: 'break-word',
-                maxWidth: '100%',
-                whiteSpace: 'normal'
-            };
-            rules.push({ selector, styles });
-            el.style.overflow = 'auto';
-            el.style.overflowWrap = 'break-word';
-            el.style.wordWrap = 'break-word';
-            el.style.maxWidth = '100%';
-            el.style.whiteSpace = 'normal';
+            rules.push({ selector, styles: { wrapped: 'true' } });
         }
     }
     return rules;
