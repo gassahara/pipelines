@@ -1028,8 +1028,36 @@ const executeChildren = async (children, env, stageid) => {
     }
     if (env.stack && env.stack.agentspawned === stageid) return spawnOutputs;
     for (const so of spawnOutputs) {
-        var run = await compilepipeline(so.dna.pipeline, null, []);
-        await run.pipeline({ id: so.dna.identity.id, env: { ...so.inheritedenv, containerid: so.containerref, rngactive: true, stack: {}, registersubscription: env.registersubscription, updateworldmap: env.updateworldmap } });
+        const childPipelineId =
+            so.dna?.identity?.id ||
+            so.containerref ||
+            'child_pipeline';
+
+        var run = await compilepipeline(
+            so.dna.pipeline,
+            null,
+            [],
+            childPipelineId
+        );
+
+        logdebug('[SPAWN] Child pipeline recovery:', {
+            childPipelineId,
+            resumeFrom: run.resumeFrom,
+            restoredEnv: run.restoredEnv ? 'yes' : 'no'
+        });
+
+        await run.pipeline({
+            id: childPipelineId,
+            env: {
+                ...so.inheritedenv,
+                containerid: so.containerref,
+                rngactive: true,
+                stack: {},
+                registersubscription: env.registersubscription,
+                updateworldmap: env.updateworldmap,
+                pipelineid: childPipelineId
+            }
+        });
     }
     if (env.stack) env.stack.agentspawned = stageid;
     return spawnOutputs;
@@ -1108,12 +1136,21 @@ const deepcloneevent = (e) => {
     };
 };
 
-export const compilepipeline = async (pipeline, accessors, sinks) => {
+export const compilepipeline = async (
+    pipeline,
+    accessors,
+    sinks,
+    pipelineIdOverride = null
+) => {
     if (!pipeline.elements) {
         throw new Error('[compilepipeline] pipeline must have elements array');
     }
 
-    const pipelineId = pipeline.id || pipeline.identity?.id || 'default_pipeline';
+    const pipelineId =
+        pipelineIdOverride ||
+        pipeline.id ||
+        pipeline.identity?.id ||
+        'default_pipeline';
 
     const rawStages = [];
     for (const el of pipeline.elements) {
