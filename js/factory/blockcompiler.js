@@ -114,6 +114,7 @@ const safeElementOutputs = (env, outputKeys = null) => {
 const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pipelineId) => {
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
   const mapKey = `pipeline:${pipelineId}:executionmap`;
+  const htmlMapKey = `pipeline:${pipelineId}:htmlmap`;
   const outputKeys = Object.keys(elementDef?.signature?.outputs || {});
 
   const loadExecutionMap = async () => {
@@ -167,6 +168,38 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
     }
   };
 
+  const storeTargetHtml = async (targetId) => {
+    if (!targetId || typeof document === 'undefined') return;
+
+    const targetEl = document.getElementById(targetId);
+    if (!targetEl) return;
+
+    let htmlMap = { pipelineId, targets: {} };
+    try {
+      const existing = await enqueueDbRestore(htmlMapKey);
+      if (existing && existing.targets) {
+        htmlMap = existing;
+      }
+    } catch (err) {
+      console.warn('[PERSISTENCE] load html map failed:', err);
+    }
+
+    htmlMap.targets[targetId] = targetEl.innerHTML;
+    htmlMap.savedAt = Date.now();
+
+    const htmlMapJson = JSON.stringify(htmlMap);
+    if (htmlMapJson.length > 1024 * 1024) {
+      console.warn('[PERSISTENCE] html map too large, skipping save:', htmlMapJson.length);
+      return;
+    }
+
+    try {
+      await enqueueDbStore(htmlMapKey, htmlMap);
+    } catch (persistError) {
+      console.warn('[PERSISTENCE] html map save failed:', persistError);
+    }
+  };
+
   return async (env) => {
     await storeElementState('running', { startedAt: Date.now() });
 
@@ -179,25 +212,9 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
         outputs: completedOutputs
       });
 
-      // P40: Capture target HTML after successful writer element.
       if (elementDef.type === 'writer') {
         const targetId = elementDef.targetlabel || env.approot;
-        if (targetId && typeof document !== 'undefined') {
-          const targetEl = document.getElementById(targetId);
-          if (targetEl) {
-            const htmlSnapshot = {
-              pipelineId,
-              rootId: targetId,
-              html: targetEl.innerHTML,
-              savedAt: Date.now()
-            };
-            try {
-              await enqueueDbStore(`pipeline:${pipelineId}:html`, htmlSnapshot);
-            } catch (persistError) {
-              console.warn('[PERSISTENCE] html snapshot save failed:', persistError);
-            }
-          }
-        }
+        await storeTargetHtml(targetId);
       }
 
       try {

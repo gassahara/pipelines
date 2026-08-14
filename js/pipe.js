@@ -159,7 +159,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
 
   const runAll = async (env, fromIndex = 0) => {
     const snapshotKey = 'pipeline:' + env.agentid + ':env';
-    const htmlKey = `pipeline:${pipelineId}:html`;
+    const htmlMapKey = `pipeline:${pipelineId}:htmlmap`;
 
     // Restore prior env snapshot if available.
     try {
@@ -175,21 +175,20 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
       console.warn('[PIPELINE] snapshot restore failed:', err);
     }
 
-    // Restore prior HTML snapshot if available.
+    // Restore all persisted writer target HTMLs.
     try {
-      const htmlSnapshot = await enqueueDbRestore(htmlKey);
-      if (
-        htmlSnapshot &&
-        htmlSnapshot.rootId &&
-        typeof htmlSnapshot.html === 'string'
-      ) {
-        const targetEl = document.getElementById(htmlSnapshot.rootId);
-        if (targetEl) {
-          targetEl.innerHTML = htmlSnapshot.html;
+      const htmlMap = await enqueueDbRestore(htmlMapKey);
+      if (htmlMap && htmlMap.targets) {
+        for (const [targetId, html] of Object.entries(htmlMap.targets)) {
+          if (typeof html !== 'string') continue;
+          const targetEl = document.getElementById(targetId);
+          if (targetEl) {
+            targetEl.innerHTML = html;
+          }
         }
       }
     } catch (err) {
-      console.warn('[PIPELINE] html snapshot restore failed:', err);
+      console.warn('[PIPELINE] html map restore failed:', err);
     }
 
     // Reattach registered triggers after HTML restoration.
