@@ -132,6 +132,40 @@ const safeFullEnv = (env) => {
   return out;
 };
 
+const loadCurrentHtmlMap = async (pipelineId) => {
+  try {
+    return await enqueueDbRestore(`pipeline:${pipelineId}:htmlmap`);
+  } catch (err) {
+    console.warn('[PERSISTENCE] load current html map failed:', err);
+    return null;
+  }
+};
+
+const registerStageElements = async (pipelineId, stageId, elementIds) => {
+  try {
+    const mapKey = `pipeline:${pipelineId}:executionmap`;
+    const existing = await enqueueDbRestore(mapKey);
+    const map = existing && existing.stages
+      ? existing
+      : { pipelineId, stages: {} };
+
+    if (!map.stages[stageId]) {
+      map.stages[stageId] = { elements: {} };
+    }
+
+    for (const elementId of elementIds) {
+      map.stages[stageId].elements[elementId] = {
+        status: 'WAITING',
+        savedAt: Date.now()
+      };
+    }
+
+    await enqueueDbStore(mapKey, map);
+  } catch (err) {
+    console.warn('[PERSISTENCE] registerStageElements failed:', err);
+  }
+};
+
 const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pipelineId) => {
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
   const mapKey = `pipeline:${pipelineId}:executionmap`;
@@ -221,21 +255,25 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
     }
   };
 
-  return async (env) => {
-    // Save pre-execution checkpoint BEFORE running element.
-    await storeElementState('running', {
+  const wrapper = async (env) => {
+    // Save full checkpoint BEFORE running element.
+    const currentHtmlMap = await loadCurrentHtmlMap(pipelineId) || {};
+    await storeElementState('RUNNING', {
       startedAt: Date.now(),
-      env: safeFullEnv(env)
+      env: safeFullEnv(env),
+      htmlMap: currentHtmlMap
     });
 
     try {
       const result = await compiledElement(env);
 
       const completedOutputs = captureOutputs(env);
-      await storeElementState('completed', {
+      const afterHtmlMap = await loadCurrentHtmlMap(pipelineId) || {};
+      await storeElementState('EXECUTED', {
         completedAt: Date.now(),
         outputs: completedOutputs,
-        env: safeFullEnv(env)
+        env: safeFullEnv(env),
+        htmlMap: afterHtmlMap
       });
 
       if (elementDef.type === 'writer') {
@@ -256,6 +294,9 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
       throw elementError;
     }
   };
+
+  wrapper.id = elementId;
+  return wrapper;
 };
 
 const writeoutputs = (sig, env, result) => {
@@ -914,7 +955,7 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
         if (startIndex < 0) startIndex = 0;
     }
 
-    const fn = stageRunner(stage, children, startIndex);
+    const fn = stageRunner(stage, children, startIndex, pipelineId);
     fn.id = stage.id;
 
     const reads = new Set();
@@ -942,18 +983,22 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
     return fn;
 };
 
-const stageRunner = (stage, children, startIndex = 0) => {
+const stageRunner = (stage, children, startIndex = 0, pipelineId = 'default_pipeline') => {
     const control = stage.control;
     const id = stage.id;
     if (!control || control.command === undefined || control.command === null) {
-        return defaultRunner(id, children, startIndex);
+        return defaultRunner(id, children, startIndex, pipelineId);
     }
-    if (control.command === 'TRIGGER') return triggerRunner(id, control, children, stage);
-    if (control.command === 'LOOP') return loopRunner(id, control, children, startIndex);
+    if (control.command === 'TRIGGER') {
+        return triggerRunner(id, control, children, stage, pipelineId, startIndex);
+    }
+    if (control.command === 'LOOP') {
+        return loopRunner(id, control, children, startIndex, pipelineId);
+    }
     throw new Error('unknown stage command: ' + control.command);
 };
 
-const triggerRunner = (id, control, children, stage) => {
+const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0) => {
     return async (env) => {
         const sourceref = env[control.sourceid];
         const eventtype = control.event;
@@ -962,6 +1007,10 @@ const triggerRunner = (id, control, children, stage) => {
             logwarn('[control:TRIGGER] missing source/event/registersubscription for stage:', id);
             return {};
         }
+
+        // Persist stage elements as WAITING before registering.
+        await registerStageElements(pipelineId, id, children.map(ch => ch.id || ch.blockmeta?.id || 'unknown'));
+
         const handler = async (e) => {
             env.eventtarget = e.target;
             if (stage.output !== null && stage.output !== undefined) {
@@ -978,8 +1027,10 @@ const triggerRunner = (id, control, children, stage) => {
     };
 };
 
-const loopRunner = (id, control, children, startIndex = 0) => {
+const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default_pipeline') => {
     return async (env) => {
+        await registerStageElements(pipelineId, id, children.map(ch => ch.id || ch.blockmeta?.id || 'unknown'));
+
         const controlprops = {};
         for (const key of Object.keys(control)) {
             if (key !== 'fn' && key !== 'inputs' && key !== 'command') {
@@ -1002,8 +1053,9 @@ const loopRunner = (id, control, children, startIndex = 0) => {
     };
 };
 
-const defaultRunner = (id, children, startIndex = 0) => {
+const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipeline') => {
     return async (env) => {
+        await registerStageElements(pipelineId, id, children.map(ch => ch.id || ch.blockmeta?.id || 'unknown'));
         await executeChildren(children.slice(startIndex), env, id);
         return {};
     };
@@ -1043,7 +1095,8 @@ const executeChildren = async (children, env, stageid) => {
         logdebug('[SPAWN] Child pipeline recovery:', {
             childPipelineId,
             resumeFrom: run.resumeFrom,
-            restoredEnv: run.restoredEnv ? 'yes' : 'no'
+            restoredEnv: run.restoredEnv ? 'yes' : 'no',
+            restoredHtmlMap: run.restoredHtmlMap ? 'yes' : 'no'
         });
 
         await run.pipeline({
@@ -1170,9 +1223,8 @@ export const compilepipeline = async (
             unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
     }
 
-    // Compile-time recovery from persisted execution map.
     let resumeFrom = null;
-    let lastCheckpointEnv = null;
+    let restoredState = null;
     try {
         const mapKey = `pipeline:${pipelineId}:executionmap`;
         const executionMap = await enqueueDbRestore(mapKey);
@@ -1184,13 +1236,12 @@ export const compilepipeline = async (
                 for (const el of stage.elements || []) {
                     if (el.element !== 'BLOCK') continue;
                     const elementState = stageRecord.elements?.[el.id];
-
-                    if (elementState?.env) {
-                        lastCheckpointEnv = elementState.env;
-                    }
-
-                    if (!elementState || elementState.status !== 'completed') {
+                    if (
+                        elementState &&
+                        (elementState.status === 'WAITING' || elementState.status === 'RUNNING')
+                    ) {
                         resumeFrom = { stageId: stage.id, elementId: el.id };
+                        restoredState = elementState;
                         break;
                     }
                 }
@@ -1205,7 +1256,15 @@ export const compilepipeline = async (
     const compiledpipeline = createpipeline(compiled, sinks, undefined, {
         resumeFrom,
         pipelineId,
-        restoredEnv: lastCheckpointEnv
+        restoredEnv: restoredState?.env || null,
+        restoredHtmlMap: restoredState?.htmlMap || null
     });
-    return { pipeline: compiledpipeline, resumeFrom, restoredEnv: lastCheckpointEnv, pipelineId };
+
+    return {
+        pipeline: compiledpipeline,
+        resumeFrom,
+        restoredEnv: restoredState?.env || null,
+        restoredHtmlMap: restoredState?.htmlMap || null,
+        pipelineId
+    };
 };

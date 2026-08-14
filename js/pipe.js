@@ -38,13 +38,25 @@ const safeOutputs = (env) => {
   return out;
 };
 
+const applyHtmlMap = (htmlMap) => {
+  if (!htmlMap || !htmlMap.targets) return;
+  for (const [targetId, html] of Object.entries(htmlMap.targets)) {
+    if (typeof html !== 'string') continue;
+    const targetEl = document.getElementById(targetId);
+    if (targetEl) {
+      targetEl.innerHTML = html;
+    }
+  }
+};
+
 export const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
   if (!Array.isArray(stages)) throw new Error("[PIPELINE] Stages must be an array.");
 
   const {
     resumeFrom = null,
     pipelineId = 'default_pipeline',
-    restoredEnv = null
+    restoredEnv = null,
+    restoredHtmlMap = null
   } = options;
 
   // Local runtime promise stack for async stages.
@@ -179,7 +191,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
       console.warn('[PIPELINE] snapshot restore failed:', err);
     }
 
-    // Restore full env checkpoint from last persisted element state.
+    // Restore env checkpoint from the resumed element, if present.
     if (restoredEnv && typeof restoredEnv === 'object') {
       for (const [key, value] of Object.entries(restoredEnv)) {
         if (!(key in env) || env[key] === undefined) {
@@ -188,20 +200,23 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
       }
     }
 
-    // Restore all persisted writer target HTMLs.
-    try {
-      const htmlMap = await enqueueDbRestore(htmlMapKey);
-      if (htmlMap && htmlMap.targets) {
-        for (const [targetId, html] of Object.entries(htmlMap.targets)) {
-          if (typeof html !== 'string') continue;
-          const targetEl = document.getElementById(targetId);
-          if (targetEl) {
-            targetEl.innerHTML = html;
-          }
-        }
+    // Restore HTML state from the resumed element checkpoint, if present.
+    if (restoredHtmlMap && typeof restoredHtmlMap === 'object') {
+      try {
+        applyHtmlMap(restoredHtmlMap);
+      } catch (err) {
+        console.warn('[PIPELINE] restored html map apply failed:', err);
       }
-    } catch (err) {
-      console.warn('[PIPELINE] html map restore failed:', err);
+    } else {
+      // Fall back to the latest stored html map for this pipeline.
+      try {
+        const htmlMap = await enqueueDbRestore(htmlMapKey);
+        if (htmlMap && htmlMap.targets) {
+          applyHtmlMap(htmlMap);
+        }
+      } catch (err) {
+        console.warn('[PIPELINE] html map restore failed:', err);
+      }
     }
 
     // Reattach registered triggers after HTML restoration.
@@ -231,7 +246,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         const stageid = stage.id || stage.stagemeta?.stageid || ('stage_' + idx);
         const stageMeta = stage.stagemeta || {};
 
-        // If a resume point is supplied, skip completed stages before it.
+        // If a resume point is supplied, skip stages before it.
         if (resumeFrom && resumeFrom.stageId) {
           if (stageid !== resumeFrom.stageId) {
             logdebug('[PIPELINE] Skipping stage:', stageid, 'before resume point');
@@ -257,14 +272,6 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
 
         logdebug('[PIPELINE] Executing stage:', stageid, 'for agent:', env.agentid);
         await runStage(stage, env, callerid, stageid);
-
-        // P52: If resumed stage is a TRIGGER stage, execute only that stage.
-        if (resumeFrom && resumeFrom.stageId === stageid) {
-          if (stageMeta.controlCommand === 'TRIGGER') {
-            logdebug('[PIPELINE] Resumed TRIGGER stage only; stopping after stage', stageid);
-            break;
-          }
-        }
       }
 
       if (stageStack.length) {
