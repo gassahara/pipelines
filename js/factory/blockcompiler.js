@@ -877,9 +877,9 @@ const BLOCKCOMPILERS = {
     }
 };
 
-const compileElement = (el, pipelineId = 'default_pipeline') => {
+const compileElement = (el, pipelineId = 'default_pipeline', resumeFrom = null) => {
     if (el.element === 'BLOCK') return compileBlockElement(el);
-    if (el.element === 'STAGE') return compileStageElement(el, pipelineId);
+    if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom);
     throw new Error('unknown element type: ' + el.element + ' on element id "' + (el.id || 'unnamed') + '"');
 };
 
@@ -889,12 +889,22 @@ const compileBlockElement = (block) => {
     return fn;
 };
 
-const compileStageElement = (stage, pipelineId = 'default_pipeline') => {
+const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom = null) => {
     const children = (stage.elements || []).map(el => {
-        const compiled = compileElement(el, pipelineId);
+        const compiled = compileElement(el, pipelineId, resumeFrom);
         return createPersistentElementWrapper(compiled, el, stage.id, pipelineId);
     });
-    const fn = stageRunner(stage, children);
+
+    let startIndex = 0;
+    if (resumeFrom && resumeFrom.stageId === stage.id) {
+        startIndex = children.findIndex(ch =>
+            ch.id === resumeFrom.elementId ||
+            ch.blockmeta?.id === resumeFrom.elementId
+        );
+        if (startIndex < 0) startIndex = 0;
+    }
+
+    const fn = stageRunner(stage, children, startIndex);
     fn.id = stage.id;
 
     const reads = new Set();
@@ -905,6 +915,7 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline') => {
             (el.writes || []).forEach(k => writes.add(k));
         }
     }
+
     fn.stagemeta = {
         async: stage.async === true,
         stageid: stage.id,
@@ -912,19 +923,22 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline') => {
         writes: [...writes],
         snapshotKey: 'stage:' + stage.id,
         recoverable: true,
-        notifyOnDone: stage.notifyOnDone === true
+        notifyOnDone: stage.notifyOnDone === true,
+        startElementId: resumeFrom && resumeFrom.stageId === stage.id
+            ? resumeFrom.elementId
+            : null
     };
     return fn;
 };
 
-const stageRunner = (stage, children) => {
+const stageRunner = (stage, children, startIndex = 0) => {
     const control = stage.control;
     const id = stage.id;
     if (!control || control.command === undefined || control.command === null) {
-        return defaultRunner(id, children);
+        return defaultRunner(id, children, startIndex);
     }
     if (control.command === 'TRIGGER') return triggerRunner(id, control, children, stage);
-    if (control.command === 'LOOP') return loopRunner(id, control, children);
+    if (control.command === 'LOOP') return loopRunner(id, control, children, startIndex);
     throw new Error('unknown stage command: ' + control.command);
 };
 
@@ -953,7 +967,7 @@ const triggerRunner = (id, control, children, stage) => {
     };
 };
 
-const loopRunner = (id, control, children) => {
+const loopRunner = (id, control, children, startIndex = 0) => {
     return async (env) => {
         const controlprops = {};
         for (const key of Object.keys(control)) {
@@ -962,9 +976,12 @@ const loopRunner = (id, control, children) => {
             }
         }
         const inputaccessors = (control.inputs || []).map(k => compilepathaccessor(k));
+        let first = true;
         while (true) {
             if (!env.rngactive) break;
-            await executeChildren(children, env, id);
+            const slice = first ? children.slice(startIndex) : children;
+            await executeChildren(slice, env, id);
+            first = false;
             const inputargs = inputaccessors.map(fn => fn(env));
             const fnargs = [controlprops].concat(inputargs);
             const shouldcontinue = await control.fn(...fnargs);
@@ -974,9 +991,9 @@ const loopRunner = (id, control, children) => {
     };
 };
 
-const defaultRunner = (id, children) => {
+const defaultRunner = (id, children, startIndex = 0) => {
     return async (env) => {
-        await executeChildren(children, env, id);
+        await executeChildren(children.slice(startIndex), env, id);
         return {};
     };
 };
@@ -1007,7 +1024,8 @@ const executeChildren = async (children, env, stageid) => {
     return spawnOutputs;
 };
 
-const compileElements = (elements, pipelineId = 'default_pipeline') => elements.map(el => compileElement(el, pipelineId));
+const compileElements = (elements, pipelineId = 'default_pipeline', resumeFrom = null) =>
+    elements.map(el => compileElement(el, pipelineId, resumeFrom));
 
 const compileblock = (merged) => {
     const id = merged.id || 'unnamed';
@@ -1129,7 +1147,7 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
         console.warn('[compilepipeline] recovery check failed:', err);
     }
 
-    const compiled = compileElements(pipeline.elements, pipelineId);
+    const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom);
     const compiledpipeline = createpipeline(compiled, sinks, undefined, { resumeFrom, pipelineId });
     return { pipeline: compiledpipeline, resumeFrom, pipelineId };
 };
