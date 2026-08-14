@@ -30,7 +30,13 @@ import { logwarn, logdebug } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
 import {
-  enqueueExecutionSaveStatus
+  enqueueExecutionStart,
+  enqueueExecutionStop,
+  enqueueExecutionRestart,
+  enqueueExecutionContinue,
+  enqueueExecutionSaveStatus,
+  enqueueExecutionGet,
+  enqueueExecutionSet
 } from '../actors/executionactor.js';
 import {
   enqueueDbStore,
@@ -82,15 +88,22 @@ const buildproperties = (merged) => {
   return result;
 };
 
-const safeElementOutputs = (env) => {
+const safeElementOutputs = (env, outputKeys = null) => {
   const out = {};
-  for (const [key, value] of Object.entries(env || {})) {
-    if (typeof value === 'function') continue;
-    if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) continue;
-    if (typeof Node !== 'undefined' && value instanceof Node) continue;
-    if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
+  const keys = outputKeys || Object.keys(env || {});
+  for (const key of keys) {
+    if (env[key] === undefined) continue;
+    if (typeof env[key] === 'function') continue;
+    if (typeof HTMLElement !== 'undefined' && env[key] instanceof HTMLElement) continue;
+    if (typeof Node !== 'undefined' && env[key] instanceof Node) continue;
+    if (typeof EventTarget !== 'undefined' && env[key] instanceof EventTarget) continue;
     try {
-      out[key] = JSON.parse(JSON.stringify(value));
+      const json = JSON.stringify(env[key]);
+      if (json.length > 64 * 1024) {
+        out[key] = '[large-value omitted]';
+      } else {
+        out[key] = JSON.parse(json);
+      }
     } catch {
       out[key] = null;
     }
@@ -100,56 +113,93 @@ const safeElementOutputs = (env) => {
 
 const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pipelineId) => {
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
-  const stateKey = `pipeline:${pipelineId}:stage:${stageId}:element:${elementId}:state`;
+  const mapKey = `pipeline:${pipelineId}:executionmap`;
+  const outputKeys = Object.keys(elementDef?.signature?.outputs || {});
+
+  const loadExecutionMap = async () => {
+    try {
+      const existing = await enqueueDbRestore(mapKey);
+      if (existing && existing.stages) return existing;
+    } catch (err) {
+      console.warn('[PERSISTENCE] load execution map failed:', err);
+    }
+    return { pipelineId, stages: {} };
+  };
+
+  const captureOutputs = (env) => {
+    const out = {};
+    for (const key of outputKeys) {
+      if (env[key] === undefined) continue;
+      if (typeof env[key] === 'function') continue;
+      if (typeof HTMLElement !== 'undefined' && env[key] instanceof HTMLElement) continue;
+      if (typeof Node !== 'undefined' && env[key] instanceof Node) continue;
+      if (typeof EventTarget !== 'undefined' && env[key] instanceof EventTarget) continue;
+      try {
+        const json = JSON.stringify(env[key]);
+        if (json.length > 64 * 1024) {
+          out[key] = '[large-value omitted]';
+        } else {
+          out[key] = JSON.parse(json);
+        }
+      } catch {
+        out[key] = null;
+      }
+    }
+    return out;
+  };
+
+  const storeElementState = async (status, extra = {}) => {
+    try {
+      const map = await loadExecutionMap();
+      if (!map.stages[stageId]) {
+        map.stages[stageId] = { elements: {} };
+      }
+      map.stages[stageId].elements[elementId] = {
+        status,
+        savedAt: Date.now(),
+        ...extra
+      };
+      await enqueueDbStore(mapKey, map);
+      return map.stages[stageId].elements[elementId];
+    } catch (err) {
+      console.warn('[PERSISTENCE] execution map store failed:', err);
+      return null;
+    }
+  };
 
   return async (env) => {
-    const beforeState = {
-      pipelineId,
-      stageId,
-      elementId,
-      status: 'running',
-      startedAt: Date.now(),
-      env: safeElementOutputs(env)
-    };
-
-    try {
-      await enqueueDbStore(stateKey, beforeState);
-    } catch (persistError) {
-      console.warn('[PERSISTENCE] before-save failed:', persistError);
-    }
+    await storeElementState('running', { startedAt: Date.now() });
 
     try {
       const result = await compiledElement(env);
 
-      const afterState = {
-        ...beforeState,
-        status: 'completed',
+      const completedOutputs = captureOutputs(env);
+      await storeElementState('completed', {
         completedAt: Date.now(),
-        outputs: safeElementOutputs(env)
-      };
+        outputs: completedOutputs
+      });
 
       try {
-        await enqueueDbStore(stateKey, afterState);
-        await enqueueExecutionSaveStatus(elementId, 'completed', afterState.outputs);
+        await enqueueExecutionSaveStatus(elementId, 'completed', completedOutputs);
       } catch (persistError) {
-        console.warn('[PERSISTENCE] after-save failed:', persistError);
+        console.warn('[PERSISTENCE] execution actor save-status failed:', persistError);
       }
 
       return result;
     } catch (elementError) {
-      const failedState = {
-        ...beforeState,
-        status: 'failed',
+      const failedOutputs = captureOutputs(env);
+      await storeElementState('failed', {
         completedAt: Date.now(),
         error: elementError?.message || 'Unknown element error',
-        outputs: safeElementOutputs(env)
-      };
+        outputs: failedOutputs
+      });
 
       try {
-        await enqueueDbStore(stateKey, failedState);
-        await enqueueExecutionSaveStatus(elementId, 'failed', { error: failedState.error });
+        await enqueueExecutionSaveStatus(elementId, 'failed', {
+          error: elementError?.message || 'Unknown element error'
+        });
       } catch (persistError) {
-        console.warn('[PERSISTENCE] failure-save failed:', persistError);
+        console.warn('[PERSISTENCE] execution actor failure-save failed:', persistError);
       }
 
       // CCC SAFETY: rethrow exact same error object.
@@ -193,6 +243,7 @@ const createerrorcontext = (id, stagetype) => {
   };
 };
 
+// ---------- FC5: createBlockAnalyzer factory ----------
 function createBlockAnalyzer(rules) {
     return (block) => {
         const errors = [];
@@ -216,6 +267,7 @@ function createBlockAnalyzer(rules) {
     };
 }
 
+// ---------- FC6: Shared payload/response mapping helpers ----------
 function buildPayload(mappingobj, data) {
     const result = {};
     for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
@@ -621,6 +673,7 @@ const BLOCKCOMPILERS = {
             }
             const props = command.properties;
 
+            // --- new viewport handlers (no id required) ---
             if (messages === 'getviewport') {
                 const result = await enqueuegetviewport();
                 writeoutputs(sig, env, result);
@@ -639,6 +692,7 @@ const BLOCKCOMPILERS = {
                 writeoutputs(sig, env, result);
                 return;
             }
+            // --- existing handlers ---
             if (!props || !props.id || typeof props.id !== 'string') {
                 throw new Error('[DOMQUERY] Block "' + id + '" command requires properties.id field (string)');
             }
@@ -1012,7 +1066,7 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
             unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
     }
 
-    // Compile-time recovery from persisted element map.
+    // Compile-time recovery from persisted execution map.
     let resumeFrom = null;
     try {
         const mapKey = `pipeline:${pipelineId}:executionmap`;

@@ -4,15 +4,32 @@ import { logdebug } from "./verbosity.js";
 import { enqueueExecutionStart, enqueueExecutionSaveStatus } from "./actors/executionactor.js";
 import { enqueueDbStore, enqueueDbRestore } from "./actors/dbactor.js";
 
+const SNAPSHOT_KEYS = [
+  'agentid',
+  'approot',
+  'currenttheme',
+  'themetokens',
+  'cssprefix',
+  'authsessionaccesstoken',
+  'data',
+  'layout'
+];
+
 const safeOutputs = (env) => {
   const out = {};
-  for (const [key, value] of Object.entries(env || {})) {
-    if (typeof value === 'function') continue;
-    if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) continue;
-    if (typeof Node !== 'undefined' && value instanceof Node) continue;
-    if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
+  for (const key of SNAPSHOT_KEYS) {
+    if (env[key] === undefined) continue;
+    if (typeof env[key] === 'function') continue;
+    if (typeof HTMLElement !== 'undefined' && env[key] instanceof HTMLElement) continue;
+    if (typeof Node !== 'undefined' && env[key] instanceof Node) continue;
+    if (typeof EventTarget !== 'undefined' && env[key] instanceof EventTarget) continue;
     try {
-      out[key] = JSON.parse(JSON.stringify(value));
+      const json = JSON.stringify(env[key]);
+      if (json.length > 64 * 1024) {
+        out[key] = '[large-value omitted]';
+      } else {
+        out[key] = JSON.parse(json);
+      }
     } catch {
       out[key] = null;
     }
@@ -26,8 +43,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
   const { resumeFrom = null, pipelineId = 'default_pipeline' } = options;
 
   // Local runtime promise stack for async stages.
-  // The shared EXECUTIONACTOR is used for status observability and control,
-  // while this local stack preserves the actual pending promises.
+  // Shared EXECUTIONACTOR is used for status observability and control.
   const stageStack = [];
 
   const awaitPendingForReads = async (reads) => {
@@ -157,13 +173,19 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
       console.warn('[PIPELINE] snapshot restore failed:', err);
     }
 
+    let lastSnapshot = null;
     const snapshotInterval = setInterval(async () => {
       try {
-        await enqueueDbStore(snapshotKey, safeOutputs(env));
+        const current = safeOutputs(env);
+        const currentJson = JSON.stringify(current);
+        if (currentJson !== lastSnapshot) {
+          lastSnapshot = currentJson;
+          await enqueueDbStore(snapshotKey, current);
+        }
       } catch (err) {
         console.warn('[PIPELINE] periodic snapshot failed:', err);
       }
-    }, 1000);
+    }, 5000);
 
     try {
       for (let idx = fromIndex; idx < stages.length; idx++) {

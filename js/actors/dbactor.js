@@ -25,6 +25,8 @@ const MESSAGEINTERFACES = Object.freeze({
 });
 
 const ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
+const MAX_KEYS = 100;
+const MAX_ENTRY_BYTES = 512 * 1024; // 512 KB per value cap
 
 const loadInitialState = () => {
   try {
@@ -41,17 +43,50 @@ const loadInitialState = () => {
   return { store: new Map() };
 };
 
-const persist = (store) => {
-  const root = {
+const isQuotaError = (err) => {
+  return err && (
+    err.name === 'QuotaExceededError' ||
+    err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    err.name === 'DOMException'
+  );
+};
+
+const persist = (store, maxRetries = 2) => {
+  let root = {
     namespace: 'FRAMEWORK_DBACTOR_V1',
     updatedAt: Date.now(),
     keys: Object.fromEntries(store)
   };
-  try {
-    localStorage.setItem(ROOT_KEY, JSON.stringify(root));
-  } catch (err) {
-    console.warn('[DBACTOR] persist failed:', err);
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      localStorage.setItem(ROOT_KEY, JSON.stringify(root));
+      return true;
+    } catch (err) {
+      if (isQuotaError(err)) {
+        const keys = [...store.keys()];
+        if (keys.length === 0) return false;
+
+        // Evict oldest 25% of keys, preferring keys with pipeline: prefix or no critical namespace.
+        const removeCount = Math.max(1, Math.floor(keys.length * 0.25));
+        for (let i = 0; i < removeCount; i++) {
+          store.delete(keys[i]);
+        }
+
+        root = {
+          namespace: 'FRAMEWORK_DBACTOR_V1',
+          updatedAt: Date.now(),
+          keys: Object.fromEntries(store)
+        };
+        continue;
+      }
+
+      console.warn('[DBACTOR] persist failed:', err);
+      return false;
+    }
   }
+
+  return false;
 };
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
@@ -71,10 +106,23 @@ const dbbehavior = (state, message) => {
 
   switch (message.type) {
     case DBMESSAGETYPES.STORE: {
+      const serializedValue = JSON.stringify(message.value);
+      if (serializedValue.length > MAX_ENTRY_BYTES) {
+        console.warn('[DBACTOR] value too large for key:', message.key, 'bytes:', serializedValue.length);
+        if (typeof message.resolve === 'function') message.resolve(false);
+        return state;
+      }
+
+      if (store.size >= MAX_KEYS && !store.has(message.key)) {
+        const oldestKey = store.keys().next().value;
+        if (oldestKey) store.delete(oldestKey);
+      }
+
       store.set(message.key, message.value);
-      persist(store);
+      const success = persist(store);
+
       if (typeof message.resolve === 'function') {
-        message.resolve(true);
+        message.resolve(success);
       }
       break;
     }
@@ -128,4 +176,3 @@ export const enqueueDbList = () =>
       reject
     })
   );
-
