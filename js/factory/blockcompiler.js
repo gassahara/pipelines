@@ -2,9 +2,33 @@ import { enqueueapi } from '../actors/apiactor.js';
 import { createpipeline } from '../pipe.js';
 import { callwithstack } from './callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
-import { enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue, enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition, enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout, enqueusetlayout, DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport, enqueuegetscreen, enqueuematchmedia } from '../actors/renderactor.js';
+import {
+  enqueuehtml,
+  expectelement,
+  enqueuegethtml,
+  enqueuegetvalue,
+  enqueuegetstyle,
+  enqueuegetposition,
+  enqueuesethtml,
+  enqueuesetposition,
+  enqueuesetstyle,
+  enqueuesetvalue,
+  enqueueproperty,
+  enqueuegetlayout,
+  enqueusetlayout,
+  enqueuetoggleclass,
+  DOMQUERYGETTERS,
+  DOMQUERYSETTERS,
+  DOMQUERYMESSAGES,
+  RENDERACTOR,
+  MESSAGETYPES,
+  enqueuegetviewport,
+  enqueuegetscreen,
+  enqueuematchmedia
+} from '../actors/renderactor.js';
 import { logwarn, logdebug } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';
+import { validatestageflow } from '../typesystem.js';
 
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
@@ -422,7 +446,7 @@ const BLOCKCOMPILERS = {
                     let dna = merged.dna || null;
                     if (!dna && merged.dnaref) {
                         const dnapath = merged.dnaref;
-                        if (dnapath.from === 'eventtarget') {
+                        if (dnapath.from === 'eventTarget') {
                             const target = env.eventtarget;
                             const el = dnapath.query ? target?.closest(dnapath.query) : target;
                             if (!el) return {};
@@ -502,12 +526,12 @@ const BLOCKCOMPILERS = {
             }
             const getters = DOMQUERYGETTERS;
             const setters = DOMQUERYSETTERS;
-            // Extend local set of valid messages with viewport commands
             const ALL_DOMQUERY_MESSAGES = DOMQUERYMESSAGES.concat(['getviewport', 'getscreen', 'matchmedia']);
             if (!ALL_DOMQUERY_MESSAGES.includes(messages)) {
                 throw new Error('[DOMQUERY] Block "' + id + '" unknown COMMAND type: ' + messages);
             }
             const props = command.properties;
+
             // --- new viewport handlers (no id required) ---
             if (messages === 'getviewport') {
                 const result = await enqueuegetviewport();
@@ -532,9 +556,17 @@ const BLOCKCOMPILERS = {
                 throw new Error('[DOMQUERY] Block "' + id + '" command requires properties.id field (string)');
             }
             const commandid = props.id;
-            if (setters.includes(messages) && props.value === undefined) {
-                throw new Error('[DOMQUERY] Block "' + id + '" setter COMMAND requires command.properties.value');
+
+            if (setters.includes(messages)) {
+                if (messages === 'toggleclass') {
+                    if (!props || !props.classname || typeof props.classname !== 'string') {
+                        throw new Error('[DOMQUERY] toggleclass requires properties.classname (string)');
+                    }
+                } else if (props.value === undefined) {
+                    throw new Error('[DOMQUERY] setter COMMAND requires command.properties.value');
+                }
             }
+
             const messagehandlers = {
                 'gethtml': enqueuegethtml,
                 'getvalue': enqueuegetvalue,
@@ -546,13 +578,22 @@ const BLOCKCOMPILERS = {
                 'setstyle': enqueuesetstyle,
                 'setvalue': enqueuesetvalue,
                 'setlayout': enqueusetlayout,
-                'property': enqueueproperty
+                'property': enqueueproperty,
+                'toggleclass': enqueuetoggleclass
             };
             const handler = messagehandlers[messages];
             const result = await callwithstack(
                 EVALSTACK, 'domquery:' + messages, 'async-await',
                 async (e) => {
                     if (setters.includes(messages)) {
+                        if (messages === 'toggleclass') {
+                            const classname = props.classname;
+                            const force = props.force;
+                            if (sig.inputs && sig.inputs.length > 0) {
+                                return await handler(commandid, compilepathaccessor(props.classname)(env), props.force);
+                            }
+                            return await handler(commandid, classname, force);
+                        }
                         const resolvedvalue = props.value;
                         if (sig.inputs && sig.inputs.length > 0) {
                             return await handler(commandid, compilepathaccessor(props.value)(env));
@@ -624,7 +665,24 @@ const compileBlockElement = (block) => {
 
 const compileStageElement = (stage) => {
     const children = (stage.elements || []).map(compileElement);
-    return stageRunner(stage, children);
+    const fn = stageRunner(stage, children);
+    fn.id = stage.id;
+
+    const reads = new Set();
+    const writes = new Set();
+    for (const el of stage.elements || []) {
+        if (el.element === 'BLOCK') {
+            (el.reads || []).forEach(k => reads.add(k));
+            (el.writes || []).forEach(k => writes.add(k));
+        }
+    }
+    fn.stagemeta = {
+        async: stage.async === true,
+        stageid: stage.id,
+        reads: [...reads],
+        writes: [...writes]
+    };
+    return fn;
 };
 
 const stageRunner = (stage, children) => {
@@ -793,6 +851,24 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
     if (!pipeline.elements) {
         throw new Error('[compilepipeline] pipeline must have elements array');
     }
+
+    const rawStages = [];
+    for (const el of pipeline.elements) {
+        if (el.element === 'STAGE') {
+            rawStages.push({
+                id: el.id,
+                control: el.control || null,
+                blocks: (el.elements || []).filter(e => e.element === 'BLOCK')
+            });
+        }
+    }
+    const contracts = validatestageflow(rawStages);
+    const unresolved = contracts.filter(c => !c.resolved);
+    if (unresolved.length > 0) {
+        throw new Error('[compilepipeline] Unresolved stage key dependencies: ' +
+            unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
+    }
+
     const compiled = compileElements(pipeline.elements);
     const compiledpipeline = createpipeline(compiled, sinks);
     return { pipeline: compiledpipeline };

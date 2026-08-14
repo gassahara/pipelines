@@ -74,9 +74,28 @@ export function createMessageValidator(interfaceMap) {
                 continue;
             }
             if (expectedtype === 'any') continue;
-            var actualtype = typeof message[key];
-            if (actualtype !== expectedtype) {
-                return { valid: false, error: 'type "' + type + '" field "' + key + '" expected ' + expectedtype + ' got ' + actualtype, type: type };
+
+            if (expectedtype === 'array') {
+                if (!Array.isArray(message[key])) {
+                    return {
+                        valid: false,
+                        error: 'type "' + type + '" field "' + key + '" expected array got ' + (Array.isArray(message[key]) ? 'array' : typeof message[key]),
+                        type: type
+                    };
+                }
+            } else if (expectedtype === 'object') {
+                if (message[key] === null || typeof message[key] !== 'object') {
+                    return {
+                        valid: false,
+                        error: 'type "' + type + '" field "' + key + '" expected object got ' + (message[key] === null ? 'null' : typeof message[key]),
+                        type: type
+                    };
+                }
+            } else {
+                var actualtype = typeof message[key];
+                if (actualtype !== expectedtype) {
+                    return { valid: false, error: 'type "' + type + '" field "' + key + '" expected ' + expectedtype + ' got ' + actualtype, type: type };
+                }
             }
         }
         return { valid: true, error: null, type: type };

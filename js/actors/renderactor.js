@@ -1,6 +1,7 @@
 import { createactor, createMessageValidator } from './actorkernel.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
 import { revalidateAll } from './trigerregistry.js';
+import { setRenderActor } from './actorregistry.js';
 
 export const MESSAGETYPES = Object.freeze({
   RENDER: 'render',
@@ -104,6 +105,13 @@ function createEnqueuer(type, idRequired, extraPayloadFn) {
 }
 
 var renderbehavior = function(state, message) {
+  // If RENDER message has missing/null id, assign a unique internal id.
+  // This preserves strict validation while allowing ref-based renders.
+  if (message.type === MESSAGETYPES.RENDER && (message.id === null || message.id === undefined)) {
+      renderbehavior._refcounter = (renderbehavior._refcounter || 0) + 1;
+      message.id = '__ref_render_' + Date.now() + '_' + renderbehavior._refcounter;
+  }
+
   var check = validatemessage(message);
   if (!check.valid) {
     console.error('[RENDERACTOR:UNKNOWNTYPE] type=' + check.type + ' error=' + check.error);
@@ -388,6 +396,7 @@ var renderbehavior = function(state, message) {
 };
 
 export const RENDERACTOR = createactor(renderbehavior, {});
+setRenderActor(RENDERACTOR);
 
 // Enqueue functions generated via macro (FC2)
 export const enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, function(rest) {

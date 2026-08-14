@@ -100,7 +100,7 @@ export function parseLength(value, referencePx = 16) {
     if(value == "medium") value = referencePx * 1.3;
     if(value == "large") value = referencePx * 1.5;
     if(value == "small") value = referencePx * 0.7;
-    if(value == "tiny") value = referencePx * 0.5; 
+    if(value == "tiny") value = referencePx * 0.5;
     const str = String(value).trim();
     let i = 0;
     let sign = 1;
@@ -479,9 +479,15 @@ export function rewritestyleattrs(html, rules) {
             els = resolvePath(body, rule.path);
         } else {
             if (rule.id)      els = [doc.getElementById(rule.id)];
-            if (rule.tag)     els = doc.getElementsByTagName(rule.tag);
-            if (rule.class)   els = doc.getElementsByClassName(rule.class);
-            if (rule.name)    els = [doc.getElementByName(rule.name)];
+            if (rule.tag)     els = Array.from(doc.getElementsByTagName(rule.tag));
+            if (rule.class)   els = Array.from(doc.getElementsByClassName(rule.class));
+            if (rule.name) {
+                const named = doc.getElementsByName(rule.name);
+                if (!named || named.length === 0) {
+                    throw new Error('[rewritestyleattrs] No element found with name: ' + rule.name);
+                }
+                els = Array.from(named);
+            }
         }
 
         for (var eli = 0; eli < els.length; eli++) {
@@ -491,7 +497,12 @@ export function rewritestyleattrs(html, rules) {
             if (newstyle) {
                 var newkeys = Object.keys(newstyle);
                 for (var ni = 0; ni < newkeys.length; ni++) {
-                    try { el.style[newkeys[ni]] = newstyle[newkeys[ni]]; } catch(e) { console.log({e}); }
+                    try {
+                        el.style[newkeys[ni]] = newstyle[newkeys[ni]];
+                    } catch (e) {
+                        throw new Error('[rewritestyleattrs] Failed to set style "' + newkeys[ni] + '" on element ' +
+                            (el.tagName || 'unknown') + (el.id ? '#' + el.id : '') + ': ' + e.message);
+                    }
                 }
             }
         }
@@ -710,6 +721,13 @@ export function estimateRecursiveBounds(node) {
 
 // ==================== STYLE VERIFICATION ====================
 
+// Helper to convert any colour string to hex using the new rgbToHex(r,g,b) API.
+function anyColorToHex(color) {
+    const rgb = hexToRgb(color);
+    if (!Array.isArray(rgb)) return '#000000';
+    return rgbToHex(rgb[0], rgb[1], rgb[2]);
+}
+
 export function verifyContrast(html, minRatio = 4.5) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
@@ -734,8 +752,8 @@ export function verifyContrast(html, minRatio = 4.5) {
             const fg = el.style.color;
             const bg = getEffectiveBackground(el);
             if (fg && bg) {
-                const fgHex = rgbToHex(fg);
-                const bgHex = rgbToHex(bg);
+                const fgHex = anyColorToHex(fg);
+                const bgHex = anyColorToHex(bg);
                 const ratio = contrastRatio(fgHex, bgHex);
                 if (ratio < minRatio) {
                     const newFg = getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
@@ -806,11 +824,13 @@ export function verifyHarmony(html, options = {}) {
         const bg = extractBgFromShorthand(el) || '#ffffff';
         const color = el.style.color;
         if (color) {
-            const score = colorHarmonyScore(rgbToHex(color), rgbToHex(bg));
+            const colorHex = anyColorToHex(color);
+            const bgHex = anyColorToHex(bg);
+            const score = colorHarmonyScore(colorHex, bgHex);
             if (score < 0.5) {
-                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), score, color: rgbToHex(color), bg: rgbToHex(bg) });
+                violations.push({ element: el.tagName + (el.id ? '#'+el.id : ''), score, color: colorHex, bg: bgHex });
                 if (options.autoCorrect) {
-                    const palette = getHarmoniousPalette(rgbToHex(bg), 3, { scheme: 'analogous' });
+                    const palette = getHarmoniousPalette(bgHex, 3, { scheme: 'analogous' });
                     if (palette.length > 0) {
                         const newColor = palette[0];
                         mergeAndApplyStyles(el, { color: newColor });
@@ -1017,10 +1037,11 @@ function correctContrastDoc(doc, minRatio) {
         if (el.textContent.trim() && el.style.color) {
             const bg = getEffectiveBackground(el);
             if (bg) {
-                const fg = el.style.color;
-                const ratio = contrastRatio(rgbToHex(fg), rgbToHex(bg));
+                const fgHex = anyColorToHex(el.style.color);
+                const bgHex = anyColorToHex(bg);
+                const ratio = contrastRatio(fgHex, bgHex);
                 if (ratio < minRatio) {
-                    const newFg = getOptimalForeground(rgbToHex(bg), minRatio, { scheme: 'complementary' });
+                    const newFg = getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
                     const selector = el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() };
                     rules.push({ selector, styles: { color: newFg } });
                     mergeAndApplyStyles(el, { color: newFg });
@@ -1038,8 +1059,8 @@ function correctHarmonyDoc(doc) {
         if (el.textContent.trim() && el.style.color) {
             const bg = getEffectiveBackground(el);
             if (bg) {
-                const fg = rgbToHex(el.style.color);
-                const bgHex = rgbToHex(bg);
+                const fg = anyColorToHex(el.style.color);
+                const bgHex = anyColorToHex(bg);
                 const score = colorHarmonyScore(fg, bgHex);
                 if (score < 0.5) {
                     const palette = getHarmoniousPalette(bgHex, 3, { scheme: 'analogous' });

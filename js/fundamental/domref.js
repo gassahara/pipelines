@@ -1,4 +1,4 @@
-import { RENDERACTOR } from '../actors/renderactor.js';
+import { getRenderActor } from '../actors/actorregistry.js';
 
 const RAWMAP = new WeakMap();
 
@@ -15,17 +15,20 @@ export function CREATEDOMREF(rawelement) {
   }
   const ref = {
     project: (renderer, data, env) => {
-      RENDERACTOR.send({ type: 'render', id: null, renderer: renderer, data: data, env: env || {} });
+      const actor = getRenderActor();
+      actor.send({ type: 'render', id: null, renderer: renderer, data: data, env: env || {} });
     },
     appendchild: (childref) => {
-      RENDERACTOR.send({ type: 'render', id: null, renderer: () => {
+      const actor = getRenderActor();
+      actor.send({ type: 'render', id: null, renderer: () => {
         const parent = GETRAWELEMENT(ref);
         const child = GETRAWELEMENT(childref);
         if (parent && child) parent.appendChild(child);
       }, data: {} });
     },
     remove: () => {
-      RENDERACTOR.send({ type: 'render', id: null, renderer: () => {
+      const actor = getRenderActor();
+      actor.send({ type: 'render', id: null, renderer: () => {
         const el = GETRAWELEMENT(ref);
         if (el && el.parentNode) el.parentNode.removeChild(el);
       }, data: {} });

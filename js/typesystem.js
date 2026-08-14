@@ -19,20 +19,20 @@ const extractstagesblocks = (pipeline) => {
 };
 
 export const TYPESCHEMA = {
-  agent: { 
-    dna: { type: 'object', required: true }, 
-    pipeline: { type: 'function', required: true } 
+  agent: {
+    dna: { type: 'object', required: true },
+    pipeline: { type: 'function', required: true }
   },
-  oracledna: { 
-    identity: { type: 'object', required: true }, 
-    pipeline: { type: 'object', required: true }, 
-    presentation: { type: 'object', required: false } 
+  oracledna: {
+    identity: { type: 'object', required: true },
+    pipeline: { type: 'object', required: true },
+    presentation: { type: 'object', required: false }
   },
-  layoutcomponent: { 
-    key: { type: 'string', required: true }, 
-    parent: { type: 'string', required: false }, 
-    id: { type: 'string', required: false }, 
-    datapath: { type: 'string', required: false } 
+  layoutcomponent: {
+    key: { type: 'string', required: true },
+    parent: { type: 'string', required: false },
+    id: { type: 'string', required: false },
+    datapath: { type: 'string', required: false }
   },
   pipeline: {
     stages: { type: 'array', required: true }
@@ -41,7 +41,8 @@ export const TYPESCHEMA = {
     id: { type: 'string', required: true },
     type: { type: 'string', required: true },
     intent: { type: 'string', required: false },
-    blocks: { type: 'array', required: false }
+    blocks: { type: 'array', required: false },
+    async: { type: 'boolean', required: false }
   },
   block: {
     id: { type: 'string', required: true },
@@ -147,10 +148,10 @@ export const validatecall = (schema, fn, functionname = 'anonymous') => {
 
 export async function validateschema(value, schema, context = 'stream', registry = new Map(), strict = false) {
     const errors = [];
-    
+
     let currentschema = typeof schema === 'string' ? registry.get(schema) : schema;
     if (currentschema?.schemaref) currentschema = registry.get(currentschema.schemaref);
-    
+
     if (!currentschema) return errors;
 
     if (currentschema.type && currentschema.type !== 'any') {
@@ -172,7 +173,7 @@ export async function validateschema(value, schema, context = 'stream', registry
           return { label, errs };
         })
       );
-      
+
       const winner = branchresults.find(b => b.errs.length === 0);
       if (winner) return [];
 
@@ -184,7 +185,7 @@ export async function validateschema(value, schema, context = 'stream', registry
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       if (strict && currentschema.strict !== false) {
         const allowed = new Set([
-          ...(currentschema.required || []), 
+          ...(currentschema.required || []),
           ...(currentschema.optional || []),
           ...Object.keys(currentschema.properties || {})
         ]);
@@ -374,7 +375,7 @@ export function validatespawncontracts(pipeline) {
 
 export function validateblocktype(block) {
     const errors = [];
-    const validtypes = ['fn', 'api', 'writer', 'domquery', 'spawn', 'io', 'crypto', 'wait'];
+    const validtypes = ['fn', 'api', 'fetch', 'writer', 'domquery', 'spawn', 'io', 'crypto', 'wait'];
     if (!block.type || !validtypes.includes(block.type)) {
         errors.push('BLOCK TYPE: block "' + block.id + '" has invalid type: ' + block.type + '. Valid types: ' + validtypes.join(', '));
     }
@@ -388,17 +389,26 @@ export function validatedomqueryblock(block) {
         errors.push('DOMQUERY: block "' + block.id + '" requires command with COMMAND');
         return errors;
     }
-    const getters = DOMQUERYGETTERS;
-    const setters = DOMQUERYSETTERS;
-    if (!DOMQUERYMESSAGES.includes(block.command.COMMAND)) {
+    const viewportCommands = ['getviewport', 'getscreen', 'matchmedia'];
+    const allDomqueryMessages = DOMQUERYMESSAGES.concat(viewportCommands);
+    if (!allDomqueryMessages.includes(block.command.COMMAND)) {
         errors.push('DOMQUERY: block "' + block.id + '" unknown COMMAND: ' + block.command.COMMAND);
     }
     const cmdprops = block.command.properties;
-    if (!cmdprops || !cmdprops.id || typeof cmdprops.id !== 'string') {
-        errors.push('DOMQUERY: block "' + block.id + '" command requires properties.id (string)');
+    if (!viewportCommands.includes(block.command.COMMAND)) {
+        if (!cmdprops || !cmdprops.id || typeof cmdprops.id !== 'string') {
+            errors.push('DOMQUERY: block "' + block.id + '" command requires properties.id (string)');
+        }
     }
-    if (setters.includes(block.command.COMMAND) && cmdprops && cmdprops.value === undefined) {
-        errors.push('DOMQUERY: block "' + block.id + '" setter requires command.properties.value');
+    const setters = DOMQUERYSETTERS;
+    if (setters.includes(block.command.COMMAND)) {
+        if (block.command.COMMAND === 'toggleclass') {
+            if (!cmdprops || !cmdprops.classname || typeof cmdprops.classname !== 'string') {
+                errors.push('DOMQUERY: block "' + block.id + '" toggleclass requires command.properties.classname (string)');
+            }
+        } else if (cmdprops && cmdprops.value === undefined) {
+            errors.push('DOMQUERY: block "' + block.id + '" setter requires command.properties.value');
+        }
     }
     return errors;
 }
