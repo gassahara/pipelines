@@ -3,6 +3,7 @@ import { EVALSTACK } from "./evalstack.js";
 import { logdebug } from "./verbosity.js";
 import { enqueueExecutionStart, enqueueExecutionSaveStatus } from "./actors/executionactor.js";
 import { enqueueDbStore, enqueueDbRestore } from "./actors/dbactor.js";
+import { revalidateAll } from "./actors/trigerregistry.js";
 
 const SNAPSHOT_KEYS = [
   'agentid',
@@ -158,8 +159,9 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
 
   const runAll = async (env, fromIndex = 0) => {
     const snapshotKey = 'pipeline:' + env.agentid + ':env';
+    const htmlKey = `pipeline:${pipelineId}:html`;
 
-    // Restore prior snapshot if available.
+    // Restore prior env snapshot if available.
     try {
       const restored = await enqueueDbRestore(snapshotKey);
       if (restored && typeof restored === 'object') {
@@ -171,6 +173,30 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
       }
     } catch (err) {
       console.warn('[PIPELINE] snapshot restore failed:', err);
+    }
+
+    // Restore prior HTML snapshot if available.
+    try {
+      const htmlSnapshot = await enqueueDbRestore(htmlKey);
+      if (
+        htmlSnapshot &&
+        htmlSnapshot.rootId &&
+        typeof htmlSnapshot.html === 'string'
+      ) {
+        const targetEl = document.getElementById(htmlSnapshot.rootId);
+        if (targetEl) {
+          targetEl.innerHTML = htmlSnapshot.html;
+        }
+      }
+    } catch (err) {
+      console.warn('[PIPELINE] html snapshot restore failed:', err);
+    }
+
+    // Reattach registered triggers after HTML restoration.
+    try {
+      revalidateAll();
+    } catch (err) {
+      console.warn('[PIPELINE] trigger revalidate after html restore failed:', err);
     }
 
     let lastSnapshot = null;

@@ -179,6 +179,27 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
         outputs: completedOutputs
       });
 
+      // P40: Capture target HTML after successful writer element.
+      if (elementDef.type === 'writer') {
+        const targetId = elementDef.targetlabel || env.approot;
+        if (targetId && typeof document !== 'undefined') {
+          const targetEl = document.getElementById(targetId);
+          if (targetEl) {
+            const htmlSnapshot = {
+              pipelineId,
+              rootId: targetId,
+              html: targetEl.innerHTML,
+              savedAt: Date.now()
+            };
+            try {
+              await enqueueDbStore(`pipeline:${pipelineId}:html`, htmlSnapshot);
+            } catch (persistError) {
+              console.warn('[PERSISTENCE] html snapshot save failed:', persistError);
+            }
+          }
+        }
+      }
+
       try {
         await enqueueExecutionSaveStatus(elementId, 'completed', completedOutputs);
       } catch (persistError) {

@@ -26,7 +26,8 @@ const MESSAGEINTERFACES = Object.freeze({
 
 const ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
 const MAX_KEYS = 100;
-const MAX_ENTRY_BYTES = 512 * 1024; // 512 KB per value cap
+const MAX_ENTRY_BYTES = 512 * 1024; // 512 KB default per value cap
+const HTML_MAX_ENTRY_BYTES = MAX_ENTRY_BYTES * 2; // 1 MB for HTML snapshots
 
 const loadInitialState = () => {
   try {
@@ -67,7 +68,7 @@ const persist = (store, maxRetries = 2) => {
         const keys = [...store.keys()];
         if (keys.length === 0) return false;
 
-        // Evict oldest 25% of keys, preferring keys with pipeline: prefix or no critical namespace.
+        // Evict oldest 25% of keys.
         const removeCount = Math.max(1, Math.floor(keys.length * 0.25));
         for (let i = 0; i < removeCount; i++) {
           store.delete(keys[i]);
@@ -106,8 +107,13 @@ const dbbehavior = (state, message) => {
 
   switch (message.type) {
     case DBMESSAGETYPES.STORE: {
+      let maxBytes = MAX_ENTRY_BYTES;
+      if (message.key.includes(':html')) {
+        maxBytes = HTML_MAX_ENTRY_BYTES;
+      }
+
       const serializedValue = JSON.stringify(message.value);
-      if (serializedValue.length > MAX_ENTRY_BYTES) {
+      if (serializedValue.length > maxBytes) {
         console.warn('[DBACTOR] value too large for key:', message.key, 'bytes:', serializedValue.length);
         if (typeof message.resolve === 'function') message.resolve(false);
         return state;
