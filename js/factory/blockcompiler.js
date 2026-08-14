@@ -111,6 +111,27 @@ const safeElementOutputs = (env, outputKeys = null) => {
   return out;
 };
 
+const safeFullEnv = (env) => {
+  const out = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    if (typeof value === 'function') continue;
+    if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) continue;
+    if (typeof Node !== 'undefined' && value instanceof Node) continue;
+    if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
+    try {
+      const json = JSON.stringify(value);
+      if (json.length > 128 * 1024) {
+        out[key] = '[large-value omitted]';
+      } else {
+        out[key] = JSON.parse(json);
+      }
+    } catch {
+      out[key] = null;
+    }
+  }
+  return out;
+};
+
 const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pipelineId) => {
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
   const mapKey = `pipeline:${pipelineId}:executionmap`;
@@ -201,7 +222,11 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
   };
 
   return async (env) => {
-    await storeElementState('running', { startedAt: Date.now() });
+    // Save pre-execution checkpoint BEFORE running element.
+    await storeElementState('running', {
+      startedAt: Date.now(),
+      env: safeFullEnv(env)
+    });
 
     try {
       const result = await compiledElement(env);
@@ -209,7 +234,8 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
       const completedOutputs = captureOutputs(env);
       await storeElementState('completed', {
         completedAt: Date.now(),
-        outputs: completedOutputs
+        outputs: completedOutputs,
+        env: safeFullEnv(env)
       });
 
       if (elementDef.type === 'writer') {
@@ -225,22 +251,8 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
 
       return result;
     } catch (elementError) {
-      const failedOutputs = captureOutputs(env);
-      await storeElementState('failed', {
-        completedAt: Date.now(),
-        error: elementError?.message || 'Unknown element error',
-        outputs: failedOutputs
-      });
-
-      try {
-        await enqueueExecutionSaveStatus(elementId, 'failed', {
-          error: elementError?.message || 'Unknown element error'
-        });
-      } catch (persistError) {
-        console.warn('[PERSISTENCE] execution actor failure-save failed:', persistError);
-      }
-
-      // CCC SAFETY: rethrow exact same error object.
+      // CCC handles failures. Do NOT persist failed state here.
+      // Rethrow exact same error object.
       throw elementError;
     }
   };
@@ -711,7 +723,6 @@ const BLOCKCOMPILERS = {
             }
             const props = command.properties;
 
-            // --- new viewport handlers (no id required) ---
             if (messages === 'getviewport') {
                 const result = await enqueuegetviewport();
                 writeoutputs(sig, env, result);
@@ -730,7 +741,7 @@ const BLOCKCOMPILERS = {
                 writeoutputs(sig, env, result);
                 return;
             }
-            // --- existing handlers ---
+
             if (!props || !props.id || typeof props.id !== 'string') {
                 throw new Error('[DOMQUERY] Block "' + id + '" command requires properties.id field (string)');
             }
@@ -897,9 +908,8 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
 
     let startIndex = 0;
     if (resumeFrom && resumeFrom.stageId === stage.id) {
-        startIndex = children.findIndex(ch =>
-            ch.id === resumeFrom.elementId ||
-            ch.blockmeta?.id === resumeFrom.elementId
+        startIndex = (stage.elements || []).findIndex(el =>
+            el.id === resumeFrom.elementId
         );
         if (startIndex < 0) startIndex = 0;
     }
@@ -926,7 +936,8 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
         notifyOnDone: stage.notifyOnDone === true,
         startElementId: resumeFrom && resumeFrom.stageId === stage.id
             ? resumeFrom.elementId
-            : null
+            : null,
+        controlCommand: stage.control?.command || null
     };
     return fn;
 };
@@ -1124,6 +1135,7 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
 
     // Compile-time recovery from persisted execution map.
     let resumeFrom = null;
+    let lastCheckpointEnv = null;
     try {
         const mapKey = `pipeline:${pipelineId}:executionmap`;
         const executionMap = await enqueueDbRestore(mapKey);
@@ -1135,6 +1147,11 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
                 for (const el of stage.elements || []) {
                     if (el.element !== 'BLOCK') continue;
                     const elementState = stageRecord.elements?.[el.id];
+
+                    if (elementState?.env) {
+                        lastCheckpointEnv = elementState.env;
+                    }
+
                     if (!elementState || elementState.status !== 'completed') {
                         resumeFrom = { stageId: stage.id, elementId: el.id };
                         break;
@@ -1148,6 +1165,10 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
     }
 
     const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom);
-    const compiledpipeline = createpipeline(compiled, sinks, undefined, { resumeFrom, pipelineId });
-    return { pipeline: compiledpipeline, resumeFrom, pipelineId };
+    const compiledpipeline = createpipeline(compiled, sinks, undefined, {
+        resumeFrom,
+        pipelineId,
+        restoredEnv: lastCheckpointEnv
+    });
+    return { pipeline: compiledpipeline, resumeFrom, restoredEnv: lastCheckpointEnv, pipelineId };
 };

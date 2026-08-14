@@ -41,7 +41,11 @@ const safeOutputs = (env) => {
 export const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
   if (!Array.isArray(stages)) throw new Error("[PIPELINE] Stages must be an array.");
 
-  const { resumeFrom = null, pipelineId = 'default_pipeline' } = options;
+  const {
+    resumeFrom = null,
+    pipelineId = 'default_pipeline',
+    restoredEnv = null
+  } = options;
 
   // Local runtime promise stack for async stages.
   // Shared EXECUTIONACTOR is used for status observability and control.
@@ -175,6 +179,15 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
       console.warn('[PIPELINE] snapshot restore failed:', err);
     }
 
+    // Restore full env checkpoint from last persisted element state.
+    if (restoredEnv && typeof restoredEnv === 'object') {
+      for (const [key, value] of Object.entries(restoredEnv)) {
+        if (!(key in env) || env[key] === undefined) {
+          env[key] = value;
+        }
+      }
+    }
+
     // Restore all persisted writer target HTMLs.
     try {
       const htmlMap = await enqueueDbRestore(htmlMapKey);
@@ -244,6 +257,14 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
 
         logdebug('[PIPELINE] Executing stage:', stageid, 'for agent:', env.agentid);
         await runStage(stage, env, callerid, stageid);
+
+        // P52: If resumed stage is a TRIGGER stage, execute only that stage.
+        if (resumeFrom && resumeFrom.stageId === stageid) {
+          if (stageMeta.controlCommand === 'TRIGGER') {
+            logdebug('[PIPELINE] Resumed TRIGGER stage only; stopping after stage', stageid);
+            break;
+          }
+        }
       }
 
       if (stageStack.length) {
