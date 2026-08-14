@@ -29,6 +29,13 @@ import {
 import { logwarn, logdebug } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
+import {
+  enqueueExecutionSaveStatus
+} from '../actors/executionactor.js';
+import {
+  enqueueDbStore,
+  enqueueDbRestore
+} from '../actors/dbactor.js';
 
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
@@ -39,7 +46,9 @@ const BLOCKTYPES = Object.freeze({
   IO: 'io',
   DOMQUERY: 'domquery',
   CRYPTO: 'crypto',
-  WAIT: 'wait'
+  WAIT: 'wait',
+  EXECUTIONQUERY: 'executionquery',
+  STOREQUERY: 'storequery'
 });
 
 const INHERITEDKEYS = [
@@ -71,6 +80,82 @@ const buildproperties = (merged) => {
     }
   }
   return result;
+};
+
+const safeElementOutputs = (env) => {
+  const out = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    if (typeof value === 'function') continue;
+    if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) continue;
+    if (typeof Node !== 'undefined' && value instanceof Node) continue;
+    if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
+    try {
+      out[key] = JSON.parse(JSON.stringify(value));
+    } catch {
+      out[key] = null;
+    }
+  }
+  return out;
+};
+
+const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pipelineId) => {
+  const elementId = elementDef.id || compiledElement.id || 'element_unknown';
+  const stateKey = `pipeline:${pipelineId}:stage:${stageId}:element:${elementId}:state`;
+
+  return async (env) => {
+    const beforeState = {
+      pipelineId,
+      stageId,
+      elementId,
+      status: 'running',
+      startedAt: Date.now(),
+      env: safeElementOutputs(env)
+    };
+
+    try {
+      await enqueueDbStore(stateKey, beforeState);
+    } catch (persistError) {
+      console.warn('[PERSISTENCE] before-save failed:', persistError);
+    }
+
+    try {
+      const result = await compiledElement(env);
+
+      const afterState = {
+        ...beforeState,
+        status: 'completed',
+        completedAt: Date.now(),
+        outputs: safeElementOutputs(env)
+      };
+
+      try {
+        await enqueueDbStore(stateKey, afterState);
+        await enqueueExecutionSaveStatus(elementId, 'completed', afterState.outputs);
+      } catch (persistError) {
+        console.warn('[PERSISTENCE] after-save failed:', persistError);
+      }
+
+      return result;
+    } catch (elementError) {
+      const failedState = {
+        ...beforeState,
+        status: 'failed',
+        completedAt: Date.now(),
+        error: elementError?.message || 'Unknown element error',
+        outputs: safeElementOutputs(env)
+      };
+
+      try {
+        await enqueueDbStore(stateKey, failedState);
+        await enqueueExecutionSaveStatus(elementId, 'failed', { error: failedState.error });
+      } catch (persistError) {
+        console.warn('[PERSISTENCE] failure-save failed:', persistError);
+      }
+
+      // CCC SAFETY: rethrow exact same error object.
+      throw elementError;
+    }
+  };
 };
 
 const writeoutputs = (sig, env, result) => {
@@ -108,7 +193,6 @@ const createerrorcontext = (id, stagetype) => {
   };
 };
 
-// ---------- FC5: createBlockAnalyzer factory ----------
 function createBlockAnalyzer(rules) {
     return (block) => {
         const errors = [];
@@ -132,7 +216,6 @@ function createBlockAnalyzer(rules) {
     };
 }
 
-// ---------- FC6: Shared payload/response mapping helpers ----------
 function buildPayload(mappingobj, data) {
     const result = {};
     for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
@@ -209,6 +292,12 @@ const BLOCKANALYZERS = {
   ]),
   [BLOCKTYPES.WAIT]: createBlockAnalyzer([
     { field: 'ms', required: true, message: 'wait block must have ms' }
+  ]),
+  [BLOCKTYPES.EXECUTIONQUERY]: createBlockAnalyzer([
+    { field: 'command', required: true, message: 'executionquery block must have command', custom: (val) => val && typeof val.COMMAND === 'string' }
+  ]),
+  [BLOCKTYPES.STOREQUERY]: createBlockAnalyzer([
+    { field: 'command', required: true, message: 'storequery block must have command', custom: (val) => val && typeof val.COMMAND === 'string' }
   ])
 };
 
@@ -532,7 +621,6 @@ const BLOCKCOMPILERS = {
             }
             const props = command.properties;
 
-            // --- new viewport handlers (no id required) ---
             if (messages === 'getviewport') {
                 const result = await enqueuegetviewport();
                 writeoutputs(sig, env, result);
@@ -551,7 +639,6 @@ const BLOCKCOMPILERS = {
                 writeoutputs(sig, env, result);
                 return;
             }
-            // --- existing handlers ---
             if (!props || !props.id || typeof props.id !== 'string') {
                 throw new Error('[DOMQUERY] Block "' + id + '" command requires properties.id field (string)');
             }
@@ -648,12 +735,59 @@ const BLOCKCOMPILERS = {
         };
         blockfn.id = id;
         return blockfn;
+    },
+    [BLOCKTYPES.EXECUTIONQUERY]: (merged, id, sig) => {
+        const blockfn = async (env) => {
+            const command = merged.command;
+            const args = command.args || {};
+            switch (command.COMMAND) {
+                case 'get': {
+                    const result = await enqueueExecutionGet(args.stageid, args.key);
+                    writeoutputs(sig, env, { result });
+                    break;
+                }
+                case 'set': {
+                    const result = await enqueueExecutionSet(args.stageid, args.key, args.value);
+                    writeoutputs(sig, env, { result });
+                    break;
+                }
+                case 'start': await enqueueExecutionStart(args.stageid, args.inputs || {}); break;
+                case 'stop': await enqueueExecutionStop(args.stageid); break;
+                case 'restart': await enqueueExecutionRestart(args.stageid, args.inputs || {}); break;
+                case 'continue': await enqueueExecutionContinue(args.stageid); break;
+                case 'save_status': await enqueueExecutionSaveStatus(args.stageid, args.status || 'completed', args.outputs || {}); break;
+                default: throw new Error('[executionquery] unknown command: ' + command.COMMAND);
+            }
+        };
+        blockfn.id = id;
+        return blockfn;
+    },
+    [BLOCKTYPES.STOREQUERY]: (merged, id, sig) => {
+        const blockfn = async (env) => {
+            const command = merged.command;
+            const args = command.args || {};
+            switch (command.COMMAND) {
+                case 'store': {
+                    await enqueueDbStore(args.key, args.value);
+                    writeoutputs(sig, env, { result: true });
+                    break;
+                }
+                case 'restore': {
+                    const restored = await enqueueDbRestore(args.key);
+                    writeoutputs(sig, env, { restored });
+                    break;
+                }
+                default: throw new Error('[storequery] unknown command: ' + command.COMMAND);
+            }
+        };
+        blockfn.id = id;
+        return blockfn;
     }
 };
 
-const compileElement = (el) => {
+const compileElement = (el, pipelineId = 'default_pipeline') => {
     if (el.element === 'BLOCK') return compileBlockElement(el);
-    if (el.element === 'STAGE') return compileStageElement(el);
+    if (el.element === 'STAGE') return compileStageElement(el, pipelineId);
     throw new Error('unknown element type: ' + el.element + ' on element id "' + (el.id || 'unnamed') + '"');
 };
 
@@ -663,8 +797,11 @@ const compileBlockElement = (block) => {
     return fn;
 };
 
-const compileStageElement = (stage) => {
-    const children = (stage.elements || []).map(compileElement);
+const compileStageElement = (stage, pipelineId = 'default_pipeline') => {
+    const children = (stage.elements || []).map(el => {
+        const compiled = compileElement(el, pipelineId);
+        return createPersistentElementWrapper(compiled, el, stage.id, pipelineId);
+    });
     const fn = stageRunner(stage, children);
     fn.id = stage.id;
 
@@ -680,7 +817,10 @@ const compileStageElement = (stage) => {
         async: stage.async === true,
         stageid: stage.id,
         reads: [...reads],
-        writes: [...writes]
+        writes: [...writes],
+        snapshotKey: 'stage:' + stage.id,
+        recoverable: true,
+        notifyOnDone: stage.notifyOnDone === true
     };
     return fn;
 };
@@ -775,7 +915,7 @@ const executeChildren = async (children, env, stageid) => {
     return spawnOutputs;
 };
 
-const compileElements = (elements) => elements.map(compileElement);
+const compileElements = (elements, pipelineId = 'default_pipeline') => elements.map(el => compileElement(el, pipelineId));
 
 const compileblock = (merged) => {
     const id = merged.id || 'unnamed';
@@ -852,6 +992,8 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
         throw new Error('[compilepipeline] pipeline must have elements array');
     }
 
+    const pipelineId = pipeline.id || pipeline.identity?.id || 'default_pipeline';
+
     const rawStages = [];
     for (const el of pipeline.elements) {
         if (el.element === 'STAGE') {
@@ -862,6 +1004,7 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
             });
         }
     }
+
     const contracts = validatestageflow(rawStages);
     const unresolved = contracts.filter(c => !c.resolved);
     if (unresolved.length > 0) {
@@ -869,7 +1012,32 @@ export const compilepipeline = async (pipeline, accessors, sinks) => {
             unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
     }
 
-    const compiled = compileElements(pipeline.elements);
-    const compiledpipeline = createpipeline(compiled, sinks);
-    return { pipeline: compiledpipeline };
+    // Compile-time recovery from persisted element map.
+    let resumeFrom = null;
+    try {
+        const mapKey = `pipeline:${pipelineId}:executionmap`;
+        const executionMap = await enqueueDbRestore(mapKey);
+        if (executionMap && executionMap.stages) {
+            for (const stage of pipeline.elements) {
+                if (stage.element !== 'STAGE') continue;
+                const stageRecord = executionMap.stages[stage.id];
+                if (!stageRecord) continue;
+                for (const el of stage.elements || []) {
+                    if (el.element !== 'BLOCK') continue;
+                    const elementState = stageRecord.elements?.[el.id];
+                    if (!elementState || elementState.status !== 'completed') {
+                        resumeFrom = { stageId: stage.id, elementId: el.id };
+                        break;
+                    }
+                }
+                if (resumeFrom) break;
+            }
+        }
+    } catch (err) {
+        console.warn('[compilepipeline] recovery check failed:', err);
+    }
+
+    const compiled = compileElements(pipeline.elements, pipelineId);
+    const compiledpipeline = createpipeline(compiled, sinks, undefined, { resumeFrom, pipelineId });
+    return { pipeline: compiledpipeline, resumeFrom, pipelineId };
 };

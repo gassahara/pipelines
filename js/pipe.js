@@ -1,11 +1,33 @@
 import { callwithstack } from "./factory/callwithstack.js";
 import { EVALSTACK } from "./evalstack.js";
 import { logdebug } from "./verbosity.js";
+import { enqueueExecutionStart, enqueueExecutionSaveStatus } from "./actors/executionactor.js";
+import { enqueueDbStore, enqueueDbRestore } from "./actors/dbactor.js";
 
-export const createpipeline = (stages, sinks = [], onprogress) => {
+const safeOutputs = (env) => {
+  const out = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    if (typeof value === 'function') continue;
+    if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) continue;
+    if (typeof Node !== 'undefined' && value instanceof Node) continue;
+    if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
+    try {
+      out[key] = JSON.parse(JSON.stringify(value));
+    } catch {
+      out[key] = null;
+    }
+  }
+  return out;
+};
+
+export const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
   if (!Array.isArray(stages)) throw new Error("[PIPELINE] Stages must be an array.");
 
-  // Runtime promise stack for async stages.
+  const { resumeFrom = null, pipelineId = 'default_pipeline' } = options;
+
+  // Local runtime promise stack for async stages.
+  // The shared EXECUTIONACTOR is used for status observability and control,
+  // while this local stack preserves the actual pending promises.
   const stageStack = [];
 
   const awaitPendingForReads = async (reads) => {
@@ -24,35 +46,65 @@ export const createpipeline = (stages, sinks = [], onprogress) => {
   const runStage = async (stage, env, callerid, stageid) => {
     const meta = stage.stagemeta || {};
     const isAsync = meta.async === true;
-
-    if (!isAsync) {
-      await callwithstack(
-        EVALSTACK,
-        'stage-' + stageid + ':' + (stage.intent || "unnamed"),
-        "asyncawait",
-        async () => {
-          const patch = await stage(env);
-          if (patch && typeof patch === "object") {
-            const updateworldmap = env.updateworldmap;
-            if (updateworldmap) updateworldmap(patch);
-          }
-          return env;
-        },
-        [],
-        {
-          context: { env, pipestate: env.pipestate, callerid },
-          errk: (err) => {
-            err.diagnostic = err.diagnostic || {};
-            err.diagnostic.pipelinestage = stageid;
-            throw err;
-          }
-        }
-      );
-      return;
-    }
+    const fullStageId = env.agentid + ':' + stageid;
 
     const reads = meta.reads || [];
     const writes = meta.writes || [];
+
+    const startExecution = async () => {
+      try {
+        await enqueueExecutionStart(fullStageId, {
+          ...safeOutputs(env),
+          reads,
+          writes,
+          async: isAsync
+        });
+      } catch (err) {
+        console.warn('[PIPELINE] execution actor start failed:', err);
+      }
+    };
+
+    const finishExecution = async (status, outputs) => {
+      try {
+        await enqueueExecutionSaveStatus(fullStageId, status, outputs || safeOutputs(env));
+      } catch (err) {
+        console.warn('[PIPELINE] execution actor save-status failed:', err);
+      }
+    };
+
+    await startExecution();
+
+    if (!isAsync) {
+      try {
+        await callwithstack(
+          EVALSTACK,
+          'stage-' + stageid + ':' + (stage.intent || "unnamed"),
+          "asyncawait",
+          async () => {
+            const patch = await stage(env);
+            if (patch && typeof patch === "object") {
+              const updateworldmap = env.updateworldmap;
+              if (updateworldmap) updateworldmap(patch);
+            }
+            return env;
+          },
+          [],
+          {
+            context: { env, pipestate: env.pipestate, callerid },
+            errk: (err) => {
+              err.diagnostic = err.diagnostic || {};
+              err.diagnostic.pipelinestage = stageid;
+              throw err;
+            }
+          }
+        );
+        await finishExecution('completed');
+      } catch (err) {
+        await finishExecution('failed', { error: err.message });
+        throw err;
+      }
+      return;
+    }
 
     const promise = callwithstack(
       EVALSTACK,
@@ -75,39 +127,89 @@ export const createpipeline = (stages, sinks = [], onprogress) => {
           throw err;
         }
       }
-    );
+    )
+      .then(async (patch) => {
+        await finishExecution('completed');
+        return patch;
+      })
+      .catch(async (err) => {
+        await finishExecution('failed', { error: err.message });
+        throw err;
+      });
 
     stageStack.push({ promise, reads, writes, stageid });
   };
 
   const runAll = async (env, fromIndex = 0) => {
-    for (let idx = fromIndex; idx < stages.length; idx++) {
-      const stage = stages[idx];
-      const stageid = stage.id || 'stage_' + idx;
-      const callerid = env.agentid + ':' + stageid;
-      const stageMeta = stage.stagemeta || {};
-      const reads = stageMeta.reads || [];
+    const snapshotKey = 'pipeline:' + env.agentid + ':env';
 
-      // If this stage reads keys written by a pending async stage, await those first.
-      await awaitPendingForReads(reads);
-
-      if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP') {
-        if (stage.control.fn) {
-          const shouldexecute = await stage.control.fn(env);
-          if (!shouldexecute) {
-            logdebug('[PIPELINE] Skipping stage:', stageid, 'control condition false');
-            continue;
+    // Restore prior snapshot if available.
+    try {
+      const restored = await enqueueDbRestore(snapshotKey);
+      if (restored && typeof restored === 'object') {
+        for (const [key, value] of Object.entries(restored)) {
+          if (!(key in env) || env[key] === undefined) {
+            env[key] = value;
           }
         }
       }
-
-      logdebug('[PIPELINE] Executing stage:', stageid, 'for agent:', env.agentid);
-      await runStage(stage, env, callerid, stageid);
+    } catch (err) {
+      console.warn('[PIPELINE] snapshot restore failed:', err);
     }
 
-    if (stageStack.length) {
-      await Promise.all(stageStack.map(p => p.promise));
-      stageStack.length = 0;
+    const snapshotInterval = setInterval(async () => {
+      try {
+        await enqueueDbStore(snapshotKey, safeOutputs(env));
+      } catch (err) {
+        console.warn('[PIPELINE] periodic snapshot failed:', err);
+      }
+    }, 1000);
+
+    try {
+      for (let idx = fromIndex; idx < stages.length; idx++) {
+        const stage = stages[idx];
+        const stageid = stage.id || stage.stagemeta?.stageid || ('stage_' + idx);
+        const stageMeta = stage.stagemeta || {};
+
+        // If a resume point is supplied, skip completed stages before it.
+        if (resumeFrom && resumeFrom.stageId) {
+          if (stageid !== resumeFrom.stageId) {
+            logdebug('[PIPELINE] Skipping stage:', stageid, 'before resume point');
+            continue;
+          }
+        }
+
+        const callerid = env.agentid + ':' + stageid;
+        const reads = stageMeta.reads || [];
+
+        // If this stage reads keys written by a pending async stage, await those first.
+        await awaitPendingForReads(reads);
+
+        if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP') {
+          if (stage.control.fn) {
+            const shouldexecute = await stage.control.fn(env);
+            if (!shouldexecute) {
+              logdebug('[PIPELINE] Skipping stage:', stageid, 'control condition false');
+              continue;
+            }
+          }
+        }
+
+        logdebug('[PIPELINE] Executing stage:', stageid, 'for agent:', env.agentid);
+        await runStage(stage, env, callerid, stageid);
+      }
+
+      if (stageStack.length) {
+        await Promise.all(stageStack.map(p => p.promise));
+        stageStack.length = 0;
+      }
+    } finally {
+      clearInterval(snapshotInterval);
+      try {
+        await enqueueDbStore(snapshotKey, safeOutputs(env));
+      } catch (err) {
+        console.warn('[PIPELINE] final snapshot failed:', err);
+      }
     }
   };
 

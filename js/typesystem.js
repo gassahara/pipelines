@@ -375,7 +375,10 @@ export function validatespawncontracts(pipeline) {
 
 export function validateblocktype(block) {
     const errors = [];
-    const validtypes = ['fn', 'api', 'fetch', 'writer', 'domquery', 'spawn', 'io', 'crypto', 'wait'];
+    const validtypes = [
+        'fn', 'api', 'fetch', 'writer', 'domquery', 'spawn',
+        'io', 'crypto', 'wait', 'executionquery', 'storequery'
+    ];
     if (!block.type || !validtypes.includes(block.type)) {
         errors.push('BLOCK TYPE: block "' + block.id + '" has invalid type: ' + block.type + '. Valid types: ' + validtypes.join(', '));
     }
@@ -409,6 +412,59 @@ export function validatedomqueryblock(block) {
         } else if (cmdprops && cmdprops.value === undefined) {
             errors.push('DOMQUERY: block "' + block.id + '" setter requires command.properties.value');
         }
+    }
+    return errors;
+}
+
+export function validateexecutionqueryblock(block) {
+    const errors = [];
+    if (block.type !== 'executionquery') return errors;
+    if (!block.command || !block.command.COMMAND) {
+        errors.push('EXECUTIONQUERY: block "' + block.id + '" requires command with COMMAND');
+        return errors;
+    }
+    const cmd = block.command.COMMAND;
+    const args = block.command.args || {};
+    const allowed = ['get', 'set', 'start', 'stop', 'restart', 'continue', 'save_status'];
+    if (!allowed.includes(cmd)) {
+        errors.push('EXECUTIONQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd);
+    }
+    if (['get', 'set', 'start', 'stop', 'restart', 'continue', 'save_status'].includes(cmd)) {
+        if (!args.stageid) {
+            errors.push('EXECUTIONQUERY: block "' + block.id + '" command ' + cmd + ' requires args.stageid');
+        }
+    }
+    if (cmd === 'set' && !args.key) {
+        errors.push('EXECUTIONQUERY: block "' + block.id + '" set requires args.key');
+    }
+    if (cmd === 'get' && args.key !== undefined && typeof args.key !== 'string') {
+        errors.push('EXECUTIONQUERY: block "' + block.id + '" get args.key must be string');
+    }
+    return errors;
+}
+
+export function validatestorequeryblock(block) {
+    const errors = [];
+    if (block.type !== 'storequery') return errors;
+    if (!block.command || !block.command.COMMAND) {
+        errors.push('STOREQUERY: block "' + block.id + '" requires command with COMMAND');
+        return errors;
+    }
+    const cmd = block.command.COMMAND;
+    const args = block.command.args || {};
+    if (cmd === 'store') {
+        if (!args.key) {
+            errors.push('STOREQUERY: block "' + block.id + '" store requires args.key');
+        }
+        if (args.value === undefined) {
+            errors.push('STOREQUERY: block "' + block.id + '" store requires args.value');
+        }
+    } else if (cmd === 'restore') {
+        if (!args.key) {
+            errors.push('STOREQUERY: block "' + block.id + '" restore requires args.key');
+        }
+    } else {
+        errors.push('STOREQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd);
     }
     return errors;
 }
