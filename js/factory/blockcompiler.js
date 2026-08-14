@@ -141,6 +141,16 @@ const loadCurrentHtmlMap = async (pipelineId) => {
   }
 };
 
+const storeFullEnv = async (pipelineId, env) => {
+  const key = `pipeline:${pipelineId}:fullenv`;
+  const fullEnv = safeFullEnv(env);
+  try {
+    await enqueueDbStore(key, fullEnv);
+  } catch (err) {
+    console.warn('[PERSISTENCE] full env store failed:', err);
+  }
+};
+
 const registerStageElements = async (pipelineId, stageId, elementIds) => {
   try {
     const mapKey = `pipeline:${pipelineId}:executionmap`;
@@ -213,7 +223,9 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
       map.stages[stageId].elements[elementId] = {
         status,
         savedAt: Date.now(),
-        ...extra
+        startedAt: extra.startedAt || null,
+        completedAt: extra.completedAt || null,
+        outputs: extra.outputs || null
       };
       await enqueueDbStore(mapKey, map);
       return map.stages[stageId].elements[elementId];
@@ -256,26 +268,24 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
   };
 
   const wrapper = async (env) => {
-    // Save full checkpoint BEFORE running element.
-    const currentHtmlMap = await loadCurrentHtmlMap(pipelineId) || {};
+    // Save execution status RUNNING before element runs. No env/html in map.
     await storeElementState('RUNNING', {
-      startedAt: Date.now(),
-      env: safeFullEnv(env),
-      htmlMap: currentHtmlMap
+      startedAt: Date.now()
     });
 
     try {
       const result = await compiledElement(env);
 
       const completedOutputs = captureOutputs(env);
-      const afterHtmlMap = await loadCurrentHtmlMap(pipelineId) || {};
       await storeElementState('EXECUTED', {
         completedAt: Date.now(),
-        outputs: completedOutputs,
-        env: safeFullEnv(env),
-        htmlMap: afterHtmlMap
+        outputs: completedOutputs
       });
 
+      // P73: update the single rolling env state after successful element.
+      await storeFullEnv(pipelineId, env);
+
+      // P74: update HTML map only after successful writer.
       if (elementDef.type === 'writer') {
         const targetId = elementDef.targetlabel || env.approot;
         await storeTargetHtml(targetId);
@@ -1224,7 +1234,6 @@ export const compilepipeline = async (
     }
 
     let resumeFrom = null;
-    let restoredState = null;
     try {
         const mapKey = `pipeline:${pipelineId}:executionmap`;
         const executionMap = await enqueueDbRestore(mapKey);
@@ -1241,7 +1250,6 @@ export const compilepipeline = async (
                         (elementState.status === 'WAITING' || elementState.status === 'RUNNING')
                     ) {
                         resumeFrom = { stageId: stage.id, elementId: el.id };
-                        restoredState = elementState;
                         break;
                     }
                 }
@@ -1252,19 +1260,37 @@ export const compilepipeline = async (
         console.warn('[compilepipeline] recovery check failed:', err);
     }
 
+    const fullEnvKey = `pipeline:${pipelineId}:fullenv`;
+    const htmlMapKey = `pipeline:${pipelineId}:htmlmap`;
+
+    let restoredEnv = null;
+    let restoredHtmlMap = null;
+
+    try {
+        restoredEnv = await enqueueDbRestore(fullEnvKey);
+    } catch (err) {
+        console.warn('[compilepipeline] full env restore failed:', err);
+    }
+
+    try {
+        restoredHtmlMap = await enqueueDbRestore(htmlMapKey);
+    } catch (err) {
+        console.warn('[compilepipeline] html map restore failed:', err);
+    }
+
     const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom);
     const compiledpipeline = createpipeline(compiled, sinks, undefined, {
         resumeFrom,
         pipelineId,
-        restoredEnv: restoredState?.env || null,
-        restoredHtmlMap: restoredState?.htmlMap || null
+        restoredEnv,
+        restoredHtmlMap
     });
 
     return {
         pipeline: compiledpipeline,
         resumeFrom,
-        restoredEnv: restoredState?.env || null,
-        restoredHtmlMap: restoredState?.htmlMap || null,
+        restoredEnv,
+        restoredHtmlMap,
         pipelineId
     };
 };

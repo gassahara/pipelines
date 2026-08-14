@@ -191,7 +191,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
       console.warn('[PIPELINE] snapshot restore failed:', err);
     }
 
-    // Restore env checkpoint from the resumed element, if present.
+    // Restore full env checkpoint from resumed element, if present.
     if (restoredEnv && typeof restoredEnv === 'object') {
       for (const [key, value] of Object.entries(restoredEnv)) {
         if (!(key in env) || env[key] === undefined) {
