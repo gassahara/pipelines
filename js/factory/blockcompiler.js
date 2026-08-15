@@ -157,12 +157,44 @@ function buildResponse(mappingobj, raw) {
   return result;
 }
 
+const validaterevivablefunctionblock = (block) => {
+  if (block.type !== BLOCKTYPES.FN && block.type !== BLOCKTYPES.WRITER) return [];
+  const fn = block.type === BLOCKTYPES.FN ? block.fn : (block.fn || block.ref);
+  if (typeof fn !== 'function') return [];
+
+  const errors = [];
+  const src = fn.toString();
+
+  if (/\[native code\]/.test(src)) {
+    errors.push(`[REVIVABILITY] block "${block.id}" contains a native function`);
+  }
+
+  if (fn.name === 'bound ') {
+    errors.push(`[REVIVABILITY] block "${block.id}" contains a bound function`);
+  }
+
+  if (/\bthis\b/.test(src)) {
+    errors.push(`[REVIVABILITY] block "${block.id}" uses "this"`);
+  }
+
+  const defaultFnKeys = ['length', 'name', 'prototype'];
+  const customKeys = Object.getOwnPropertyNames(fn).filter(k => !defaultFnKeys.includes(k));
+  if (customKeys.length > 0) {
+    errors.push(`[REVIVABILITY] block "${block.id}" has custom function properties: ${customKeys.join(', ')}`);
+  }
+
+  return errors;
+};
+
 const BLOCKANALYZERS = {
   [BLOCKTYPES.FN]: (block) => {
     const errors = [];
     if (!block.fn) errors.push('fn block must have a function');
-    if (typeof block.fn === 'function' && /document\.(querySelector|getElementById|innerHTML)|\bstyle\s*[.]/i.test(block.fn.toString())) {
-      errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
+    if (typeof block.fn === 'function') {
+      if (/document\.(querySelector|getElementById|innerHTML)|\bstyle\s*[.]/i.test(block.fn.toString())) {
+        errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
+      }
+      errors.push(...validaterevivablefunctionblock(block));
     }
     return { valid: errors.length === 0, errors, warnings: [], dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
   },
@@ -174,9 +206,16 @@ const BLOCKANALYZERS = {
     { field: 'endpoint', required: true, message: 'fetch block must have an endpoint' },
     { field: 'method', required: true, message: 'fetch block must have GET/POST method', custom: v => v === 'GET' || v === 'POST' }
   ]),
-  [BLOCKTYPES.WRITER]: createBlockAnalyzer([
-    { field: 'fn', required: false, message: 'writer block must have fn or ref', custom: (val, b) => typeof b.ref === 'function' || typeof val === 'function' }
-  ]),
+  [BLOCKTYPES.WRITER]: (block) => {
+    const errors = [];
+    if (typeof block.fn !== 'function' && typeof block.ref !== 'function') {
+      errors.push('writer block must have fn or ref');
+    }
+    if (typeof block.fn === 'function' || typeof block.ref === 'function') {
+      errors.push(...validaterevivablefunctionblock(block));
+    }
+    return { valid: errors.length === 0, errors, warnings: [], dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
+  },
   [BLOCKTYPES.SPAWN]: createBlockAnalyzer([
     { field: 'dna', required: false, message: 'spawn block must have dna or dnaref', custom: (v, b) => v !== undefined || b.dnaref !== undefined }
   ]),
@@ -678,7 +717,7 @@ export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOver
   }
 
   await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(err => console.warn('[compilepipeline] pipeline loaded failed:', err));
-  await enqueueExecutionRegisterPipeline(pipelineId, pipeline, {}).catch(err => console.warn('[compilepipeline] register pipeline failed:', err));
+  await enqueueExecutionRegisterPipeline(pipelineId, pipelineId, {}).catch(err => console.warn('[compilepipeline] register pipeline failed:', err));
 
   const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
   const compiled = compileElements(pipeline.elements, pipelineId, null, []);
@@ -687,35 +726,64 @@ export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOver
   return { pipeline: compiledpipeline, pipelineId, spawnBootstrapMap };
 };
 
-export const bootGlobalSnapshot = async () => {
+export const bootGlobalSnapshot = async (dnaResolvers = {}) => {
   try {
     const recoveryData = await enqueueExecutionRecover();
-    if (!recoveryData || typeof recoveryData !== 'object') return { recovered: false, pipelineCount: 0 };
-
-    const { pipelines, htmlSnapshot } = recoveryData;
-    if (typeof htmlSnapshot === 'string' && htmlSnapshot.length > 0) {
-      await enqueueRenderRestoreBodyHtml(htmlSnapshot);
-      revalidateAll();
-      logdebug('[BOOTLOADER] Global HTML snapshot restored');
+    if (!recoveryData || typeof recoveryData !== 'object') {
+      return { recovered: false, pipelineCount: 0, htmlRestored: false };
     }
 
+    const { pipelines, htmlSnapshot } = recoveryData;
+    const pipelineEntries = Object.entries(pipelines || {});
+
+    // FIRST-RUN / EMPTY-DB GUARD
+    if (pipelineEntries.length === 0) {
+      logdebug('[BOOTLOADER] No persisted pipelines found. First run or empty snapshot.');
+      return { recovered: false, pipelineCount: 0, htmlRestored: false };
+    }
+
+    // Phase 1: Rehydrate pipelines only; do not touch DOM.
     let rehydratedCount = 0;
-    for (const [pid, pdata] of Object.entries(pipelines || {})) {
-      if (pdata?.dna && pdata.status === 'running') {
-        try {
-          const compiled = await compilepipeline(pdata.dna, null, [], pid);
-          compiled.pipeline({ id: pid, env: pdata.env || {} }).catch(err => logwarn('[BOOTLOADER] Pipeline resume failed:', pid, err));
-          rehydratedCount++;
-        } catch (pipeErr) {
-          logwarn('[BOOTLOADER] Failed to re-compile pipeline:', pid, pipeErr);
-        }
+    const rehydratedPipelines = [];
+    for (const [pid, pdata] of pipelineEntries) {
+      if (pdata.status !== 'running') continue;
+      const resolver = dnaResolvers[pdata.dnaRef] || dnaResolvers[pid];
+      if (typeof resolver !== 'function') {
+        logwarn('[BOOTLOADER] No DNA resolver for pipeline:', pid);
+        continue;
+      }
+      try {
+        const dna = await resolver(pid);
+        const compiled = await compilepipeline(dna, null, [], pid);
+        rehydratedPipelines.push({ pid, compiled, env: pdata.env || {} });
+        rehydratedCount++;
+      } catch (pipeErr) {
+        logwarn('[BOOTLOADER] Failed to re-compile pipeline:', pid, pipeErr);
       }
     }
 
+    // Phase 2: Restore HTML only if at least one pipeline was rehydrated.
+    let htmlRestored = false;
+    if (rehydratedCount > 0 && typeof htmlSnapshot === 'string' && htmlSnapshot.length > 0) {
+      await enqueueRenderRestoreBodyHtml(htmlSnapshot);
+      revalidateAll();
+      htmlRestored = true;
+      logdebug('[BOOTLOADER] Global HTML snapshot restored');
+    }
+
+    // Phase 3: Run rehydrated pipelines; if HTML was restored, they will operate on it.
+    for (const { pid, compiled, env } of rehydratedPipelines) {
+      compiled.pipeline({ id: pid, env }).catch(err => logwarn('[BOOTLOADER] Pipeline resume failed:', pid, err));
+    }
+
     logdebug('[BOOTLOADER] Global recovery complete. Rehydrated pipelines:', rehydratedCount);
-    return { recovered: true, pipelineCount: rehydratedCount };
+    return {
+      recovered: rehydratedCount > 0,
+      pipelineCount: rehydratedCount,
+      htmlRestored
+    };
   } catch (err) {
     logwarn('[BOOTLOADER] Global Snapshot recovery failed:', err);
-    return { recovered: false, error: err };
+    return { recovered: false, pipelineCount: 0, htmlRestored: false };
   }
 };

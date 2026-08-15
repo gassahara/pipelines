@@ -114,7 +114,7 @@ const MESSAGEINTERFACES = Object.freeze({
     resolve: 'function?', reject: 'function?'
   },
   [EXECUTIONMESSAGETYPES.REGISTER_PIPELINE]: {
-    pipelineid: 'string', dna: 'object?', env: 'object?', resolve: 'function?', reject: 'function?'
+    pipelineid: 'string', dnaRef: 'string?', env: 'object?', resolve: 'function?', reject: 'function?'
   }
 });
 
@@ -162,7 +162,7 @@ const persistGlobalSnapshot = async (state) => {
       snapshot.pipelines[pid] = {
         status: pdata.status,
         env: sanitizeForState(pdata.env || {}),
-        dna: pdata.dna || null,
+        dnaRef: pdata.dnaRef || pid,
         stageStatuses: pdata.stageStatuses || {}
       };
     }
@@ -285,7 +285,7 @@ const stopTask = (taskid) => {
 const ensurePipeline = (state, pipelineid) => {
   if (!state.pipelines[pipelineid]) {
     state.pipelines[pipelineid] = {
-      status: 'running', env: {}, dna: null, stageStatuses: {}
+      status: 'running', env: {}, dnaRef: null, stageStatuses: {}
     };
   }
   return state.pipelines[pipelineid];
@@ -336,7 +336,6 @@ const executionbehavior = (state, message) => {
       case EXECUTIONMESSAGETYPES.GET_STATUS: {
         if (message.pipelineid) {
           const p = nextState.pipelines[message.pipelineid] || null;
-          // Wrap stageStatuses as stages for backward compat with blockcompiler
           if (p && p.stageStatuses) {
             const stages = {};
             for (const [sid, status] of Object.entries(p.stageStatuses)) {
@@ -505,7 +504,6 @@ const executionbehavior = (state, message) => {
       }
 
       case EXECUTIONMESSAGETYPES.RECOVER: {
-        // Return the full stored state for the bootloader
         resolveMessage(message, {
           pipelines: nextState.pipelines,
           htmlSnapshot: nextState.htmlSnapshot
@@ -515,7 +513,7 @@ const executionbehavior = (state, message) => {
 
       case EXECUTIONMESSAGETYPES.REGISTER_PIPELINE: {
         const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (message.dna) pipeline.dna = message.dna;
+        if (message.dnaRef) pipeline.dnaRef = message.dnaRef;
         if (message.env) pipeline.env = sanitizeForState(message.env);
         resolveMessage(message, true);
         break;
@@ -530,7 +528,6 @@ const executionbehavior = (state, message) => {
     return state;
   }
 
-  // Persist on state-mutating messages (not reads)
   const readOnly = [
     EXECUTIONMESSAGETYPES.GET_STATUS,
     EXECUTIONMESSAGETYPES.RECOVER,
@@ -626,10 +623,10 @@ export const enqueueExecutionSpawnPipeline = (descriptor) =>
 export const enqueueExecutionGetInterruptedStage = () =>
   Promise.resolve(null);
 
-// NEW: Register a pipeline's DNA and env for Global Snapshot recovery
-export const enqueueExecutionRegisterPipeline = (pipelineid, dna, env) =>
-  enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid, dna, env });
+// NEW: Register a pipeline's DNA reference and env for Global Snapshot recovery
+export const enqueueExecutionRegisterPipeline = (pipelineid, dnaRef, env) =>
+  enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid, dnaRef, env });
 
 // NEW: Take a global snapshot (with optional HTML)
 export const enqueueGlobalSnapshot = (html) =>
-  enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, { html });
+enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, { html });
