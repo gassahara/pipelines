@@ -112,7 +112,7 @@ const MESSAGEINTERFACES = Object.freeze({
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 const DB_KEY = 'global:executionstate';
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 
 const resolveMessage = (message, value = true) => {
   if (message && typeof message.resolve === 'function') message.resolve(value);
@@ -393,7 +393,6 @@ const runElementTask = async (taskid, descriptor) => {
     task.status = 'EXECUTED';
     task.resolveTask(result || {});
   } catch (err) {
-    // Persist FAILED, not EXECUTED.
     try {
       await EXECUTIONACTOR.send({
         type: EXECUTIONMESSAGETYPES.ELEMENT_STATE,

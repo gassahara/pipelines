@@ -28,7 +28,7 @@ import {
   enqueueRenderRestoreBodyHtml
 } from '../actors/renderactor.js';
 import { logwarn, logdebug, loginfo } from '../verbosity.js';
-import { registerTrigger } from '../actors/trigerregistry.js';
+import { registerTrigger, revalidateAll } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
 import {
   enqueueExecutionPipelineLoaded,
@@ -198,7 +198,6 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stagePath, 
 
     logdebug('[ELEMENT] completed:', elementId);
 
-    // Save per-pipeline HTML snapshot after every successful element.
     const topStageId = stagePath[0];
     if (topStageId) {
       await savePipelineHtmlSnapshot(pipelineId, topStageId);
@@ -1204,15 +1203,31 @@ export const compilepipeline = async (
 
   logdebug('[compilepipeline] interrupted stage:', interrupted);
 
+  if (interrupted) {
+    const topStageId = interrupted.path?.[0];
+    const topStageIds = (pipeline.elements || [])
+      .filter(el => el.element === 'STAGE')
+      .map(el => el.id);
+
+    if (!topStageIds.includes(topStageId)) {
+      logwarn('[compilepipeline] invalid interrupted path; ignoring recovery');
+      interrupted = null;
+    }
+  }
+
   let htmlRecovered = false;
   if (interrupted) {
     const topStageId = interrupted.path?.[0];
     const snapshotKey = pipelineHtmlSnapshotKey(pipelineId, topStageId);
 
+    logdebug('[compilepipeline] snapshot key:', snapshotKey);
+
     try {
       const snapshot = await enqueueDbRestore(snapshotKey);
       if (snapshot && typeof snapshot.html === 'string') {
         await enqueueRenderRestoreBodyHtml(snapshot.html);
+        revalidateAll();
+        logdebug('[compilepipeline] revalidate after html restore');
         htmlRecovered = true;
       }
     } catch (err) {
