@@ -2,8 +2,7 @@ import { callwithstack } from "./factory/callwithstack.js";
 import { EVALSTACK } from "./evalstack.js";
 import { logdebug, loginfo } from "./verbosity.js";
 import {
-  enqueueExecutionStart,
-  enqueueExecutionSaveStatus,
+  enqueueExecutionStageState,
   enqueueExecutionGetStatus
 } from "./actors/executionactor.js";
 
@@ -59,29 +58,27 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
   const runStage = async (stage, env, callerid, stageid) => {
     const meta = stage.stagemeta || {};
     const isAsync = meta.async === true;
-    const fullStageId = env.agentid + ':' + stageid;
 
     const reads = meta.reads || [];
     const writes = meta.writes || [];
 
     const startExecution = async () => {
       try {
-        await enqueueExecutionStart(fullStageId, {
-          ...safeOutputs(env),
-          reads,
-          writes,
-          async: isAsync
+        await enqueueExecutionStageState(pipelineId, stageid, {
+          status: 'running'
         });
       } catch (err) {
-        console.warn('[PIPELINE] execution actor start failed:', err);
+        console.warn('[PIPELINE] execution actor stage state failed:', err);
       }
     };
 
-    const finishExecution = async (status, outputs) => {
+    const finishExecution = async (status) => {
       try {
-        await enqueueExecutionSaveStatus(fullStageId, status, outputs || safeOutputs(env));
+        await enqueueExecutionStageState(pipelineId, stageid, {
+          status: status === 'completed' ? 'completed' : 'failed'
+        });
       } catch (err) {
-        console.warn('[PIPELINE] execution actor save-status failed:', err);
+        console.warn('[PIPELINE] execution actor stage state failed:', err);
       }
     };
 
@@ -113,7 +110,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         );
         await finishExecution('completed');
       } catch (err) {
-        await finishExecution('failed', { error: err.message });
+        await finishExecution('failed');
         throw err;
       }
       return;
@@ -146,7 +143,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         return patch;
       })
       .catch(async (err) => {
-        await finishExecution('failed', { error: err.message });
+        await finishExecution('failed');
         throw err;
       });
 
