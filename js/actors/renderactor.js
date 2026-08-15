@@ -1,7 +1,7 @@
 import { createactor, createMessageValidator } from './actorkernel.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
 import { revalidateAll } from './trigerregistry.js';
-import { setRenderActor } from './actorregistry.js';
+import { enqueueDbStore, enqueueDbRestore } from './dbactor.js';
 
 export const MESSAGETYPES = Object.freeze({
   RENDER: 'render',
@@ -30,7 +30,9 @@ export const MESSAGETYPES = Object.freeze({
   SETLAYOUT: 'setlayout',
   GETVIEWPORT: 'getviewport',
   GETSCREEN: 'getscreen',
-  MATCHMEDIA: 'matchmedia'
+  MATCHMEDIA: 'matchmedia',
+  HTML_SNAPSHOT: 'html_snapshot',
+  HTML_RECOVER: 'html_recover'
 });
 
 var MESSAGEINTERFACES = Object.freeze({
@@ -60,13 +62,13 @@ var MESSAGEINTERFACES = Object.freeze({
   [MESSAGETYPES.SETLAYOUT]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
   [MESSAGETYPES.GETVIEWPORT]: { resolve: 'function', reject: 'function?' },
   [MESSAGETYPES.GETSCREEN]:   { resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.MATCHMEDIA]:  { query: 'string', resolve: 'function', reject: 'function?' }
+  [MESSAGETYPES.MATCHMEDIA]:  { query: 'string', resolve: 'function', reject: 'function?' },
+  [MESSAGETYPES.HTML_SNAPSHOT]: { resolve: 'function?', reject: 'function?' },
+  [MESSAGETYPES.HTML_RECOVER]:  { resolve: 'function?', reject: 'function?' }
 });
 
-// Shared validator from actorkernel
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
-// Internal helper to retrieve element and reject promise if missing
 function getElementOrFail(id, reject) {
     if (!id || typeof id !== 'string') {
         reject(new Error('[RENDERACTOR] id must be a non-empty string'));
@@ -80,7 +82,6 @@ function getElementOrFail(id, reject) {
     return el;
 }
 
-// Macro to generate enqueue functions (FC2)
 function createEnqueuer(type, idRequired, extraPayloadFn) {
     return function(...args) {
         var id = idRequired ? args[0] : undefined;
@@ -106,7 +107,6 @@ function createEnqueuer(type, idRequired, extraPayloadFn) {
 
 var renderbehavior = function(state, message) {
   // If RENDER message has missing/null id, assign a unique internal id.
-  // This preserves strict validation while allowing ref-based renders.
   if (message.type === MESSAGETYPES.RENDER && (message.id === null || message.id === undefined)) {
       renderbehavior._refcounter = (renderbehavior._refcounter || 0) + 1;
       message.id = '__ref_render_' + Date.now() + '_' + renderbehavior._refcounter;
@@ -117,6 +117,7 @@ var renderbehavior = function(state, message) {
     console.error('[RENDERACTOR:UNKNOWNTYPE] type=' + check.type + ' error=' + check.error);
     return state;
   }
+
   if (message.type === MESSAGETYPES.RENDER) {
     var target = message.id ? document.getElementById(message.id) : null;
     if (typeof message.renderer === 'function') {
@@ -392,11 +393,39 @@ var renderbehavior = function(state, message) {
       message.resolve({ matches: mq.matches });
     }
   }
+  else if (message.type === MESSAGETYPES.HTML_SNAPSHOT) {
+    try {
+      const html = document.body ? document.body.innerHTML : '';
+      const snapshot = {
+        savedAt: Date.now(),
+        html
+      };
+      enqueueDbStore('global:htmlsnapshot', snapshot)
+        .catch((err) => console.warn('[RENDERACTOR] html snapshot store failed:', err));
+      if (typeof message.resolve === 'function') message.resolve(true);
+    } catch (err) {
+      if (typeof message.reject === 'function') message.reject(err);
+    }
+  }
+  else if (message.type === MESSAGETYPES.HTML_RECOVER) {
+    enqueueDbRestore('global:htmlsnapshot')
+      .then((snapshot) => {
+        if (snapshot && typeof snapshot.html === 'string') {
+          if (document.body) document.body.innerHTML = snapshot.html;
+          if (typeof message.resolve === 'function') message.resolve(true);
+        } else {
+          if (typeof message.resolve === 'function') message.resolve(false);
+        }
+      })
+      .catch((err) => {
+        if (typeof message.reject === 'function') message.reject(err);
+      });
+  }
+
   return state;
 };
 
 export const RENDERACTOR = createactor(renderbehavior, {});
-setRenderActor(RENDERACTOR);
 
 // Enqueue functions generated via macro (FC2)
 export const enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, function(rest) {
@@ -500,3 +529,13 @@ export const enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
 export const enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) {
     return { query: rest[0] };
 });
+
+export const enqueueRenderSnapshot = () =>
+  new Promise((resolve, reject) =>
+    RENDERACTOR.send({ type: MESSAGETYPES.HTML_SNAPSHOT, resolve, reject })
+  );
+
+export const enqueueRenderRecover = () =>
+  new Promise((resolve, reject) =>
+    RENDERACTOR.send({ type: MESSAGETYPES.HTML_RECOVER, resolve, reject })
+  );

@@ -24,29 +24,25 @@ import {
   MESSAGETYPES,
   enqueuegetviewport,
   enqueuegetscreen,
-  enqueuematchmedia
+  enqueuematchmedia,
+  enqueueRenderSnapshot
 } from '../actors/renderactor.js';
 import { logwarn, logdebug } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
 import {
-  enqueueExecutionStart,
-  enqueueExecutionStop,
-  enqueueExecutionRestart,
-  enqueueExecutionContinue,
-  enqueueExecutionSaveStatus,
-  enqueueExecutionGet,
-  enqueueExecutionSet
+  enqueueExecutionPipelineLoaded,
+  enqueueExecutionStageState,
+  enqueueExecutionElementState,
+  enqueueExecutionEnvUpdated,
+  enqueueExecutionRecover,
+  enqueueExecutionGetStatus,
+  enqueueExecutionStopStage,
+  enqueueExecutionCancelStage,
+  enqueueExecutionBreakStage,
+  enqueueExecutionRestartStage,
+  enqueueExecutionContinueStage
 } from '../actors/executionactor.js';
-import {
-  eventPipelineLoaded,
-  eventStageState,
-  eventElementState,
-  eventEnvUpdated,
-  eventHtmlUpdated,
-  eventSpawnLoaded,
-  getSnapshot
-} from '../executionsnapshot.js';
 
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
@@ -165,7 +161,7 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
 
   const storeElementState = async (status, extra = {}) => {
     try {
-      eventElementState(pipelineId, stageId, elementId, {
+      await enqueueExecutionElementState(pipelineId, stageId, elementId, {
         status,
         savedAt: Date.now(),
         startedAt: extra.startedAt || null,
@@ -173,20 +169,7 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
         outputs: extra.outputs || null
       });
     } catch (err) {
-      console.warn('[PERSISTENCE] snapshot element state failed:', err);
-    }
-  };
-
-  const storeTargetHtml = async (targetId) => {
-    if (!targetId || typeof document === 'undefined') return;
-
-    const targetEl = document.getElementById(targetId);
-    if (!targetEl) return;
-
-    try {
-      eventHtmlUpdated(targetId, targetEl.innerHTML);
-    } catch (persistError) {
-      console.warn('[PERSISTENCE] snapshot html update failed:', persistError);
+      console.warn('[PERSISTENCE] execution actor element state failed:', err);
     }
   };
 
@@ -205,19 +188,16 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
         outputs: completedOutputs
       });
 
-      // P73/P83: update single rolling env state through global snapshot event.
-      eventEnvUpdated(pipelineId, safeFullEnv(env));
+      // Execution actor owns pipeline env.
+      await enqueueExecutionEnvUpdated(pipelineId, safeFullEnv(env));
 
-      // P74/P84: update global HTML after successful writer.
+      // Render actor owns global HTML snapshot after writer success.
       if (elementDef.type === 'writer') {
-        const targetId = elementDef.targetlabel || env.approot;
-        await storeTargetHtml(targetId);
-      }
-
-      try {
-        await enqueueExecutionSaveStatus(elementId, 'completed', completedOutputs);
-      } catch (persistError) {
-        console.warn('[PERSISTENCE] execution actor save-status failed:', persistError);
+        try {
+          await enqueueRenderSnapshot();
+        } catch (persistError) {
+          console.warn('[PERSISTENCE] render snapshot failed:', persistError);
+        }
       }
 
       return result;
@@ -648,7 +628,11 @@ const BLOCKCOMPILERS = {
 
             if (result && result.dna) {
                 const childPipelineId = result.dna.identity?.id || result.containerref || 'child_pipeline';
-                eventSpawnLoaded(env.pipelineid || env.agentid || 'unknown', childPipelineId, result.containerref);
+                try {
+                  await enqueueExecutionPipelineLoaded(childPipelineId, result.inheritedenv || {});
+                } catch (err) {
+                  console.warn('[SPAWN] child pipeline loaded event failed:', err);
+                }
             }
 
             return result;
@@ -825,20 +809,20 @@ const BLOCKCOMPILERS = {
             const args = command.args || {};
             switch (command.COMMAND) {
                 case 'get': {
-                    const result = await enqueueExecutionGet(args.stageid, args.key);
+                    const result = await enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null);
                     writeoutputs(sig, env, { result });
                     break;
                 }
-                case 'set': {
-                    const result = await enqueueExecutionSet(args.stageid, args.key, args.value);
+                case 'stop': await enqueueExecutionStopStage(args.pipelineid, args.stageid); break;
+                case 'cancel': await enqueueExecutionCancelStage(args.pipelineid, args.stageid); break;
+                case 'break': await enqueueExecutionBreakStage(args.pipelineid, args.stageid); break;
+                case 'restart': await enqueueExecutionRestartStage(args.pipelineid, args.stageid, args.elementid || null); break;
+                case 'continue': await enqueueExecutionContinueStage(args.pipelineid, args.stageid); break;
+                case 'recover': {
+                    const result = await enqueueExecutionRecover(args.pipelineid || env.pipelineid || null);
                     writeoutputs(sig, env, { result });
                     break;
                 }
-                case 'start': await enqueueExecutionStart(args.stageid, args.inputs || {}); break;
-                case 'stop': await enqueueExecutionStop(args.stageid); break;
-                case 'restart': await enqueueExecutionRestart(args.stageid, args.inputs || {}); break;
-                case 'continue': await enqueueExecutionContinue(args.stageid); break;
-                case 'save_status': await enqueueExecutionSaveStatus(args.stageid, args.status || 'completed', args.outputs || {}); break;
                 default: throw new Error('[executionquery] unknown command: ' + command.COMMAND);
             }
         };
@@ -851,14 +835,12 @@ const BLOCKCOMPILERS = {
             const args = command.args || {};
             switch (command.COMMAND) {
                 case 'store': {
-                    // StoreQuery may still use DB actor for arbitrary keys, but
-                    // framework state should use executionsnapshot events.
-                    // Keep as-is for explicit store commands.
+                    // Custom store keys can still be persisted through DB actor if imported,
+                    // but framework state is owned by actors. This block remains future extension.
                     break;
                 }
                 case 'restore': {
-                    // For framework state, compilepipeline uses snapshot; explicit restore
-                    // may remain for custom store keys.
+                    // Custom restore can be added when DB query blocks are reintroduced.
                     break;
                 }
                 default: throw new Error('[storequery] unknown command: ' + command.COMMAND);
@@ -895,7 +877,8 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
         if (startIndex < 0) startIndex = 0;
     }
 
-    const fn = stageRunner(stage, children, startIndex, pipelineId);
+    const isResumeStage = resumeFrom && resumeFrom.stageId === stage.id;
+    const fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage);
     fn.id = stage.id;
 
     const reads = new Set();
@@ -915,22 +898,20 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
         snapshotKey: 'stage:' + stage.id,
         recoverable: true,
         notifyOnDone: stage.notifyOnDone === true,
-        startElementId: resumeFrom && resumeFrom.stageId === stage.id
-            ? resumeFrom.elementId
-            : null,
+        startElementId: isResumeStage ? resumeFrom.elementId : null,
         controlCommand: stage.control?.command || null
     };
     return fn;
 };
 
-const stageRunner = (stage, children, startIndex = 0, pipelineId = 'default_pipeline') => {
+const stageRunner = (stage, children, startIndex = 0, pipelineId = 'default_pipeline', resumeStage = false) => {
     const control = stage.control;
     const id = stage.id;
     if (!control || control.command === undefined || control.command === null) {
         return defaultRunner(id, children, startIndex, pipelineId);
     }
     if (control.command === 'TRIGGER') {
-        return triggerRunner(id, control, children, stage, pipelineId, startIndex);
+        return triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage);
     }
     if (control.command === 'LOOP') {
         return loopRunner(id, control, children, startIndex, pipelineId);
@@ -938,7 +919,7 @@ const stageRunner = (stage, children, startIndex = 0, pipelineId = 'default_pipe
     throw new Error('unknown stage command: ' + control.command);
 };
 
-const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0) => {
+const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0, resumeStage = false) => {
     return async (env) => {
         const sourceref = env[control.sourceid];
         const eventtype = control.event;
@@ -948,13 +929,17 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0)
             return {};
         }
 
-        // Record stage elements as WAITING using snapshot event.
+        // Record stage elements as WAITING via Execution Actor.
         const elementIds = children.map(ch => ch.id || ch.blockmeta?.id || 'unknown');
         const elements = {};
         for (const elementId of elementIds) {
             elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
         }
-        eventStageState(pipelineId, id, { elements });
+        try {
+            await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+        } catch (err) {
+            console.warn('[TRIGGER] execution actor stage state failed:', err);
+        }
 
         const handler = async (e) => {
             env.eventtarget = e.target;
@@ -966,8 +951,17 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0)
                 await env._rerunStages(control.rerunfrom);
             }
         };
+
         rs(control.sourceid, eventtype, handler);
         registerTrigger(control.sourceid, eventtype, handler);
+
+        // P92/P95: If this trigger stage is the interrupted resume target,
+        // finish the broken execution immediately before waiting for future events.
+        if (resumeStage) {
+            const remaining = startIndex > 0 ? children.slice(startIndex) : children;
+            await executeChildren(remaining, env, id);
+        }
+
         return {};
     };
 };
@@ -979,7 +973,11 @@ const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default
         for (const elementId of elementIds) {
             elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
         }
-        eventStageState(pipelineId, id, { elements });
+        try {
+            await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+        } catch (err) {
+            console.warn('[LOOP] execution actor stage state failed:', err);
+        }
 
         const controlprops = {};
         for (const key of Object.keys(control)) {
@@ -1010,7 +1008,11 @@ const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipel
         for (const elementId of elementIds) {
             elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
         }
-        eventStageState(pipelineId, id, { elements });
+        try {
+            await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+        } catch (err) {
+            console.warn('[DEFAULT] execution actor stage state failed:', err);
+        }
 
         await executeChildren(children.slice(startIndex), env, id);
         return {};
@@ -1051,8 +1053,7 @@ const executeChildren = async (children, env, stageid) => {
         logdebug('[SPAWN] Child pipeline recovery:', {
             childPipelineId,
             resumeFrom: run.resumeFrom,
-            restoredEnv: run.restoredEnv ? 'yes' : 'no',
-            restoredHtmlMap: run.restoredHtmlMap ? 'yes' : 'no'
+            restoredEnv: run.restoredEnv ? 'yes' : 'no'
         });
 
         await run.pipeline({
@@ -1196,34 +1197,40 @@ export const compilepipeline = async (
             unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
     }
 
-    // P81/P85: Ensure pipeline loaded event has occurred before we read snapshot.
-    eventPipelineLoaded(pipelineId, {});
+    // Ensure pipeline exists in Execution Actor without overwriting saved env.
+    try {
+        await enqueueExecutionPipelineLoaded(pipelineId, {});
+    } catch (err) {
+        console.warn('[compilepipeline] pipeline loaded event failed:', err);
+    }
+
+    // Recover saved execution state from Execution Actor.
+    let savedState = null;
+    try {
+        savedState = await enqueueExecutionRecover(pipelineId);
+    } catch (err) {
+        console.warn('[compilepipeline] execution recover failed:', err);
+    }
 
     let resumeFrom = null;
-    try {
-        const snapshot = getSnapshot();
-        const pipelineState = snapshot.loadedPipelines[pipelineId];
-        if (pipelineState && pipelineState.stages) {
-            for (const stage of pipeline.elements) {
-                if (stage.element !== 'STAGE') continue;
-                const stageRecord = pipelineState.stages[stage.id];
-                if (!stageRecord) continue;
-                for (const el of stage.elements || []) {
-                    if (el.element !== 'BLOCK') continue;
-                    const elementState = stageRecord.elements?.[el.id];
-                    if (
-                        elementState &&
-                        (elementState.status === 'WAITING' || elementState.status === 'RUNNING')
-                    ) {
-                        resumeFrom = { stageId: stage.id, elementId: el.id };
-                        break;
-                    }
+    if (savedState && savedState.stages) {
+        for (const stage of pipeline.elements) {
+            if (stage.element !== 'STAGE') continue;
+            const stageRecord = savedState.stages[stage.id];
+            if (!stageRecord) continue;
+            for (const el of stage.elements || []) {
+                if (el.element !== 'BLOCK') continue;
+                const elementState = stageRecord.elements?.[el.id];
+                if (
+                    elementState &&
+                    (elementState.status === 'WAITING' || elementState.status === 'RUNNING')
+                ) {
+                    resumeFrom = { stageId: stage.id, elementId: el.id };
+                    break;
                 }
-                if (resumeFrom) break;
             }
+            if (resumeFrom) break;
         }
-    } catch (err) {
-        console.warn('[compilepipeline] recovery check failed:', err);
     }
 
     const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
@@ -1232,15 +1239,13 @@ export const compilepipeline = async (
     const compiledpipeline = createpipeline(compiled, sinks, undefined, {
         resumeFrom,
         pipelineId,
-        snapshot: getSnapshot(),
-        spawnBootstrapMap
+        restoredEnv: savedState?.env || null
     });
 
     return {
         pipeline: compiledpipeline,
         resumeFrom,
-        restoredEnv: getSnapshot().loadedPipelines[pipelineId]?.env || null,
-        restoredHtmlMap: getSnapshot().globalHtml || null,
+        restoredEnv: savedState?.env || null,
         pipelineId,
         spawnBootstrapMap
     };

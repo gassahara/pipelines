@@ -1,61 +1,80 @@
 import { createactor, createMessageValidator } from './actorkernel.js';
+import { enqueueDbStore, enqueueDbRestore } from './dbactor.js';
 
 export const EXECUTIONMESSAGETYPES = Object.freeze({
-  START: 'start',
-  STOP: 'stop',
-  RESTART: 'restart',
-  CONTINUE: 'continue',
-  SAVE_STATUS: 'save_status',
-  GET: 'get',
-  SET: 'set'
+  PIPELINE_LOADED: 'pipeline_loaded',
+  STAGE_STATE: 'stage_state',
+  ELEMENT_STATE: 'element_state',
+  ENV_UPDATED: 'env_updated',
+  SNAPSHOT: 'snapshot',
+  RECOVER: 'recover',
+  STOP_STAGE: 'stop_stage',
+  CANCEL_STAGE: 'cancel_stage',
+  BREAK_STAGE: 'break_stage',
+  RESTART_STAGE: 'restart_stage',
+  CONTINUE_STAGE: 'continue_stage',
+  GET_STATUS: 'get_status'
 });
 
 const MESSAGEINTERFACES = Object.freeze({
-  [EXECUTIONMESSAGETYPES.START]: {
-    stageid: 'string',
-    inputs: 'object?',
-    resolve: 'function?',
-    reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.STOP]: {
-    stageid: 'string',
-    resolve: 'function?',
-    reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.RESTART]: {
-    stageid: 'string',
-    inputs: 'object?',
-    resolve: 'function?',
-    reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.CONTINUE]: {
-    stageid: 'string',
-    resolve: 'function?',
-    reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.SAVE_STATUS]: {
-    stageid: 'string',
-    status: 'string?',
-    outputs: 'object?',
-    resolve: 'function?',
-    reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.GET]: {
-    stageid: 'string',
-    key: 'string?',
-    resolve: 'function?',
-    reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.SET]: {
-    stageid: 'string',
-    key: 'string',
-    value: 'any',
-    resolve: 'function?',
-    reject: 'function?'
-  }
+  [EXECUTIONMESSAGETYPES.PIPELINE_LOADED]: { pipelineid: 'string', env: 'object?', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.STAGE_STATE]: { pipelineid: 'string', stageid: 'string', state: 'object', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.ELEMENT_STATE]: { pipelineid: 'string', stageid: 'string', elementid: 'string', state: 'object', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.ENV_UPDATED]: { pipelineid: 'string', env: 'object', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.SNAPSHOT]: { resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.RECOVER]: { pipelineid: 'string', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.STOP_STAGE]: { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.CANCEL_STAGE]: { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.BREAK_STAGE]: { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.RESTART_STAGE]: { pipelineid: 'string', stageid: 'string', elementid: 'string?', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.CONTINUE_STAGE]: { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' },
+  [EXECUTIONMESSAGETYPES.GET_STATUS]: { pipelineid: 'string?', resolve: 'function?', reject: 'function?' }
 });
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
+
+const DB_KEY = 'global:executionstate';
+
+const ensurePipeline = (state, pipelineid) => {
+  if (!state.pipelines[pipelineid]) {
+    state.pipelines[pipelineid] = {
+      status: 'running',
+      env: {},
+      stages: {}
+    };
+  }
+  return state.pipelines[pipelineid];
+};
+
+const ensureStage = (pipeline, stageid) => {
+  if (!pipeline.stages[stageid]) {
+    pipeline.stages[stageid] = {
+      status: 'awaiting',
+      elements: {}
+    };
+  }
+  return pipeline.stages[stageid];
+};
+
+const persistState = async (state) => {
+  try {
+    await enqueueDbStore(DB_KEY, state);
+  } catch (err) {
+    console.warn('[EXECUTIONACTOR] persist failed:', err);
+  }
+};
+
+const loadInitialState = async () => {
+  try {
+    const stored = await enqueueDbRestore(DB_KEY);
+    if (stored && stored.pipelines) {
+      return stored;
+    }
+  } catch (err) {
+    console.warn('[EXECUTIONACTOR] load initial state failed:', err);
+  }
+  return { pipelines: {}, snapshot: { lastSavedAt: null } };
+};
 
 const executionbehavior = (state, message) => {
   const check = validatemessage(message);
@@ -68,187 +87,205 @@ const executionbehavior = (state, message) => {
     return state;
   }
 
-  const map = new Map(state.map);
+  const nextState = {
+    ...state,
+    pipelines: { ...state.pipelines }
+  };
 
   switch (message.type) {
-    case EXECUTIONMESSAGETYPES.START: {
-      map.set(message.stageid, {
-        stageid: message.stageid,
-        status: 'running',
-        inputs: message.inputs || {},
-        outputs: {},
-        updatedAt: Date.now()
-      });
-      if (typeof message.resolve === 'function') message.resolve(true);
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.STOP: {
-      const record = map.get(message.stageid);
-      if (record) {
-        map.set(message.stageid, {
-          ...record,
-          status: 'stopped',
-          updatedAt: Date.now()
-        });
+    case EXECUTIONMESSAGETYPES.PIPELINE_LOADED: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      if (message.env && Object.keys(message.env).length > 0) {
+        pipeline.env = message.env;
       }
-      if (typeof message.resolve === 'function') message.resolve(true);
+      pipeline.status = 'running';
       break;
     }
 
-    case EXECUTIONMESSAGETYPES.RESTART: {
-      const existing = map.get(message.stageid);
-      map.set(message.stageid, {
-        stageid: message.stageid,
-        status: 'running',
-        inputs: message.inputs || existing?.inputs || {},
-        outputs: {},
-        updatedAt: Date.now()
-      });
-      if (typeof message.resolve === 'function') message.resolve(true);
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.CONTINUE: {
-      const record = map.get(message.stageid);
-      if (record && (record.status === 'stopped' || record.status === 'awaiting')) {
-        map.set(message.stageid, {
-          ...record,
-          status: 'running',
-          updatedAt: Date.now()
-        });
-      }
-      if (typeof message.resolve === 'function') message.resolve(true);
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.SAVE_STATUS: {
-      const record = map.get(message.stageid);
-      if (record) {
-        map.set(message.stageid, {
-          ...record,
-          status: message.status || record.status,
-          outputs: message.outputs || record.outputs || {},
-          updatedAt: Date.now()
-        });
-      }
-      if (typeof message.resolve === 'function') message.resolve(true);
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.GET: {
-      const record = map.get(message.stageid);
-      if (typeof message.resolve === 'function') {
-        if (!record) {
-          message.resolve(null);
-        } else if (message.key) {
-          message.resolve(record[message.key] !== undefined ? record[message.key] : null);
-        } else {
-          message.resolve(record);
+    case EXECUTIONMESSAGETYPES.STAGE_STATE: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      const stage = ensureStage(pipeline, message.stageid);
+      if (message.state && typeof message.state === 'object') {
+        if (message.state.elements) {
+          const elements = { ...stage.elements };
+          for (const [elementId, elementState] of Object.entries(message.state.elements)) {
+            elements[elementId] = {
+              status: elementState.status || 'WAITING',
+              savedAt: elementState.savedAt || Date.now()
+            };
+          }
+          stage.elements = elements;
+        }
+        if (message.state.status) {
+          stage.status = message.state.status;
         }
       }
       break;
     }
 
-    case EXECUTIONMESSAGETYPES.SET: {
-      const existing = map.get(message.stageid) || {
-        stageid: message.stageid,
-        status: 'unknown',
-        inputs: {},
-        outputs: {},
-        updatedAt: Date.now()
+    case EXECUTIONMESSAGETYPES.ELEMENT_STATE: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      const stage = ensureStage(pipeline, message.stageid);
+      stage.elements = { ...stage.elements };
+      stage.elements[message.elementid] = {
+        status: message.state.status || 'RUNNING',
+        savedAt: message.state.savedAt || Date.now(),
+        startedAt: message.state.startedAt || null,
+        completedAt: message.state.completedAt || null,
+        outputs: message.state.outputs || null
       };
-      const updated = {
-        ...existing,
-        [message.key]: message.value,
-        updatedAt: Date.now()
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.ENV_UPDATED: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      pipeline.env = message.env || {};
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.SNAPSHOT: {
+      nextState.snapshot = {
+        ...nextState.snapshot,
+        lastSavedAt: Date.now()
       };
-      map.set(message.stageid, updated);
+      persistState(nextState);
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.RECOVER: {
+      const pipeline = nextState.pipelines[message.pipelineid] || null;
       if (typeof message.resolve === 'function') {
-        message.resolve(updated[message.key]);
+        message.resolve(pipeline);
+      }
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.STOP_STAGE: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      const stage = ensureStage(pipeline, message.stageid);
+      stage.status = 'stopped';
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.CANCEL_STAGE: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      const stage = ensureStage(pipeline, message.stageid);
+      stage.status = 'cancelled';
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.BREAK_STAGE: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      const stage = ensureStage(pipeline, message.stageid);
+      stage.status = 'awaiting';
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.RESTART_STAGE: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      const stage = ensureStage(pipeline, message.stageid);
+      stage.status = 'running';
+      if (message.elementid) {
+        stage.elements[message.elementid] = {
+          status: 'RUNNING',
+          savedAt: Date.now(),
+          startedAt: Date.now(),
+          completedAt: null,
+          outputs: null
+        };
+      }
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.CONTINUE_STAGE: {
+      const pipeline = ensurePipeline(nextState, message.pipelineid);
+      const stage = ensureStage(pipeline, message.stageid);
+      if (stage.status === 'stopped' || stage.status === 'awaiting') {
+        stage.status = 'running';
+      }
+      break;
+    }
+
+    case EXECUTIONMESSAGETYPES.GET_STATUS: {
+      if (typeof message.resolve === 'function') {
+        if (message.pipelineid) {
+          message.resolve(nextState.pipelines[message.pipelineid] || null);
+        } else {
+          message.resolve(nextState.pipelines);
+        }
       }
       break;
     }
   }
 
-  return { map };
+  persistState(nextState);
+  return nextState;
 };
 
-export const EXECUTIONACTOR = createactor(executionbehavior, { map: new Map() });
+export const EXECUTIONACTOR = createactor(executionbehavior, { pipelines: {}, snapshot: { lastSavedAt: null } });
 
-export const enqueueExecutionStart = (stageid, inputs) =>
+// Initialize from DB asynchronously after export.
+(async () => {
+  const loaded = await loadInitialState();
+  // Actor state already seeded; use replaceState if available? For now keep initial empty.
+})();
+
+export const enqueueExecutionPipelineLoaded = (pipelineid, env) =>
   new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({
-      type: EXECUTIONMESSAGETYPES.START,
-      stageid,
-      inputs,
-      resolve,
-      reject
-    })
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.PIPELINE_LOADED, pipelineid, env, resolve, reject })
   );
 
-export const enqueueExecutionStop = (stageid) =>
+export const enqueueExecutionStageState = (pipelineid, stageid, state) =>
   new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({
-      type: EXECUTIONMESSAGETYPES.STOP,
-      stageid,
-      resolve,
-      reject
-    })
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.STAGE_STATE, pipelineid, stageid, state, resolve, reject })
   );
 
-export const enqueueExecutionRestart = (stageid, inputs) =>
+export const enqueueExecutionElementState = (pipelineid, stageid, elementid, state) =>
   new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({
-      type: EXECUTIONMESSAGETYPES.RESTART,
-      stageid,
-      inputs,
-      resolve,
-      reject
-    })
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.ELEMENT_STATE, pipelineid, stageid, elementid, state, resolve, reject })
   );
 
-export const enqueueExecutionContinue = (stageid) =>
+export const enqueueExecutionEnvUpdated = (pipelineid, env) =>
   new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({
-      type: EXECUTIONMESSAGETYPES.CONTINUE,
-      stageid,
-      resolve,
-      reject
-    })
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.ENV_UPDATED, pipelineid, env, resolve, reject })
   );
 
-export const enqueueExecutionSaveStatus = (stageid, status, outputs) =>
+export const enqueueExecutionSnapshot = () =>
   new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({
-      type: EXECUTIONMESSAGETYPES.SAVE_STATUS,
-      stageid,
-      status,
-      outputs,
-      resolve,
-      reject
-    })
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.SNAPSHOT, resolve, reject })
   );
 
-export const enqueueExecutionGet = (stageid, key) =>
+export const enqueueExecutionRecover = (pipelineid) =>
   new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({
-      type: EXECUTIONMESSAGETYPES.GET,
-      stageid,
-      key,
-      resolve,
-      reject
-    })
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.RECOVER, pipelineid, resolve, reject })
   );
 
-export const enqueueExecutionSet = (stageid, key, value) =>
+export const enqueueExecutionStopStage = (pipelineid, stageid) =>
   new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({
-      type: EXECUTIONMESSAGETYPES.SET,
-      stageid,
-      key,
-      value,
-      resolve,
-      reject
-    })
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.STOP_STAGE, pipelineid, stageid, resolve, reject })
+  );
+
+export const enqueueExecutionCancelStage = (pipelineid, stageid) =>
+  new Promise((resolve, reject) =>
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.CANCEL_STAGE, pipelineid, stageid, resolve, reject })
+  );
+
+export const enqueueExecutionBreakStage = (pipelineid, stageid) =>
+  new Promise((resolve, reject) =>
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.BREAK_STAGE, pipelineid, stageid, resolve, reject })
+  );
+
+export const enqueueExecutionRestartStage = (pipelineid, stageid, elementid) =>
+  new Promise((resolve, reject) =>
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.RESTART_STAGE, pipelineid, stageid, elementid, resolve, reject })
+  );
+
+export const enqueueExecutionContinueStage = (pipelineid, stageid) =>
+  new Promise((resolve, reject) =>
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.CONTINUE_STAGE, pipelineid, stageid, resolve, reject })
+  );
+
+export const enqueueExecutionGetStatus = (pipelineid) =>
+  new Promise((resolve, reject) =>
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.GET_STATUS, pipelineid, resolve, reject })
   );

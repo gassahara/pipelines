@@ -1,7 +1,11 @@
 import { callwithstack } from "./factory/callwithstack.js";
 import { EVALSTACK } from "./evalstack.js";
 import { logdebug, loginfo } from "./verbosity.js";
-import { enqueueExecutionStart, enqueueExecutionSaveStatus } from "./actors/executionactor.js";
+import {
+  enqueueExecutionStart,
+  enqueueExecutionSaveStatus,
+  enqueueExecutionGetStatus
+} from "./actors/executionactor.js";
 
 const logRestoreStep = (step, detail = '') => {
   loginfo('[RESTORE] ' + step, detail);
@@ -34,11 +38,9 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
   const {
     resumeFrom = null,
     pipelineId = 'default_pipeline',
-    snapshot = null
+    restoredEnv = null
   } = options;
 
-  // Local runtime promise stack for async stages.
-  // Shared EXECUTIONACTOR is used for status observability and control.
   const stageStack = [];
 
   const awaitPendingForReads = async (reads) => {
@@ -152,23 +154,19 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
   };
 
   const runAll = async (env, fromIndex = 0) => {
-    // Restore env from global snapshot if present.
-    if (snapshot && snapshot.loadedPipelines && snapshot.loadedPipelines[pipelineId]) {
-      const savedEnv = snapshot.loadedPipelines[pipelineId].env;
-      if (savedEnv && typeof savedEnv === 'object') {
-        logRestoreStep('restoring-env', { pipelineId, restoredEnv: 'yes' });
-        for (const [key, value] of Object.entries(savedEnv)) {
-          if (!(key in env) || env[key] === undefined) {
-            env[key] = value;
-          }
+    // Restore env from Execution Actor saved pipeline env if present.
+    if (restoredEnv && typeof restoredEnv === 'object') {
+      logRestoreStep('restoring-env', { pipelineId, restoredEnv: 'yes' });
+      for (const [key, value] of Object.entries(restoredEnv)) {
+        if (!(key in env) || env[key] === undefined) {
+          env[key] = value;
         }
-        logRestoreStep('env-restored', { pipelineId });
-      } else {
-        logRestoreStep('restoring-env', { pipelineId, restoredEnv: 'no' });
       }
+      logRestoreStep('env-restored', { pipelineId });
+    } else {
+      logRestoreStep('restoring-env', { pipelineId, restoredEnv: 'no' });
     }
 
-    // Compute resume index so we skip only stages before the target resume stage.
     let resumeIndex = -1;
     if (resumeFrom && resumeFrom.stageId) {
       resumeIndex = stages.findIndex(s => (s.id || s.stagemeta?.stageid) === resumeFrom.stageId);
@@ -186,16 +184,33 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         const stageid = stage.id || stage.stagemeta?.stageid || ('stage_' + idx);
         const stageMeta = stage.stagemeta || {};
 
-        // P77: skip stages before the resume point only.
+        // Skip stages before the resume point only.
         if (resumeIndex !== -1 && idx < resumeIndex) {
           logdebug('[PIPELINE] Skipping stage before resume point:', stageid);
+          continue;
+        }
+
+        // Read Execution Actor status for this pipeline once.
+        let pipelineStatus = null;
+        try {
+          pipelineStatus = await enqueueExecutionGetStatus(pipelineId);
+        } catch (err) {
+          console.warn('[PIPELINE] execution actor get status failed:', err);
+        }
+
+        const savedStageStatus = pipelineStatus?.stages?.[stageid]?.status || null;
+        if (savedStageStatus === 'cancelled') {
+          logdebug('[PIPELINE] Skipping cancelled stage:', stageid);
+          continue;
+        }
+        if (savedStageStatus === 'stopped') {
+          logdebug('[PIPELINE] Stage stopped:', stageid);
           continue;
         }
 
         const callerid = env.agentid + ':' + stageid;
         const reads = stageMeta.reads || [];
 
-        // If this stage reads keys written by a pending async stage, await those first.
         await awaitPendingForReads(reads);
 
         if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP') {
