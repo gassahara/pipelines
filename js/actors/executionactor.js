@@ -35,6 +35,18 @@ const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
 const DB_KEY = 'global:executionstate';
 
+const resolveMessage = (message, value = true) => {
+  if (message && typeof message.resolve === 'function') {
+    message.resolve(value);
+  }
+};
+
+const rejectMessage = (message, error) => {
+  if (message && typeof message.reject === 'function') {
+    message.reject(error);
+  }
+};
+
 const ensurePipeline = (state, pipelineid) => {
   if (!state.pipelines[pipelineid]) {
     state.pipelines[pipelineid] = {
@@ -79,11 +91,7 @@ const loadInitialState = async () => {
 const executionbehavior = (state, message) => {
   const check = validatemessage(message);
   if (!check.valid) {
-    if (typeof message.reject === 'function') {
-      message.reject(new Error('[EXECUTIONACTOR:INVALID] ' + check.error));
-    } else {
-      console.error('[EXECUTIONACTOR:INVALID]', check.error);
-    }
+    rejectMessage(message, new Error('[EXECUTIONACTOR:INVALID] ' + check.error));
     return state;
   }
 
@@ -92,130 +100,145 @@ const executionbehavior = (state, message) => {
     pipelines: { ...state.pipelines }
   };
 
-  switch (message.type) {
-    case EXECUTIONMESSAGETYPES.PIPELINE_LOADED: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      if (message.env && Object.keys(message.env).length > 0) {
-        pipeline.env = message.env;
+  try {
+    switch (message.type) {
+      case EXECUTIONMESSAGETYPES.PIPELINE_LOADED: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        if (message.env && Object.keys(message.env).length > 0) {
+          pipeline.env = message.env;
+        }
+        pipeline.status = 'running';
+        resolveMessage(message, true);
+        break;
       }
-      pipeline.status = 'running';
-      break;
-    }
 
-    case EXECUTIONMESSAGETYPES.STAGE_STATE: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      const stage = ensureStage(pipeline, message.stageid);
-      if (message.state && typeof message.state === 'object') {
-        if (message.state.elements) {
-          const elements = { ...stage.elements };
-          for (const [elementId, elementState] of Object.entries(message.state.elements)) {
-            elements[elementId] = {
-              status: elementState.status || 'WAITING',
-              savedAt: elementState.savedAt || Date.now()
-            };
+      case EXECUTIONMESSAGETYPES.STAGE_STATE: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        const stage = ensureStage(pipeline, message.stageid);
+        if (message.state && typeof message.state === 'object') {
+          if (message.state.elements) {
+            const elements = { ...stage.elements };
+            for (const [elementId, elementState] of Object.entries(message.state.elements)) {
+              elements[elementId] = {
+                status: elementState.status || 'WAITING',
+                savedAt: elementState.savedAt || Date.now()
+              };
+            }
+            stage.elements = elements;
           }
-          stage.elements = elements;
+          if (message.state.status) {
+            stage.status = message.state.status;
+          }
         }
-        if (message.state.status) {
-          stage.status = message.state.status;
-        }
+        resolveMessage(message, true);
+        break;
       }
-      break;
-    }
 
-    case EXECUTIONMESSAGETYPES.ELEMENT_STATE: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      const stage = ensureStage(pipeline, message.stageid);
-      stage.elements = { ...stage.elements };
-      stage.elements[message.elementid] = {
-        status: message.state.status || 'RUNNING',
-        savedAt: message.state.savedAt || Date.now(),
-        startedAt: message.state.startedAt || null,
-        completedAt: message.state.completedAt || null,
-        outputs: message.state.outputs || null
-      };
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.ENV_UPDATED: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      pipeline.env = message.env || {};
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.SNAPSHOT: {
-      nextState.snapshot = {
-        ...nextState.snapshot,
-        lastSavedAt: Date.now()
-      };
-      persistState(nextState);
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.RECOVER: {
-      const pipeline = nextState.pipelines[message.pipelineid] || null;
-      if (typeof message.resolve === 'function') {
-        message.resolve(pipeline);
-      }
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.STOP_STAGE: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      const stage = ensureStage(pipeline, message.stageid);
-      stage.status = 'stopped';
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.CANCEL_STAGE: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      const stage = ensureStage(pipeline, message.stageid);
-      stage.status = 'cancelled';
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.BREAK_STAGE: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      const stage = ensureStage(pipeline, message.stageid);
-      stage.status = 'awaiting';
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.RESTART_STAGE: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      const stage = ensureStage(pipeline, message.stageid);
-      stage.status = 'running';
-      if (message.elementid) {
+      case EXECUTIONMESSAGETYPES.ELEMENT_STATE: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        const stage = ensureStage(pipeline, message.stageid);
+        stage.elements = { ...stage.elements };
         stage.elements[message.elementid] = {
-          status: 'RUNNING',
-          savedAt: Date.now(),
-          startedAt: Date.now(),
-          completedAt: null,
-          outputs: null
+          status: message.state.status || 'RUNNING',
+          savedAt: message.state.savedAt || Date.now(),
+          startedAt: message.state.startedAt || null,
+          completedAt: message.state.completedAt || null,
+          outputs: message.state.outputs || null
         };
+        resolveMessage(message, true);
+        break;
       }
-      break;
-    }
 
-    case EXECUTIONMESSAGETYPES.CONTINUE_STAGE: {
-      const pipeline = ensurePipeline(nextState, message.pipelineid);
-      const stage = ensureStage(pipeline, message.stageid);
-      if (stage.status === 'stopped' || stage.status === 'awaiting') {
+      case EXECUTIONMESSAGETYPES.ENV_UPDATED: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        pipeline.env = message.env || {};
+        resolveMessage(message, true);
+        break;
+      }
+
+      case EXECUTIONMESSAGETYPES.SNAPSHOT: {
+        nextState.snapshot = {
+          ...nextState.snapshot,
+          lastSavedAt: Date.now()
+        };
+        persistState(nextState);
+        resolveMessage(message, true);
+        break;
+      }
+
+      case EXECUTIONMESSAGETYPES.RECOVER: {
+        const pipeline = nextState.pipelines[message.pipelineid] || null;
+        resolveMessage(message, pipeline);
+        break;
+      }
+
+      case EXECUTIONMESSAGETYPES.STOP_STAGE: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        const stage = ensureStage(pipeline, message.stageid);
+        stage.status = 'stopped';
+        resolveMessage(message, true);
+        break;
+      }
+
+      case EXECUTIONMESSAGETYPES.CANCEL_STAGE: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        const stage = ensureStage(pipeline, message.stageid);
+        stage.status = 'cancelled';
+        resolveMessage(message, true);
+        break;
+      }
+
+      case EXECUTIONMESSAGETYPES.BREAK_STAGE: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        const stage = ensureStage(pipeline, message.stageid);
+        stage.status = 'awaiting';
+        resolveMessage(message, true);
+        break;
+      }
+
+      case EXECUTIONMESSAGETYPES.RESTART_STAGE: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        const stage = ensureStage(pipeline, message.stageid);
         stage.status = 'running';
-      }
-      break;
-    }
-
-    case EXECUTIONMESSAGETYPES.GET_STATUS: {
-      if (typeof message.resolve === 'function') {
-        if (message.pipelineid) {
-          message.resolve(nextState.pipelines[message.pipelineid] || null);
-        } else {
-          message.resolve(nextState.pipelines);
+        if (message.elementid) {
+          stage.elements[message.elementid] = {
+            status: 'RUNNING',
+            savedAt: Date.now(),
+            startedAt: Date.now(),
+            completedAt: null,
+            outputs: null
+          };
         }
+        resolveMessage(message, true);
+        break;
       }
-      break;
+
+      case EXECUTIONMESSAGETYPES.CONTINUE_STAGE: {
+        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        const stage = ensureStage(pipeline, message.stageid);
+        if (stage.status === 'stopped' || stage.status === 'awaiting') {
+          stage.status = 'running';
+        }
+        resolveMessage(message, true);
+        break;
+      }
+
+      case EXECUTIONMESSAGETYPES.GET_STATUS: {
+        if (message.pipelineid) {
+          resolveMessage(message, nextState.pipelines[message.pipelineid] || null);
+        } else {
+          resolveMessage(message, nextState.pipelines);
+        }
+        break;
+      }
+
+      default:
+        rejectMessage(message, new Error('[EXECUTIONACTOR] unknown message type'));
+        return state;
     }
+  } catch (err) {
+    rejectMessage(message, err);
+    return state;
   }
 
   persistState(nextState);
@@ -223,12 +246,6 @@ const executionbehavior = (state, message) => {
 };
 
 export const EXECUTIONACTOR = createactor(executionbehavior, { pipelines: {}, snapshot: { lastSavedAt: null } });
-
-// Initialize from DB asynchronously after export.
-(async () => {
-  const loaded = await loadInitialState();
-  // Actor state already seeded; use replaceState if available? For now keep initial empty.
-})();
 
 export const enqueueExecutionPipelineLoaded = (pipelineid, env) =>
   new Promise((resolve, reject) =>
