@@ -48,7 +48,10 @@ const buildproperties = (merged) => {
 const sanitizeEnv = (env, maxBytes = 128 * 1024) => {
   const out = {};
   for (const [key, value] of Object.entries(env || {})) {
-    if (typeof value === 'function') continue;
+    if (typeof value === 'function') {
+      if (key === 'registersubscription') out[key] = '[Function:registersubscription]';
+      continue;
+    }
     if (typeof Node !== 'undefined' && value instanceof Node) continue;
     if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
     try {
@@ -722,7 +725,7 @@ export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOver
   }
 
   await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(err => console.warn('[compilepipeline] pipeline loaded failed:', err));
-  await enqueueExecutionRegisterPipeline(pipelineId, pipelineId, {}).catch(err => console.warn('[compilepipeline] register pipeline failed:', err));
+  await enqueueExecutionRegisterPipeline(pipelineId, pipeline, {}).catch(err => console.warn('[compilepipeline] register pipeline failed:', err));
 
   const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
   const compiled = compileElements(pipeline.elements, pipelineId, null, []);
@@ -731,7 +734,7 @@ export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOver
   return { pipeline: compiledpipeline, pipelineId, spawnBootstrapMap };
 };
 
-export const bootGlobalSnapshot = async (dnaResolvers = {}) => {
+export const bootGlobalSnapshot = async (envEnhancer = null) => {
   try {
     const recoveryData = await enqueueExecutionRecover();
     if (!recoveryData || typeof recoveryData !== 'object') {
@@ -752,14 +755,12 @@ export const bootGlobalSnapshot = async (dnaResolvers = {}) => {
     const rehydratedPipelines = [];
     for (const [pid, pdata] of pipelineEntries) {
       if (pdata.status !== 'running') continue;
-      const resolver = dnaResolvers[pdata.dnaRef] || dnaResolvers[pid];
-      if (typeof resolver !== 'function') {
-        logwarn('[BOOTLOADER] No DNA resolver for pipeline:', pid);
+      if (!pdata.dna) {
+        logwarn('[BOOTLOADER] No DNA for pipeline:', pid);
         continue;
       }
       try {
-        const dna = await resolver(pid);
-        const compiled = await compilepipeline(dna, null, [], pid);
+        const compiled = await compilepipeline(pdata.dna, null, [], pid);
         rehydratedPipelines.push({ pid, compiled, env: pdata.env || {} });
         rehydratedCount++;
       } catch (pipeErr) {
@@ -778,7 +779,10 @@ export const bootGlobalSnapshot = async (dnaResolvers = {}) => {
 
     // Phase 3: Run rehydrated pipelines; if HTML was restored, they will operate on it.
     for (const { pid, compiled, env } of rehydratedPipelines) {
-      compiled.pipeline({ id: pid, env }).catch(err => logwarn('[BOOTLOADER] Pipeline resume failed:', pid, err));
+      const runtimeEnv = typeof envEnhancer === 'function'
+        ? { ...env, ...envEnhancer(pid, env) }
+        : env;
+      compiled.pipeline({ id: pid, env: runtimeEnv }).catch(err => logwarn('[BOOTLOADER] Pipeline resume failed:', pid, err));
     }
 
     logdebug('[BOOTLOADER] Global recovery complete. Rehydrated pipelines:', rehydratedCount);

@@ -1,5 +1,5 @@
 import { createactor, createMessageValidator } from './actorkernel.js';
-import { enqueueDbStore, enqueueDbRestore } from './dbactor.js';
+import { enqueueDbStore, enqueueDbRestore, serializeDna, deserializeDna } from './dbactor.js';
 
 // -- Message Types --
 // Lean set: Task Runner + Global Snapshot + Pipeline Registry
@@ -114,7 +114,7 @@ const MESSAGEINTERFACES = Object.freeze({
     resolve: 'function?', reject: 'function?'
   },
   [EXECUTIONMESSAGETYPES.REGISTER_PIPELINE]: {
-    pipelineid: 'string', dnaRef: 'string?', env: 'object?', resolve: 'function?', reject: 'function?'
+    pipelineid: 'string', dna: 'object?', env: 'object?', resolve: 'function?', reject: 'function?'
   }
 });
 
@@ -162,7 +162,7 @@ const persistGlobalSnapshot = async (state) => {
       snapshot.pipelines[pid] = {
         status: pdata.status,
         env: sanitizeForState(pdata.env || {}),
-        dnaRef: pdata.dnaRef || pid,
+        dna: serializeDna(pdata.dna || {}),
         stageStatuses: pdata.stageStatuses || {}
       };
     }
@@ -177,8 +177,15 @@ const loadInitialState = async () => {
   try {
     const stored = await enqueueDbRestore(DB_KEY);
     if (stored && stored.version === 1 && stored.pipelines) {
+      const pipelines = {};
+      for (const [pid, pdata] of Object.entries(stored.pipelines || {})) {
+        pipelines[pid] = {
+          ...pdata,
+          dna: pdata.dna ? deserializeDna(pdata.dna) : null
+        };
+      }
       return {
-        pipelines: stored.pipelines || {},
+        pipelines,
         htmlSnapshot: stored.htmlSnapshot || null
       };
     }
@@ -285,7 +292,7 @@ const stopTask = (taskid) => {
 const ensurePipeline = (state, pipelineid) => {
   if (!state.pipelines[pipelineid]) {
     state.pipelines[pipelineid] = {
-      status: 'running', env: {}, dnaRef: null, stageStatuses: {}
+      status: 'running', env: {}, dna: null, stageStatuses: {}
     };
   }
   return state.pipelines[pipelineid];
@@ -513,7 +520,7 @@ const executionbehavior = (state, message) => {
 
       case EXECUTIONMESSAGETYPES.REGISTER_PIPELINE: {
         const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (message.dnaRef) pipeline.dnaRef = message.dnaRef;
+        if (message.dna) pipeline.dna = message.dna;
         if (message.env) pipeline.env = sanitizeForState(message.env);
         resolveMessage(message, true);
         break;
@@ -623,10 +630,10 @@ export const enqueueExecutionSpawnPipeline = (descriptor) =>
 export const enqueueExecutionGetInterruptedStage = () =>
   Promise.resolve(null);
 
-// NEW: Register a pipeline's DNA reference and env for Global Snapshot recovery
-export const enqueueExecutionRegisterPipeline = (pipelineid, dnaRef, env) =>
-  enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid, dnaRef, env });
+// Register a pipeline's DNA and env for Global Snapshot recovery
+export const enqueueExecutionRegisterPipeline = (pipelineid, dna, env) =>
+  enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid, dna, env });
 
-// NEW: Take a global snapshot (with optional HTML)
+// Take a global snapshot (with optional HTML)
 export const enqueueGlobalSnapshot = (html) =>
 enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, { html });

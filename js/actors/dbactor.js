@@ -50,6 +50,27 @@ const persist = (store) => {
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
+const FN_TAG = '__fn__';
+
+function dnaReplacer(key, value) {
+  if (typeof value === 'function') {
+    return { [FN_TAG]: true, source: value.toString() };
+  }
+  return value;
+}
+
+function dnaReviver(key, value) {
+  if (value && typeof value === 'object' && value[FN_TAG] === true) {
+    try {
+      return new Function('return (' + value.source + ')')();
+    } catch (err) {
+      console.warn('[DNA] failed to revive function using new Function:', err);
+      return function() { throw new Error('revived function failed'); };
+    }
+  }
+  return value;
+}
+
 const dbbehavior = (state, message) => {
   const check = validatemessage(message);
   if (!check.valid) {
@@ -102,3 +123,6 @@ export const enqueueDbStore = (key, value) => enqueue(DBMESSAGETYPES.STORE, { ke
 export const enqueueDbRestore = (key) => enqueue(DBMESSAGETYPES.RESTORE, { key });
 export const enqueueDbList = () => enqueue(DBMESSAGETYPES.LIST);
 export const enqueueDbDelete = (key) => enqueue(DBMESSAGETYPES.DELETE, { key });
+
+export const serializeDna = (dna) => JSON.stringify(dna, dnaReplacer);
+export const deserializeDna = (json) => JSON.parse(json, dnaReviver);
