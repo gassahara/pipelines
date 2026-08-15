@@ -129,12 +129,13 @@ const safeFullEnv = (env) => {
   return out;
 };
 
-const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pipelineId) => {
+const createPersistentElementWrapper = (compiledElement, elementDef, stagePath, pipelineId) => {
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
   const outputKeys = Object.keys(elementDef?.signature?.outputs || {});
 
   const wrapper = async (env) => {
-    logdebug('[ELEMENT] submit:', pipelineId, stageId, elementId);
+    const path = [...stagePath, elementId];
+    logdebug('[ELEMENT] submit path:', pipelineId, path);
 
     try {
       await enqueueExecutionEnvUpdated(pipelineId, safeFullEnv(env));
@@ -149,7 +150,7 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
 
     const { taskid } = await enqueueExecutionSubmit({
       pipelineid: pipelineId,
-      stageid: stageId,
+      path,
       elementid: elementId,
       env,
       signature: {
@@ -176,6 +177,7 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
   };
 
   wrapper.id = elementId;
+  wrapper.kind = 'element';
   return wrapper;
 };
 
@@ -622,35 +624,46 @@ const BLOCKCOMPILERS = {
     }
 };
 
-const compileElement = (el, pipelineId = 'default_pipeline', resumeFrom = null) => {
+const compileElement = (el, pipelineId = 'default_pipeline', resumeFrom = null, stagePath = []) => {
     if (el.element === 'BLOCK') return compileBlockElement(el);
-    if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom);
+    if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath);
     throw new Error('unknown element type: ' + el.element + ' on element id "' + (el.id || 'unnamed') + '"');
 };
 
 const compileBlockElement = (block) => {
     const fn = compileblock(block);
     fn.blockmeta = { id: block.id, type: block.type, ref: block.ref, replace: block.replace };
+    fn.kind = 'element';
     return fn;
 };
 
-const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom = null) => {
+const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom = null, parentPath = []) => {
+    const stagePath = [...parentPath, stage.id];
+
     const children = (stage.elements || []).map(el => {
-        const compiled = compileElement(el, pipelineId, resumeFrom);
-        return createPersistentElementWrapper(compiled, el, stage.id, pipelineId);
+        if (el.element === 'BLOCK') {
+            const compiled = compileElement(el, pipelineId, resumeFrom, stagePath);
+            return createPersistentElementWrapper(compiled, el, stagePath, pipelineId);
+        }
+        if (el.element === 'STAGE') {
+            return compileStageElement(el, pipelineId, resumeFrom, stagePath);
+        }
+        throw new Error('unknown element type: ' + el.element);
     });
 
     let startIndex = 0;
-    if (resumeFrom && resumeFrom.stageId === stage.id) {
-        startIndex = (stage.elements || []).findIndex(el => el.id === resumeFrom.elementId);
+    if (resumeFrom?.path?.[0] === stage.id) {
+        const targetElementId = resumeFrom.path[resumeFrom.path.length - 1];
+        startIndex = (stage.elements || []).findIndex(el => el.id === targetElementId);
         if (startIndex < 0) startIndex = 0;
     }
 
-    logdebug('[compileStageElement] stage:', stage.id, 'startIndex:', startIndex);
+    logdebug('[compileStageElement] stage:', stage.id, 'stagePath:', stagePath, 'startIndex:', startIndex);
 
-    const isResumeStage = resumeFrom && resumeFrom.stageId === stage.id;
-    const fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage);
+    const isResumeStage = resumeFrom?.path?.[0] === stage.id;
+    const fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom);
     fn.id = stage.id;
+    fn.kind = 'stage';
 
     const reads = new Set();
     const writes = new Set();
@@ -669,43 +682,50 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
         snapshotKey: 'stage:' + stage.id,
         recoverable: true,
         notifyOnDone: stage.notifyOnDone === true,
-        startElementId: isResumeStage ? resumeFrom.elementId : null,
-        controlCommand: stage.control?.command || null
+        startElementId: isResumeStage ? resumeFrom.path[resumeFrom.path.length - 1] : null,
+        controlCommand: stage.control?.command || null,
+        path: stagePath
     };
     return fn;
 };
 
-const stageRunner = (stage, children, startIndex = 0, pipelineId = 'default_pipeline', resumeStage = false) => {
+const stageRunner = (stage, children, startIndex = 0, pipelineId = 'default_pipeline', resumeStage = false, stagePath = [], resumeFrom = null) => {
     const control = stage.control;
     const id = stage.id;
     if (!control || control.command === undefined || control.command === null) {
-        return defaultRunner(id, children, startIndex, pipelineId);
+        return defaultRunner(id, children, startIndex, pipelineId, stagePath, resumeFrom);
     }
     if (control.command === 'TRIGGER') {
-        return triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage);
+        return triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath, resumeFrom);
     }
     if (control.command === 'LOOP') {
-        return loopRunner(id, control, children, startIndex, pipelineId);
+        return loopRunner(id, control, children, startIndex, pipelineId, stagePath, resumeFrom);
     }
     throw new Error('unknown stage command: ' + control.command);
 };
 
-const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipeline') => {
+const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipeline', stagePath = [], resumeFrom = null) => {
     return async (env) => {
         const stageExecutor = async (execEnv) => {
-            const elementIds = children.map(ch => ch.id || 'unknown');
-            const elements = {};
-            for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+            const orderedChildren = children.map(ch => {
+                if (ch.kind === 'stage') {
+                    return { type:'stage', id:ch.id, status:'awaiting', children:[] };
+                }
+                return { type:'element', id:ch.id, status:'WAITING', savedAt: Date.now() };
+            });
+
             try {
-                await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+                await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: orderedChildren });
             } catch (err) {
                 console.warn('[DEFAULT] stage state failed:', err);
             }
+
             await executeChildren(children.slice(startIndex), execEnv, id);
         };
 
         const { taskid } = await enqueueExecutionSubmitStage({
             pipelineid: pipelineId,
+            path: stagePath,
             stageid: id,
             stageExecutor,
             env
@@ -715,14 +735,16 @@ const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipel
     };
 };
 
-const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default_pipeline') => {
+const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default_pipeline', stagePath = [], resumeFrom = null) => {
     return async (env) => {
         const stageExecutor = async (execEnv) => {
-            const elementIds = children.map(ch => ch.id || 'unknown');
-            const elements = {};
-            for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+            const orderedChildren = children.map(ch => {
+                if (ch.kind === 'stage') return { type:'stage', id:ch.id, status:'awaiting', children:[] };
+                return { type:'element', id:ch.id, status:'WAITING', savedAt: Date.now() };
+            });
+
             try {
-                await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+                await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: orderedChildren });
             } catch (err) {
                 console.warn('[LOOP] stage state failed:', err);
             }
@@ -747,6 +769,7 @@ const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default
 
         const { taskid } = await enqueueExecutionSubmitStage({
             pipelineid: pipelineId,
+            path: stagePath,
             stageid: id,
             stageExecutor,
             env
@@ -756,7 +779,7 @@ const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default
     };
 };
 
-const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0, resumeStage = false) => {
+const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0, resumeStage = false, stagePath = [], resumeFrom = null) => {
     return async (env) => {
         const sourceref = env[control.sourceid];
         const eventtype = control.event;
@@ -767,14 +790,17 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
         }
 
         const runTriggerStage = async (execEnv, slice) => {
-            const elementIds = children.map(ch => ch.id || 'unknown');
-            const elements = {};
-            for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+            const orderedChildren = children.map(ch => {
+                if (ch.kind === 'stage') return { type:'stage', id:ch.id, status:'awaiting', children:[] };
+                return { type:'element', id:ch.id, status:'WAITING', savedAt: Date.now() };
+            });
+
             try {
-                await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+                await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: orderedChildren });
             } catch (err) {
                 console.warn('[TRIGGER] stage state failed:', err);
             }
+
             await executeChildren(slice, execEnv, id);
         };
 
@@ -786,6 +812,7 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
 
             const { taskid } = await enqueueExecutionSubmitStage({
                 pipelineid: pipelineId,
+                path: stagePath,
                 stageid: id,
                 stageExecutor: (execEnv) => runTriggerStage(execEnv, children),
                 env
@@ -804,6 +831,7 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
             const remaining = startIndex > 0 ? children.slice(startIndex) : children;
             const { taskid } = await enqueueExecutionSubmitStage({
                 pipelineid: pipelineId,
+                path: stagePath,
                 stageid: id,
                 stageExecutor: (execEnv) => runTriggerStage(execEnv, remaining),
                 env
@@ -867,8 +895,8 @@ const executeChildren = async (children, env, stageid) => {
     return spawnOutputs;
 };
 
-const compileElements = (elements, pipelineId = 'default_pipeline', resumeFrom = null) =>
-    elements.map(el => compileElement(el, pipelineId, resumeFrom));
+const compileElements = (elements, pipelineId = 'default_pipeline', resumeFrom = null, parentPath = []) =>
+    elements.map(el => compileElement(el, pipelineId, resumeFrom, parentPath));
 
 const compileblock = (merged) => {
     const id = merged.id || 'unnamed';
@@ -1043,9 +1071,10 @@ const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
       }
     }
 
+    const resumeTopStage = resumeFrom?.path?.[0] || resumeFrom?.stageId || null;
     let resumeIndex = -1;
-    if (resumeFrom && resumeFrom.stageId) {
-      resumeIndex = stages.findIndex(s => (s.id || s.stagemeta?.stageid) === resumeFrom.stageId);
+    if (resumeTopStage) {
+      resumeIndex = stages.findIndex(s => (s.id || s.stagemeta?.stageid) === resumeTopStage);
     }
 
     try {
@@ -1125,14 +1154,12 @@ export const compilepipeline = async (
       unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
   }
 
-  // 1. Ensure pipeline exists in ExecutionActor without overwriting saved env.
   try {
     await enqueueExecutionPipelineLoaded(pipelineId, {});
   } catch (err) {
     console.warn('[compilepipeline] pipeline loaded event failed:', err);
   }
 
-  // 2. Ask ExecutionActor for an interrupted stage.
   let interrupted = null;
   try {
     interrupted = await enqueueExecutionGetInterruptedStage(pipelineId);
@@ -1144,7 +1171,6 @@ export const compilepipeline = async (
 
   let htmlRecovered = false;
   if (interrupted) {
-    // 3. Ask RenderActor to restore last full HTML snapshot.
     try {
       htmlRecovered = await enqueueRenderRecover();
     } catch (err) {
@@ -1155,19 +1181,18 @@ export const compilepipeline = async (
     logdebug('[compilepipeline] no interrupted stage; skipping HTML recover');
   }
 
-  // 4. Set resume point and env.
   const resumeFrom = interrupted
-    ? { stageId: interrupted.stageid, elementId: interrupted.elementid }
+    ? { path: interrupted.path, stageId: interrupted.path?.[0] || null }
     : null;
 
   const restoredEnv = interrupted?.env || null;
 
-  logdebug('[compilepipeline] resumeFrom:', resumeFrom);
+  logdebug('[compilepipeline] resume path:', interrupted?.path || null);
   logdebug('[compilepipeline] restored env:', restoredEnv ? 'yes' : 'no');
 
   const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
 
-  const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom);
+  const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom, []);
   const compiledpipeline = createpipeline(compiled, sinks, undefined, {
     resumeFrom,
     pipelineId,
