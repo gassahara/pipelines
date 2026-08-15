@@ -40,6 +40,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
     restoredEnv = null
   } = options;
 
+  // Local runtime promise stack for async stages.
   const stageStack = [];
 
   const awaitPendingForReads = async (reads) => {
@@ -181,7 +182,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         const stageid = stage.id || stage.stagemeta?.stageid || ('stage_' + idx);
         const stageMeta = stage.stagemeta || {};
 
-        // Skip stages before the resume point only.
+        // P77: skip stages before the resume point only.
         if (resumeIndex !== -1 && idx < resumeIndex) {
           logdebug('[PIPELINE] Skipping stage before resume point:', stageid);
           continue;
@@ -208,6 +209,7 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         const callerid = env.agentid + ':' + stageid;
         const reads = stageMeta.reads || [];
 
+        // If this stage reads keys written by a pending async stage, await those first.
         await awaitPendingForReads(reads);
 
         if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP') {
