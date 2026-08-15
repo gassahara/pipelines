@@ -112,7 +112,15 @@ const dbbehavior = (state, message) => {
         maxBytes = HTML_MAX_ENTRY_BYTES;
       }
 
-      const serializedValue = JSON.stringify(message.value);
+      let serializedValue;
+      try {
+        serializedValue = JSON.stringify(message.value);
+      } catch (err) {
+        console.warn('[DBACTOR] serialization failed:', err);
+        if (typeof message.resolve === 'function') message.resolve(false);
+        return state;
+      }
+
       if (serializedValue.length > maxBytes) {
         if (message.key.includes('global:executionstate')) {
           console.warn('[DBACTOR] global execution state too large. Consider splitting env from execution status map. key=', message.key, 'bytes=', serializedValue.length);

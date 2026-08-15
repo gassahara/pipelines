@@ -130,13 +130,43 @@ const ensureStage = (pipeline, stageid) => {
   return pipeline.stages[stageid];
 };
 
+const sanitizeForState = (value, seen = new WeakSet()) => {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === 'function') return '[Function]';
+
+  if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) return '[DOM_NODE]';
+  if (typeof Node !== 'undefined' && value instanceof Node) return '[DOM_NODE]';
+  if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) return '[EventTarget]';
+
+  if (typeof value !== 'object') return value;
+
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeForState(item, seen));
+  }
+
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'continuation') continue;
+    out[key] = sanitizeForState(item, seen);
+  }
+  seen.delete(value);
+  return out;
+};
+
 const persistState = async (state) => {
   try {
-    await enqueueDbStore(DB_KEY, {
+    const result = await enqueueDbStore(DB_KEY, {
       version: STATE_VERSION,
       pipelines: state.pipelines,
       snapshot: state.snapshot
     });
+    if (result === false) {
+      console.warn('[EXECUTIONACTOR] persist returned false');
+    }
   } catch (err) {
     console.warn('[EXECUTIONACTOR] persist failed:', err);
   }
@@ -213,6 +243,7 @@ const runElementTask = async (taskid, descriptor) => {
     };
 
     const result = await descriptor.executor(executionContext);
+    const safeResult = sanitizeForState(result);
 
     await EXECUTIONACTOR.send({
       type: EXECUTIONMESSAGETYPES.ELEMENT_STATE,
@@ -222,14 +253,13 @@ const runElementTask = async (taskid, descriptor) => {
       state: {
         status: 'EXECUTED',
         completedAt: Date.now(),
-        outputs: result || null
+        outputs: safeResult
       }
     });
 
     task.status = 'EXECUTED';
     task.resolveTask(result || {});
   } catch (err) {
-    // Persist as EXECUTED, never FAILED.
     try {
       await EXECUTIONACTOR.send({
         type: EXECUTIONMESSAGETYPES.ELEMENT_STATE,
@@ -425,7 +455,7 @@ const executionbehavior = (state, message) => {
 
       case EXECUTIONMESSAGETYPES.ENV_UPDATED: {
         const pipeline = ensurePipeline(nextState, message.pipelineid);
-        pipeline.env = message.env || {};
+        pipeline.env = sanitizeForState(message.env || {});
         resolveMessage(message, true);
         break;
       }
