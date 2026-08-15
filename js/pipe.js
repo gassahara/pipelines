@@ -1,31 +1,21 @@
 import { callwithstack } from "./factory/callwithstack.js";
 import { EVALSTACK } from "./evalstack.js";
-import { logdebug } from "./verbosity.js";
+import { logdebug, loginfo } from "./verbosity.js";
 import { enqueueExecutionStart, enqueueExecutionSaveStatus } from "./actors/executionactor.js";
-import { enqueueDbStore, enqueueDbRestore } from "./actors/dbactor.js";
-import { revalidateAll } from "./actors/trigerregistry.js";
 
-const SNAPSHOT_KEYS = [
-  'agentid',
-  'approot',
-  'currenttheme',
-  'themetokens',
-  'cssprefix',
-  'authsessionaccesstoken',
-  'data',
-  'layout'
-];
+const logRestoreStep = (step, detail = '') => {
+  loginfo('[RESTORE] ' + step, detail);
+};
 
 const safeOutputs = (env) => {
   const out = {};
-  for (const key of SNAPSHOT_KEYS) {
-    if (env[key] === undefined) continue;
-    if (typeof env[key] === 'function') continue;
-    if (typeof HTMLElement !== 'undefined' && env[key] instanceof HTMLElement) continue;
-    if (typeof Node !== 'undefined' && env[key] instanceof Node) continue;
-    if (typeof EventTarget !== 'undefined' && env[key] instanceof EventTarget) continue;
+  for (const [key, value] of Object.entries(env || {})) {
+    if (typeof value === 'function') continue;
+    if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) continue;
+    if (typeof Node !== 'undefined' && value instanceof Node) continue;
+    if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
     try {
-      const json = JSON.stringify(env[key]);
+      const json = JSON.stringify(value);
       if (json.length > 64 * 1024) {
         out[key] = '[large-value omitted]';
       } else {
@@ -38,25 +28,13 @@ const safeOutputs = (env) => {
   return out;
 };
 
-const applyHtmlMap = (htmlMap) => {
-  if (!htmlMap || !htmlMap.targets) return;
-  for (const [targetId, html] of Object.entries(htmlMap.targets)) {
-    if (typeof html !== 'string') continue;
-    const targetEl = document.getElementById(targetId);
-    if (targetEl) {
-      targetEl.innerHTML = html;
-    }
-  }
-};
-
 export const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
   if (!Array.isArray(stages)) throw new Error("[PIPELINE] Stages must be an array.");
 
   const {
     resumeFrom = null,
     pipelineId = 'default_pipeline',
-    restoredEnv = null,
-    restoredHtmlMap = null
+    snapshot = null
   } = options;
 
   // Local runtime promise stack for async stages.
@@ -174,71 +152,33 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
   };
 
   const runAll = async (env, fromIndex = 0) => {
-    const snapshotKey = 'pipeline:' + env.agentid + ':env';
-    const htmlMapKey = `pipeline:${pipelineId}:htmlmap`;
-
-    // Restore prior env snapshot if available.
-    try {
-      const restored = await enqueueDbRestore(snapshotKey);
-      if (restored && typeof restored === 'object') {
-        for (const [key, value] of Object.entries(restored)) {
+    // Restore env from global snapshot if present.
+    if (snapshot && snapshot.loadedPipelines && snapshot.loadedPipelines[pipelineId]) {
+      const savedEnv = snapshot.loadedPipelines[pipelineId].env;
+      if (savedEnv && typeof savedEnv === 'object') {
+        logRestoreStep('restoring-env', { pipelineId, restoredEnv: 'yes' });
+        for (const [key, value] of Object.entries(savedEnv)) {
           if (!(key in env) || env[key] === undefined) {
             env[key] = value;
           }
         }
-      }
-    } catch (err) {
-      console.warn('[PIPELINE] snapshot restore failed:', err);
-    }
-
-    // Restore full env checkpoint from resumed element, if present.
-    if (restoredEnv && typeof restoredEnv === 'object') {
-      for (const [key, value] of Object.entries(restoredEnv)) {
-        if (!(key in env) || env[key] === undefined) {
-          env[key] = value;
-        }
+        logRestoreStep('env-restored', { pipelineId });
+      } else {
+        logRestoreStep('restoring-env', { pipelineId, restoredEnv: 'no' });
       }
     }
 
-    // Restore HTML state from the resumed element checkpoint, if present.
-    if (restoredHtmlMap && typeof restoredHtmlMap === 'object') {
-      try {
-        applyHtmlMap(restoredHtmlMap);
-      } catch (err) {
-        console.warn('[PIPELINE] restored html map apply failed:', err);
-      }
-    } else {
-      // Fall back to the latest stored html map for this pipeline.
-      try {
-        const htmlMap = await enqueueDbRestore(htmlMapKey);
-        if (htmlMap && htmlMap.targets) {
-          applyHtmlMap(htmlMap);
-        }
-      } catch (err) {
-        console.warn('[PIPELINE] html map restore failed:', err);
-      }
+    // Compute resume index so we skip only stages before the target resume stage.
+    let resumeIndex = -1;
+    if (resumeFrom && resumeFrom.stageId) {
+      resumeIndex = stages.findIndex(s => (s.id || s.stagemeta?.stageid) === resumeFrom.stageId);
     }
 
-    // Reattach registered triggers after HTML restoration.
-    try {
-      revalidateAll();
-    } catch (err) {
-      console.warn('[PIPELINE] trigger revalidate after html restore failed:', err);
-    }
-
-    let lastSnapshot = null;
-    const snapshotInterval = setInterval(async () => {
-      try {
-        const current = safeOutputs(env);
-        const currentJson = JSON.stringify(current);
-        if (currentJson !== lastSnapshot) {
-          lastSnapshot = currentJson;
-          await enqueueDbStore(snapshotKey, current);
-        }
-      } catch (err) {
-        console.warn('[PIPELINE] periodic snapshot failed:', err);
-      }
-    }, 5000);
+    logRestoreStep('pipeline-booting', {
+      pipelineId,
+      resumeFrom: resumeFrom || null,
+      resumeIndex
+    });
 
     try {
       for (let idx = fromIndex; idx < stages.length; idx++) {
@@ -246,12 +186,10 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         const stageid = stage.id || stage.stagemeta?.stageid || ('stage_' + idx);
         const stageMeta = stage.stagemeta || {};
 
-        // If a resume point is supplied, skip stages before it.
-        if (resumeFrom && resumeFrom.stageId) {
-          if (stageid !== resumeFrom.stageId) {
-            logdebug('[PIPELINE] Skipping stage:', stageid, 'before resume point');
-            continue;
-          }
+        // P77: skip stages before the resume point only.
+        if (resumeIndex !== -1 && idx < resumeIndex) {
+          logdebug('[PIPELINE] Skipping stage before resume point:', stageid);
+          continue;
         }
 
         const callerid = env.agentid + ':' + stageid;
@@ -278,14 +216,12 @@ export const createpipeline = (stages, sinks = [], onprogress, options = {}) => 
         await Promise.all(stageStack.map(p => p.promise));
         stageStack.length = 0;
       }
-    } finally {
-      clearInterval(snapshotInterval);
-      try {
-        await enqueueDbStore(snapshotKey, safeOutputs(env));
-      } catch (err) {
-        console.warn('[PIPELINE] final snapshot failed:', err);
-      }
+    } catch (err) {
+      logRestoreStep('pipeline-error', { pipelineId, error: err.message });
+      throw err;
     }
+
+    logRestoreStep('pipeline-booted', { pipelineId });
   };
 
   return async (agent) => {

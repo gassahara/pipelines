@@ -116,6 +116,8 @@ const dbbehavior = (state, message) => {
 	if (serializedValue.length > maxBytes) {
             if (message.key.includes(':executionmap')) {
 		console.warn('[DBACTOR] execution map too large. Execution map must contain statuses only. key=', message.key, 'bytes=', serializedValue.length);
+            } else if (message.key.includes('global:executionsnapshot')) {
+		console.warn('[DBACTOR] global execution snapshot too large. Consider splitting env/html from status map. key=', message.key, 'bytes=', serializedValue.length);
             } else {
 		console.warn('[DBACTOR] value too large for key:', message.key, 'bytes:', serializedValue.length);
             }

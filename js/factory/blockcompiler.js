@@ -39,9 +39,14 @@ import {
   enqueueExecutionSet
 } from '../actors/executionactor.js';
 import {
-  enqueueDbStore,
-  enqueueDbRestore
-} from '../actors/dbactor.js';
+  eventPipelineLoaded,
+  eventStageState,
+  eventElementState,
+  eventEnvUpdated,
+  eventHtmlUpdated,
+  eventSpawnLoaded,
+  getSnapshot
+} from '../executionsnapshot.js';
 
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
@@ -132,65 +137,9 @@ const safeFullEnv = (env) => {
   return out;
 };
 
-const loadCurrentHtmlMap = async (pipelineId) => {
-  try {
-    return await enqueueDbRestore(`pipeline:${pipelineId}:htmlmap`);
-  } catch (err) {
-    console.warn('[PERSISTENCE] load current html map failed:', err);
-    return null;
-  }
-};
-
-const storeFullEnv = async (pipelineId, env) => {
-  const key = `pipeline:${pipelineId}:fullenv`;
-  const fullEnv = safeFullEnv(env);
-  try {
-    await enqueueDbStore(key, fullEnv);
-  } catch (err) {
-    console.warn('[PERSISTENCE] full env store failed:', err);
-  }
-};
-
-const registerStageElements = async (pipelineId, stageId, elementIds) => {
-  try {
-    const mapKey = `pipeline:${pipelineId}:executionmap`;
-    const existing = await enqueueDbRestore(mapKey);
-    const map = existing && existing.stages
-      ? existing
-      : { pipelineId, stages: {} };
-
-    if (!map.stages[stageId]) {
-      map.stages[stageId] = { elements: {} };
-    }
-
-    for (const elementId of elementIds) {
-      map.stages[stageId].elements[elementId] = {
-        status: 'WAITING',
-        savedAt: Date.now()
-      };
-    }
-
-    await enqueueDbStore(mapKey, map);
-  } catch (err) {
-    console.warn('[PERSISTENCE] registerStageElements failed:', err);
-  }
-};
-
 const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pipelineId) => {
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
-  const mapKey = `pipeline:${pipelineId}:executionmap`;
-  const htmlMapKey = `pipeline:${pipelineId}:htmlmap`;
   const outputKeys = Object.keys(elementDef?.signature?.outputs || {});
-
-  const loadExecutionMap = async () => {
-    try {
-      const existing = await enqueueDbRestore(mapKey);
-      if (existing && existing.stages) return existing;
-    } catch (err) {
-      console.warn('[PERSISTENCE] load execution map failed:', err);
-    }
-    return { pipelineId, stages: {} };
-  };
 
   const captureOutputs = (env) => {
     const out = {};
@@ -216,22 +165,15 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
 
   const storeElementState = async (status, extra = {}) => {
     try {
-      const map = await loadExecutionMap();
-      if (!map.stages[stageId]) {
-        map.stages[stageId] = { elements: {} };
-      }
-      map.stages[stageId].elements[elementId] = {
+      eventElementState(pipelineId, stageId, elementId, {
         status,
         savedAt: Date.now(),
         startedAt: extra.startedAt || null,
         completedAt: extra.completedAt || null,
         outputs: extra.outputs || null
-      };
-      await enqueueDbStore(mapKey, map);
-      return map.stages[stageId].elements[elementId];
+      });
     } catch (err) {
-      console.warn('[PERSISTENCE] execution map store failed:', err);
-      return null;
+      console.warn('[PERSISTENCE] snapshot element state failed:', err);
     }
   };
 
@@ -241,34 +183,15 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
     const targetEl = document.getElementById(targetId);
     if (!targetEl) return;
 
-    let htmlMap = { pipelineId, targets: {} };
     try {
-      const existing = await enqueueDbRestore(htmlMapKey);
-      if (existing && existing.targets) {
-        htmlMap = existing;
-      }
-    } catch (err) {
-      console.warn('[PERSISTENCE] load html map failed:', err);
-    }
-
-    htmlMap.targets[targetId] = targetEl.innerHTML;
-    htmlMap.savedAt = Date.now();
-
-    const htmlMapJson = JSON.stringify(htmlMap);
-    if (htmlMapJson.length > 1024 * 1024) {
-      console.warn('[PERSISTENCE] html map too large, skipping save:', htmlMapJson.length);
-      return;
-    }
-
-    try {
-      await enqueueDbStore(htmlMapKey, htmlMap);
+      eventHtmlUpdated(targetId, targetEl.innerHTML);
     } catch (persistError) {
-      console.warn('[PERSISTENCE] html map save failed:', persistError);
+      console.warn('[PERSISTENCE] snapshot html update failed:', persistError);
     }
   };
 
   const wrapper = async (env) => {
-    // Save execution status RUNNING before element runs. No env/html in map.
+    // Save execution status RUNNING before element runs.
     await storeElementState('RUNNING', {
       startedAt: Date.now()
     });
@@ -282,10 +205,10 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
         outputs: completedOutputs
       });
 
-      // P73: update the single rolling env state after successful element.
-      await storeFullEnv(pipelineId, env);
+      // P73/P83: update single rolling env state through global snapshot event.
+      eventEnvUpdated(pipelineId, safeFullEnv(env));
 
-      // P74: update HTML map only after successful writer.
+      // P74/P84: update global HTML after successful writer.
       if (elementDef.type === 'writer') {
         const targetId = elementDef.targetlabel || env.approot;
         await storeTargetHtml(targetId);
@@ -722,6 +645,12 @@ const BLOCKCOMPILERS = {
                     errk: createerrorcontext(id, 'spawn')
                 }
             );
+
+            if (result && result.dna) {
+                const childPipelineId = result.dna.identity?.id || result.containerref || 'child_pipeline';
+                eventSpawnLoaded(env.pipelineid || env.agentid || 'unknown', childPipelineId, result.containerref);
+            }
+
             return result;
         };
         blockfn.id = id;
@@ -922,13 +851,14 @@ const BLOCKCOMPILERS = {
             const args = command.args || {};
             switch (command.COMMAND) {
                 case 'store': {
-                    await enqueueDbStore(args.key, args.value);
-                    writeoutputs(sig, env, { result: true });
+                    // StoreQuery may still use DB actor for arbitrary keys, but
+                    // framework state should use executionsnapshot events.
+                    // Keep as-is for explicit store commands.
                     break;
                 }
                 case 'restore': {
-                    const restored = await enqueueDbRestore(args.key);
-                    writeoutputs(sig, env, { restored });
+                    // For framework state, compilepipeline uses snapshot; explicit restore
+                    // may remain for custom store keys.
                     break;
                 }
                 default: throw new Error('[storequery] unknown command: ' + command.COMMAND);
@@ -1018,8 +948,13 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0)
             return {};
         }
 
-        // Persist stage elements as WAITING before registering.
-        await registerStageElements(pipelineId, id, children.map(ch => ch.id || ch.blockmeta?.id || 'unknown'));
+        // Record stage elements as WAITING using snapshot event.
+        const elementIds = children.map(ch => ch.id || ch.blockmeta?.id || 'unknown');
+        const elements = {};
+        for (const elementId of elementIds) {
+            elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+        }
+        eventStageState(pipelineId, id, { elements });
 
         const handler = async (e) => {
             env.eventtarget = e.target;
@@ -1039,7 +974,12 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0)
 
 const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default_pipeline') => {
     return async (env) => {
-        await registerStageElements(pipelineId, id, children.map(ch => ch.id || ch.blockmeta?.id || 'unknown'));
+        const elementIds = children.map(ch => ch.id || ch.blockmeta?.id || 'unknown');
+        const elements = {};
+        for (const elementId of elementIds) {
+            elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+        }
+        eventStageState(pipelineId, id, { elements });
 
         const controlprops = {};
         for (const key of Object.keys(control)) {
@@ -1065,7 +1005,13 @@ const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default
 
 const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipeline') => {
     return async (env) => {
-        await registerStageElements(pipelineId, id, children.map(ch => ch.id || ch.blockmeta?.id || 'unknown'));
+        const elementIds = children.map(ch => ch.id || ch.blockmeta?.id || 'unknown');
+        const elements = {};
+        for (const elementId of elementIds) {
+            elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+        }
+        eventStageState(pipelineId, id, { elements });
+
         await executeChildren(children.slice(startIndex), env, id);
         return {};
     };
@@ -1199,6 +1145,23 @@ const deepcloneevent = (e) => {
     };
 };
 
+const buildSpawnBootstrapMap = (pipeline) => {
+    const map = {};
+    for (const stage of pipeline.elements || []) {
+        if (stage.element !== 'STAGE') continue;
+        for (const el of stage.elements || []) {
+            if (el.element === 'BLOCK' && el.type === 'spawn' && el.dna) {
+                const childPipelineId = el.dna.identity?.id || el.container || 'child_pipeline';
+                map[childPipelineId] = {
+                    dna: el.dna,
+                    containerref: el.container || null
+                };
+            }
+        }
+    }
+    return map;
+};
+
 export const compilepipeline = async (
     pipeline,
     accessors,
@@ -1233,14 +1196,17 @@ export const compilepipeline = async (
             unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
     }
 
+    // P81/P85: Ensure pipeline loaded event has occurred before we read snapshot.
+    eventPipelineLoaded(pipelineId, {});
+
     let resumeFrom = null;
     try {
-        const mapKey = `pipeline:${pipelineId}:executionmap`;
-        const executionMap = await enqueueDbRestore(mapKey);
-        if (executionMap && executionMap.stages) {
+        const snapshot = getSnapshot();
+        const pipelineState = snapshot.loadedPipelines[pipelineId];
+        if (pipelineState && pipelineState.stages) {
             for (const stage of pipeline.elements) {
                 if (stage.element !== 'STAGE') continue;
-                const stageRecord = executionMap.stages[stage.id];
+                const stageRecord = pipelineState.stages[stage.id];
                 if (!stageRecord) continue;
                 for (const el of stage.elements || []) {
                     if (el.element !== 'BLOCK') continue;
@@ -1260,37 +1226,22 @@ export const compilepipeline = async (
         console.warn('[compilepipeline] recovery check failed:', err);
     }
 
-    const fullEnvKey = `pipeline:${pipelineId}:fullenv`;
-    const htmlMapKey = `pipeline:${pipelineId}:htmlmap`;
-
-    let restoredEnv = null;
-    let restoredHtmlMap = null;
-
-    try {
-        restoredEnv = await enqueueDbRestore(fullEnvKey);
-    } catch (err) {
-        console.warn('[compilepipeline] full env restore failed:', err);
-    }
-
-    try {
-        restoredHtmlMap = await enqueueDbRestore(htmlMapKey);
-    } catch (err) {
-        console.warn('[compilepipeline] html map restore failed:', err);
-    }
+    const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
 
     const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom);
     const compiledpipeline = createpipeline(compiled, sinks, undefined, {
         resumeFrom,
         pipelineId,
-        restoredEnv,
-        restoredHtmlMap
+        snapshot: getSnapshot(),
+        spawnBootstrapMap
     });
 
     return {
         pipeline: compiledpipeline,
         resumeFrom,
-        restoredEnv,
-        restoredHtmlMap,
-        pipelineId
+        restoredEnv: getSnapshot().loadedPipelines[pipelineId]?.env || null,
+        restoredHtmlMap: getSnapshot().globalHtml || null,
+        pipelineId,
+        spawnBootstrapMap
     };
 };
