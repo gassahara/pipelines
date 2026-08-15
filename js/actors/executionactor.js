@@ -21,6 +21,7 @@ export const EXECUTIONMESSAGETYPES = Object.freeze({
   GET_TASK_STATUS: 'get_task_status',
   CANCEL_TASK: 'cancel_task',
   STOP_TASK: 'stop_task',
+  GET_INTERRUPTED_STAGE: 'get_interrupted_stage',
   SPAWN_PIPELINE: 'spawn_pipeline'
 });
 
@@ -87,6 +88,9 @@ const MESSAGEINTERFACES = Object.freeze({
   [EXECUTIONMESSAGETYPES.STOP_TASK]: {
     taskid: 'string', resolve: 'function?', reject: 'function?'
   },
+  [EXECUTIONMESSAGETYPES.GET_INTERRUPTED_STAGE]: {
+    pipelineid: 'string', resolve: 'function?', reject: 'function?'
+  },
   [EXECUTIONMESSAGETYPES.SPAWN_PIPELINE]: {
     parentPipelineId: 'string', childPipelineId: 'string', childRunner: 'function',
     childEnv: 'object', containerref: 'string?', resolve: 'function?', reject: 'function?'
@@ -95,6 +99,7 @@ const MESSAGEINTERFACES = Object.freeze({
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 const DB_KEY = 'global:executionstate';
+const STATE_VERSION = 1;
 
 const resolveMessage = (message, value = true) => {
   if (message && typeof message.resolve === 'function') message.resolve(value);
@@ -127,7 +132,11 @@ const ensureStage = (pipeline, stageid) => {
 
 const persistState = async (state) => {
   try {
-    await enqueueDbStore(DB_KEY, state);
+    await enqueueDbStore(DB_KEY, {
+      version: STATE_VERSION,
+      pipelines: state.pipelines,
+      snapshot: state.snapshot
+    });
   } catch (err) {
     console.warn('[EXECUTIONACTOR] persist failed:', err);
   }
@@ -136,8 +145,9 @@ const persistState = async (state) => {
 const loadInitialState = async () => {
   try {
     const stored = await enqueueDbRestore(DB_KEY);
-    if (stored && stored.pipelines) {
+    if (stored && stored.version === STATE_VERSION && stored.pipelines) {
       return {
+        version: STATE_VERSION,
         pipelines: stored.pipelines || {},
         snapshot: stored.snapshot || { lastSavedAt: null }
       };
@@ -145,10 +155,13 @@ const loadInitialState = async () => {
   } catch (err) {
     console.warn('[EXECUTIONACTOR] load initial state failed:', err);
   }
-  return { pipelines: {}, snapshot: { lastSavedAt: null } };
+  return {
+    version: STATE_VERSION,
+    pipelines: {},
+    snapshot: { lastSavedAt: null }
+  };
 };
 
-// In-memory execution task map. Not persisted.
 const tasks = new Map();
 let taskCounter = 0;
 
@@ -216,6 +229,7 @@ const runElementTask = async (taskid, descriptor) => {
     task.status = 'EXECUTED';
     task.resolveTask(result || {});
   } catch (err) {
+    // Persist as EXECUTED, never FAILED.
     try {
       await EXECUTIONACTOR.send({
         type: EXECUTIONMESSAGETYPES.ELEMENT_STATE,
@@ -297,7 +311,7 @@ const executionbehavior = (state, message) => {
   }
 
   const nextState = {
-    ...state,
+    version: STATE_VERSION,
     pipelines: { ...state.pipelines },
     snapshot: { ...state.snapshot }
   };
@@ -317,6 +331,7 @@ const executionbehavior = (state, message) => {
       case EXECUTIONMESSAGETYPES.STAGE_STATE: {
         const pipeline = ensurePipeline(nextState, message.pipelineid);
         const stage = ensureStage(pipeline, message.stageid);
+
         if (message.state && typeof message.state === 'object') {
           if (message.state.status) stage.status = message.state.status;
           if (message.state.elements) {
@@ -550,6 +565,32 @@ const executionbehavior = (state, message) => {
         break;
       }
 
+      case EXECUTIONMESSAGETYPES.GET_INTERRUPTED_STAGE: {
+        const pipeline = nextState.pipelines[message.pipelineid];
+        let result = null;
+
+        if (pipeline && pipeline.stages) {
+          outer:
+          for (const stageid of Object.keys(pipeline.stages)) {
+            const stage = pipeline.stages[stageid];
+            for (const elementid of Object.keys(stage.elements || {})) {
+              const element = stage.elements[elementid];
+              if (element.status === 'RUNNING') {
+                result = {
+                  stageid,
+                  elementid,
+                  env: pipeline.env || null
+                };
+                break outer;
+              }
+            }
+          }
+        }
+
+        resolveMessage(message, result);
+        break;
+      }
+
       case EXECUTIONMESSAGETYPES.SPAWN_PIPELINE: {
         const task = makeTask({
           kind: 'spawn',
@@ -577,7 +618,8 @@ const executionbehavior = (state, message) => {
     message.type !== EXECUTIONMESSAGETYPES.RECOVER &&
     message.type !== EXECUTIONMESSAGETYPES.AWAIT_TASK &&
     message.type !== EXECUTIONMESSAGETYPES.GET_TASKS &&
-    message.type !== EXECUTIONMESSAGETYPES.GET_TASK_STATUS
+    message.type !== EXECUTIONMESSAGETYPES.GET_TASK_STATUS &&
+    message.type !== EXECUTIONMESSAGETYPES.GET_INTERRUPTED_STAGE
   ) {
     persistState(nextState);
   }
@@ -676,6 +718,16 @@ export const enqueueExecutionStopTask = (taskid) =>
     EXECUTIONACTOR.send({
       type: EXECUTIONMESSAGETYPES.STOP_TASK,
       taskid,
+      resolve,
+      reject
+    })
+  );
+
+export const enqueueExecutionGetInterruptedStage = (pipelineid) =>
+  new Promise((resolve, reject) =>
+    EXECUTIONACTOR.send({
+      type: EXECUTIONMESSAGETYPES.GET_INTERRUPTED_STAGE,
+      pipelineid,
       resolve,
       reject
     })

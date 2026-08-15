@@ -24,7 +24,8 @@ import {
   enqueuegetviewport,
   enqueuegetscreen,
   enqueuematchmedia,
-  enqueueRenderSnapshot
+  enqueueRenderSnapshot,
+  enqueueRenderRecover
 } from '../actors/renderactor.js';
 import { logwarn, logdebug, loginfo } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';
@@ -47,6 +48,7 @@ import {
   enqueueExecutionGetTaskStatus,
   enqueueExecutionCancelTask,
   enqueueExecutionStopTask,
+  enqueueExecutionGetInterruptedStage,
   enqueueExecutionSpawnPipeline
 } from '../actors/executionactor.js';
 
@@ -88,9 +90,7 @@ const compilepathaccessor = (pathstr) => {
 const buildproperties = (merged) => {
   const result = {};
   for (const key of Object.keys(merged)) {
-    if (key !== 'fn') {
-      result[key] = merged[key];
-    }
+    if (key !== 'fn') result[key] = merged[key];
   }
   return result;
 };
@@ -106,14 +106,9 @@ const safeElementOutputs = (env, outputKeys = null) => {
     if (typeof EventTarget !== 'undefined' && env[key] instanceof EventTarget) continue;
     try {
       const json = JSON.stringify(env[key]);
-      if (json.length > 64 * 1024) {
-        out[key] = '[large-value omitted]';
-      } else {
-        out[key] = JSON.parse(json);
-      }
-    } catch {
-      out[key] = null;
-    }
+      if (json.length > 64 * 1024) out[key] = '[large-value omitted]';
+      else out[key] = JSON.parse(json);
+    } catch { out[key] = null; }
   }
   return out;
 };
@@ -127,14 +122,9 @@ const safeFullEnv = (env) => {
     if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) continue;
     try {
       const json = JSON.stringify(value);
-      if (json.length > 128 * 1024) {
-        out[key] = '[large-value omitted]';
-      } else {
-        out[key] = JSON.parse(json);
-      }
-    } catch {
-      out[key] = null;
-    }
+      if (json.length > 128 * 1024) out[key] = '[large-value omitted]';
+      else out[key] = JSON.parse(json);
+    } catch { out[key] = null; }
   }
   return out;
 };
@@ -144,7 +134,8 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
   const outputKeys = Object.keys(elementDef?.signature?.outputs || {});
 
   const wrapper = async (env) => {
-    // Pre-execution env checkpoint.
+    logdebug('[ELEMENT] submit:', pipelineId, stageId, elementId);
+
     try {
       await enqueueExecutionEnvUpdated(pipelineId, safeFullEnv(env));
     } catch (err) {
@@ -170,6 +161,8 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
     });
 
     const result = await enqueueExecutionAwaitTask(taskid);
+
+    logdebug('[ELEMENT] completed:', elementId);
 
     if (elementDef.type === 'writer') {
       try {
@@ -250,11 +243,8 @@ function buildPayload(mappingobj, data) {
         if (typeof mappingdef === 'function') {
             result[fieldkey] = mappingdef(data);
         } else if (typeof mappingdef === 'object' && mappingdef !== null && !Array.isArray(mappingdef)) {
-            if (mappingdef.from !== undefined) {
-                result[fieldkey] = data[mappingdef.from];
-            } else {
-                result[fieldkey] = buildPayload(mappingdef, data);
-            }
+            if (mappingdef.from !== undefined) result[fieldkey] = data[mappingdef.from];
+            else result[fieldkey] = buildPayload(mappingdef, data);
         } else {
             result[fieldkey] = mappingdef;
         }
@@ -286,9 +276,7 @@ const BLOCKANALYZERS = {
     if (typeof block.fn === 'function') {
       const fnsrc = block.fn.toString();
       const DOMPATTERNS = /document\.(querySelector|getElementById|getElementsBy|createElement|innerHTML|classList|addEventListener|body|head|window)|\bstyle\s*[.]|window\.(document|location|navigator|addEventListener|inner|device)/i;
-      if (DOMPATTERNS.test(fnsrc)) {
-        errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
-      }
+      if (DOMPATTERNS.test(fnsrc)) errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
     }
     return { valid: errors.length === 0, errors, warnings, dependencies: [], outputs: block.signature?.outputs || {}, contracts: [] };
   },
@@ -329,8 +317,6 @@ const BLOCKANALYZERS = {
   ])
 };
 
-// BLOCKCOMPILERS are unchanged from prior run except they now execute as element
-// executors. They still produce async (env) => result closures.
 const BLOCKCOMPILERS = {
     [BLOCKTYPES.FN]: (merged, id, sig) => {
         const blockfn = async (env) => {
@@ -343,10 +329,7 @@ const BLOCKCOMPILERS = {
             const fnargs = [properties].concat(inputaccessors.map(fn => fn(env)));
             const result = await callwithstack(
                 EVALSTACK, label, 'async-await',
-                async (e) => {
-                    const fnresult = await fn(...fnargs);
-                    return fnresult || {};
-                },
+                async (e) => { const fnresult = await fn(...fnargs); return fnresult || {}; },
                 [env],
                 {
                     context: { env, pipestate: env.pipestate },
@@ -365,17 +348,11 @@ const BLOCKCOMPILERS = {
             const label = 'api:' + (merged.endpoint || id);
             const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
             const inputdata = {};
-            for (let i = 0; i < sig.inputs.length; i++) {
-                inputdata[sig.inputs[i]] = inputaccessors[i](env);
-            }
+            for (let i = 0; i < sig.inputs.length; i++) inputdata[sig.inputs[i]] = inputaccessors[i](env);
             const apiendpoint = merged.endpoint;
             const payloadmapping = merged.mapping?.payload || {};
             const payload = buildPayload(payloadmapping, inputdata);
-            for (const field of Object.keys(sig.outputs)) {
-                if (payload[field] === undefined && inputdata[field] !== undefined) {
-                    payload[field] = inputdata[field];
-                }
-            }
+            for (const field of Object.keys(sig.outputs)) if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
             const rawresult = await callwithstack(
                 EVALSTACK, label, 'async-await',
                 async () => {
@@ -383,12 +360,7 @@ const BLOCKCOMPILERS = {
                     const apiresolve = await enqueueapi(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' });
                     return { status: apiresolve.status, data: apiresolve.data };
                 },
-                [],
-                {
-                    context: { env },
-                    capturecontinuation: true,
-                    errk: createerrorcontext(id, 'api:call')
-                }
+                [], { context: { env }, capturecontinuation: true, errk: createerrorcontext(id, 'api:call') }
             );
             const responsemapping = merged.mapping?.response;
             let result = rawresult.data;
@@ -396,9 +368,7 @@ const BLOCKCOMPILERS = {
             const patch = {};
             const apioutputkeys = Object.keys(sig.outputs);
             if (apioutputkeys.length === 1) patch[apioutputkeys[0]] = result;
-            else if (typeof result === 'object') {
-                for (const key of apioutputkeys) if (result[key] !== undefined) patch[key] = result[key];
-            }
+            else if (typeof result === 'object') for (const key of apioutputkeys) if (result[key] !== undefined) patch[key] = result[key];
             for (const [k, v] of Object.entries(patch)) env[k] = v;
         };
         blockfn.id = id;
@@ -469,9 +439,7 @@ const BLOCKCOMPILERS = {
         const blockfn = async (env) => {
             logdebug('[BLOCK] Executing spawn block:', id);
             const containerrefraw = merged.container;
-            if (containerrefraw === null || containerrefraw === undefined) {
-                throw new Error('[SPAWN] missing container');
-            }
+            if (containerrefraw === null || containerrefraw === undefined) throw new Error('[SPAWN] missing container');
             const result = await callwithstack(
                 EVALSTACK, 'spawn:' + (merged.ref || id), 'async-await',
                 async (e) => {
@@ -495,9 +463,7 @@ const BLOCKCOMPILERS = {
                     }
                     if (!dna) throw new Error('[spawn] no dna');
                     const inheritedenv = {};
-                    if (merged.sharestack) {
-                        for (const key of INHERITEDKEYS) if (env[key] !== undefined) inheritedenv[key] = env[key];
-                    }
+                    if (merged.sharestack) for (const key of INHERITEDKEYS) if (env[key] !== undefined) inheritedenv[key] = env[key];
                     return { dna, containerref: containerrefraw, inheritedenv, outputkey: Object.keys(sig.outputs)[0] || null };
                 },
                 [env], { context: { env }, capturecontinuation: true, errk: createerrorcontext(id, 'spawn') }
@@ -541,9 +507,7 @@ const BLOCKCOMPILERS = {
             }
             if (!props.id || typeof props.id !== 'string') throw new Error('[DOMQUERY] requires properties.id');
             const commandid = props.id;
-            if (setters.includes(messages) && messages !== 'toggleclass' && props.value === undefined) {
-                throw new Error('[DOMQUERY] setter requires value');
-            }
+            if (setters.includes(messages) && messages !== 'toggleclass' && props.value === undefined) throw new Error('[DOMQUERY] setter requires value');
             if (messages === 'toggleclass' && !props.classname) throw new Error('[DOMQUERY] toggleclass requires classname');
             const handlerMap = {
                 gethtml: enqueuegethtml, getvalue: enqueuegetvalue, getstyle: enqueuegetstyle,
@@ -682,6 +646,8 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
         if (startIndex < 0) startIndex = 0;
     }
 
+    logdebug('[compileStageElement] stage:', stage.id, 'startIndex:', startIndex);
+
     const isResumeStage = resumeFrom && resumeFrom.stageId === stage.id;
     const fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage);
     fn.id = stage.id;
@@ -730,13 +696,11 @@ const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipel
             const elementIds = children.map(ch => ch.id || 'unknown');
             const elements = {};
             for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
-
             try {
                 await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
             } catch (err) {
                 console.warn('[DEFAULT] stage state failed:', err);
             }
-
             await executeChildren(children.slice(startIndex), execEnv, id);
         };
 
@@ -757,7 +721,6 @@ const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default
             const elementIds = children.map(ch => ch.id || 'unknown');
             const elements = {};
             for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
-
             try {
                 await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
             } catch (err) {
@@ -807,13 +770,11 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
             const elementIds = children.map(ch => ch.id || 'unknown');
             const elements = {};
             for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
-
             try {
                 await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
             } catch (err) {
                 console.warn('[TRIGGER] stage state failed:', err);
             }
-
             await executeChildren(slice, execEnv, id);
         };
 
@@ -839,7 +800,6 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
         rs(control.sourceid, eventtype, handler);
         registerTrigger(control.sourceid, eventtype, handler);
 
-        // If this trigger stage is the interrupted resume target, finish it now.
         if (resumeStage) {
             const remaining = startIndex > 0 ? children.slice(startIndex) : children;
             const { taskid } = await enqueueExecutionSubmitStage({
@@ -869,6 +829,7 @@ const executeChildren = async (children, env, stageid) => {
             }
         } catch (err) {
             err.message = 'child ' + (stageid || 'unnamed') + '/' + (child.id || 'unnamed') + ': ' + err.message;
+            logdebug('[CHILD_ERROR]', stageid, child.id, err.message);
             throw err;
         }
     }
@@ -912,14 +873,9 @@ const compileElements = (elements, pipelineId = 'default_pipeline', resumeFrom =
 const compileblock = (merged) => {
     const id = merged.id || 'unnamed';
     const sig = merged.signature;
-    if (!sig || !Array.isArray(sig.inputs)) {
-        throw new Error('[SIGNATURE] Block "' + id + '" is missing required signature');
-    }
-    if (Array.isArray(sig.outputs)) {
-        sig.outputs = sig.outputs.reduce((acc, k) => { acc[k] = 'any'; return acc; }, {});
-    } else if (!sig.outputs || typeof sig.outputs !== 'object') {
-        throw new Error('[SIGNATURE] Block "' + id + '" is missing required outputs');
-    }
+    if (!sig || !Array.isArray(sig.inputs)) throw new Error('[SIGNATURE] Block "' + id + '" is missing required signature');
+    if (Array.isArray(sig.outputs)) sig.outputs = sig.outputs.reduce((acc, k) => { acc[k] = 'any'; return acc; }, {});
+    else if (!sig.outputs || typeof sig.outputs !== 'object') throw new Error('[SIGNATURE] Block "' + id + '" is missing required outputs');
     const analyzer = BLOCKANALYZERS[merged.type];
     if (!analyzer) throw new Error('unknown block type: ' + merged.type + ' in block ' + id);
     const analysis = analyzer(merged);
@@ -993,7 +949,6 @@ const buildSpawnBootstrapMap = (pipeline) => {
     return map;
 };
 
-// Local pipeline runner — replaces deleted pipe.js.
 const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
   if (!Array.isArray(stages)) throw new Error('[PIPELINE] Stages must be an array.');
 
@@ -1170,38 +1125,45 @@ export const compilepipeline = async (
       unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
   }
 
+  // 1. Ensure pipeline exists in ExecutionActor without overwriting saved env.
   try {
     await enqueueExecutionPipelineLoaded(pipelineId, {});
   } catch (err) {
     console.warn('[compilepipeline] pipeline loaded event failed:', err);
   }
 
-  let savedState = null;
+  // 2. Ask ExecutionActor for an interrupted stage.
+  let interrupted = null;
   try {
-    savedState = await enqueueExecutionRecover(pipelineId);
+    interrupted = await enqueueExecutionGetInterruptedStage(pipelineId);
   } catch (err) {
-    console.warn('[compilepipeline] execution recover failed:', err);
+    console.warn('[compilepipeline] interrupted stage query failed:', err);
   }
 
-  let resumeFrom = null;
-  let restoredEnv = savedState?.env || null;
+  logdebug('[compilepipeline] interrupted stage:', interrupted);
 
-  if (savedState && savedState.stages) {
-    outer:
-    for (const stage of pipeline.elements) {
-      if (stage.element !== 'STAGE') continue;
-      const stageRecord = savedState.stages[stage.id];
-      if (!stageRecord) continue;
-      for (const el of stage.elements || []) {
-        if (el.element !== 'BLOCK') continue;
-        const elementState = stageRecord.elements?.[el.id];
-        if (elementState && elementState.status === 'RUNNING') {
-          resumeFrom = { stageId: stage.id, elementId: el.id };
-          break outer;
-        }
-      }
+  let htmlRecovered = false;
+  if (interrupted) {
+    // 3. Ask RenderActor to restore last full HTML snapshot.
+    try {
+      htmlRecovered = await enqueueRenderRecover();
+    } catch (err) {
+      console.warn('[compilepipeline] html recover failed:', err);
     }
+    logdebug('[compilepipeline] html recover result:', htmlRecovered);
+  } else {
+    logdebug('[compilepipeline] no interrupted stage; skipping HTML recover');
   }
+
+  // 4. Set resume point and env.
+  const resumeFrom = interrupted
+    ? { stageId: interrupted.stageid, elementId: interrupted.elementid }
+    : null;
+
+  const restoredEnv = interrupted?.env || null;
+
+  logdebug('[compilepipeline] resumeFrom:', resumeFrom);
+  logdebug('[compilepipeline] restored env:', restoredEnv ? 'yes' : 'no');
 
   const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
 

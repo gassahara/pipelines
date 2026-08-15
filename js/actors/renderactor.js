@@ -69,6 +69,22 @@ var MESSAGEINTERFACES = Object.freeze({
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
+let htmlSnapshotTimer = null;
+const scheduleHtmlSnapshot = () => {
+  if (htmlSnapshotTimer) clearTimeout(htmlSnapshotTimer);
+  htmlSnapshotTimer = setTimeout(async () => {
+    try {
+      const snapshot = {
+        savedAt: Date.now(),
+        html: document.body ? document.body.innerHTML : ''
+      };
+      await enqueueDbStore('global:htmlsnapshot', snapshot);
+    } catch (err) {
+      console.warn('[RENDERACTOR] html snapshot failed:', err);
+    }
+  }, 250);
+};
+
 function getElementOrFail(id, reject) {
     if (!id || typeof id !== 'string') {
         reject(new Error('[RENDERACTOR] id must be a non-empty string'));
@@ -123,6 +139,7 @@ var renderbehavior = function(state, message) {
     if (typeof message.renderer === 'function') {
       try {
         message.renderer(target, message.data, message.env || {});
+        scheduleHtmlSnapshot();
       } catch (err) {
         console.error('[RENDERACTOR] Renderer error:', err);
         throw err;
@@ -132,6 +149,7 @@ var renderbehavior = function(state, message) {
     var target = document.getElementById(message.id);
     if (target) target.innerHTML = '';
     revalidateAll();
+    scheduleHtmlSnapshot();
   } else if (message.type === MESSAGETYPES.HTML) {
     var target = getElementOrFail(message.id, message.reject);
     if (!target) return state;
@@ -141,11 +159,13 @@ var renderbehavior = function(state, message) {
       target.innerHTML = message.markup;
       revalidateAll();
     }
+    scheduleHtmlSnapshot();
     if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.REMOVE) {
     var target = document.getElementById(message.id);
     if (target) target.remove();
     revalidateAll();
+    scheduleHtmlSnapshot();
   } else if (message.type === MESSAGETYPES.SETSTYLES) {
     var target = getElementOrFail(message.id, message.reject);
     if (!target) return state;
@@ -155,18 +175,21 @@ var renderbehavior = function(state, message) {
         target.style[stykeys[si]] = message.styles[stykeys[si]];
       }
     }
+    scheduleHtmlSnapshot();
   } else if (message.type === MESSAGETYPES.SETATTR) {
     var target = getElementOrFail(message.id, message.reject);
     if (!target) return state;
     if (typeof message.name === 'string') {
       target.setAttribute(message.name, message.value);
     }
+    scheduleHtmlSnapshot();
   } else if (message.type === MESSAGETYPES.TOGGLECLASS) {
     var target = getElementOrFail(message.id, message.reject);
     if (!target) return state;
     if (typeof message.classname === 'string') {
       target.classList.toggle(message.classname, message.force);
     }
+    scheduleHtmlSnapshot();
   } else if (message.type === MESSAGETYPES.CRYPTO) {
     var win = typeof window !== 'undefined' ? window : globalThis;
     var array = new Uint8Array(message.bytes);
@@ -229,6 +252,7 @@ var renderbehavior = function(state, message) {
           el[pkeys[pi]] = message.props[pkeys[pi]];
         }
       }
+      scheduleHtmlSnapshot();
       if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(el));
     } catch (err) {
       if (typeof message.reject === 'function') message.reject(err);
@@ -236,6 +260,7 @@ var renderbehavior = function(state, message) {
   } else if (message.type === MESSAGETYPES.CREATECONTAINER) {
     try {
       var container = document.createElement('div');
+      scheduleHtmlSnapshot();
       if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(container));
     } catch (err) {
       if (typeof message.reject === 'function') message.reject(err);
@@ -245,6 +270,7 @@ var renderbehavior = function(state, message) {
       var wrapper = document.createElement('div');
       wrapper.innerHTML = message.html;
       var child = wrapper.firstElementChild;
+      scheduleHtmlSnapshot();
       if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(child || wrapper));
     } catch (err) {
       if (typeof message.reject === 'function') message.reject(err);
@@ -259,6 +285,7 @@ var renderbehavior = function(state, message) {
     }
     try {
       var result = fn.apply(el, message.arguments || []);
+      scheduleHtmlSnapshot();
       if (typeof message.resolve === 'function') message.resolve(result);
     } catch (e) {
       if (typeof message.reject === 'function') message.reject(e);
@@ -313,6 +340,7 @@ var renderbehavior = function(state, message) {
     if (!el) return state;
     el.innerHTML = message.value;
     revalidateAll();
+    scheduleHtmlSnapshot();
     if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.SETPOSITION) {
     var el = getElementOrFail(message.id, message.reject);
@@ -341,6 +369,7 @@ var renderbehavior = function(state, message) {
       }
       el.setAttribute('style', merged);
     }
+    scheduleHtmlSnapshot();
     if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.SETSTYLE) {
     var el = getElementOrFail(message.id, message.reject);
@@ -351,11 +380,13 @@ var renderbehavior = function(state, message) {
         el.style[keys[i]] = message.value[keys[i]];
       }
     }
+    scheduleHtmlSnapshot();
     if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.SETVALUE) {
     var el = getElementOrFail(message.id, message.reject);
     if (!el) return state;
     el.value = message.value;
+    scheduleHtmlSnapshot();
     if (typeof message.resolve === 'function') message.resolve();
   } else if (message.type === MESSAGETYPES.SETLAYOUT) {
     var el = getElementOrFail(message.id, message.reject);
@@ -366,6 +397,7 @@ var renderbehavior = function(state, message) {
         el[keys[li]] = message.value[keys[li]];
       }
     }
+    scheduleHtmlSnapshot();
     if (typeof message.resolve === 'function') message.resolve();
   }
   // ==================== NEW HANDLERS ====================
@@ -395,10 +427,9 @@ var renderbehavior = function(state, message) {
   }
   else if (message.type === MESSAGETYPES.HTML_SNAPSHOT) {
     try {
-      const html = document.body ? document.body.innerHTML : '';
       const snapshot = {
         savedAt: Date.now(),
-        html
+        html: document.body ? document.body.innerHTML : ''
       };
       enqueueDbStore('global:htmlsnapshot', snapshot)
         .catch((err) => console.warn('[RENDERACTOR] html snapshot store failed:', err));
@@ -411,7 +442,10 @@ var renderbehavior = function(state, message) {
     enqueueDbRestore('global:htmlsnapshot')
       .then((snapshot) => {
         if (snapshot && typeof snapshot.html === 'string') {
-          if (document.body) document.body.innerHTML = snapshot.html;
+          if (document.body) {
+            document.body.innerHTML = snapshot.html;
+          }
+          revalidateAll();
           if (typeof message.resolve === 'function') message.resolve(true);
         } else {
           if (typeof message.resolve === 'function') message.resolve(false);
