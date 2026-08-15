@@ -1,483 +1,230 @@
-import { DOMQUERYGETTERS, DOMQUERYSETTERS, DOMQUERYMESSAGES } from './actors/renderactor.js';
+import { DOMQUERYMESSAGES, DOMQUERYSETTERS } from './actors/renderactor.js';
 
 const extractstagesblocks = (pipeline) => {
-    if (pipeline.elements) {
-        const stages = [];
-        const blocks = [];
-        for (const el of pipeline.elements) {
-            if (el.element === 'STAGE') {
-                stages.push({ id: el.id, control: el.control || null, blocks: (el.elements || []).filter(e => e.element === 'BLOCK') });
-            } else if (el.element === 'BLOCK') {
-                blocks.push(el);
-            }
-        }
-        return { stages, blocks };
-    } else if (pipeline.stages) {
-        return { stages: pipeline.stages, blocks: [] };
-    }
-    return { stages: [], blocks: [] };
+  if (pipeline.elements) {
+    const stages = [], blocks = [];
+    pipeline.elements.forEach(el => {
+      if (el.element === 'STAGE') stages.push({ id: el.id, control: el.control || null, blocks: (el.elements || []).filter(e => e.element === 'BLOCK') });
+      else if (el.element === 'BLOCK') blocks.push(el);
+    });
+    return { stages, blocks };
+  }
+  return { stages: pipeline.stages || [], blocks: [] };
 };
 
 export const TYPESCHEMA = {
-  agent: {
-    dna: { type: 'object', required: true },
-    pipeline: { type: 'function', required: true }
-  },
-  oracledna: {
-    identity: { type: 'object', required: true },
-    pipeline: { type: 'object', required: true },
-    presentation: { type: 'object', required: false }
-  },
-  layoutcomponent: {
-    key: { type: 'string', required: true },
-    parent: { type: 'string', required: false },
-    id: { type: 'string', required: false },
-    datapath: { type: 'string', required: false }
-  },
-  pipeline: {
-    stages: { type: 'array', required: true }
-  },
-  stage: {
-    id: { type: 'string', required: true },
-    type: { type: 'string', required: true },
-    intent: { type: 'string', required: false },
-    blocks: { type: 'array', required: false },
-    async: { type: 'boolean', required: false }
-  },
-  block: {
-    id: { type: 'string', required: true },
-    type: { type: 'string', required: true },
-    ref: { type: 'string', required: false },
-    intent: { type: 'string', required: false },
-    args: { type: 'array', required: false },
-    output: { type: 'string', required: false },
-    target: { type: 'string', required: false },
-    datapath: { type: 'string', required: false },
-    mappings: { type: 'object', required: false }
-  },
-  rewriterspec: {
-    rewriter: { type: 'function', required: true },
-    label: { type: 'string', required: true }
-  },
-  responseadapter: {
-    functionname: { type: 'string', required: true },
-    registerkey: { type: 'string', required: true },
-    pipelinesource: { type: 'string', required: true },
-    targetapiref: { type: 'string', required: true },
-    validatedfields: { type: 'array', required: false }
-  },
-  paramadapter: {
-    functionname: { type: 'string', required: true },
-    registerkey: { type: 'string', required: true },
-    pipelinesource: { type: 'string', required: true },
-    targetapiref: { type: 'string', required: true },
-    readkeys: { type: 'array', required: true }
-  },
-  blockcontract: {
-    id: { type: 'string', required: true },
-    type: { type: 'string', required: true },
-    reads: { type: 'array', required: false },
-    ref: { type: 'string', required: false },
-    schemaref: { type: 'string', required: false },
-    responseadapterref: { type: 'string', required: false },
-    paramsfrom: { type: 'string', required: false },
-    resultto: { type: 'string', required: false },
-    datalabel: { type: 'string', required: false },
-    targetlabel: { type: 'string', required: false },
-    stylizer: { type: 'function', required: false },
-    output: { type: 'string', required: false }
-  }
+  agent: { dna: { type: 'object', required: true }, pipeline: { type: 'function', required: true } },
+  oracledna: { identity: { type: 'object', required: true }, pipeline: { type: 'object', required: true }, presentation: { type: 'object', required: false } },
+  layoutcomponent: { key: { type: 'string', required: true }, parent: { type: 'string' }, id: { type: 'string' }, datapath: { type: 'string' } },
+  pipeline: { stages: { type: 'array', required: true } },
+  stage: { id: { type: 'string', required: true }, type: { type: 'string', required: true }, intent: { type: 'string' }, blocks: { type: 'array' }, async: { type: 'boolean' } },
+  block: { id: { type: 'string', required: true }, type: { type: 'string', required: true }, ref: { type: 'string' }, intent: { type: 'string' }, args: { type: 'array' }, output: { type: 'string' }, target: { type: 'string' }, datapath: { type: 'string' }, mappings: { type: 'object' } },
+  rewriterspec: { rewriter: { type: 'function', required: true }, label: { type: 'string', required: true } },
+  responseadapter: { functionname: { type: 'string', required: true }, registerkey: { type: 'string', required: true }, pipelinesource: { type: 'string', required: true }, targetapiref: { type: 'string', required: true }, validatedfields: { type: 'array' } },
+  paramadapter: { functionname: { type: 'string', required: true }, registerkey: { type: 'string', required: true }, pipelinesource: { type: 'string', required: true }, targetapiref: { type: 'string', required: true }, readkeys: { type: 'array', required: true } },
+  blockcontract: { id: { type: 'string', required: true }, type: { type: 'string', required: true }, reads: { type: 'array' }, ref: { type: 'string' }, schemaref: { type: 'string' }, responseadapterref: { type: 'string' }, paramsfrom: { type: 'string' }, resultto: { type: 'string' }, datalabel: { type: 'string' }, targetlabel: { type: 'string' }, stylizer: { type: 'function' }, output: { type: 'string' } }
 };
 
-// =============== FC10: Unified field validator ===============
-
-/**
- * Validates a value against a field specification object.
- * Returns an array of error strings (empty if valid).
- */
 export function validateFields(value, fieldSpecs) {
-    const errors = [];
-    if (value === null || value === undefined) {
-        errors.push('VALUE IS NULL OR UNDEFINED');
-        return errors;
+  if (value == null) return ['VALUE IS NULL OR UNDEFINED'];
+  const errors = [];
+  for (const [key, rules] of Object.entries(fieldSpecs)) {
+    const propvalue = value[key];
+    if (rules.required && propvalue == null) errors.push(`REQUIRED PROPERTY "${key}" IS MISSING`);
+    else if (propvalue != null && rules.type) {
+      const actual = Array.isArray(propvalue) ? 'array' : typeof propvalue;
+      if (actual !== rules.type) errors.push(`PROPERTY "${key}" MUST BE OF TYPE ${rules.type} (GOT ${actual})`);
     }
-    for (const [key, rules] of Object.entries(fieldSpecs)) {
-        const propvalue = value[key];
-        if (rules.required && (propvalue === undefined || propvalue === null)) {
-            errors.push('REQUIRED PROPERTY "' + key + '" IS MISSING');
-            continue;
-        }
-        if (propvalue !== undefined && propvalue !== null) {
-            const actualtype = Array.isArray(propvalue) ? 'array' : typeof propvalue;
-            if (rules.type && actualtype !== rules.type) {
-                errors.push('PROPERTY "' + key + '" MUST BE OF TYPE ' + rules.type + ' (GOT ' + actualtype + ')');
-            }
-        }
-    }
-    return errors;
+  }
+  return errors;
 }
 
 export const validate = (value, schemaname) => {
-    const schema = TYPESCHEMA[schemaname];
-    if (!schema) return { tag: 'success' };
-    const errors = validateFields(value, schema);
-    if (errors.length > 0) {
-        return { tag: 'failure', message: 'VALIDATION FAILED FOR SCHEMA "' + schemaname + '": ' + errors.join('; ') };
-    }
-    return { tag: 'success' };
+  const schema = TYPESCHEMA[schemaname];
+  if (!schema) return { tag: 'success' };
+  const errors = validateFields(value, schema);
+  return errors.length ? { tag: 'failure', message: `VALIDATION FAILED FOR SCHEMA "${schemaname}": ${errors.join('; ')}` } : { tag: 'success' };
 };
 
-export const validatecall = (schema, fn, functionname = 'anonymous') => {
-  return (...args) => {
-    for (let i = 0; i < schema.length; i++) {
-      const arg = args[i];
-      const rule = schema[i];
-      if (rule.required && (arg === undefined || arg === null)) {
-        throw new Error('[TYPESYSTEM] REQUIRED ARGUMENT "' + rule.name + '" IS MISSING IN ' + functionname + '.');
-      }
-      if (arg !== undefined && rule.type) {
-        const actualtype = Array.isArray(arg) ? 'array' : typeof arg;
-        if (actualtype !== rule.type) {
-          throw new Error('[TYPESYSTEM] ARGUMENT "' + rule.name + '" IN ' + functionname + ' MUST BE OF TYPE ' + rule.type + ' (GOT ' + actualtype + ').');
-        }
-      }
+export const validatecall = (schema, fn, functionname = 'anonymous') => (...args) => {
+  schema.forEach((rule, i) => {
+    const arg = args[i];
+    if (rule.required && arg == null) throw new Error(`[TYPESYSTEM] REQUIRED ARGUMENT "${rule.name}" IS MISSING IN ${functionname}.`);
+    if (arg !== undefined && rule.type) {
+      const actual = Array.isArray(arg) ? 'array' : typeof arg;
+      if (actual !== rule.type) throw new Error(`[TYPESYSTEM] ARGUMENT "${rule.name}" IN ${functionname} MUST BE OF TYPE ${rule.type} (GOT ${actual}).`);
     }
-    return fn(...args);
-  };
+  });
+  return fn(...args);
 };
 
 export async function validateschema(value, schema, context = 'stream', registry = new Map(), strict = false) {
-    const errors = [];
+  const errors = [];
+  let curr = typeof schema === 'string' ? registry.get(schema) : schema;
+  if (curr?.schemaref) curr = registry.get(curr.schemaref);
+  if (!curr) return errors;
 
-    let currentschema = typeof schema === 'string' ? registry.get(schema) : schema;
-    if (currentschema?.schemaref) currentschema = registry.get(currentschema.schemaref);
+  if (curr.type && curr.type !== 'any') {
+    const actual = Array.isArray(value) ? 'array' : typeof value;
+    if (actual !== curr.type && !(curr.type === 'integer' && actual === 'number' && Number.isInteger(value))) {
+      return [`${context}: TYPE MISMATCH. EXPECTED ${curr.type}, GOT ${actual}`];
+    }
+  }
 
-    if (!currentschema) return errors;
+  if (curr.oneof) {
+    const branches = await Promise.all(curr.oneof.map(async (s, i) => ({
+      label: s.required ? `variant with keys [${s.required.join(', ')}]` : `variant ${i}`,
+      errs: await validateschema(value, s, `${context}<oneOf:${i}>`, registry, strict)
+    })));
+    if (branches.some(b => b.errs.length === 0)) return [];
+    return [`${context}: NO MATCHING VARIANT IN ONEOF.\n${branches.map(b => `  · ${b.label}: ${b.errs.join('; ')}`).join('\n')}`];
+  }
 
-    if (currentschema.type && currentschema.type !== 'any') {
-      const actualtype = Array.isArray(value) ? 'array' : typeof value;
-      if (actualtype !== currentschema.type) {
-        if (currentschema.type === 'integer' && actualtype === 'number' && Number.isInteger(value)) {
-        } else {
-          errors.push(context + ': TYPE MISMATCH. EXPECTED ' + currentschema.type + ', GOT ' + actualtype);
-          return errors;
-        }
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    if (strict && curr.strict !== false) {
+      const allowed = new Set([...(curr.required || []), ...(curr.optional || []), ...Object.keys(curr.properties || {})]);
+      Object.keys(value).filter(k => !allowed.has(k)).forEach(k => errors.push(`${context}: UNEXPECTED PROPERTY "${k}"`));
+    }
+    (curr.required || []).filter(k => !(k in value)).forEach(k => errors.push(`${context}: MISSING REQUIRED PROPERTY "${k}"`));
+    if (curr.properties) {
+      for (const [k, pval] of Object.entries(value)) {
+        if (curr.properties[k]) errors.push(...await validateschema(pval, curr.properties[k], `${context}.${k}`, registry, strict));
       }
     }
+  }
 
-    if (currentschema.oneof) {
-      const branchresults = await Promise.all(
-        currentschema.oneof.map(async (s, i) => {
-          const label = s.required ? 'variant with keys [' + s.required.join(', ') + ']' : 'variant ' + i;
-          const errs = await validateschema(value, s, context + '<oneOf:' + i + '>', registry, strict);
-          return { label, errs };
-        })
-      );
-
-      const winner = branchresults.find(b => b.errs.length === 0);
-      if (winner) return [];
-
-      const branchreport = branchresults.map(b => '  · ' + b.label + ': ' + b.errs.join('; ')).join('\\n');
-      errors.push(context + ': NO MATCHING VARIANT IN ONEOF.\\n' + branchreport);
-      return errors;
+  if (curr.items && Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      errors.push(...await validateschema(value[i], curr.items, `${context}[${i}]`, registry, strict));
     }
+  }
 
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      if (strict && currentschema.strict !== false) {
-        const allowed = new Set([
-          ...(currentschema.required || []),
-          ...(currentschema.optional || []),
-          ...Object.keys(currentschema.properties || {})
-        ]);
-        for (const key of Object.keys(value)) {
-          if (!allowed.has(key)) {
-            errors.push(context + ': UNEXPECTED PROPERTY "' + key + '"');
-          }
-        }
-      }
-
-      if (currentschema.required) {
-        for (const reqkey of currentschema.required) {
-          if (!(reqkey in value)) {
-            errors.push(context + ': MISSING REQUIRED PROPERTY "' + reqkey + '"');
-          }
-        }
-      }
-
-      if (currentschema.properties) {
-        for (const [key, propvalue] of Object.entries(value)) {
-          const propschema = currentschema.properties[key];
-          if (propschema) {
-            const properrors = await validateschema(propvalue, propschema, context + '.' + key, registry, strict);
-            errors.push(...properrors);
-          }
-        }
-      }
-    }
-
-    if (currentschema.items && Array.isArray(value)) {
-      for (let i = 0; i < value.length; i++) {
-        const itemerrors = await validateschema(value[i], currentschema.items, context + '[' + i + ']', registry, strict);
-        errors.push(...itemerrors);
-      }
-    }
-
-    if (currentschema.validators) {
-      for (const validator of currentschema.validators) {
-        errors.push(...validator(value, context));
-      }
-    }
-
-    return errors;
+  (curr.validators || []).forEach(v => errors.push(...v(value, context)));
+  return errors;
 }
 
-export function validateformalblock(block, registries = {}) {
-    const errors = [];
-    if (!Array.isArray(block.reads)) errors.push('FORMAL: block "' + block.id + '" missing reads[]');
-    if (!Array.isArray(block.writes)) errors.push('FORMAL: block "' + block.id + '" missing writes[]');
-    if (block.type === 'api') {
-        if (!block.schemaref) errors.push('FORMAL: api block "' + block.id + '" missing schemaref');
-        if (!block.paramsfrom) errors.push('FORMAL: api block "' + block.id + '" missing paramsfrom');
-        if (!block.resultto) errors.push('FORMAL: api block "' + block.id + '" missing resultto');
-    }
-
-    if (block.contract) {
-        if (block.contract.inputschema && typeof block.contract.inputschema !== 'object') errors.push('FORMAL: block "' + block.id + '" contract.inputschema must be an object');
-        if (block.contract.outputschema && typeof block.contract.outputschema !== 'object') errors.push('FORMAL: block "' + block.id + '" contract.outputschema must be an object');
-    }
-    return errors;
+export function validateformalblock(block) {
+  const errors = [];
+  if (!Array.isArray(block.reads)) errors.push(`FORMAL: block "${block.id}" missing reads[]`);
+  if (!Array.isArray(block.writes)) errors.push(`FORMAL: block "${block.id}" missing writes[]`);
+  if (block.type === 'api' && (!block.schemaref || !block.paramsfrom || !block.resultto)) {
+    errors.push(`FORMAL: api block "${block.id}" missing schemaref/paramsfrom/resultto`);
+  }
+  return errors;
 }
 
 export function validatestageflow(stages) {
-  const contracts = [];
-  const cumulativewrites = new Set();
-  const injectedservices = new Set([
-    'containerref', 'domlens', 'callapi', 'callwriter', 'callfn',
-    'registersubscription', 'spawnagent', 'updateworldmap', 'getworldmap',
-    'openapischemas', 'validateschema', 'schemaadapter',
-    'createnodefromtemplate', 'authsessionaccesstoken', 'agents', 'rituals',
+  const contracts = [], cumulativewrites = new Set([
+    'containerref', 'domlens', 'callapi', 'callwriter', 'callfn', 'registersubscription',
+    'spawnagent', 'updateworldmap', 'getworldmap', 'openapischemas', 'validateschema',
+    'schemaadapter', 'createnodefromtemplate', 'authsessionaccesstoken', 'agents', 'rituals'
   ]);
-  injectedservices.forEach(s => cumulativewrites.add(s));
 
   for (const stage of stages) {
-    const stagereads = new Set();
-    const stagewrites = new Set();
-    for (const block of (stage.blocks || [])) {
-      (block.reads || []).forEach(k => { stagereads.add(k); });
-      (block.writes || []).forEach(k => { stagewrites.add(k); cumulativewrites.add(k); });
-    }
+    const stagereads = new Set(), stagewrites = new Set();
+    (stage.blocks || []).forEach(b => {
+      (b.reads || []).forEach(k => stagereads.add(k));
+      (b.writes || []).forEach(k => { stagewrites.add(k); cumulativewrites.add(k); });
+    });
     const missing = [...stagereads].filter(k => !cumulativewrites.has(k));
     contracts.push({
-      stageid: stage.id,
-      stagereads: [...stagereads],
-      stagewrites: [...stagewrites],
-      cumulativereads: [...stagereads],
-      cumulativewrites: [...cumulativewrites],
-      missingkeys: missing,
-      resolved: missing.length === 0
+      stageid: stage.id, stagereads: [...stagereads], stagewrites: [...stagewrites],
+      cumulativereads: [...stagereads], cumulativewrites: [...cumulativewrites],
+      missingkeys: missing, resolved: missing.length === 0
     });
   }
   return contracts;
 }
 
-export function validatemonadalgebra(name, impl) {
-  return {
-    type: name,
-    hasunit: typeof impl.of === 'function' || typeof impl.pure === 'function' || typeof impl.JUST === 'function',
-    hasbind: typeof impl.chain === 'function' || typeof impl.bind === 'function',
-    hasmap: typeof impl.map === 'function',
-    lawstatus: 'ASSUMED'
-  };
-}
+export const validatemonadalgebra = (name, impl) => ({
+  type: name,
+  hasunit: typeof impl.of === 'function' || typeof impl.pure === 'function' || typeof impl.JUST === 'function',
+  hasbind: typeof impl.chain === 'function' || typeof impl.bind === 'function',
+  hasmap: typeof impl.map === 'function',
+  lawstatus: 'ASSUMED'
+});
 
 export function validateblockio(block, cumulativewrites) {
-    const errors = [];
-    const reads = block.reads || [];
-    for (const key of reads) {
-        if (!cumulativewrites.has(key)) {
-            errors.push('BLOCK IO: block "' + block.id + '" reads "' + key + '" but it has not been written yet');
-        }
-    }
-    return errors;
+  return (block.reads || [])
+    .filter(k => !cumulativewrites.has(k))
+    .map(k => `BLOCK IO: block "${block.id}" reads "${k}" but it has not been written yet`);
 }
 
 export function validateblockfnio(block) {
-    const errors = [];
-    if (block.type !== 'fn') return errors;
-    const sig = block.signature;
-    if (!sig) return errors;
-    const fn = block.fn;
-    if (!fn) return errors;
-    const paramcount = fn.length;
-    const inputcount = (sig.inputs || []).length;
-    const outputcount = (sig.outputs || []).length;
-    if (paramcount > 0 && paramcount !== inputcount) {
-        errors.push('FN IO: block "' + block.id + '" fn expects ' + paramcount + ' params but signature declares ' + inputcount + ' inputs');
-    }
-    if (inputcount === 0 && paramcount > 0) {
-        errors.push('FN IO: block "' + block.id + '" has 0 inputs but fn expects ' + paramcount + ' params');
-    }
-    return errors;
+  if (block.type !== 'fn' || !block.fn || !block.signature) return [];
+  const pCount = block.fn.length, inCount = (block.signature.inputs || []).length;
+  if (pCount > 0 && pCount !== inCount) return [`FN IO: block "${block.id}" fn expects ${pCount} params but declares ${inCount} inputs`];
+  return [];
 }
 
 export function validatecontainerrefs(pipeline) {
-    const errors = [];
-    const refsproduced = new Set();
-    const { stages } = extractstagesblocks(pipeline);
-    for (const stage of stages) {
-        for (const block of (stage.blocks || [])) {
-            if (block.type === 'writer' || block.type === 'fn') {
-                const outputs = block.signature ? (block.signature.outputs || []) : [];
-                outputs.forEach(k => refsproduced.add(k));
-            }
-        }
+  const errors = [], refsproduced = new Set();
+  const { stages } = extractstagesblocks(pipeline);
+  stages.forEach(s => (s.blocks || []).forEach(b => {
+    if (['writer', 'fn'].includes(b.type)) (b.signature?.outputs || []).forEach(k => refsproduced.add(k));
+  }));
+  stages.forEach(s => (s.blocks || []).forEach(b => {
+    if (b.type === 'spawn') {
+      if (b.container && !refsproduced.has(b.container)) errors.push(`SPAWN: block "${b.id}" references unproduced container "${b.container}"`);
+      if (!b.dna && !b.dnaref) errors.push(`SPAWN: block "${b.id}" must have dna or dnaref`);
+      if (b.dnaref?.from === 'eventTarget' && !b.dnaref.attr && !b.dnaref.key) errors.push(`SPAWN: block "${b.id}" eventTarget dnaref requires attr or key`);
     }
-    for (const stage of stages) {
-        for (const block of (stage.blocks || [])) {
-            if (block.type === 'spawn') {
-                const containerkey = block.container;
-                if (containerkey && !refsproduced.has(containerkey)) {
-                    errors.push('SPAWN: block "' + block.id + '" references container "' + containerkey + '" which is not produced by any preceding stage');
-                }
-                if (!block.dna && !block.dnaref) {
-                    errors.push('SPAWN: block "' + block.id + '" must have either \'dna\' or \'dnaref\' property');
-                }
-                if (block.dnaref && block.dnaref.from === 'eventTarget' && !block.dnaref.attr && !block.dnaref.key) {
-                    errors.push('SPAWN: block "' + block.id + '" dnaref with from:eventTarget must specify attr or key');
-                }
-            }
-        }
-    }
-    return errors;
+  }));
+  return errors;
 }
 
 export function validatespawncontracts(pipeline) {
-    const errors = [];
-    const { stages } = extractstagesblocks(pipeline);
-    for (const stage of stages) {
-        for (const block of (stage.blocks || [])) {
-            if (block.type !== 'spawn') continue;
-            const hasdna = !!block.dna;
-            const hasdnaref = !!block.dnaref;
-            if (!hasdna && !hasdnaref) {
-                errors.push('SPAWN CONTRACT: block "' + block.id + '" requires dna or dnaref');
-            }
-            if (hasdna && hasdnaref) {
-                errors.push('SPAWN CONTRACT: block "' + block.id + '" has both dna and dnaref; use one');
-            }
-            if (block.container && typeof block.container !== 'string') {
-                errors.push('SPAWN CONTRACT: block "' + block.id + '" container must be a string (env key)');
-            }
-        }
-    }
-    return errors;
+  const errors = [];
+  const { stages } = extractstagesblocks(pipeline);
+  stages.forEach(s => (s.blocks || []).filter(b => b.type === 'spawn').forEach(b => {
+    if (!b.dna && !b.dnaref) errors.push(`SPAWN CONTRACT: block "${b.id}" requires dna or dnaref`);
+    if (b.dna && b.dnaref) errors.push(`SPAWN CONTRACT: block "${b.id}" has both dna and dnaref`);
+    if (b.container && typeof b.container !== 'string') errors.push(`SPAWN CONTRACT: block "${b.id}" container must be a string`);
+  }));
+  return errors;
 }
 
 export function validateblocktype(block) {
-    const errors = [];
-    const validtypes = [
-        'fn', 'api', 'fetch', 'writer', 'domquery', 'spawn',
-        'io', 'crypto', 'wait', 'executionquery', 'storequery'
-    ];
-    if (!block.type || !validtypes.includes(block.type)) {
-        errors.push('BLOCK TYPE: block "' + block.id + '" has invalid type: ' + block.type + '. Valid types: ' + validtypes.join(', '));
-    }
-    return errors;
+  const valid = ['fn', 'api', 'fetch', 'writer', 'domquery', 'spawn', 'io', 'crypto', 'wait', 'executionquery', 'storequery'];
+  return (!block.type || !valid.includes(block.type)) ? [`BLOCK TYPE: block "${block.id}" invalid type: ${block.type}`] : [];
 }
 
 export function validatedomqueryblock(block) {
-    const errors = [];
-    if (block.type !== 'domquery') return errors;
-    if (!block.command || !block.command.COMMAND) {
-        errors.push('DOMQUERY: block "' + block.id + '" requires command with COMMAND');
-        return errors;
-    }
-    const viewportCommands = ['getviewport', 'getscreen', 'matchmedia'];
-    const allDomqueryMessages = DOMQUERYMESSAGES.concat(viewportCommands);
-    if (!allDomqueryMessages.includes(block.command.COMMAND)) {
-        errors.push('DOMQUERY: block "' + block.id + '" unknown COMMAND: ' + block.command.COMMAND);
-    }
-    const cmdprops = block.command.properties;
-    if (!viewportCommands.includes(block.command.COMMAND)) {
-        if (!cmdprops || !cmdprops.id || typeof cmdprops.id !== 'string') {
-            errors.push('DOMQUERY: block "' + block.id + '" command requires properties.id (string)');
-        }
-    }
-    const setters = DOMQUERYSETTERS;
-    if (setters.includes(block.command.COMMAND)) {
-        if (block.command.COMMAND === 'toggleclass') {
-            if (!cmdprops || !cmdprops.classname || typeof cmdprops.classname !== 'string') {
-                errors.push('DOMQUERY: block "' + block.id + '" toggleclass requires command.properties.classname (string)');
-            }
-        } else if (cmdprops && cmdprops.value === undefined) {
-            errors.push('DOMQUERY: block "' + block.id + '" setter requires command.properties.value');
-        }
-    }
-    return errors;
+  if (block.type !== 'domquery') return [];
+  const cmd = block.command?.COMMAND;
+  if (!cmd) return [`DOMQUERY: block "${block.id}" requires command.COMMAND`];
+  const all = DOMQUERYMESSAGES.concat(['getviewport', 'getscreen', 'matchmedia']);
+  if (!all.includes(cmd)) return [`DOMQUERY: block "${block.id}" unknown COMMAND: ${cmd}`];
+  const props = block.command.properties;
+  if (!['getviewport', 'getscreen', 'matchmedia'].includes(cmd) && (!props?.id || typeof props.id !== 'string')) {
+    return [`DOMQUERY: block "${block.id}" requires command.properties.id`];
+  }
+  if (DOMQUERYSETTERS.includes(cmd)) {
+    if (cmd === 'toggleclass' && (!props?.classname || typeof props.classname !== 'string')) return [`DOMQUERY: block "${block.id}" toggleclass requires classname`];
+    if (cmd !== 'toggleclass' && props?.value === undefined) return [`DOMQUERY: block "${block.id}" setter requires value`];
+  }
+  return [];
 }
 
 export function validateexecutionqueryblock(block) {
-    const errors = [];
-    if (block.type !== 'executionquery') return errors;
-    if (!block.command || !block.command.COMMAND) {
-        errors.push('EXECUTIONQUERY: block "' + block.id + '" requires command with COMMAND');
-        return errors;
-    }
-    const cmd = block.command.COMMAND;
-    const args = block.command.args || {};
-    const allowed = ['get', 'set', 'start', 'stop', 'restart', 'continue', 'save_status'];
-    if (!allowed.includes(cmd)) {
-        errors.push('EXECUTIONQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd);
-    }
-    if (['get', 'set', 'start', 'stop', 'restart', 'continue', 'save_status'].includes(cmd)) {
-        if (!args.stageid) {
-            errors.push('EXECUTIONQUERY: block "' + block.id + '" command ' + cmd + ' requires args.stageid');
-        }
-    }
-    if (cmd === 'set' && !args.key) {
-        errors.push('EXECUTIONQUERY: block "' + block.id + '" set requires args.key');
-    }
-    if (cmd === 'get' && args.key !== undefined && typeof args.key !== 'string') {
-        errors.push('EXECUTIONQUERY: block "' + block.id + '" get args.key must be string');
-    }
-    return errors;
+  if (block.type !== 'executionquery') return [];
+  const cmd = block.command?.COMMAND;
+  if (!cmd) return [`EXECUTIONQUERY: block "${block.id}" requires command.COMMAND`];
+  const allowed = ['get', 'set', 'start', 'stop', 'restart', 'continue', 'save_status', 'tasks', 'task_status', 'await_task', 'cancel_task', 'stop_task', 'recover'];
+  if (!allowed.includes(cmd)) return [`EXECUTIONQUERY: block "${block.id}" unknown COMMAND: ${cmd}`];
+  return [];
 }
 
 export function validatestorequeryblock(block) {
-    const errors = [];
-    if (block.type !== 'storequery') return errors;
-    if (!block.command || !block.command.COMMAND) {
-        errors.push('STOREQUERY: block "' + block.id + '" requires command with COMMAND');
-        return errors;
-    }
-    const cmd = block.command.COMMAND;
-    const args = block.command.args || {};
-    if (cmd === 'store') {
-        if (!args.key) {
-            errors.push('STOREQUERY: block "' + block.id + '" store requires args.key');
-        }
-        if (args.value === undefined) {
-            errors.push('STOREQUERY: block "' + block.id + '" store requires args.value');
-        }
-    } else if (cmd === 'restore') {
-        if (!args.key) {
-            errors.push('STOREQUERY: block "' + block.id + '" restore requires args.key');
-        }
-    } else {
-        errors.push('STOREQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd);
-    }
-    return errors;
+  if (block.type !== 'storequery') return [];
+  const cmd = block.command?.COMMAND;
+  if (!cmd || !['store', 'restore'].includes(cmd)) return [`STOREQUERY: block "${block.id}" invalid command`];
+  return [];
 }
 
 export function validateblockproperties(block) {
-    const errors = [];
-    if (block.type === 'domquery') {
-        const cmdprops = block.command && block.command.properties;
-        if (!cmdprops) {
-            errors.push('DOMQUERY: block "' + block.id + '" requires command.properties block');
-        } else if (typeof cmdprops !== 'object') {
-            errors.push('DOMQUERY: block "' + block.id + '" command.properties must be an object');
-        }
-    }
-    return errors;
+  if (block.type === 'domquery' && (!block.command?.properties || typeof block.command.properties !== 'object')) {
+    return [`DOMQUERY: block "${block.id}" requires object command.properties`];
+  }
+  return [];
 }

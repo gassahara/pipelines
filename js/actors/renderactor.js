@@ -34,7 +34,7 @@ export const MESSAGETYPES = Object.freeze({
   RESTORE_BODY_HTML: 'restore_body_html'
 });
 
-var MESSAGEINTERFACES = Object.freeze({
+const MESSAGEINTERFACES = Object.freeze({
   [MESSAGETYPES.RENDER]: { id: 'string', renderer: 'function', data: 'any', env: 'object', resolve: 'function?', reject: 'function?' },
   [MESSAGETYPES.CLEAR]: { id: 'string', resolve: 'function?', reject: 'function?' },
   [MESSAGETYPES.HTML]: { id: 'string', markup: 'string', append: 'boolean', resolve: 'function?', reject: 'function?' },
@@ -68,460 +68,257 @@ var MESSAGEINTERFACES = Object.freeze({
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
-function getElementOrFail(id, reject) {
-    if (!id || typeof id !== 'string') {
-        reject(new Error('[RENDERACTOR] id must be a non-empty string'));
-        return null;
-    }
-    var el = document.getElementById(id);
-    if (!el) {
-        reject(new Error('[RENDERACTOR] element not found: ' + id));
-        return null;
-    }
-    return el;
-}
+const withElement = (id, reject, fn) => {
+  if (!id || typeof id !== 'string') {
+    if (typeof reject === 'function') reject(new Error('[RENDERACTOR] id must be a non-empty string'));
+    return null;
+  }
+  const el = document.getElementById(id);
+  if (!el) {
+    if (typeof reject === 'function') reject(new Error('[RENDERACTOR] element not found: ' + id));
+    return null;
+  }
+  return fn(el);
+};
 
-function createEnqueuer(type, idRequired, extraPayloadFn) {
-    return function(...args) {
-        var id = idRequired ? args[0] : undefined;
-        var rest = idRequired ? Array.prototype.slice.call(args, 1) : args;
-        return new Promise(function(resolve, reject) {
-            if (idRequired) {
-                if (!id || typeof id !== 'string') {
-                    reject(new Error('[' + type + '] id must be a non-empty string'));
-                    return;
-                }
-                if (!document.getElementById(id)) {
-                    reject(new Error('[' + type + '] element not found: ' + id));
-                    return;
-                }
-            }
-            var extra = extraPayloadFn ? extraPayloadFn(rest) : {};
-            var message = { type: type, id: id, resolve: resolve, reject: reject };
-            for (var k in extra) { message[k] = extra[k]; }
-            RENDERACTOR.send(message);
-        });
-    };
-}
+const resolveMsg = (msg, val) => typeof msg.resolve === 'function' && msg.resolve(val);
+const rejectMsg = (msg, err) => typeof msg.reject === 'function' && msg.reject(err);
 
-var renderbehavior = function(state, message) {
-  // If RENDER message has missing/null id, assign a unique internal id.
+// Declarative Message Handlers Map
+const HANDLERS = {
+  [MESSAGETYPES.RENDER]: (state, msg) => {
+    const target = msg.id ? document.getElementById(msg.id) : null;
+    if (typeof msg.renderer === 'function') {
+      try { msg.renderer(target, msg.data, msg.env || {}); }
+      catch (err) { console.error('[RENDERACTOR] Renderer error:', err); throw err; }
+    }
+  },
+  [MESSAGETYPES.CLEAR]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    el.innerHTML = '';
+    revalidateAll();
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.HTML]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
+    else { el.innerHTML = msg.markup; revalidateAll(); }
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.REMOVE]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    el.remove();
+    revalidateAll();
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.SETSTYLES]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    if (msg.styles && typeof msg.styles === 'object') Object.assign(el.style, msg.styles);
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.SETATTR]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    if (typeof msg.name === 'string') el.setAttribute(msg.name, msg.value);
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.TOGGLECLASS]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    if (typeof msg.classname === 'string') el.classList.toggle(msg.classname, msg.force);
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.CRYPTO]: (state, msg) => {
+    const win = typeof window !== 'undefined' ? window : globalThis;
+    const array = new Uint8Array(msg.bytes);
+    win.crypto.getRandomValues(array);
+    resolveMsg(msg, Array.from(array));
+  },
+  [MESSAGETYPES.GEOLOCATION]: (state, msg) => {
+    const win = typeof window !== 'undefined' ? window : globalThis;
+    const geo = win.navigator?.geolocation;
+    if (!geo) return rejectMsg(msg, new Error('geolocation API unavailable'));
+    geo.getCurrentPosition(
+      pos => resolveMsg(msg, { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      err => rejectMsg(msg, new Error('geolocation failed: ' + err.message)),
+      { enablehighaccuracy: msg.enablehighaccuracy || false, timeout: msg.timeout || 5000 }
+    );
+  },
+  [MESSAGETYPES.PERSISTENCE]: (state, msg) => {
+    const storage = (typeof window !== 'undefined' ? window : globalThis).localStorage;
+    if (!storage) return rejectMsg(msg, new Error('localStorage unavailable'));
+    try {
+      if (msg.action === 'getItem') resolveMsg(msg, { value: storage.getItem(msg.key) });
+      else if (msg.action === 'setItem') { storage.setItem(msg.key, msg.value); resolveMsg(msg, { success: true }); }
+      else if (msg.action === 'removeItem') { storage.removeItem(msg.key); resolveMsg(msg, { success: true }); }
+      else if (msg.action === 'clear') { storage.clear(); resolveMsg(msg, { success: true }); }
+      else rejectMsg(msg, new Error('unknown persistence action: ' + msg.action));
+    } catch (err) { rejectMsg(msg, err); }
+  },
+  [MESSAGETYPES.CREATEELEMENT]: (state, msg) => {
+    try {
+      const el = document.createElement(msg.tag);
+      if (msg.props && typeof msg.props === 'object') Object.assign(el, msg.props);
+      resolveMsg(msg, CREATEDOMREF(el));
+    } catch (err) { rejectMsg(msg, err); }
+  },
+  [MESSAGETYPES.CREATECONTAINER]: (state, msg) => {
+    try { resolveMsg(msg, CREATEDOMREF(document.createElement('div'))); }
+    catch (err) { rejectMsg(msg, err); }
+  },
+  [MESSAGETYPES.CREATEFROMHTML]: (state, msg) => {
+    try {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = msg.html;
+      resolveMsg(msg, CREATEDOMREF(wrapper.firstElementChild || wrapper));
+    } catch (err) { rejectMsg(msg, err); }
+  },
+  [MESSAGETYPES.PROPERTY]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    const fn = el[msg.name];
+    if (typeof fn !== 'function') return rejectMsg(msg, new Error(`property "${msg.name}" is not a function on element ${msg.id}`));
+    try { resolveMsg(msg, fn.apply(el, msg.arguments || [])); }
+    catch (e) { rejectMsg(msg, e); }
+  }),
+  [MESSAGETYPES.GETHTML]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    resolveMsg(msg, { tag: el.tagName.toLowerCase(), innerHTML: el.innerHTML });
+  }),
+  [MESSAGETYPES.GETVALUE]: (state, msg) => withElement(msg.id, msg.reject, el => resolveMsg(msg, el.value)),
+  [MESSAGETYPES.GETSTYLE]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    const computed = window.getComputedStyle(el);
+    const styleobj = {};
+    for (let si = 0; si < computed.length; si++) styleobj[computed[si]] = computed.getPropertyValue(computed[si]);
+    resolveMsg(msg, styleobj);
+  }),
+  [MESSAGETYPES.GETPOSITION]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    const rect = el.getBoundingClientRect();
+    resolveMsg(msg, { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
+  }),
+  [MESSAGETYPES.GETLAYOUT]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    resolveMsg(msg, {
+      offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight,
+      offsetLeft: el.offsetLeft, offsetTop: el.offsetTop,
+      scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight,
+      clientWidth: el.clientWidth, clientHeight: el.clientHeight
+    });
+  }),
+  [MESSAGETYPES.SETHTML]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    el.innerHTML = msg.value;
+    revalidateAll();
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.SETPOSITION]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    if (msg.value && typeof msg.value === 'object') Object.assign(el.style, msg.value);
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.SETSTYLE]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    if (msg.value && typeof msg.value === 'object') Object.assign(el.style, msg.value);
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.SETVALUE]: (state, msg) => withElement(msg.id, msg.reject, el => { el.value = msg.value; resolveMsg(msg); }),
+  [MESSAGETYPES.SETLAYOUT]: (state, msg) => withElement(msg.id, msg.reject, el => {
+    if (msg.value && typeof msg.value === 'object') Object.assign(el, msg.value);
+    resolveMsg(msg);
+  }),
+  [MESSAGETYPES.GETVIEWPORT]: (state, msg) => {
+    const doc = document.documentElement;
+    resolveMsg(msg, { viewportWidth: doc.clientWidth, viewportHeight: doc.clientHeight });
+  },
+  [MESSAGETYPES.GETSCREEN]: (state, msg) => {
+    const scr = window.screen;
+    resolveMsg(msg, { screenWidth: scr.width, screenHeight: scr.height, availWidth: scr.availWidth, availHeight: scr.availHeight });
+  },
+  [MESSAGETYPES.MATCHMEDIA]: (state, msg) => resolveMsg(msg, { matches: window.matchMedia(msg.query).matches }),
+  [MESSAGETYPES.GET_BODY_HTML]: (state, msg) => resolveMsg(msg, document.body ? document.body.innerHTML : ''),
+  [MESSAGETYPES.RESTORE_BODY_HTML]: (state, msg) => {
+    if (document.body) { document.body.innerHTML = msg.html; revalidateAll(); }
+    resolveMsg(msg, true);
+  }
+};
+
+let refcounter = 0;
+const renderbehavior = (state, message) => {
   if (message.type === MESSAGETYPES.RENDER && (message.id === null || message.id === undefined)) {
-      renderbehavior._refcounter = (renderbehavior._refcounter || 0) + 1;
-      message.id = '__ref_render_' + Date.now() + '_' + renderbehavior._refcounter;
+    refcounter += 1;
+    message.id = '__ref_render_' + Date.now() + '_' + refcounter;
   }
 
-  var check = validatemessage(message);
+  const check = validatemessage(message);
   if (!check.valid) {
     console.error('[RENDERACTOR:UNKNOWNTYPE] type=' + check.type + ' error=' + check.error);
     return state;
   }
 
-  if (message.type === MESSAGETYPES.RENDER) {
-    var target = message.id ? document.getElementById(message.id) : null;
-    if (typeof message.renderer === 'function') {
-      try {
-        message.renderer(target, message.data, message.env || {});
-      } catch (err) {
-        console.error('[RENDERACTOR] Renderer error:', err);
-        throw err;
-      }
-    }
-  } else if (message.type === MESSAGETYPES.CLEAR) {
-    var target = document.getElementById(message.id);
-    if (target) target.innerHTML = '';
-    revalidateAll();
-  } else if (message.type === MESSAGETYPES.HTML) {
-    var target = getElementOrFail(message.id, message.reject);
-    if (!target) return state;
-    if (message.append) {
-      target.insertAdjacentHTML('beforeend', message.markup);
-    } else {
-      target.innerHTML = message.markup;
-      revalidateAll();
-    }
-    if (typeof message.resolve === 'function') message.resolve();
-  } else if (message.type === MESSAGETYPES.REMOVE) {
-    var target = document.getElementById(message.id);
-    if (target) target.remove();
-    revalidateAll();
-  } else if (message.type === MESSAGETYPES.SETSTYLES) {
-    var target = getElementOrFail(message.id, message.reject);
-    if (!target) return state;
-    if (message.styles && typeof message.styles === 'object') {
-      var stykeys = Object.keys(message.styles);
-      for (var si = 0; si < stykeys.length; si++) {
-        target.style[stykeys[si]] = message.styles[stykeys[si]];
-      }
-    }
-  } else if (message.type === MESSAGETYPES.SETATTR) {
-    var target = getElementOrFail(message.id, message.reject);
-    if (!target) return state;
-    if (typeof message.name === 'string') {
-      target.setAttribute(message.name, message.value);
-    }
-  } else if (message.type === MESSAGETYPES.TOGGLECLASS) {
-    var target = getElementOrFail(message.id, message.reject);
-    if (!target) return state;
-    if (typeof message.classname === 'string') {
-      target.classList.toggle(message.classname, message.force);
-    }
-  } else if (message.type === MESSAGETYPES.CRYPTO) {
-    var win = typeof window !== 'undefined' ? window : globalThis;
-    var array = new Uint8Array(message.bytes);
-    win.crypto.getRandomValues(array);
-    if (typeof message.resolve === 'function') {
-      message.resolve(Array.from(array));
-    }
-  } else if (message.type === MESSAGETYPES.GEOLOCATION) {
-    var win = typeof window !== 'undefined' ? window : globalThis;
-    var geo = win.navigator && win.navigator.geolocation;
-    if (!geo) {
-      if (typeof message.reject === 'function') message.reject(new Error('geolocation API unavailable'));
-      return state;
-    }
-    geo.getCurrentPosition(
-      function(pos) {
-        var coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
-        if (typeof message.resolve === 'function') message.resolve(coords);
-      },
-      function(err) {
-        if (typeof message.reject === 'function') message.reject(new Error('geolocation failed: ' + err.message));
-      },
-      { enablehighaccuracy: message.enablehighaccuracy || false, timeout: message.timeout || 5000 }
-    );
-    return state;
-  } else if (message.type === MESSAGETYPES.PERSISTENCE) {
-    var storagewin = typeof window !== 'undefined' ? window : globalThis;
-    var storage = storagewin.localStorage;
-    if (!storage) {
-      if (typeof message.reject === 'function') message.reject(new Error('localStorage unavailable'));
-      return state;
-    }
-    try {
-      var presult;
-      if (message.action === 'getItem') {
-        presult = { value: storage.getItem(message.key) };
-      } else if (message.action === 'setItem') {
-        storage.setItem(message.key, message.value);
-        presult = { success: true };
-      } else if (message.action === 'removeItem') {
-        storage.removeItem(message.key);
-        presult = { success: true };
-      } else if (message.action === 'clear') {
-        storage.clear();
-        presult = { success: true };
-      } else {
-        if (typeof message.reject === 'function') message.reject(new Error('unknown persistence action: ' + message.action));
-        return state;
-      }
-      if (typeof message.resolve === 'function') message.resolve(presult);
-    } catch (err) {
-      if (typeof message.reject === 'function') message.reject(err);
-    }
-  } else if (message.type === MESSAGETYPES.CREATEELEMENT) {
-    try {
-      var el = document.createElement(message.tag);
-      if (message.props && typeof message.props === 'object') {
-        var pkeys = Object.keys(message.props);
-        for (var pi = 0; pi < pkeys.length; pi++) {
-          el[pkeys[pi]] = message.props[pkeys[pi]];
-        }
-      }
-      if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(el));
-    } catch (err) {
-      if (typeof message.reject === 'function') message.reject(err);
-    }
-  } else if (message.type === MESSAGETYPES.CREATECONTAINER) {
-    try {
-      var container = document.createElement('div');
-      if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(container));
-    } catch (err) {
-      if (typeof message.reject === 'function') message.reject(err);
-    }
-  } else if (message.type === MESSAGETYPES.CREATEFROMHTML) {
-    try {
-      var wrapper = document.createElement('div');
-      wrapper.innerHTML = message.html;
-      var child = wrapper.firstElementChild;
-      if (typeof message.resolve === 'function') message.resolve(CREATEDOMREF(child || wrapper));
-    } catch (err) {
-      if (typeof message.reject === 'function') message.reject(err);
-    }
-  } else if (message.type === MESSAGETYPES.PROPERTY) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    var fn = el[message.name];
-    if (typeof fn !== 'function') {
-      if (typeof message.reject === 'function') message.reject(new Error('property "' + message.name + '" is not a function on element ' + message.id));
-      return state;
-    }
-    try {
-      var result = fn.apply(el, message.arguments || []);
-      if (typeof message.resolve === 'function') message.resolve(result);
-    } catch (e) {
-      if (typeof message.reject === 'function') message.reject(e);
-    }
-  } else if (message.type === MESSAGETYPES.GETHTML) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (typeof message.resolve === 'function') {
-      message.resolve({ tag: el.tagName.toLowerCase(), innerHTML: el.innerHTML });
-    }
-  } else if (message.type === MESSAGETYPES.GETVALUE) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (typeof message.resolve === 'function') {
-      message.resolve(el.value);
-    }
-  } else if (message.type === MESSAGETYPES.GETSTYLE) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (typeof message.resolve === 'function') {
-      var computed = window.getComputedStyle(el);
-      var styleobj = {};
-      for (var si = 0; si < computed.length; si++) {
-        styleobj[computed[si]] = computed.getPropertyValue(computed[si]);
-      }
-      message.resolve(styleobj);
-    }
-  } else if (message.type === MESSAGETYPES.GETPOSITION) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (typeof message.resolve === 'function') {
-      var rect = el.getBoundingClientRect();
-      message.resolve({ x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
-    }
-  } else if (message.type === MESSAGETYPES.GETLAYOUT) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (typeof message.resolve === 'function') {
-      message.resolve({
-        offsetWidth: el.offsetWidth,
-        offsetHeight: el.offsetHeight,
-        offsetLeft: el.offsetLeft,
-        offsetTop: el.offsetTop,
-        scrollWidth: el.scrollWidth,
-        scrollHeight: el.scrollHeight,
-        clientWidth: el.clientWidth,
-        clientHeight: el.clientHeight
-      });
-    }
-  } else if (message.type === MESSAGETYPES.SETHTML) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    el.innerHTML = message.value;
-    revalidateAll();
-    if (typeof message.resolve === 'function') message.resolve();
-  } else if (message.type === MESSAGETYPES.SETPOSITION) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (message.value && typeof message.value === 'object') {
-      var oldstyle = el.getAttribute('style') || '';
-      var pairs = oldstyle.split(';');
-      var stylemap = {};
-      for (var pi = 0; pi < pairs.length; pi++) {
-        var ci = pairs[pi].indexOf(':');
-        if (ci > 0) {
-          stylemap[pairs[pi].slice(0, ci).trim()] = pairs[pi].slice(ci + 1).trim();
-        } else if (pairs[pi].trim()) {
-          stylemap[pairs[pi].trim()] = '';
-        }
-      }
-      var keys = Object.keys(message.value);
-      for (var ki = 0; ki < keys.length; ki++) {
-        stylemap[keys[ki]] = message.value[keys[ki]];
-      }
-      var mergedkeys = Object.keys(stylemap);
-      var merged = '';
-      for (var mi = 0; mi < mergedkeys.length; mi++) {
-        if (mi > 0) merged += ';';
-        merged += mergedkeys[mi] + ':' + stylemap[mergedkeys[mi]];
-      }
-      el.setAttribute('style', merged);
-    }
-    if (typeof message.resolve === 'function') message.resolve();
-  } else if (message.type === MESSAGETYPES.SETSTYLE) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (message.value && typeof message.value === 'object') {
-      var keys = Object.keys(message.value);
-      for (var i = 0; i < keys.length; i++) {
-        el.style[keys[i]] = message.value[keys[i]];
-      }
-    }
-    if (typeof message.resolve === 'function') message.resolve();
-  } else if (message.type === MESSAGETYPES.SETVALUE) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    el.value = message.value;
-    if (typeof message.resolve === 'function') message.resolve();
-  } else if (message.type === MESSAGETYPES.SETLAYOUT) {
-    var el = getElementOrFail(message.id, message.reject);
-    if (!el) return state;
-    if (message.value && typeof message.value === 'object') {
-      var keys = Object.keys(message.value);
-      for (var li = 0; li < keys.length; li++) {
-        el[keys[li]] = message.value[keys[li]];
-      }
-    }
-    if (typeof message.resolve === 'function') message.resolve();
-  } else if (message.type === MESSAGETYPES.GETVIEWPORT) {
-    var vpWidth  = document.documentElement.clientWidth;
-    var vpHeight = document.documentElement.clientHeight;
-    if (typeof message.resolve === 'function') {
-      message.resolve({ viewportWidth: vpWidth, viewportHeight: vpHeight });
-    }
-  } else if (message.type === MESSAGETYPES.GETSCREEN) {
-    var scr = window.screen;
-    if (typeof message.resolve === 'function') {
-      message.resolve({
-        screenWidth:  scr.width,
-        screenHeight: scr.height,
-        availWidth:   scr.availWidth,
-        availHeight:  scr.availHeight
-      });
-    }
-  } else if (message.type === MESSAGETYPES.MATCHMEDIA) {
-    var mq = window.matchMedia(message.query);
-    if (typeof message.resolve === 'function') {
-      message.resolve({ matches: mq.matches });
-    }
-  } else if (message.type === MESSAGETYPES.GET_BODY_HTML) {
-    if (typeof message.resolve === 'function') {
-      message.resolve(document.body ? document.body.innerHTML : '');
-    }
-  } else if (message.type === MESSAGETYPES.RESTORE_BODY_HTML) {
-    if (document.body) {
-      document.body.innerHTML = message.html;
-      revalidateAll();
-    }
-    if (typeof message.resolve === 'function') message.resolve(true);
-  }
-
+  const handler = HANDLERS[message.type];
+  if (handler) handler(state, message);
   return state;
 };
 
 export const RENDERACTOR = createactor(renderbehavior, {});
 
-// Enqueue functions generated via macro (FC2)
-export const enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, function(rest) {
-    return { renderer: rest[0], data: rest[1], env: rest[2] };
-});
+const createEnqueuer = (type, idRequired, extraPayloadFn) => (...args) => {
+  const id = idRequired ? args[0] : undefined;
+  const rest = idRequired ? args.slice(1) : args;
+  return new Promise((resolve, reject) => {
+    if (idRequired && (!id || typeof id !== 'string' || !document.getElementById(id))) {
+      reject(new Error(`[${type}] invalid or missing element id: ${id}`));
+      return;
+    }
+    const extra = extraPayloadFn ? extraPayloadFn(rest) : {};
+    RENDERACTOR.send({ type, id, resolve, reject, ...extra });
+  });
+};
+
+export const enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, ([renderer, data, env]) => ({ renderer, data, env }));
 export const enqueueclear = createEnqueuer(MESSAGETYPES.CLEAR, true);
-export const enqueuehtml = createEnqueuer(MESSAGETYPES.HTML, true, function(rest) {
-    return { markup: rest[0], append: rest[1] };
-});
+export const enqueuehtml = createEnqueuer(MESSAGETYPES.HTML, true, ([markup, append]) => ({ markup, append }));
 export const enqueueremove = createEnqueuer(MESSAGETYPES.REMOVE, true);
-export const enqueuestyles = createEnqueuer(MESSAGETYPES.SETSTYLES, true, function(rest) {
-    return { styles: rest[0] };
-});
-export const enqueuesetattr = createEnqueuer(MESSAGETYPES.SETATTR, true, function(rest) {
-    return { name: rest[0], value: rest[1] };
-});
-export const enqueuetoggleclass = createEnqueuer(MESSAGETYPES.TOGGLECLASS, true, function(rest) {
-    return { classname: rest[0], force: rest[1] };
-});
-export const enqueuecreateelement = createEnqueuer(MESSAGETYPES.CREATEELEMENT, false, function(rest) {
-    return { tag: rest[0], props: rest[1] };
-});
+export const enqueuestyles = createEnqueuer(MESSAGETYPES.SETSTYLES, true, ([styles]) => ({ styles }));
+export const enqueuesetattr = createEnqueuer(MESSAGETYPES.SETATTR, true, ([name, value]) => ({ name, value }));
+export const enqueuetoggleclass = createEnqueuer(MESSAGETYPES.TOGGLECLASS, true, ([classname, force]) => ({ classname, force }));
+export const enqueuecreateelement = createEnqueuer(MESSAGETYPES.CREATEELEMENT, false, ([tag, props]) => ({ tag, props }));
 export const enqueuecreatecontainer = createEnqueuer(MESSAGETYPES.CREATECONTAINER, false);
-export const enqueuecreatefromhtml = createEnqueuer(MESSAGETYPES.CREATEFROMHTML, false, function(rest) {
-    return { html: rest[0] };
-});
+export const enqueuecreatefromhtml = createEnqueuer(MESSAGETYPES.CREATEFROMHTML, false, ([html]) => ({ html }));
 export const enqueuegethtml = createEnqueuer(MESSAGETYPES.GETHTML, true);
 export const enqueuegetvalue = createEnqueuer(MESSAGETYPES.GETVALUE, true);
 export const enqueuegetstyle = createEnqueuer(MESSAGETYPES.GETSTYLE, true);
 export const enqueuegetposition = createEnqueuer(MESSAGETYPES.GETPOSITION, true);
-export const enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, function(rest) {
-    return { value: rest[0] };
-});
-export const enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, function(rest) {
-    return { value: rest[0] };
-});
-export const enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, function(rest) {
-    return { value: rest[0] };
-});
-export const enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, function(rest) {
-    return { value: rest[0] };
-});
-export const DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
-export const DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
-export const DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
-
-export const enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, function(rest) {
-    return { name: rest[0], arguments: rest[1] };
-});
+export const enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, ([value]) => ({ value }));
+export const enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, ([value]) => ({ value }));
+export const enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, ([value]) => ({ value }));
+export const enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, ([value]) => ({ value }));
+export const enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, ([name, args]) => ({ name, arguments: args }));
 export const enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
-export const enqueusetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) {
-    return { value: rest[0] };
-});
-
-export const expectelement = function(id, timeout) {
-  timeout = timeout || 30000;
-  return new Promise(function(resolve, reject) {
-    var existing = document.getElementById(id);
-    if (existing) {
-      resolve(CREATEDOMREF(existing));
-      return;
-    }
-    var observer = null;
-    var timeoutid = null;
-    var cleanup = function() {
-      if (observer) observer.disconnect();
-      if (timeoutid) clearTimeout(timeoutid);
-    };
-    var onfound = function(el) {
-      cleanup();
-      resolve(CREATEDOMREF(el));
-    };
-    var ontimeout = function() {
-      cleanup();
-      reject(new Error('[expectelement] element not found: ' + id));
-    };
-    timeoutid = setTimeout(ontimeout, timeout);
-    observer = new MutationObserver(function() {
-      var el = document.getElementById(id);
-      if (el) onfound(el);
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  });
-};
-
-export const handlefilereaderrequest = function(payload) {
-  return new Promise(function(resolve, reject) {
-    var reader = new FileReader();
-    reader.onload = function(event) {
-      resolve({ text: event.target.result });
-    };
-    reader.onerror = function() {
-      reject(new Error('[renderactor] FileReader error'));
-    };
-    reader.readAsText(payload.file);
-  });
-};
-
+export const enqueusetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, ([value]) => ({ value }));
 export const enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
 export const enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
-export const enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) {
-    return { query: rest[0] };
+export const enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, ([query]) => ({ query }));
+
+export const DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
+export const DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
+export const DOMQUERYMESSAGES = Object.freeze([...DOMQUERYGETTERS, ...DOMQUERYSETTERS]);
+
+export const expectelement = (id, timeout = 30000) => new Promise((resolve, reject) => {
+  const existing = document.getElementById(id);
+  if (existing) return resolve(CREATEDOMREF(existing));
+
+  let observer = null;
+  const timeoutid = setTimeout(() => {
+    if (observer) observer.disconnect();
+    reject(new Error('[expectelement] element not found: ' + id));
+  }, timeout);
+
+  observer = new MutationObserver(() => {
+    const el = document.getElementById(id);
+    if (el) {
+      clearTimeout(timeoutid);
+      observer.disconnect();
+      resolve(CREATEDOMREF(el));
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+});
+
+export const handlefilereaderrequest = (payload) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = (e) => resolve({ text: e.target.result });
+  reader.onerror = () => reject(new Error('[renderactor] FileReader error'));
+  reader.readAsText(payload.file);
 });
 
 export const enqueueRenderGetBodyHtml = () =>
-  new Promise((resolve, reject) =>
-    RENDERACTOR.send({
-      type: MESSAGETYPES.GET_BODY_HTML,
-      resolve,
-      reject
-    })
-  );
+  new Promise((resolve, reject) => RENDERACTOR.send({ type: MESSAGETYPES.GET_BODY_HTML, resolve, reject }));
 
 export const enqueueRenderRestoreBodyHtml = (html) =>
-  new Promise((resolve, reject) =>
-    RENDERACTOR.send({
-      type: MESSAGETYPES.RESTORE_BODY_HTML,
-      html,
-      resolve,
-      reject
-    })
-  );
+  new Promise((resolve, reject) => RENDERACTOR.send({ type: MESSAGETYPES.RESTORE_BODY_HTML, html, resolve, reject }));
