@@ -1,5 +1,4 @@
 import { enqueueapi } from '../actors/apiactor.js';
-import { createpipeline } from '../pipe.js';
 import { callwithstack } from './callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import {
@@ -27,13 +26,15 @@ import {
   enqueuematchmedia,
   enqueueRenderSnapshot
 } from '../actors/renderactor.js';
-import { logwarn, logdebug } from '../verbosity.js';
+import { logwarn, logdebug, loginfo } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
 import {
   enqueueExecutionPipelineLoaded,
   enqueueExecutionStageState,
-  enqueueExecutionElementState,
+  enqueueExecutionSubmit,
+  enqueueExecutionSubmitStage,
+  enqueueExecutionAwaitTask,
   enqueueExecutionEnvUpdated,
   enqueueExecutionRecover,
   enqueueExecutionGetStatus,
@@ -41,7 +42,12 @@ import {
   enqueueExecutionCancelStage,
   enqueueExecutionBreakStage,
   enqueueExecutionRestartStage,
-  enqueueExecutionContinueStage
+  enqueueExecutionContinueStage,
+  enqueueExecutionGetTasks,
+  enqueueExecutionGetTaskStatus,
+  enqueueExecutionCancelTask,
+  enqueueExecutionStopTask,
+  enqueueExecutionSpawnPipeline
 } from '../actors/executionactor.js';
 
 const BLOCKTYPES = Object.freeze({
@@ -137,75 +143,43 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stageId, pi
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
   const outputKeys = Object.keys(elementDef?.signature?.outputs || {});
 
-  const captureOutputs = (env) => {
-    const out = {};
-    for (const key of outputKeys) {
-      if (env[key] === undefined) continue;
-      if (typeof env[key] === 'function') continue;
-      if (typeof HTMLElement !== 'undefined' && env[key] instanceof HTMLElement) continue;
-      if (typeof Node !== 'undefined' && env[key] instanceof Node) continue;
-      if (typeof EventTarget !== 'undefined' && env[key] instanceof EventTarget) continue;
-      try {
-        const json = JSON.stringify(env[key]);
-        if (json.length > 64 * 1024) {
-          out[key] = '[large-value omitted]';
-        } else {
-          out[key] = JSON.parse(json);
-        }
-      } catch {
-        out[key] = null;
-      }
-    }
-    return out;
-  };
-
-  const storeElementState = async (status, extra = {}) => {
-    try {
-      await enqueueExecutionElementState(pipelineId, stageId, elementId, {
-        status,
-        savedAt: Date.now(),
-        startedAt: extra.startedAt || null,
-        completedAt: extra.completedAt || null,
-        outputs: extra.outputs || null
-      });
-    } catch (err) {
-      console.warn('[PERSISTENCE] execution actor element state failed:', err);
-    }
-  };
-
   const wrapper = async (env) => {
-    // Save execution status RUNNING before element runs.
-    await storeElementState('RUNNING', {
-      startedAt: Date.now()
+    // Pre-execution env checkpoint.
+    try {
+      await enqueueExecutionEnvUpdated(pipelineId, safeFullEnv(env));
+    } catch (err) {
+      console.warn('[BLOCKCOMPILER] pre-env checkpoint failed:', err);
+    }
+
+    const executor = async (executionContext) => {
+      const execEnv = executionContext.env || env;
+      return await compiledElement(execEnv);
+    };
+
+    const { taskid } = await enqueueExecutionSubmit({
+      pipelineid: pipelineId,
+      stageid: stageId,
+      elementid: elementId,
+      env,
+      signature: {
+        inputs: elementDef?.signature?.inputs || [],
+        outputs: elementDef?.signature?.outputs || {}
+      },
+      executor,
+      properties: elementDef || {}
     });
 
-    try {
-      const result = await compiledElement(env);
+    const result = await enqueueExecutionAwaitTask(taskid);
 
-      const completedOutputs = captureOutputs(env);
-      await storeElementState('EXECUTED', {
-        completedAt: Date.now(),
-        outputs: completedOutputs
-      });
-
-      // Execution actor owns pipeline env.
-      await enqueueExecutionEnvUpdated(pipelineId, safeFullEnv(env));
-
-      // Render actor owns global HTML snapshot after writer success.
-      if (elementDef.type === 'writer') {
-        try {
-          await enqueueRenderSnapshot();
-        } catch (persistError) {
-          console.warn('[PERSISTENCE] render snapshot failed:', persistError);
-        }
+    if (elementDef.type === 'writer') {
+      try {
+        await enqueueRenderSnapshot();
+      } catch (err) {
+        console.warn('[BLOCKCOMPILER] render snapshot failed:', err);
       }
-
-      return result;
-    } catch (elementError) {
-      // CCC handles failures. Do NOT persist failed state here.
-      // Rethrow exact same error object.
-      throw elementError;
     }
+
+    return result;
   };
 
   wrapper.id = elementId;
@@ -247,7 +221,6 @@ const createerrorcontext = (id, stagetype) => {
   };
 };
 
-// ---------- FC5: createBlockAnalyzer factory ----------
 function createBlockAnalyzer(rules) {
     return (block) => {
         const errors = [];
@@ -271,7 +244,6 @@ function createBlockAnalyzer(rules) {
     };
 }
 
-// ---------- FC6: Shared payload/response mapping helpers ----------
 function buildPayload(mappingobj, data) {
     const result = {};
     for (const [fieldkey, mappingdef] of Object.entries(mappingobj)) {
@@ -357,6 +329,8 @@ const BLOCKANALYZERS = {
   ])
 };
 
+// BLOCKCOMPILERS are unchanged from prior run except they now execute as element
+// executors. They still produce async (env) => result closures.
 const BLOCKCOMPILERS = {
     [BLOCKTYPES.FN]: (merged, id, sig) => {
         const blockfn = async (env) => {
@@ -396,21 +370,17 @@ const BLOCKCOMPILERS = {
             }
             const apiendpoint = merged.endpoint;
             const payloadmapping = merged.mapping?.payload || {};
-            logdebug({inputaccessors, inputdata, apiendpoint, payloadmapping});
-
             const payload = buildPayload(payloadmapping, inputdata);
             for (const field of Object.keys(sig.outputs)) {
                 if (payload[field] === undefined && inputdata[field] !== undefined) {
                     payload[field] = inputdata[field];
                 }
             }
-            logdebug({payload});
             const rawresult = await callwithstack(
                 EVALSTACK, label, 'async-await',
                 async () => {
                     const endpoint = env[apiendpoint] || apiendpoint;
                     const apiresolve = await enqueueapi(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' });
-                    logdebug({apiendpoint, apiresolve, endpoint, enqueueapi}, merged.method, payload);
                     return { status: apiresolve.status, data: apiresolve.data };
                 },
                 [],
@@ -420,27 +390,16 @@ const BLOCKCOMPILERS = {
                     errk: createerrorcontext(id, 'api:call')
                 }
             );
-
             const responsemapping = merged.mapping?.response;
             let result = rawresult.data;
-            if (responsemapping) {
-                result = buildResponse(responsemapping, rawresult);
-            }
-
+            if (responsemapping) result = buildResponse(responsemapping, rawresult);
             const patch = {};
             const apioutputkeys = Object.keys(sig.outputs);
-            if (apioutputkeys.length === 1) {
-                patch[apioutputkeys[0]] = result;
-            } else if (typeof result === 'object') {
-                for (const key of apioutputkeys) {
-                    if (result[key] !== undefined) {
-                        patch[key] = result[key];
-                    }
-                }
+            if (apioutputkeys.length === 1) patch[apioutputkeys[0]] = result;
+            else if (typeof result === 'object') {
+                for (const key of apioutputkeys) if (result[key] !== undefined) patch[key] = result[key];
             }
-            for (const [k, v] of Object.entries(patch)) {
-                env[k] = v;
-            }
+            for (const [k, v] of Object.entries(patch)) env[k] = v;
         };
         blockfn.id = id;
         return blockfn;
@@ -451,56 +410,28 @@ const BLOCKCOMPILERS = {
             const label = 'fetch:' + (merged.endpoint || id);
             const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
             const inputdata = {};
-            for (let i = 0; i < sig.inputs.length; i++) {
-                inputdata[sig.inputs[i]] = inputaccessors[i](env);
-            }
+            for (let i = 0; i < sig.inputs.length; i++) inputdata[sig.inputs[i]] = inputaccessors[i](env);
             const apiendpoint = merged.endpoint;
             const payloadmapping = merged.mapping?.payload || {};
-            logdebug({inputaccessors, inputdata, apiendpoint, payloadmapping});
-
             const payload = buildPayload(payloadmapping, inputdata);
-            for (const field of Object.keys(sig.outputs)) {
-                if (payload[field] === undefined && inputdata[field] !== undefined) {
-                    payload[field] = inputdata[field];
-                }
-            }
-            logdebug({payload});
+            for (const field of Object.keys(sig.outputs)) if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
             const rawresult = await callwithstack(
                 EVALSTACK, label, 'async-await',
                 async () => {
                     const endpoint = env[apiendpoint] || apiendpoint;
                     const apiresolve = await enqueueapi(endpoint, merged.method, payload, { textual: true, token: env.authsessionaccesstoken || '' });
-                    logdebug({apiendpoint, apiresolve, endpoint, enqueueapi}, merged.method, payload);
                     return { status: apiresolve.status, data: apiresolve.data };
                 },
-                [],
-                {
-                    context: { env },
-                    capturecontinuation: true,
-                    errk: createerrorcontext(id, 'fetch:call')
-                }
+                [], { context: { env }, capturecontinuation: true, errk: createerrorcontext(id, 'fetch:call') }
             );
-
             const responsemapping = merged.mapping?.response;
             let result = rawresult.data;
-            if (responsemapping) {
-                result = buildResponse(responsemapping, rawresult);
-            }
-
+            if (responsemapping) result = buildResponse(responsemapping, rawresult);
             const patch = {};
             const apioutputkeys = Object.keys(sig.outputs);
-            if (apioutputkeys.length === 1) {
-                patch[apioutputkeys[0]] = result;
-            } else if (typeof result === 'object') {
-                for (const key of apioutputkeys) {
-                    if (result[key] !== undefined) {
-                        patch[key] = result[key];
-                    }
-                }
-            }
-            for (const [k, v] of Object.entries(patch)) {
-                env[k] = v;
-            }
+            if (apioutputkeys.length === 1) patch[apioutputkeys[0]] = result;
+            else if (typeof result === 'object') for (const key of apioutputkeys) if (result[key] !== undefined) patch[key] = result[key];
+            for (const [k, v] of Object.entries(patch)) env[k] = v;
         };
         blockfn.id = id;
         return blockfn;
@@ -509,56 +440,22 @@ const BLOCKCOMPILERS = {
         const blockfn = async (env) => {
             logdebug('[BLOCK] Executing writer block:', id);
             let fn = merged.fn;
-            if (!fn && typeof merged.ref === 'function') {
-                fn = merged.ref;
-            }
-            if (!fn) {
-                throw new Error('[WRITER] Block "' + id + '" failed property validation:\n' +
-                                '  Property: fn or ref\n' +
-                                '  Schema: { type: "function", required: true, description: "Writer function returning { id, timeout, html }" }\n' +
-                                '  Received: fn=' + JSON.stringify(merged.fn) + ', ref=' + JSON.stringify(merged.ref) + '\n' +
-                                '  Resolution: Provide "fn" (inline) or "ref" (label reference) in block definition');
-            }
-
+            if (!fn && typeof merged.ref === 'function') fn = merged.ref;
+            if (!fn) throw new Error('[WRITER] Block "' + id + '" failed property validation');
             const properties = buildproperties(merged);
             const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
             const inputargs = inputaccessors.map(fn => fn(env));
-            const fnargs = [properties].concat(inputargs);
-
-            const result = await fn.apply(null, fnargs);
-
+            const result = await fn.apply(null, [properties].concat(inputargs));
             if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined || result.timeout === undefined) {
-                throw new Error('[WRITER] Block "' + id + '" returned invalid result:\n' +
-                                '  Expected: { id: string|null, timeout: number, html: string }\n' +
-                                '  Received: ' + JSON.stringify(result) + '\n' +
-                                '  Missing fields: ' + [
-                                    result.id === undefined ? 'id' : null,
-                                    result.timeout === undefined ? 'timeout' : null,
-                                    result.html === undefined ? 'html' : null
-                                ].filter(Boolean).join(', '));
+                throw new Error('[WRITER] Block "' + id + '" returned invalid result');
             }
-
-            const html = result.html;
-            const elementid = result.id;
-            const timeout = result.timeout;
-
+            const html = result.html, elementid = result.id, timeout = result.timeout;
             let target = merged.targetlabel || env.approot;
             if (merged.targetlabel === null || merged.targetlabel === undefined) {
-                if (env.approot === null || env.approot === undefined) {
-                    throw new Error('[WRITER] Block "' + id + '" failed property validation:\n' +
-                                    '  Property: targetlabel\n' +
-                                    '  Schema: { type: "string", required: true, description: "Element ID to attach HTML output" }\n' +
-                                    '  Received: ' + (merged.targetlabel === null ? 'null' : 'undefined') + '\n' +
-                                    '  Fallback: env.approot = ' + (env.approot === null ? 'null' : env.approot === undefined ? 'undefined' : JSON.stringify(env.approot)) + '\n' +
-                                    '  Resolution: Set "targetlabel" in block definition or provide "approot" in environment');
-                }
+                if (env.approot === null || env.approot === undefined) throw new Error('[WRITER] missing targetlabel/approot');
                 target = env.approot;
-            } else {
-                target = merged.targetlabel;
-            }
-
+            } else target = merged.targetlabel;
             await enqueuehtml(target, html, !merged.replace);
-
             if (elementid && Object.keys(sig.outputs).length > 0) {
                 const domref = await expectelement(elementid, timeout || 5000);
                 env[Object.keys(sig.outputs)[0]] = result;
@@ -571,22 +468,12 @@ const BLOCKCOMPILERS = {
     [BLOCKTYPES.SPAWN]: (merged, id, sig) => {
         const blockfn = async (env) => {
             logdebug('[BLOCK] Executing spawn block:', id);
-            const label = 'spawn:' + (merged.ref || id);
-            logdebug({merged});
             const containerrefraw = merged.container;
             if (containerrefraw === null || containerrefraw === undefined) {
-                throw new Error('[SPAWN] Block "' + id + '" failed property validation:\n' +
-                                '  Property: container\n' +
-                                '  Schema: { type: "string", required: true, description: "Element ID for child agent root" }\n' +
-                                '  Received: ' + (merged.container === null ? 'null' : merged.container === undefined ? 'undefined' : JSON.stringify(merged.container)) + '\n' +
-                                '  Fallback chain:\n' +
-                                '    1. merged.container = ' + (merged.container === null ? 'null' : merged.container === undefined ? 'undefined' : JSON.stringify(merged.container)) + '\n' +
-                                '    2. env.approot = ' + (env.approot === null ? 'null' : env.approot === undefined ? 'undefined' : JSON.stringify(env.approot)) + '\n' +
-                                '    3. sig.inputs[0] = ' + (sig.inputs.length > 0 ? JSON.stringify(env[sig.inputs[0]]) : 'undefined') + '\n' +
-                                '  Resolution: Set "container" in block definition or provide "approot" in environment');
+                throw new Error('[SPAWN] missing container');
             }
             const result = await callwithstack(
-                EVALSTACK, label, 'async-await',
+                EVALSTACK, 'spawn:' + (merged.ref || id), 'async-await',
                 async (e) => {
                     let dna = merged.dna || null;
                     if (!dna && merged.dnaref) {
@@ -596,8 +483,7 @@ const BLOCKCOMPILERS = {
                             const el = dnapath.query ? target?.closest(dnapath.query) : target;
                             if (!el) return {};
                             const agentid = dnapath.key || el?.getAttribute(dnapath.attr);
-                            const agents = env.agents || [];
-                            const rituals = env.rituals || [];
+                            const agents = env.agents || [], rituals = env.rituals || [];
                             const agentdef = agents.find(a => a.id === agentid);
                             dna = agentdef ? agentdef.pipeline : null;
                             if (!dna) {
@@ -607,34 +493,15 @@ const BLOCKCOMPILERS = {
                             if (!dna) return {};
                         }
                     }
-                    if (!dna) {
-                        throw new Error('[spawn] no dna provided. Use ' + 'dna' + ' property or ' + 'dnaref' + ' with from:eventtarget');
-                    }
+                    if (!dna) throw new Error('[spawn] no dna');
                     const inheritedenv = {};
                     if (merged.sharestack) {
-                        for (const key of INHERITEDKEYS) {
-                            if (env[key] !== undefined) inheritedenv[key] = env[key];
-                        }
+                        for (const key of INHERITEDKEYS) if (env[key] !== undefined) inheritedenv[key] = env[key];
                     }
-                    return { dna: dna, containerref: containerrefraw, inheritedenv: inheritedenv, outputkey: Object.keys(sig.outputs)[0] || null };
+                    return { dna, containerref: containerrefraw, inheritedenv, outputkey: Object.keys(sig.outputs)[0] || null };
                 },
-                [env],
-                {
-                    context: { env },
-                    capturecontinuation: true,
-                    errk: createerrorcontext(id, 'spawn')
-                }
+                [env], { context: { env }, capturecontinuation: true, errk: createerrorcontext(id, 'spawn') }
             );
-
-            if (result && result.dna) {
-                const childPipelineId = result.dna.identity?.id || result.containerref || 'child_pipeline';
-                try {
-                  await enqueueExecutionPipelineLoaded(childPipelineId, result.inheritedenv || {});
-                } catch (err) {
-                  console.warn('[SPAWN] child pipeline loaded event failed:', err);
-                }
-            }
-
             return result;
         };
         blockfn.id = id;
@@ -642,134 +509,62 @@ const BLOCKCOMPILERS = {
     },
     [BLOCKTYPES.IO]: (merged, id, sig) => {
         const blockfn = async (env) => {
-            logdebug('[BLOCK] Executing io block:', id);
-            const label = 'io:' + (merged.ref || id);
             const io = typeof merged.ref === 'function' ? merged.ref : null;
-            if (!io) throw new Error('io block "' + id + '" ref must be a function. Got: ' + typeof merged.ref);
+            if (!io) throw new Error('io block "' + id + '" ref must be a function');
             const inputaccessors = (sig.inputs || []).map(k => compilepathaccessor(k));
             const inputdata = {};
-            for (let i = 0; i < sig.inputs.length; i++) {
-                inputdata[sig.inputs[i]] = inputaccessors[i](env);
-            }
-            const result = await callwithstack(
-                EVALSTACK, label, 'async-await',
-                async (e) => {
-                    return await io(inputdata, e);
-                },
-                [env],
-                {
-                    context: { env },
-                    capturecontinuation: true,
-                    errk: createerrorcontext(id, 'io')
-                }
+            for (let i = 0; i < sig.inputs.length; i++) inputdata[sig.inputs[i]] = inputaccessors[i](env);
+            return await callwithstack(
+                EVALSTACK, 'io:' + (merged.ref || id), 'async-await',
+                async (e) => await io(inputdata, e),
+                [env], { context: { env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') }
             );
-            return result;
         };
         blockfn.id = id;
         return blockfn;
     },
     [BLOCKTYPES.DOMQUERY]: (merged, id, sig) => {
         const blockfn = async (env) => {
-            logdebug('[BLOCK] Executing domquery block:', id);
             const command = merged.command;
-            if (!command || !command.COMMAND) {
-                throw new Error('[DOMQUERY] Block "' + id + '" requires command with COMMAND property');
-            }
+            if (!command || !command.COMMAND) throw new Error('[DOMQUERY] requires COMMAND');
             const messages = command.COMMAND;
-            if (typeof messages !== 'string') {
-                throw new Error('[DOMQUERY] Block "' + id + '" command.COMMAND must be a string');
-            }
-            const getters = DOMQUERYGETTERS;
-            const setters = DOMQUERYSETTERS;
-            const ALL_DOMQUERY_MESSAGES = DOMQUERYMESSAGES.concat(['getviewport', 'getscreen', 'matchmedia']);
-            if (!ALL_DOMQUERY_MESSAGES.includes(messages)) {
-                throw new Error('[DOMQUERY] Block "' + id + '" unknown COMMAND type: ' + messages);
-            }
-            const props = command.properties;
-
-            if (messages === 'getviewport') {
-                const result = await enqueuegetviewport();
-                writeoutputs(sig, env, result);
-                return;
-            }
-            if (messages === 'getscreen') {
-                const result = await enqueuegetscreen();
-                writeoutputs(sig, env, result);
-                return;
-            }
+            const getters = DOMQUERYGETTERS, setters = DOMQUERYSETTERS;
+            const ALL = DOMQUERYMESSAGES.concat(['getviewport','getscreen','matchmedia']);
+            if (!ALL.includes(messages)) throw new Error('[DOMQUERY] unknown COMMAND: ' + messages);
+            const props = command.properties || {};
+            if (messages === 'getviewport') { writeoutputs(sig, env, await enqueuegetviewport()); return; }
+            if (messages === 'getscreen') { writeoutputs(sig, env, await enqueuegetscreen()); return; }
             if (messages === 'matchmedia') {
-                if (!props || !props.query || typeof props.query !== 'string') {
-                    throw new Error('[DOMQUERY] Block "' + id + '" matchmedia requires command.properties.query (string)');
-                }
-                const result = await enqueuematchmedia(props.query);
-                writeoutputs(sig, env, result);
+                if (!props.query) throw new Error('[DOMQUERY] matchmedia requires query');
+                writeoutputs(sig, env, await enqueuematchmedia(props.query));
                 return;
             }
-
-            if (!props || !props.id || typeof props.id !== 'string') {
-                throw new Error('[DOMQUERY] Block "' + id + '" command requires properties.id field (string)');
-            }
+            if (!props.id || typeof props.id !== 'string') throw new Error('[DOMQUERY] requires properties.id');
             const commandid = props.id;
-
-            if (setters.includes(messages)) {
-                if (messages === 'toggleclass') {
-                    if (!props || !props.classname || typeof props.classname !== 'string') {
-                        throw new Error('[DOMQUERY] toggleclass requires properties.classname (string)');
-                    }
-                } else if (props.value === undefined) {
-                    throw new Error('[DOMQUERY] setter COMMAND requires command.properties.value');
-                }
+            if (setters.includes(messages) && messages !== 'toggleclass' && props.value === undefined) {
+                throw new Error('[DOMQUERY] setter requires value');
             }
-
-            const messagehandlers = {
-                'gethtml': enqueuegethtml,
-                'getvalue': enqueuegetvalue,
-                'getstyle': enqueuegetstyle,
-                'getposition': enqueuegetposition,
-                'getlayout': enqueuegetlayout,
-                'sethtml': enqueuesethtml,
-                'setposition': enqueuesetposition,
-                'setstyle': enqueuesetstyle,
-                'setvalue': enqueuesetvalue,
-                'setlayout': enqueusetlayout,
-                'property': enqueueproperty,
-                'toggleclass': enqueuetoggleclass
+            if (messages === 'toggleclass' && !props.classname) throw new Error('[DOMQUERY] toggleclass requires classname');
+            const handlerMap = {
+                gethtml: enqueuegethtml, getvalue: enqueuegetvalue, getstyle: enqueuegetstyle,
+                getposition: enqueuegetposition, getlayout: enqueuegetlayout,
+                sethtml: enqueuesethtml, setposition: enqueuesetposition, setstyle: enqueuesetstyle,
+                setvalue: enqueuesetvalue, setlayout: enqueusetlayout, toggleclass: enqueuetoggleclass,
+                property: enqueueproperty
             };
-            const handler = messagehandlers[messages];
+            const handler = handlerMap[messages];
             const result = await callwithstack(
                 EVALSTACK, 'domquery:' + messages, 'async-await',
                 async (e) => {
                     if (setters.includes(messages)) {
-                        if (messages === 'toggleclass') {
-                            const classname = props.classname;
-                            const force = props.force;
-                            if (sig.inputs && sig.inputs.length > 0) {
-                                return await handler(commandid, compilepathaccessor(props.classname)(env), props.force);
-                            }
-                            return await handler(commandid, classname, force);
-                        }
+                        if (messages === 'toggleclass') return await handler(commandid, props.classname, props.force);
                         const resolvedvalue = props.value;
-                        if (sig.inputs && sig.inputs.length > 0) {
-                            return await handler(commandid, compilepathaccessor(props.value)(env));
-                        }
+                        if (sig.inputs && sig.inputs.length > 0) return await handler(commandid, compilepathaccessor(props.value)(env));
                         return await handler(commandid, resolvedvalue);
                     }
                     return await handler(commandid);
                 },
-                [env],
-                {
-                    context: { env },
-                    capturecontinuation: true,
-                    errk: (err) => {
-                        err.diagnostic = err.diagnostic || {};
-                        err.diagnostic.blockid = id;
-                        err.diagnostic.stagetype = 'domquery:' + messages;
-                        if (setters.includes(messages) && err.message && err.message.indexOf('element not found:') === 0) {
-                            return { ok: false, error: err.message };
-                        }
-                        throw err;
-                    }
-                }
+                [env], { context: { env }, capturecontinuation: true, errk: createerrorcontext(id, 'domquery:' + messages) }
             );
             writeoutputs(sig, env, result);
         };
@@ -778,13 +573,11 @@ const BLOCKCOMPILERS = {
     },
     [BLOCKTYPES.CRYPTO]: (merged, id, sig) => {
         const blockfn = async (env) => {
-            logdebug('[BLOCK] Executing crypto block:', id);
             const bytes = merged.bytes || 512;
-            const timeout = merged.timeout || 10000;
-            const outputkey = sig.outputs && Object.keys(sig.outputs).length > 0 ? Object.keys(sig.outputs)[0] : null;
-            if (!outputkey) throw new Error('[crypto] block "' + id + '" must have signature.outputs[0]');
-            const result = await new Promise(function(resolve, reject) {
-                RENDERACTOR.send({ type: MESSAGETYPES.CRYPTO, bytes: bytes, resolve: resolve, reject: reject });
+            const outputkey = Object.keys(sig.outputs)[0];
+            if (!outputkey) throw new Error('[crypto] requires outputs');
+            const result = await new Promise((resolve, reject) => {
+                RENDERACTOR.send({ type: MESSAGETYPES.CRYPTO, bytes, resolve, reject });
             });
             env[outputkey] = result;
             return {};
@@ -794,7 +587,6 @@ const BLOCKCOMPILERS = {
     },
     [BLOCKTYPES.WAIT]: (merged, id, sig) => {
         const blockfn = async (env) => {
-            logdebug('[BLOCK] Executing wait block:', id);
             const ms = typeof merged.ms === 'number' ? merged.ms : compilepathaccessor(merged.ms)(env);
             if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
             await new Promise(resolve => setTimeout(resolve, ms));
@@ -811,6 +603,34 @@ const BLOCKCOMPILERS = {
                 case 'get': {
                     const result = await enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null);
                     writeoutputs(sig, env, { result });
+                    break;
+                }
+                case 'tasks': {
+                    const result = await enqueueExecutionGetTasks({
+                        pipelineid: args.pipelineid,
+                        stageid: args.stageid,
+                        elementid: args.elementid,
+                        kind: args.kind
+                    });
+                    writeoutputs(sig, env, { result });
+                    break;
+                }
+                case 'task_status': {
+                    const result = await enqueueExecutionGetTaskStatus(args.taskid);
+                    writeoutputs(sig, env, { result });
+                    break;
+                }
+                case 'await_task': {
+                    const result = await enqueueExecutionAwaitTask(args.taskid);
+                    writeoutputs(sig, env, { result });
+                    break;
+                }
+                case 'cancel_task': {
+                    await enqueueExecutionCancelTask(args.taskid);
+                    break;
+                }
+                case 'stop_task': {
+                    await enqueueExecutionStopTask(args.taskid);
                     break;
                 }
                 case 'stop': await enqueueExecutionStopStage(args.pipelineid, args.stageid); break;
@@ -831,20 +651,7 @@ const BLOCKCOMPILERS = {
     },
     [BLOCKTYPES.STOREQUERY]: (merged, id, sig) => {
         const blockfn = async (env) => {
-            const command = merged.command;
-            const args = command.args || {};
-            switch (command.COMMAND) {
-                case 'store': {
-                    // Custom store keys can still be persisted through DB actor if imported,
-                    // but framework state is owned by actors. This block remains future extension.
-                    break;
-                }
-                case 'restore': {
-                    // Custom restore can be added when DB query blocks are reintroduced.
-                    break;
-                }
-                default: throw new Error('[storequery] unknown command: ' + command.COMMAND);
-            }
+            // Future custom store blocks. Framework state is actor-owned.
         };
         blockfn.id = id;
         return blockfn;
@@ -871,9 +678,7 @@ const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom 
 
     let startIndex = 0;
     if (resumeFrom && resumeFrom.stageId === stage.id) {
-        startIndex = (stage.elements || []).findIndex(el =>
-            el.id === resumeFrom.elementId
-        );
+        startIndex = (stage.elements || []).findIndex(el => el.id === resumeFrom.elementId);
         if (startIndex < 0) startIndex = 0;
     }
 
@@ -919,6 +724,75 @@ const stageRunner = (stage, children, startIndex = 0, pipelineId = 'default_pipe
     throw new Error('unknown stage command: ' + control.command);
 };
 
+const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipeline') => {
+    return async (env) => {
+        const stageExecutor = async (execEnv) => {
+            const elementIds = children.map(ch => ch.id || 'unknown');
+            const elements = {};
+            for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+
+            try {
+                await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+            } catch (err) {
+                console.warn('[DEFAULT] stage state failed:', err);
+            }
+
+            await executeChildren(children.slice(startIndex), execEnv, id);
+        };
+
+        const { taskid } = await enqueueExecutionSubmitStage({
+            pipelineid: pipelineId,
+            stageid: id,
+            stageExecutor,
+            env
+        });
+
+        await enqueueExecutionAwaitTask(taskid);
+    };
+};
+
+const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default_pipeline') => {
+    return async (env) => {
+        const stageExecutor = async (execEnv) => {
+            const elementIds = children.map(ch => ch.id || 'unknown');
+            const elements = {};
+            for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+
+            try {
+                await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+            } catch (err) {
+                console.warn('[LOOP] stage state failed:', err);
+            }
+
+            const controlprops = {};
+            for (const key of Object.keys(control)) {
+                if (key !== 'fn' && key !== 'inputs' && key !== 'command') controlprops[key] = control[key];
+            }
+            const inputaccessors = (control.inputs || []).map(k => compilepathaccessor(k));
+            let first = true;
+            while (true) {
+                if (!execEnv.rngactive) break;
+                const slice = first ? children.slice(startIndex) : children;
+                await executeChildren(slice, execEnv, id);
+                first = false;
+                const inputargs = inputaccessors.map(fn => fn(execEnv));
+                const fnargs = [controlprops].concat(inputargs);
+                const shouldcontinue = await control.fn(...fnargs);
+                if (!shouldcontinue) break;
+            }
+        };
+
+        const { taskid } = await enqueueExecutionSubmitStage({
+            pipelineid: pipelineId,
+            stageid: id,
+            stageExecutor,
+            env
+        });
+
+        await enqueueExecutionAwaitTask(taskid);
+    };
+};
+
 const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0, resumeStage = false) => {
     return async (env) => {
         const sourceref = env[control.sourceid];
@@ -929,24 +803,34 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
             return {};
         }
 
-        // Record stage elements as WAITING via Execution Actor.
-        const elementIds = children.map(ch => ch.id || ch.blockmeta?.id || 'unknown');
-        const elements = {};
-        for (const elementId of elementIds) {
-            elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
-        }
-        try {
-            await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
-        } catch (err) {
-            console.warn('[TRIGGER] execution actor stage state failed:', err);
-        }
+        const runTriggerStage = async (execEnv, slice) => {
+            const elementIds = children.map(ch => ch.id || 'unknown');
+            const elements = {};
+            for (const elementId of elementIds) elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
+
+            try {
+                await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
+            } catch (err) {
+                console.warn('[TRIGGER] stage state failed:', err);
+            }
+
+            await executeChildren(slice, execEnv, id);
+        };
 
         const handler = async (e) => {
             env.eventtarget = e.target;
             if (stage.output !== null && stage.output !== undefined) {
                 env[stage.output] = deepcloneevent(e);
             }
-            await executeChildren(children, env, id);
+
+            const { taskid } = await enqueueExecutionSubmitStage({
+                pipelineid: pipelineId,
+                stageid: id,
+                stageExecutor: (execEnv) => runTriggerStage(execEnv, children),
+                env
+            });
+            await enqueueExecutionAwaitTask(taskid);
+
             if (control.rerunfrom !== undefined && typeof env._rerunStages === 'function') {
                 await env._rerunStages(control.rerunfrom);
             }
@@ -955,66 +839,18 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
         rs(control.sourceid, eventtype, handler);
         registerTrigger(control.sourceid, eventtype, handler);
 
-        // P92/P95: If this trigger stage is the interrupted resume target,
-        // finish the broken execution immediately before waiting for future events.
+        // If this trigger stage is the interrupted resume target, finish it now.
         if (resumeStage) {
             const remaining = startIndex > 0 ? children.slice(startIndex) : children;
-            await executeChildren(remaining, env, id);
+            const { taskid } = await enqueueExecutionSubmitStage({
+                pipelineid: pipelineId,
+                stageid: id,
+                stageExecutor: (execEnv) => runTriggerStage(execEnv, remaining),
+                env
+            });
+            await enqueueExecutionAwaitTask(taskid);
         }
 
-        return {};
-    };
-};
-
-const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default_pipeline') => {
-    return async (env) => {
-        const elementIds = children.map(ch => ch.id || ch.blockmeta?.id || 'unknown');
-        const elements = {};
-        for (const elementId of elementIds) {
-            elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
-        }
-        try {
-            await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
-        } catch (err) {
-            console.warn('[LOOP] execution actor stage state failed:', err);
-        }
-
-        const controlprops = {};
-        for (const key of Object.keys(control)) {
-            if (key !== 'fn' && key !== 'inputs' && key !== 'command') {
-                controlprops[key] = control[key];
-            }
-        }
-        const inputaccessors = (control.inputs || []).map(k => compilepathaccessor(k));
-        let first = true;
-        while (true) {
-            if (!env.rngactive) break;
-            const slice = first ? children.slice(startIndex) : children;
-            await executeChildren(slice, env, id);
-            first = false;
-            const inputargs = inputaccessors.map(fn => fn(env));
-            const fnargs = [controlprops].concat(inputargs);
-            const shouldcontinue = await control.fn(...fnargs);
-            if (!shouldcontinue) break;
-        }
-        return {};
-    };
-};
-
-const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipeline') => {
-    return async (env) => {
-        const elementIds = children.map(ch => ch.id || ch.blockmeta?.id || 'unknown');
-        const elements = {};
-        for (const elementId of elementIds) {
-            elements[elementId] = { status: 'WAITING', savedAt: Date.now() };
-        }
-        try {
-            await enqueueExecutionStageState(pipelineId, id, { status: 'running', elements });
-        } catch (err) {
-            console.warn('[DEFAULT] execution actor stage state failed:', err);
-        }
-
-        await executeChildren(children.slice(startIndex), env, id);
         return {};
     };
 };
@@ -1036,29 +872,22 @@ const executeChildren = async (children, env, stageid) => {
             throw err;
         }
     }
+
     if (env.stack && env.stack.agentspawned === stageid) return spawnOutputs;
+
     for (const so of spawnOutputs) {
-        const childPipelineId =
-            so.dna?.identity?.id ||
-            so.containerref ||
-            'child_pipeline';
+        const childPipelineId = so.dna?.identity?.id || so.containerref || 'child_pipeline';
 
-        var run = await compilepipeline(
-            so.dna.pipeline,
-            null,
-            [],
-            childPipelineId
-        );
+        const childRunner = async (agent) => {
+            const childCompiled = await compilepipeline(so.dna.pipeline, null, [], childPipelineId);
+            await childCompiled.pipeline(agent);
+        };
 
-        logdebug('[SPAWN] Child pipeline recovery:', {
+        const { taskid } = await enqueueExecutionSpawnPipeline({
+            parentPipelineId: env.pipelineid || env.agentid || 'unknown',
             childPipelineId,
-            resumeFrom: run.resumeFrom,
-            restoredEnv: run.restoredEnv ? 'yes' : 'no'
-        });
-
-        await run.pipeline({
-            id: childPipelineId,
-            env: {
+            childRunner,
+            childEnv: {
                 ...so.inheritedenv,
                 containerid: so.containerref,
                 rngactive: true,
@@ -1066,9 +895,13 @@ const executeChildren = async (children, env, stageid) => {
                 registersubscription: env.registersubscription,
                 updateworldmap: env.updateworldmap,
                 pipelineid: childPipelineId
-            }
+            },
+            containerref: so.containerref
         });
+
+        await enqueueExecutionAwaitTask(taskid);
     }
+
     if (env.stack) env.stack.agentspawned = stageid;
     return spawnOutputs;
 };
@@ -1153,100 +986,237 @@ const buildSpawnBootstrapMap = (pipeline) => {
         for (const el of stage.elements || []) {
             if (el.element === 'BLOCK' && el.type === 'spawn' && el.dna) {
                 const childPipelineId = el.dna.identity?.id || el.container || 'child_pipeline';
-                map[childPipelineId] = {
-                    dna: el.dna,
-                    containerref: el.container || null
-                };
+                map[childPipelineId] = { dna: el.dna, containerref: el.container || null };
             }
         }
     }
     return map;
 };
 
-export const compilepipeline = async (
-    pipeline,
-    accessors,
-    sinks,
-    pipelineIdOverride = null
-) => {
-    if (!pipeline.elements) {
-        throw new Error('[compilepipeline] pipeline must have elements array');
+// Local pipeline runner — replaces deleted pipe.js.
+const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
+  if (!Array.isArray(stages)) throw new Error('[PIPELINE] Stages must be an array.');
+
+  const {
+    resumeFrom = null,
+    pipelineId = 'default_pipeline',
+    restoredEnv = null
+  } = options;
+
+  const stageStack = [];
+
+  const awaitPendingForReads = async (reads) => {
+    const pending = stageStack.filter(entry =>
+      entry.writes.some(k => reads.includes(k))
+    );
+    if (pending.length) {
+      await Promise.all(pending.map(p => p.promise));
+      for (const p of pending) {
+        const idx = stageStack.indexOf(p);
+        if (idx !== -1) stageStack.splice(idx, 1);
+      }
     }
+  };
 
-    const pipelineId =
-        pipelineIdOverride ||
-        pipeline.id ||
-        pipeline.identity?.id ||
-        'default_pipeline';
+  const runStage = async (stage, env, callerid, stageid) => {
+    const meta = stage.stagemeta || {};
+    const isAsync = meta.async === true;
 
-    const rawStages = [];
-    for (const el of pipeline.elements) {
-        if (el.element === 'STAGE') {
-            rawStages.push({
-                id: el.id,
-                control: el.control || null,
-                blocks: (el.elements || []).filter(e => e.element === 'BLOCK')
-            });
-        }
-    }
+    const reads = meta.reads || [];
+    const writes = meta.writes || [];
 
-    const contracts = validatestageflow(rawStages);
-    const unresolved = contracts.filter(c => !c.resolved);
-    if (unresolved.length > 0) {
-        throw new Error('[compilepipeline] Unresolved stage key dependencies: ' +
-            unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
-    }
-
-    // Ensure pipeline exists in Execution Actor without overwriting saved env.
-    try {
-        await enqueueExecutionPipelineLoaded(pipelineId, {});
-    } catch (err) {
-        console.warn('[compilepipeline] pipeline loaded event failed:', err);
-    }
-
-    // Recover saved execution state from Execution Actor.
-    let savedState = null;
-    try {
-        savedState = await enqueueExecutionRecover(pipelineId);
-    } catch (err) {
-        console.warn('[compilepipeline] execution recover failed:', err);
-    }
-
-    let resumeFrom = null;
-    if (savedState && savedState.stages) {
-        for (const stage of pipeline.elements) {
-            if (stage.element !== 'STAGE') continue;
-            const stageRecord = savedState.stages[stage.id];
-            if (!stageRecord) continue;
-            for (const el of stage.elements || []) {
-                if (el.element !== 'BLOCK') continue;
-                const elementState = stageRecord.elements?.[el.id];
-                if (
-                    elementState &&
-                    (elementState.status === 'WAITING' || elementState.status === 'RUNNING')
-                ) {
-                    resumeFrom = { stageId: stage.id, elementId: el.id };
-                    break;
-                }
+    if (!isAsync) {
+      try {
+        await callwithstack(
+          EVALSTACK,
+          'stage-' + stageid + ':' + (stage.intent || 'unnamed'),
+          'asyncawait',
+          async () => {
+            const patch = await stage(env);
+            if (patch && typeof patch === 'object') {
+              const updateworldmap = env.updateworldmap;
+              if (updateworldmap) updateworldmap(patch);
             }
-            if (resumeFrom) break;
-        }
+            return env;
+          },
+          [],
+          {
+            context: { env, pipestate: env.pipestate, callerid },
+            errk: (err) => {
+              err.diagnostic = err.diagnostic || {};
+              err.diagnostic.pipelinestage = stageid;
+              throw err;
+            }
+          }
+        );
+      } catch (err) {
+        throw err;
+      }
+      return;
     }
 
-    const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
+    const promise = callwithstack(
+      EVALSTACK,
+      'stage-async-' + stageid + ':' + (stage.intent || 'unnamed'),
+      'asyncawait',
+      async () => {
+        const patch = await stage(env);
+        if (patch && typeof patch === 'object') {
+          const updateworldmap = env.updateworldmap;
+          if (updateworldmap) updateworldmap(patch);
+        }
+        return env;
+      },
+      [],
+      {
+        context: { env, pipestate: env.pipestate, callerid },
+        errk: (err) => {
+          err.diagnostic = err.diagnostic || {};
+          err.diagnostic.pipelinestage = stageid;
+          throw err;
+        }
+      }
+    );
 
-    const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom);
-    const compiledpipeline = createpipeline(compiled, sinks, undefined, {
-        resumeFrom,
-        pipelineId,
-        restoredEnv: savedState?.env || null
-    });
+    stageStack.push({ promise, reads, writes, stageid });
+  };
 
-    return {
-        pipeline: compiledpipeline,
-        resumeFrom,
-        restoredEnv: savedState?.env || null,
-        pipelineId,
-        spawnBootstrapMap
-    };
+  const runAll = async (env, fromIndex = 0) => {
+    if (restoredEnv && typeof restoredEnv === 'object') {
+      for (const [key, value] of Object.entries(restoredEnv)) {
+        if (!(key in env) || env[key] === undefined) env[key] = value;
+      }
+    }
+
+    let resumeIndex = -1;
+    if (resumeFrom && resumeFrom.stageId) {
+      resumeIndex = stages.findIndex(s => (s.id || s.stagemeta?.stageid) === resumeFrom.stageId);
+    }
+
+    try {
+      for (let idx = fromIndex; idx < stages.length; idx++) {
+        const stage = stages[idx];
+        const stageid = stage.id || stage.stagemeta?.stageid || ('stage_' + idx);
+
+        if (resumeIndex !== -1 && idx < resumeIndex) continue;
+
+        let pipelineStatus = null;
+        try {
+          pipelineStatus = await enqueueExecutionGetStatus(pipelineId);
+        } catch (err) {}
+
+        const savedStageStatus = pipelineStatus?.stages?.[stageid]?.status || null;
+        if (savedStageStatus === 'cancelled') continue;
+        if (savedStageStatus === 'stopped') continue;
+
+        const callerid = env.agentid + ':' + stageid;
+        const reads = stage.stagemeta?.reads || [];
+        await awaitPendingForReads(reads);
+
+        if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP') {
+          if (stage.control.fn) {
+            const shouldexecute = await stage.control.fn(env);
+            if (!shouldexecute) continue;
+          }
+        }
+
+        await runStage(stage, env, callerid, stageid);
+      }
+
+      if (stageStack.length) {
+        await Promise.all(stageStack.map(p => p.promise));
+        stageStack.length = 0;
+      }
+    } catch (err) {
+      throw err;
+    }
+  };
+
+  return async (agent) => {
+    const env = agent.env;
+    if (!env || typeof env !== 'object') throw new Error('[PIPELINE] agent.env is required');
+    env.agentid = agent.id;
+    env._rerunStages = (fromIndex) => runAll(env, fromIndex);
+    await runAll(env);
+    return env;
+  };
+};
+
+export const compilepipeline = async (
+  pipeline,
+  accessors,
+  sinks,
+  pipelineIdOverride = null
+) => {
+  if (!pipeline.elements) throw new Error('[compilepipeline] pipeline must have elements array');
+
+  const pipelineId = pipelineIdOverride || pipeline.id || pipeline.identity?.id || 'default_pipeline';
+
+  const rawStages = [];
+  for (const el of pipeline.elements) {
+    if (el.element === 'STAGE') {
+      rawStages.push({
+        id: el.id,
+        control: el.control || null,
+        blocks: (el.elements || []).filter(e => e.element === 'BLOCK')
+      });
+    }
+  }
+
+  const contracts = validatestageflow(rawStages);
+  const unresolved = contracts.filter(c => !c.resolved);
+  if (unresolved.length > 0) {
+    throw new Error('[compilepipeline] Unresolved stage key dependencies: ' +
+      unresolved.map(c => c.stageid + ': missing ' + c.missingkeys.join(', ')).join('; '));
+  }
+
+  try {
+    await enqueueExecutionPipelineLoaded(pipelineId, {});
+  } catch (err) {
+    console.warn('[compilepipeline] pipeline loaded event failed:', err);
+  }
+
+  let savedState = null;
+  try {
+    savedState = await enqueueExecutionRecover(pipelineId);
+  } catch (err) {
+    console.warn('[compilepipeline] execution recover failed:', err);
+  }
+
+  let resumeFrom = null;
+  let restoredEnv = savedState?.env || null;
+
+  if (savedState && savedState.stages) {
+    outer:
+    for (const stage of pipeline.elements) {
+      if (stage.element !== 'STAGE') continue;
+      const stageRecord = savedState.stages[stage.id];
+      if (!stageRecord) continue;
+      for (const el of stage.elements || []) {
+        if (el.element !== 'BLOCK') continue;
+        const elementState = stageRecord.elements?.[el.id];
+        if (elementState && elementState.status === 'RUNNING') {
+          resumeFrom = { stageId: stage.id, elementId: el.id };
+          break outer;
+        }
+      }
+    }
+  }
+
+  const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
+
+  const compiled = compileElements(pipeline.elements, pipelineId, resumeFrom);
+  const compiledpipeline = createpipeline(compiled, sinks, undefined, {
+    resumeFrom,
+    pipelineId,
+    restoredEnv
+  });
+
+  return {
+    pipeline: compiledpipeline,
+    resumeFrom,
+    restoredEnv,
+    pipelineId,
+    spawnBootstrapMap
+  };
 };
