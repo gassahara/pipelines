@@ -3,7 +3,8 @@ import { createactor, createMessageValidator } from './actorkernel.js';
 export const DBMESSAGETYPES = Object.freeze({
   STORE: 'store',
   RESTORE: 'restore',
-  LIST: 'list'
+  LIST: 'list',
+  DELETE: 'delete'
 });
 
 const MESSAGEINTERFACES = Object.freeze({
@@ -19,6 +20,11 @@ const MESSAGEINTERFACES = Object.freeze({
     reject: 'function?'
   },
   [DBMESSAGETYPES.LIST]: {
+    resolve: 'function?',
+    reject: 'function?'
+  },
+  [DBMESSAGETYPES.DELETE]: {
+    key: 'string',
     resolve: 'function?',
     reject: 'function?'
   }
@@ -160,6 +166,15 @@ const dbbehavior = (state, message) => {
       }
       break;
     }
+
+    case DBMESSAGETYPES.DELETE: {
+      store.delete(message.key);
+      const success = persist(store);
+      if (typeof message.resolve === 'function') {
+        message.resolve(success);
+      }
+      break;
+    }
   }
 
   return { store };
@@ -192,6 +207,16 @@ export const enqueueDbList = () =>
   new Promise((resolve, reject) =>
     DBACTOR.send({
       type: DBMESSAGETYPES.LIST,
+      resolve,
+      reject
+    })
+  );
+
+export const enqueueDbDelete = (key) =>
+  new Promise((resolve, reject) =>
+    DBACTOR.send({
+      type: DBMESSAGETYPES.DELETE,
+      key,
       resolve,
       reject
     })

@@ -24,8 +24,8 @@ import {
   enqueuegetviewport,
   enqueuegetscreen,
   enqueuematchmedia,
-  enqueueRenderSnapshot,
-  enqueueRenderRecover
+  enqueueRenderGetBodyHtml,
+  enqueueRenderRestoreBodyHtml
 } from '../actors/renderactor.js';
 import { logwarn, logdebug, loginfo } from '../verbosity.js';
 import { registerTrigger } from '../actors/trigerregistry.js';
@@ -51,6 +51,11 @@ import {
   enqueueExecutionGetInterruptedStage,
   enqueueExecutionSpawnPipeline
 } from '../actors/executionactor.js';
+import {
+  enqueueDbStore,
+  enqueueDbRestore,
+  enqueueDbDelete
+} from '../actors/dbactor.js';
 
 const BLOCKTYPES = Object.freeze({
   FN: 'fn',
@@ -129,6 +134,34 @@ const safeFullEnv = (env) => {
   return out;
 };
 
+const pipelineHtmlSnapshotKey = (pipelineId, topStageId) =>
+  `pipeline:${pipelineId}:stage:${topStageId}:htmlsnapshot`;
+
+const savePipelineHtmlSnapshot = async (pipelineId, topStageId) => {
+  try {
+    const html = await enqueueRenderGetBodyHtml();
+    await enqueueDbStore(
+      pipelineHtmlSnapshotKey(pipelineId, topStageId),
+      {
+        pipelineId,
+        topStageId,
+        savedAt: Date.now(),
+        html
+      }
+    );
+  } catch (err) {
+    console.warn('[BLOCKCOMPILER] html snapshot save failed:', err);
+  }
+};
+
+const deletePipelineHtmlSnapshot = async (pipelineId, topStageId) => {
+  try {
+    await enqueueDbDelete(pipelineHtmlSnapshotKey(pipelineId, topStageId));
+  } catch (err) {
+    console.warn('[BLOCKCOMPILER] html snapshot delete failed:', err);
+  }
+};
+
 const createPersistentElementWrapper = (compiledElement, elementDef, stagePath, pipelineId) => {
   const elementId = elementDef.id || compiledElement.id || 'element_unknown';
   const outputKeys = Object.keys(elementDef?.signature?.outputs || {});
@@ -165,12 +198,10 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stagePath, 
 
     logdebug('[ELEMENT] completed:', elementId);
 
-    if (elementDef.type === 'writer') {
-      try {
-        await enqueueRenderSnapshot();
-      } catch (err) {
-        console.warn('[BLOCKCOMPILER] render snapshot failed:', err);
-      }
+    // Save per-pipeline HTML snapshot after every successful element.
+    const topStageId = stagePath[0];
+    if (topStageId) {
+      await savePipelineHtmlSnapshot(pipelineId, topStageId);
     }
 
     return result;
@@ -732,6 +763,7 @@ const defaultRunner = (id, children, startIndex = 0, pipelineId = 'default_pipel
         });
 
         await enqueueExecutionAwaitTask(taskid);
+        await deletePipelineHtmlSnapshot(pipelineId, stagePath[0]);
     };
 };
 
@@ -776,6 +808,7 @@ const loopRunner = (id, control, children, startIndex = 0, pipelineId = 'default
         });
 
         await enqueueExecutionAwaitTask(taskid);
+        await deletePipelineHtmlSnapshot(pipelineId, stagePath[0]);
     };
 };
 
@@ -818,6 +851,7 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
                 env
             });
             await enqueueExecutionAwaitTask(taskid);
+            await deletePipelineHtmlSnapshot(pipelineId, stagePath[0]);
 
             if (control.rerunfrom !== undefined && typeof env._rerunStages === 'function') {
                 await env._rerunStages(control.rerunfrom);
@@ -837,6 +871,7 @@ const triggerRunner = (id, control, children, stage, pipelineId, startIndex = 0,
                 env
             });
             await enqueueExecutionAwaitTask(taskid);
+            await deletePipelineHtmlSnapshot(pipelineId, stagePath[0]);
         }
 
         return {};
@@ -1171,14 +1206,22 @@ export const compilepipeline = async (
 
   let htmlRecovered = false;
   if (interrupted) {
+    const topStageId = interrupted.path?.[0];
+    const snapshotKey = pipelineHtmlSnapshotKey(pipelineId, topStageId);
+
     try {
-      htmlRecovered = await enqueueRenderRecover();
+      const snapshot = await enqueueDbRestore(snapshotKey);
+      if (snapshot && typeof snapshot.html === 'string') {
+        await enqueueRenderRestoreBodyHtml(snapshot.html);
+        htmlRecovered = true;
+      }
     } catch (err) {
-      console.warn('[compilepipeline] html recover failed:', err);
+      console.warn('[compilepipeline] per-pipeline html restore failed:', err);
     }
+
     logdebug('[compilepipeline] html recover result:', htmlRecovered);
   } else {
-    logdebug('[compilepipeline] no interrupted stage; skipping HTML recover');
+    logdebug('[compilepipeline] no interrupted stage; skipping HTML restore');
   }
 
   const resumeFrom = interrupted
