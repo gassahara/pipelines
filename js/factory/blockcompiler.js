@@ -90,6 +90,11 @@ const createPersistentElementWrapper = (compiledElement, elementDef, stagePath, 
 
   wrapper.id = elementId;
   wrapper.kind = 'element';
+
+  if (compiledElement.blockmeta) {
+    wrapper.blockmeta = compiledElement.blockmeta;
+  }
+
   return wrapper;
 };
 
@@ -365,7 +370,7 @@ const BLOCKCOMPILERS = {
         EVALSTACK, 'domquery:' + cmd, 'async-await',
         async () => {
           if (DOMQUERYSETTERS.includes(cmd)) {
-            if (cmd === 'toggleclass') return await handler(props.id, props.classname, props.force);
+            if (cmd === 'toggleclass') return await handler(props.id, props.classname ?? props.value, props.force);
             const val = sig.inputs?.length > 0 ? compilepathaccessor(props.value)(env) : props.value;
             return await handler(props.id, val);
           }
