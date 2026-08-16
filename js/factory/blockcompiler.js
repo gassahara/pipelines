@@ -213,7 +213,8 @@ const validaterevivableobject = (obj, label = 'briefcase') => {
   return errors;
 };
 
-const isWhitespace = (ch) => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\v' || ch === '\f';
+const isWhitespace = (ch) => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\v' || ch === '\f' || ch === '\uFEFF';
+const isLineTerminator = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029';
 const isDigit = (ch) => ch >= '0' && ch <= '9';
 const isIdentifierStart = (ch) =>
   (ch >= 'a' && ch <= 'z') ||
@@ -222,39 +223,26 @@ const isIdentifierStart = (ch) =>
 const isIdentifierPart = (ch) => isIdentifierStart(ch) || isDigit(ch);
 
 const RESERVED = new Set([
-    'function','if','continue', 'return','let','const','var','switch','case','break','null','true','false','of','in','new','typeof','instanceof','else','do','while','for','try','catch','finally','throw','this','super','class','extends','import','export','default','void','delete','yield','await','async','static','get','set','debugger','with','enum','implements','interface','package','private','protected','public'
+  'function','if','return','let','const','var','switch','case','break','continue','null','true','false','of','in','new','typeof','instanceof','else','do','while','for','try','catch','finally','throw','this','super','class','extends','import','export','default','void','delete','yield','await','async','static','get','set','debugger','with','enum','implements','interface','package','private','protected','public'
 ]);
 
 const BUILTINS = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt']);
 
-const detectFreeIdentifiers = (source) => {
-  const scope = {};
-  const free = [];
+const tokenize = (source) => {
+  const tokens = [];
   let i = 0;
-
-  const readPreviousWord = (start) => {
-    let wordStart = start - 1;
-    while (wordStart >= 0 && isWhitespace(source[wordStart])) wordStart -= 1;
-    const wordEnd = wordStart + 1;
-    wordStart = wordEnd;
-    while (wordStart > 0 && isIdentifierPart(source[wordStart - 1])) wordStart -= 1;
-    return source.slice(wordStart, wordEnd);
-  };
 
   while (i < source.length) {
     const ch = source[i];
 
-    // whitespace
-    if (isWhitespace(ch)) { i += 1; continue; }
+    if (isWhitespace(ch) || isLineTerminator(ch)) { i += 1; continue; }
 
-    // line comment
     if (ch === '/' && i + 1 < source.length && source[i + 1] === '/') {
       i += 2;
       while (i < source.length && source[i] !== '\n') i += 1;
       continue;
     }
 
-    // block comment
     if (ch === '/' && i + 1 < source.length && source[i + 1] === '*') {
       i += 2;
       while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
@@ -262,7 +250,6 @@ const detectFreeIdentifiers = (source) => {
       continue;
     }
 
-    // string literal
     if (ch === '"' || ch === "'" || ch === '`') {
       const quote = ch;
       i += 1;
@@ -271,69 +258,273 @@ const detectFreeIdentifiers = (source) => {
         if (source[i] === quote) { i += 1; break; }
         i += 1;
       }
+      tokens.push({ type: 'literal', value: 'string' });
       continue;
     }
 
-    // number
-    if (isDigit(ch)) {
+    if (isDigit(ch) || (ch === '.' && i + 1 < source.length && isDigit(source[i + 1]))) {
       i += 1;
       while (i < source.length) {
         const c = source[i];
         if (isDigit(c) || c === '.' || c === '_' || c === 'x' || c === 'X' || c === 'a' || c === 'A' || c === 'b' || c === 'B' || c === 'c' || c === 'C' || c === 'd' || c === 'D' || c === 'e' || c === 'E' || c === 'f' || c === 'F') i += 1;
         else break;
       }
+      tokens.push({ type: 'literal', value: 'number' });
       continue;
     }
 
-    // identifier
+    if (ch === '=' && i + 1 < source.length && source[i + 1] === '>') {
+      tokens.push({ type: 'punctuator', value: '=>' });
+      i += 2;
+      continue;
+    }
+
     if (isIdentifierStart(ch)) {
       const start = i;
       i += 1;
       while (i < source.length && isIdentifierPart(source[i])) i += 1;
-      const id = source.slice(start, i);
+      const value = source.slice(start, i);
+      tokens.push({ type: RESERVED.has(value) ? 'keyword' : 'identifier', value });
+      continue;
+    }
 
-      if (RESERVED.has(id)) continue;
-      if (BUILTINS.has(id)) continue;
-
-      // property access: previous non-whitespace is '.'
-      let p = start - 1;
-      while (p >= 0 && isWhitespace(source[p])) p -= 1;
-      if (p >= 0 && source[p] === '.') continue;
-
-      // object key: next non-whitespace is ':'
-      let q = i;
-      while (q < source.length && isWhitespace(source[q])) q += 1;
-      if (q < source.length && source[q] === ':') {
-        i = q;
-        continue;
-      }
-
-      // declaration context: previous word is const/let/var/function, or inside parameter list
-      const previousWord = readPreviousWord(start);
-      if (previousWord === 'const' || previousWord === 'let' || previousWord === 'var' || previousWord === 'function') {
-        scope[id] = true;
-        continue;
-      }
-
-      let depth = 0;
-      let lastParenOpen = -1;
-      for (let k = start - 1; k >= 0; k -= 1) {
-        if (source[k] === ')') depth += 1;
-        else if (source[k] === '(') {
-          depth -= 1;
-          if (depth < 0) { lastParenOpen = k; break; }
-        }
-      }
-      if (lastParenOpen !== -1) {
-        scope[id] = true;
-        continue;
-      }
-
-      if (scope[id] === undefined && free.indexOf(id) === -1) free.push(id);
+    if ('{}()[].,;:=<>+-*/%&|!?~'.includes(ch)) {
+      tokens.push({ type: 'punctuator', value: ch });
+      i += 1;
       continue;
     }
 
     i += 1;
+  }
+
+  return tokens;
+};
+
+const skipExpression = (tokens, start) => {
+  let depth = 0;
+  let i = start;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (t.type === 'punctuator') {
+      if (t.value === '(' || t.value === '[' || t.value === '{') depth += 1;
+      else if (t.value === ')' || t.value === ']' || t.value === '}') {
+        if (depth === 0) return i;
+        depth -= 1;
+      } else if (depth === 0 && (t.value === ',' || t.value === ';')) {
+        return i;
+      }
+    }
+    i += 1;
+  }
+  return i;
+};
+
+const parseBindingPattern = (tokens, start, scope) => {
+  let depth = 0;
+  let i = start;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (t.type === 'punctuator') {
+      if (t.value === '{' || t.value === '[') {
+        depth += 1;
+        i += 1;
+        continue;
+      }
+      if (t.value === '}' || t.value === ']') {
+        depth -= 1;
+        i += 1;
+        if (depth === 0) return i;
+        continue;
+      }
+    }
+    if (t.type === 'identifier') {
+      scope[t.value] = true;
+    }
+    i += 1;
+  }
+  return i;
+};
+
+const parseDeclarationList = (tokens, start, scope) => {
+  let i = start;
+  let expectName = true;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (t.type === 'identifier' && expectName) {
+      scope[t.value] = true;
+      expectName = false;
+      i += 1;
+      continue;
+    }
+    if (t.type === 'punctuator') {
+      if (t.value === '{' || t.value === '[') {
+        i = parseBindingPattern(tokens, i, scope);
+        expectName = false;
+        continue;
+      }
+      if (t.value === '=') {
+        i = skipExpression(tokens, i + 1);
+        expectName = false;
+        continue;
+      }
+      if (t.value === ',') {
+        expectName = true;
+        i += 1;
+        continue;
+      }
+      if (t.value === ';' || t.value === ')') {
+        return i;
+      }
+    }
+    i += 1;
+  }
+  return i;
+};
+
+const parseFunctionParameters = (tokens, parenIndex, scope) => {
+  let depth = 0;
+  let end = parenIndex;
+  for (let j = parenIndex; j < tokens.length; j += 1) {
+    const t = tokens[j];
+    if (t.type !== 'punctuator') continue;
+    if (t.value === '(') depth += 1;
+    else if (t.value === ')') {
+      depth -= 1;
+      if (depth === 0) { end = j; break; }
+    }
+  }
+  for (let m = parenIndex + 1; m < end; m += 1) {
+    const t = tokens[m];
+    if (t.type === 'identifier') {
+      scope[t.value] = true;
+    } else if (t.type === 'punctuator' && (t.value === '{' || t.value === '[')) {
+      m = parseBindingPattern(tokens, m, scope) - 1;
+    }
+  }
+  return end + 1;
+};
+
+const handleFunctionDeclaration = (tokens, start, scope) => {
+  let i = start + 1;
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '*') i += 1;
+  if (tokens[i] && tokens[i].type === 'identifier') {
+    scope[tokens[i].value] = true;
+    i += 1;
+  }
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    i = parseFunctionParameters(tokens, i, scope);
+  }
+  return i;
+};
+
+const handleArrowParameters = (tokens, arrowIndex, scope) => {
+  const prev = tokens[arrowIndex - 1];
+  if (!prev) return;
+  if (prev.type === 'identifier') {
+    scope[prev.value] = true;
+    return;
+  }
+  if (prev.type === 'punctuator' && prev.value === ')') {
+    let depth = 0;
+    for (let k = arrowIndex - 1; k >= 0; k -= 1) {
+      const t = tokens[k];
+      if (t.type !== 'punctuator') continue;
+      if (t.value === ')') depth += 1;
+      else if (t.value === '(') {
+        depth -= 1;
+        if (depth === 0) {
+          for (let m = k + 1; m < arrowIndex - 1; m += 1) {
+            const p = tokens[m];
+            if (p.type === 'identifier') scope[p.value] = true;
+            else if (p.type === 'punctuator' && (p.value === '{' || p.value === '[')) {
+              m = parseBindingPattern(tokens, m, scope) - 1;
+            }
+          }
+          break;
+        }
+      }
+    }
+  }
+};
+
+const handleForInitializer = (tokens, start, scope) => {
+  let i = start + 1;
+  if (tokens[i] && tokens[i].type === 'identifier' && tokens[i].value === 'await') i += 1;
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    i += 1;
+    if (tokens[i] && tokens[i].type === 'keyword' && (tokens[i].value === 'let' || tokens[i].value === 'var' || tokens[i].value === 'const')) {
+      i = parseDeclarationList(tokens, i + 1, scope);
+    } else {
+      while (i < tokens.length && !(tokens[i].type === 'punctuator' && tokens[i].value === ';')) i += 1;
+    }
+  }
+  return i;
+};
+
+const handleCatchParameter = (tokens, start, scope) => {
+  let i = start + 1;
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    i += 1;
+    if (tokens[i] && tokens[i].type === 'identifier') {
+      scope[tokens[i].value] = true;
+      i += 1;
+    } else if (tokens[i] && tokens[i].type === 'punctuator' && (tokens[i].value === '{' || tokens[i].value === '[')) {
+      i = parseBindingPattern(tokens, i, scope);
+    }
+  }
+  return i;
+};
+
+const parseDeclarations = (tokens) => {
+  const scope = {};
+  let i = 0;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (t.type === 'keyword') {
+      if (t.value === 'const' || t.value === 'let' || t.value === 'var') {
+        i = parseDeclarationList(tokens, i + 1, scope);
+        continue;
+      }
+      if (t.value === 'function') {
+        i = handleFunctionDeclaration(tokens, i, scope);
+        continue;
+      }
+      if (t.value === 'for') {
+        i = handleForInitializer(tokens, i, scope);
+        continue;
+      }
+      if (t.value === 'catch') {
+        i = handleCatchParameter(tokens, i, scope);
+        continue;
+      }
+    }
+    if (t.type === 'punctuator' && t.value === '=>') {
+      handleArrowParameters(tokens, i, scope);
+    }
+    i += 1;
+  }
+  return scope;
+};
+
+const detectFreeIdentifiers = (source) => {
+  const tokens = tokenize(source);
+  const scope = parseDeclarations(tokens);
+  const free = [];
+
+  for (let idx = 0; idx < tokens.length; idx += 1) {
+    const t = tokens[idx];
+    if (t.type !== 'identifier') continue;
+    const id = t.value;
+    if (RESERVED.has(id) || BUILTINS.has(id)) continue;
+    if (scope[id] !== undefined) continue;
+
+    const prev = idx > 0 ? tokens[idx - 1] : null;
+    if (prev && prev.type === 'punctuator' && prev.value === '.') continue;
+
+    const next = idx + 1 < tokens.length ? tokens[idx + 1] : null;
+    if (next && next.type === 'punctuator' && next.value === ':') continue;
+
+    if (free.indexOf(id) === -1) free.push(id);
   }
 
   return free;

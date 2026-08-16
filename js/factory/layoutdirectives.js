@@ -289,7 +289,8 @@ export function checkOverlapDoc(doc) {
   const positioned = Array.from(doc.getElementsByTagName('*')).filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
   for (let i = 0; i < positioned.length; i++) {
     for (let j = i + 1; j < positioned.length; j++) {
-      const a = positioned[i], b = positioned[j];
+	const a = positioned[i];
+	const b = positioned[j];
       const aTop = parseFloat(a.style.top) || 0, aLeft = parseFloat(a.style.left) || 0, aW = parseFloat(a.style.width) || 0, aH = parseFloat(a.style.height) || 0;
       const bTop = parseFloat(b.style.top) || 0, bLeft = parseFloat(b.style.left) || 0, bW = parseFloat(b.style.width) || 0, bH = parseFloat(b.style.height) || 0;
       if (aW && aH && bW && bH && aLeft < bLeft + bW && aLeft + aW > bLeft && aTop < bTop + bH && aTop + aH > bTop) {
