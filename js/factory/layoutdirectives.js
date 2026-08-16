@@ -259,7 +259,8 @@ export function checkSpacingDoc(doc, minGap) {
         ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li'].includes(el.tagName.toLowerCase());
     });
     for (let i = 0; i < children.length - 1; i++) {
-      const a = children[i], b = children[i+1];
+	const a = children[i];
+	const b = children[i+1];
       const gap = (parseFloat(a.style.marginBottom) || 0) + (parseFloat(b.style.marginTop) || 0);
       if (gap < minGap) {
         violations.push({ elementA: a.tagName + (a.id ? '#'+a.id : ''), elementB: b.tagName + (b.id ? '#'+b.id : ''), gap });
