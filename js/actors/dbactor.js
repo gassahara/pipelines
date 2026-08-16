@@ -50,6 +50,8 @@ const persist = (store) => {
 
 const validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
+// ==================== DNA FUNCTION SERIALIZATION ====================
+
 const FN_TAG = '__fn__';
 
 function dnaReplacer(key, value) {
@@ -70,6 +72,118 @@ function dnaReviver(key, value) {
   }
   return value;
 }
+
+export const serializeDna = (dna) => JSON.stringify(dna, dnaReplacer);
+export const deserializeDna = (json) => JSON.parse(json, dnaReviver);
+
+// ==================== PROPERTY PAIR STORE ====================
+
+const PAIRSTORE = new Map();
+let pairCounter = 0;
+
+function pairIdentity(key, value) {
+  let normalized;
+  if (typeof value === 'function') {
+    normalized = 'function:' + value.toString();
+  } else if (typeof value === 'object' && value !== null) {
+    try {
+      normalized = 'json:' + JSON.stringify(value);
+    } catch {
+      normalized = 'object:' + (value.constructor?.name || 'Object');
+    }
+  } else {
+    normalized = typeof value + ':' + String(value);
+  }
+  return key + '\u0000' + normalized;
+}
+
+function storePair(key, value) {
+  const identity = pairIdentity(key, value);
+  let refId = PAIRSTORE.get(identity);
+  if (!refId) {
+    pairCounter += 1;
+    refId = 'pair_' + pairCounter;
+    PAIRSTORE.set(identity, refId);
+    PAIRSTORE.set('ref:' + refId, { key, value });
+  }
+  return refId;
+}
+
+export function consolidateGraph(node) {
+  if (node === null || node === undefined) return node;
+
+  if (typeof node === 'object') {
+    if (node.__pairref) return node;
+
+    if (Array.isArray(node)) {
+      return node.map(consolidateGraph);
+    }
+
+    if (node.element === 'BLOCK') {
+      for (const [key, value] of Object.entries(node)) {
+        if (key === 'elements') continue;
+        const refId = storePair(key, value);
+        node[key] = { __pairref: refId };
+      }
+      return node;
+    }
+
+    for (const [key, value] of Object.entries(node)) {
+      node[key] = consolidateGraph(value);
+    }
+    return node;
+  }
+
+  return node;
+}
+
+export function restoreGraph(node) {
+  if (node === null || node === undefined) return node;
+
+  if (typeof node === 'object') {
+    if (node.__pairref) {
+      const entry = PAIRSTORE.get('ref:' + node.__pairref);
+      return entry ? entry.value : undefined;
+    }
+
+    if (Array.isArray(node)) {
+      return node.map(restoreGraph);
+    }
+
+    for (const [key, value] of Object.entries(node)) {
+      node[key] = restoreGraph(value);
+    }
+    return node;
+  }
+
+  return node;
+}
+
+export function serializePairStore() {
+  const output = {};
+  for (const [key, value] of PAIRSTORE.entries()) {
+    output[key] = value;
+  }
+  return JSON.stringify(output, dnaReplacer);
+}
+
+export function deserializePairStore(json) {
+  if (!json) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(json, dnaReviver);
+  } catch (err) {
+    console.warn('[DBACTOR] deserializePairStore failed:', err);
+    return;
+  }
+
+  PAIRSTORE.clear();
+  for (const [key, value] of Object.entries(parsed || {})) {
+    PAIRSTORE.set(key, value);
+  }
+}
+
+// ==================== ACTOR BEHAVIOR ====================
 
 const dbbehavior = (state, message) => {
   const check = validatemessage(message);
@@ -123,6 +237,3 @@ export const enqueueDbStore = (key, value) => enqueue(DBMESSAGETYPES.STORE, { ke
 export const enqueueDbRestore = (key) => enqueue(DBMESSAGETYPES.RESTORE, { key });
 export const enqueueDbList = () => enqueue(DBMESSAGETYPES.LIST);
 export const enqueueDbDelete = (key) => enqueue(DBMESSAGETYPES.DELETE, { key });
-
-export const serializeDna = (dna) => JSON.stringify(dna, dnaReplacer);
-export const deserializeDna = (json) => JSON.parse(json, dnaReviver);

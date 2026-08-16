@@ -38,9 +38,11 @@ const compilepathaccessor = (pathstr) => {
   return (env) => parts.reduce((curr, key) => (curr != null ? curr[key] : undefined), env);
 };
 
-const buildproperties = (merged) => {
-  const result = {};
-  for (const key of Object.keys(merged)) { if (key !== 'fn') result[key] = merged[key]; }
+const buildproperties = (merged, inherited = {}) => {
+  const result = { ...inherited };
+  for (const key of Object.keys(merged)) {
+    if (key !== 'fn') result[key] = merged[key];
+  }
   return result;
 };
 
@@ -194,6 +196,25 @@ const validaterevivablefunctionblock = (block) => {
   return errors;
 };
 
+const validaterevivableobject = (obj, label = 'briefcase') => {
+  const errors = [];
+  if (typeof obj !== 'object' || obj === null) return errors;
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === 'function') {
+      const src = value.toString();
+      if (/\[native code\]/.test(src)) errors.push(`[REVIVABILITY] ${label}.${key} contains a native function`);
+      if (value.name === 'bound ') errors.push(`[REVIVABILITY] ${label}.${key} contains a bound function`);
+      if (/\bthis\b/.test(src)) errors.push(`[REVIVABILITY] ${label}.${key} uses "this"`);
+      const defaultFnKeys = ['length', 'name', 'prototype'];
+      const customKeys = Object.getOwnPropertyNames(value).filter(k => !defaultFnKeys.includes(k));
+      if (customKeys.length > 0) errors.push(`[REVIVABILITY] ${label}.${key} has custom function properties: ${customKeys.join(', ')}`);
+    } else if (typeof value === 'object' && value !== null) {
+      errors.push(...validaterevivableobject(value, `${label}.${key}`));
+    }
+  }
+  return errors;
+};
+
 const BLOCKANALYZERS = {
   [BLOCKTYPES.FN]: (block) => {
     const errors = [];
@@ -275,11 +296,11 @@ const compileHttpBlock = (merged, id, sig, isTextual = false) => {
 };
 
 const BLOCKCOMPILERS = {
-  [BLOCKTYPES.FN]: (merged, id, sig) => {
+  [BLOCKTYPES.FN]: (merged, id, sig, inheritedProperties = {}) => {
     const blockfn = async (env) => {
       const fn = merged.fn;
       if (!fn) throw new Error('fn block must have a function: ' + id);
-      const properties = buildproperties(merged);
+      const properties = buildproperties(merged, inheritedProperties);
       const fnargs = [properties].concat((sig.inputs || []).map(compilepathaccessor).map(f => f(env)));
       const result = await callwithstack(
         EVALSTACK, 'fn:' + (merged.ref || id), 'async-await',
@@ -294,11 +315,11 @@ const BLOCKCOMPILERS = {
   },
   [BLOCKTYPES.API]: (merged, id, sig) => compileHttpBlock(merged, id, sig, false),
   [BLOCKTYPES.FETCH]: (merged, id, sig) => compileHttpBlock(merged, id, sig, true),
-  [BLOCKTYPES.WRITER]: (merged, id, sig) => {
+  [BLOCKTYPES.WRITER]: (merged, id, sig, inheritedProperties = {}) => {
     const blockfn = async (env) => {
       const fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
-      const properties = buildproperties(merged);
+      const properties = buildproperties(merged, inheritedProperties);
       const inputargs = (sig.inputs || []).map(compilepathaccessor).map(f => f(env));
       const result = await fn(properties, ...inputargs);
       if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) {
@@ -316,7 +337,7 @@ const BLOCKCOMPILERS = {
     blockfn.id = id;
     return blockfn;
   },
-  [BLOCKTYPES.SPAWN]: (merged, id, sig) => {
+  [BLOCKTYPES.SPAWN]: (merged, id, sig, inheritedProperties = {}) => {
     const blockfn = async (env) => {
       if (!merged.container) throw new Error('[SPAWN] missing container');
       return await callwithstack(
@@ -331,7 +352,8 @@ const BLOCKCOMPILERS = {
           if (!dna) throw new Error('[spawn] no dna');
           const inheritedenv = {};
           if (merged.sharestack) for (const key of INHERITEDKEYS) if (env[key] !== undefined) inheritedenv[key] = env[key];
-          return { dna, containerref: merged.container, inheritedenv, outputkey: Object.keys(sig.outputs || {})[0] || null };
+          const inheritedbriefcase = merged.sharebriefcase ? inheritedProperties : {};
+          return { dna, containerref: merged.container, inheritedenv, inheritedbriefcase, outputkey: Object.keys(sig.outputs || {})[0] || null };
         },
         [env], { context: { env }, capturecontinuation: true, errk: createerrorcontext(id, 'spawn') }
       );
@@ -431,14 +453,14 @@ const BLOCKCOMPILERS = {
     blockfn.id = id;
     return blockfn;
   },
-  [BLOCKTYPES.STOREQUERY]: (merged, id) => {
+  [BLOCKTYPES.STOREQUERY]: (merged, id, sig) => {
     const blockfn = async () => {};
     blockfn.id = id;
     return blockfn;
   }
 };
 
-const compileblock = (block) => {
+const compileblock = (block, inheritedBriefcase = {}) => {
   const compiler = BLOCKCOMPILERS[block.type];
   if (!compiler) throw new Error('[compileblock] Unknown block type: ' + block.type);
   const analyzer = BLOCKANALYZERS[block.type];
@@ -446,17 +468,17 @@ const compileblock = (block) => {
     const check = analyzer(block);
     if (!check.valid) throw new Error('[compileblock] Analysis failed: ' + check.errors.join(', '));
   }
-  return compiler(block, block.id, block.signature || { inputs: [], outputs: {} });
+  return compiler(block, block.id, block.signature || { inputs: [], outputs: {} }, inheritedBriefcase);
 };
 
-const compileElement = (el, pipelineId = 'default_pipeline', resumeFrom = null, stagePath = []) => {
+const compileElement = (el, pipelineId = 'default_pipeline', resumeFrom = null, stagePath = [], inheritedBriefcase = {}) => {
   if (el.element === 'BLOCK') {
-    const fn = compileblock(el);
+    const fn = compileblock(el, inheritedBriefcase);
     fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace };
     fn.kind = 'element';
     return fn;
   }
-  if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath);
+  if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase);
   throw new Error('unknown element type: ' + el.element);
 };
 
@@ -468,11 +490,12 @@ const mapOrderedChildren = (children) => children.map(ch => ({
   savedAt: ch.kind !== 'stage' ? Date.now() : undefined
 }));
 
-const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom = null, parentPath = []) => {
+const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom = null, parentPath = [], inheritedBriefcase = {}) => {
+  const stageBriefcase = { ...inheritedBriefcase, ...(stage.briefcase || {}) };
   const stagePath = [...parentPath, stage.id];
   const children = (stage.elements || []).map(el => {
-    if (el.element === 'BLOCK') return createPersistentElementWrapper(compileElement(el, pipelineId, resumeFrom, stagePath), el, stagePath, pipelineId);
-    if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath);
+    if (el.element === 'BLOCK') return createPersistentElementWrapper(compileElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase), el, stagePath, pipelineId);
+    if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase);
     throw new Error('unknown element type: ' + el.element);
   });
 
@@ -577,7 +600,7 @@ const executeChildren = async (children, env, stageid) => {
     try {
       const result = await child(env);
       if (child.blockmeta?.type === 'spawn' && result?.dna) {
-        spawnOutputs.push({ dna: result.dna, containerref: result.containerref, inheritedenv: result.inheritedenv });
+        spawnOutputs.push({ dna: result.dna, containerref: result.containerref, inheritedenv: result.inheritedenv, inheritedbriefcase: result.inheritedbriefcase || {} });
       }
     } catch (err) {
       err.message = `child ${stageid || 'unnamed'}/${child.id || 'unnamed'}: ${err.message}`;
@@ -591,7 +614,9 @@ const executeChildren = async (children, env, stageid) => {
   for (const so of spawnOutputs) {
     const childPipelineId = so.dna?.identity?.id || so.containerref || 'child_pipeline';
     const childRunner = async (agent) => {
-      const childCompiled = await compilepipeline(so.dna.pipeline, null, [], childPipelineId);
+      const childCompiled = await compilepipeline(so.dna.pipeline, null, [], childPipelineId, {
+        inheritedBriefcase: so.inheritedbriefcase || {}
+      });
       await childCompiled.pipeline(agent);
     };
 
@@ -608,8 +633,8 @@ const executeChildren = async (children, env, stageid) => {
   return spawnOutputs;
 };
 
-const compileElements = (elements, pipelineId = 'default_pipeline', resumeFrom = null, parentPath = []) =>
-  elements.map(el => compileElement(el, pipelineId, resumeFrom, parentPath));
+const compileElements = (elements, pipelineId = 'default_pipeline', resumeFrom = null, parentPath = [], inheritedBriefcase = {}) =>
+  elements.map(el => compileElement(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase));
 
 const buildSpawnBootstrapMap = (pipeline) => {
   const map = {};
@@ -710,9 +735,19 @@ const createpipeline = (stages, sinks = [], onprogress, options = {}) => {
   };
 };
 
-export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOverride = null) => {
+export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOverride = null, options = {}) => {
   if (!pipeline.elements) throw new Error('[compilepipeline] pipeline must have elements array');
   const pipelineId = pipelineIdOverride || pipeline.id || pipeline.identity?.id || 'default_pipeline';
+
+  const pipelineBriefcase = {
+    ...(options.inheritedBriefcase || {}),
+    ...(pipeline.briefcase || {})
+  };
+
+  const briefcaseErrors = validaterevivableobject(pipelineBriefcase, 'pipeline.briefcase');
+  if (briefcaseErrors.length > 0) {
+    throw new Error('[compilepipeline] briefcase revivability failed: ' + briefcaseErrors.join(', '));
+  }
 
   const rawStages = (pipeline.elements || []).filter(el => el.element === 'STAGE').map(el => ({
     id: el.id, control: el.control || null, blocks: (el.elements || []).filter(e => e.element === 'BLOCK')
@@ -728,7 +763,7 @@ export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOver
   await enqueueExecutionRegisterPipeline(pipelineId, pipeline, {}).catch(err => console.warn('[compilepipeline] register pipeline failed:', err));
 
   const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
-  const compiled = compileElements(pipeline.elements, pipelineId, null, []);
+  const compiled = compileElements(pipeline.elements, pipelineId, null, [], pipelineBriefcase);
   const compiledpipeline = createpipeline(compiled, sinks, undefined, { pipelineId });
 
   return { pipeline: compiledpipeline, pipelineId, spawnBootstrapMap };

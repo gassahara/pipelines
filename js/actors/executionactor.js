@@ -1,5 +1,14 @@
 import { createactor, createMessageValidator } from './actorkernel.js';
-import { enqueueDbStore, enqueueDbRestore, serializeDna, deserializeDna } from './dbactor.js';
+import {
+  enqueueDbStore,
+  enqueueDbRestore,
+  serializeDna,
+  deserializeDna,
+  consolidateGraph,
+  restoreGraph,
+  serializePairStore,
+  deserializePairStore
+} from './dbactor.js';
 
 // -- Message Types --
 // Lean set: Task Runner + Global Snapshot + Pipeline Registry
@@ -155,14 +164,17 @@ const persistGlobalSnapshot = async (state) => {
       version: 1,
       savedAt: Date.now(),
       pipelines: {},
-      htmlSnapshot: state.htmlSnapshot || null
+      htmlSnapshot: state.htmlSnapshot || null,
+      pairstore: serializePairStore()
     };
 
     for (const [pid, pdata] of Object.entries(state.pipelines)) {
+      const dnaClone = deserializeDna(serializeDna(pdata.dna || {}));
+      const consolidatedDna = consolidateGraph(dnaClone);
       snapshot.pipelines[pid] = {
         status: pdata.status,
         env: sanitizeForState(pdata.env || {}),
-        dna: serializeDna(pdata.dna || {}),
+        dna: serializeDna(consolidatedDna),
         stageStatuses: pdata.stageStatuses || {}
       };
     }
@@ -177,13 +189,20 @@ const loadInitialState = async () => {
   try {
     const stored = await enqueueDbRestore(DB_KEY);
     if (stored && stored.version === 1 && stored.pipelines) {
+      if (stored.pairstore) {
+        deserializePairStore(stored.pairstore);
+      }
+
       const pipelines = {};
       for (const [pid, pdata] of Object.entries(stored.pipelines || {})) {
+        let dna = pdata.dna ? deserializeDna(pdata.dna) : null;
+        if (dna) dna = restoreGraph(dna);
         pipelines[pid] = {
           ...pdata,
-          dna: pdata.dna ? deserializeDna(pdata.dna) : null
+          dna
         };
       }
+
       return {
         pipelines,
         htmlSnapshot: stored.htmlSnapshot || null
