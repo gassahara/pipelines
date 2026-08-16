@@ -483,8 +483,6 @@ const findMatchingParen = (tokens, start) => {
 };
 
 const parseArrowExpression = (tokens, arrowIndex, free) => {
-  pushScope();
-
   const prev = arrowIndex > 0 ? tokens[arrowIndex - 1] : null;
   if (prev) {
     if (prev.type === 'identifier') {
@@ -525,10 +523,8 @@ const parseArrowExpression = (tokens, arrowIndex, free) => {
   const isBlockBody = next && next.type === 'punctuator' && next.value === '{';
   if (isBlockBody) {
     index = parseBlock(tokens, bodyStart, free);
-    // no popScope here; outer segment loop pops on matching '}'
   } else {
     index = parseExpressionWithScope(tokens, bodyStart, free, [',', ';', ')', ']', '}']);
-    popScope();
   }
   return index;
 };
@@ -542,7 +538,6 @@ const parseFunctionExpression = (tokens, start, free) => {
   }
 
   if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    pushScope();
     const endParen = findMatchingParen(tokens, i);
     for (let m = i + 1; m < endParen; m += 1) {
       const t = tokens[m];
@@ -556,10 +551,8 @@ const parseFunctionExpression = (tokens, start, free) => {
     i = endParen + 1;
     if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
       i = parseBlock(tokens, i, free);
-      // no popScope here; outer segment loop pops on matching '}'
     } else {
       i = parseExpressionWithScope(tokens, i, free, [',', ';', ')', ']', '}']);
-      popScope();
     }
   }
 
@@ -614,7 +607,6 @@ const parseBlock = (tokens, start, free) => {
 const handleCatchParameter = (tokens, start, free) => {
   let i = start + 1;
   if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    pushScope();
     i += 1;
     if (tokens[i] && tokens[i].type === 'identifier') {
       declareInScope(tokens[i].value);
@@ -627,7 +619,6 @@ const handleCatchParameter = (tokens, start, free) => {
     i += 1;
     if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
       i = parseBlock(tokens, i, free);
-      // no popScope here; outer segment loop pops on matching '}'
     }
   }
   return i;
@@ -689,10 +680,15 @@ const detectFreeIdentifiers = (source) => {
   const free = [];
 
   for (const segment of segments) {
+    const last = segment[segment.length - 1];
+
+    if (last && last.type === 'punctuator' && last.value === '{') {
+      pushScope();
+    }
+
     const segmentFree = [];
     analyzeSegment(segment, segmentFree);
 
-    const last = segment[segment.length - 1];
     if (last && last.type === 'punctuator' && last.value === '}') {
       popScope();
     }
