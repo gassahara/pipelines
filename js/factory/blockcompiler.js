@@ -213,24 +213,124 @@ const validaterevivableobject = (obj, label = 'briefcase') => {
   return errors;
 };
 
+const isWhitespace = (ch) => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\v' || ch === '\f';
+const isDigit = (ch) => ch >= '0' && ch <= '9';
+const isIdentifierStart = (ch) =>
+  (ch >= 'a' && ch <= 'z') ||
+  (ch >= 'A' && ch <= 'Z') ||
+  ch === '_' || ch === '$';
+const isIdentifierPart = (ch) => isIdentifierStart(ch) || isDigit(ch);
+
+const RESERVED = new Set([
+  'function','if','return','let','const','var','switch','case','break','null','true','false','of','in','new','typeof','instanceof','else','do','while','for','try','catch','finally','throw','this','super','class','extends','import','export','default','void','delete','yield','await','async','static','get','set','debugger','with','enum','implements','interface','package','private','protected','public'
+]);
+
+const BUILTINS = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt']);
+
 const detectFreeIdentifiers = (source) => {
-  const builtins = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt']);
   const declared = new Set();
-  for (const match of source.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) declared.add(match[1]);
-  for (const match of source.matchAll(/function\s+([A-Za-z_$][\w$]*)/g)) declared.add(match[1]);
-  for (const match of source.matchAll(/\(([^)]*)\)\s*=>/g)) {
-    match[1].split(',').map(s => s.trim()).filter(Boolean).forEach(p => declared.add(p.replace(/[=].*$/, '').trim()));
+  const free = [];
+  let i = 0;
+
+  while (i < source.length) {
+    const ch = source[i];
+
+    // whitespace
+    if (isWhitespace(ch)) { i += 1; continue; }
+
+    // line comment
+    if (ch === '/' && i + 1 < source.length && source[i + 1] === '/') {
+      i += 2;
+      while (i < source.length && source[i] !== '\n') i += 1;
+      continue;
+    }
+
+    // block comment
+    if (ch === '/' && i + 1 < source.length && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+
+    // string literal
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+
+    // number
+    if (isDigit(ch)) {
+      i += 1;
+      while (i < source.length) {
+        const c = source[i];
+        if (isDigit(c) || c === '.' || c === '_' || c === 'x' || c === 'X' || c === 'a' || c === 'A' || c === 'b' || c === 'B' || c === 'c' || c === 'C' || c === 'd' || c === 'D' || c === 'e' || c === 'E' || c === 'f' || c === 'F') i += 1;
+        else break;
+      }
+      continue;
+    }
+
+    // identifier
+    if (isIdentifierStart(ch)) {
+      const start = i;
+      i += 1;
+      while (i < source.length && isIdentifierPart(source[i])) i += 1;
+      const id = source.slice(start, i);
+
+      if (RESERVED.has(id)) continue;
+      if (BUILTINS.has(id)) continue;
+
+      // property access: previous non-whitespace is '.'
+      let p = start - 1;
+      while (p >= 0 && isWhitespace(source[p])) p -= 1;
+      if (p >= 0 && source[p] === '.') continue;
+
+      // object key: next non-whitespace is ':'
+      let q = i;
+      while (q < source.length && isWhitespace(source[q])) q += 1;
+      if (q < source.length && source[q] === ':') {
+        i = q;
+        continue;
+      }
+
+      // local declaration: preceding non-whitespace ends with const/let/var/function
+      let declEnd = start - 1;
+      while (declEnd >= 0 && isWhitespace(source[declEnd])) declEnd -= 1;
+      const beforeText = source.slice(0, declEnd + 1);
+      if (beforeText === 'const' || beforeText === 'let' || beforeText === 'var' || beforeText === 'function') {
+        declared.add(id);
+        continue;
+      }
+
+      // function parameter detection via unmatched '(' before identifier
+      let depth = 0;
+      let lastParenOpen = -1;
+      for (let k = start - 1; k >= 0; k -= 1) {
+        if (source[k] === ')') depth += 1;
+        else if (source[k] === '(') {
+          depth -= 1;
+          if (depth < 0) { lastParenOpen = k; break; }
+        }
+      }
+      if (lastParenOpen !== -1) {
+        declared.add(id);
+        continue;
+      }
+
+      if (!declared.has(id) && free.indexOf(id) === -1) free.push(id);
+      continue;
+    }
+
+    i += 1;
   }
-  const ids = [];
-  for (const match of source.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)) {
-    const id = match[1];
-    if (builtins.has(id) || declared.has(id)) continue;
-    const before = source.slice(0, match.index);
-    const after = source.slice(match.index + id.length);
-    if (before.match(/\.\s*$/) || after.match(/^\s*:/)) continue;
-    if (!ids.includes(id)) ids.push(id);
-  }
-  return ids;
+
+  return free;
 };
 
 const prepareFunctionForSerialization = (fn, env, briefcase) => {
