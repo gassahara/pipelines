@@ -157,6 +157,8 @@ export function getCandidateElements(doc) {
   });
 }
 
+
+export function checkOverflowDoc(doc, viewportWidth, containerWidths) {
 const isInsideScrollWrapper = (el) => {
   let parent = el.parentElement;
   while (parent) {
@@ -166,8 +168,6 @@ const isInsideScrollWrapper = (el) => {
   }
   return false;
 };
-
-export function checkOverflowDoc(doc, viewportWidth, containerWidths) {
   const violations = [];
   const propertyMap = buildLayoutPropertyMap(doc.body, viewportWidth);
   const candidates = getCandidateElements(doc);
@@ -187,6 +187,15 @@ export function checkOverflowDoc(doc, viewportWidth, containerWidths) {
 }
 
 export function correctOverflowDoc(doc, overflowElements) {
+const isInsideScrollWrapper = (el) => {
+  let parent = el.parentElement;
+  while (parent) {
+    const s = parent.style || {};
+    if (parent.tagName.toLowerCase() === 'div' && (s.width || s.maxWidth) && s.overflow === 'scroll') return true;
+    parent = parent.parentElement;
+  }
+  return false;
+};
   const rules = [];
   for (const el of overflowElements) {
     if (isInsideScrollWrapper(el)) continue;
