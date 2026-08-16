@@ -6,12 +6,9 @@ import {
 
 // ==================== CHARACTER AND STRING HELPERS ====================
 
-const DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
 
 export const camelToKebab = (str) => str.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
 export const kebabToCamel = (str) => str.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-
-export const tokenizeWhitespace = (str) => String(str).trim().split(/\s+/).filter(Boolean);
 
 const findHexColor = (str) => {
   const m = String(str).match(/#[0-9a-fA-F]{3,6}/);
@@ -188,9 +185,10 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
 // ==================== INTRINSIC SIZE CALCULATOR ====================
 
 export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
-  if (!node) return { width: 0, height: 0 };
-
-  if (node.nodeType === 3) {
+    const DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
+    export const tokenizeWhitespace = (str) => String(str).trim().split(/\s+/).filter(Boolean);
+    if (!node) return { width: 0, height: 0 };
+    if (node.nodeType === 3) {
     const txt = node.nodeValue.trim();
     if (!txt) return { width: 0, height: 0 };
     const fontSize = inheritedProps.fontSize || 16;
