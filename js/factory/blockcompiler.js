@@ -323,7 +323,7 @@ const segmentTokens = (tokens) => {
       else if (t.value === ')' || t.value === ']') depth -= 1;
     }
     current.push(t);
-    if (depth === 0 && t.type === 'punctuator' && t.value === ';') {
+    if (depth === 0 && t.type === 'punctuator' && (t.value === ';' || t.value === '{' || t.value === '}')) {
       segments.push(current);
       current = [];
     }
@@ -522,13 +522,14 @@ const parseArrowExpression = (tokens, arrowIndex, free) => {
   const bodyStart = arrowIndex + 1;
   const next = bodyStart < tokens.length ? tokens[bodyStart] : null;
   let index;
-  if (next && next.type === 'punctuator' && next.value === '{') {
+  const isBlockBody = next && next.type === 'punctuator' && next.value === '{';
+  if (isBlockBody) {
     index = parseBlock(tokens, bodyStart, free);
+    // no popScope here; outer segment loop pops on matching '}'
   } else {
     index = parseExpressionWithScope(tokens, bodyStart, free, [',', ';', ')', ']', '}']);
+    popScope();
   }
-
-  popScope();
   return index;
 };
 
@@ -555,10 +556,11 @@ const parseFunctionExpression = (tokens, start, free) => {
     i = endParen + 1;
     if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
       i = parseBlock(tokens, i, free);
+      // no popScope here; outer segment loop pops on matching '}'
     } else {
       i = parseExpressionWithScope(tokens, i, free, [',', ';', ')', ']', '}']);
+      popScope();
     }
-    popScope();
   }
 
   return i;
@@ -625,8 +627,8 @@ const handleCatchParameter = (tokens, start, free) => {
     i += 1;
     if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
       i = parseBlock(tokens, i, free);
+      // no popScope here; outer segment loop pops on matching '}'
     }
-    popScope();
   }
   return i;
 };
@@ -689,6 +691,12 @@ const detectFreeIdentifiers = (source) => {
   for (const segment of segments) {
     const segmentFree = [];
     analyzeSegment(segment, segmentFree);
+
+    const last = segment[segment.length - 1];
+    if (last && last.type === 'punctuator' && last.value === '}') {
+      popScope();
+    }
+
     for (const id of segmentFree) {
       if (free.indexOf(id) === -1) free.push(id);
     }
