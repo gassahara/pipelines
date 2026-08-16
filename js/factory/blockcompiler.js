@@ -312,26 +312,6 @@ const isDeclared = (id) => {
   return false;
 };
 
-const segmentTokens = (tokens) => {
-  const segments = [];
-  let current = [];
-  let depth = 0;
-
-  for (const t of tokens) {
-    if (t.type === 'punctuator') {
-      if (t.value === '(' || t.value === '[') depth += 1;
-      else if (t.value === ')' || t.value === ']') depth -= 1;
-    }
-    current.push(t);
-    if (depth === 0 && t.type === 'punctuator' && (t.value === ';' || t.value === '{' || t.value === '}')) {
-      segments.push(current);
-      current = [];
-    }
-  }
-  if (current.length > 0) segments.push(current);
-  return segments;
-};
-
 const parseBindingPattern = (tokens, start) => {
   let depth = 0;
   let i = start;
@@ -482,7 +462,79 @@ const findMatchingParen = (tokens, start) => {
   return tokens.length;
 };
 
+const parseBlock = (tokens, start, free) => {
+  pushScope();
+  let depth = 1;
+  let i = start + 1;
+
+  while (i < tokens.length && depth > 0) {
+    const t = tokens[i];
+
+    if (t.type === 'punctuator') {
+      if (t.value === '{') {
+        depth += 1;
+        i += 1;
+        continue;
+      }
+      if (t.value === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          i += 1;
+          break;
+        }
+        i += 1;
+        continue;
+      }
+    }
+
+    if (t.type === 'keyword') {
+      if (t.value === 'const' || t.value === 'let' || t.value === 'var') {
+        i = parseDeclarationList(tokens, i + 1, free);
+        continue;
+      }
+      if (t.value === 'function') {
+        i = parseFunctionExpression(tokens, i, free);
+        continue;
+      }
+      if (t.value === 'for') {
+        i = parseExpressionWithScope(tokens, i + 1, free, [';', ')']);
+        continue;
+      }
+      if (t.value === 'catch') {
+        i = handleCatchParameter(tokens, i, free);
+        continue;
+      }
+    }
+
+    if (t.type === 'punctuator' && t.value === '=>') {
+      i = parseArrowExpression(tokens, i, free);
+      continue;
+    }
+
+    if (t.type === 'identifier') {
+      if (!isDeclared(t.value) && !BUILTINS.has(t.value) && !RESERVED.has(t.value)) {
+        const prev = i > 0 ? tokens[i - 1] : null;
+        const next = i + 1 < tokens.length ? tokens[i + 1] : null;
+        const isProperty = prev && prev.type === 'punctuator' && prev.value === '.';
+        const isKey = next && next.type === 'punctuator' && next.value === ':';
+        if (!isProperty && !isKey && free.indexOf(t.value) === -1) {
+          free.push(t.value);
+        }
+      }
+      i += 1;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  popScope();
+  return i;
+};
+
 const parseArrowExpression = (tokens, arrowIndex, free) => {
+  pushScope();
+
   const prev = arrowIndex > 0 ? tokens[arrowIndex - 1] : null;
   if (prev) {
     if (prev.type === 'identifier') {
@@ -520,12 +572,13 @@ const parseArrowExpression = (tokens, arrowIndex, free) => {
   const bodyStart = arrowIndex + 1;
   const next = bodyStart < tokens.length ? tokens[bodyStart] : null;
   let index;
-  const isBlockBody = next && next.type === 'punctuator' && next.value === '{';
-  if (isBlockBody) {
+  if (next && next.type === 'punctuator' && next.value === '{') {
     index = parseBlock(tokens, bodyStart, free);
   } else {
     index = parseExpressionWithScope(tokens, bodyStart, free, [',', ';', ')', ']', '}']);
   }
+
+  popScope();
   return index;
 };
 
@@ -538,6 +591,7 @@ const parseFunctionExpression = (tokens, start, free) => {
   }
 
   if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    pushScope();
     const endParen = findMatchingParen(tokens, i);
     for (let m = i + 1; m < endParen; m += 1) {
       const t = tokens[m];
@@ -554,29 +608,44 @@ const parseFunctionExpression = (tokens, start, free) => {
     } else {
       i = parseExpressionWithScope(tokens, i, free, [',', ';', ')', ']', '}']);
     }
+    popScope();
   }
 
   return i;
 };
 
-const parseBlock = (tokens, start, free) => {
-  let depth = 0;
-  let i = start;
+const handleCatchParameter = (tokens, start, free) => {
+  let i = start + 1;
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    pushScope();
+    i += 1;
+    if (tokens[i] && tokens[i].type === 'identifier') {
+      declareInScope(tokens[i].value);
+      removeFree(free, tokens[i].value);
+      i += 1;
+    } else if (tokens[i] && tokens[i].type === 'punctuator' && (tokens[i].value === '{' || tokens[i].value === '[')) {
+      i = parseBindingPattern(tokens, i);
+    }
+    while (i < tokens.length && !(tokens[i].type === 'punctuator' && tokens[i].value === ')')) i += 1;
+    i += 1;
+    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
+      i = parseBlock(tokens, i, free);
+    }
+    popScope();
+  }
+  return i;
+};
+
+const detectFreeIdentifiers = (source) => {
+  const tokens = tokenize(source);
+  scopes.length = 0;
+  scopes.push({});
+  const free = [];
+
+  let i = 0;
   while (i < tokens.length) {
     const t = tokens[i];
-    if (t.type === 'punctuator') {
-      if (t.value === '{') {
-        depth += 1;
-        i += 1;
-        continue;
-      }
-      if (t.value === '}') {
-        depth -= 1;
-        i += 1;
-        if (depth === 0) return i;
-        continue;
-      }
-    }
+
     if (t.type === 'keyword') {
       if (t.value === 'const' || t.value === 'let' || t.value === 'var') {
         i = parseDeclarationList(tokens, i + 1, free);
@@ -595,68 +664,16 @@ const parseBlock = (tokens, start, free) => {
         continue;
       }
     }
+
     if (t.type === 'punctuator' && t.value === '=>') {
       i = parseArrowExpression(tokens, i, free);
-      continue;
-    }
-    i += 1;
-  }
-  return i;
-};
-
-const handleCatchParameter = (tokens, start, free) => {
-  let i = start + 1;
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    i += 1;
-    if (tokens[i] && tokens[i].type === 'identifier') {
-      declareInScope(tokens[i].value);
-      removeFree(free, tokens[i].value);
-      i += 1;
-    } else if (tokens[i] && tokens[i].type === 'punctuator' && (tokens[i].value === '{' || tokens[i].value === '[')) {
-      i = parseBindingPattern(tokens, i);
-    }
-    while (i < tokens.length && !(tokens[i].type === 'punctuator' && tokens[i].value === ')')) i += 1;
-    i += 1;
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
-      i = parseBlock(tokens, i, free);
-    }
-  }
-  return i;
-};
-
-const analyzeSegment = (segment, free) => {
-  let i = 0;
-  while (i < segment.length) {
-    const t = segment[i];
-
-    if (t.type === 'keyword') {
-      if (t.value === 'const' || t.value === 'let' || t.value === 'var') {
-        i = parseDeclarationList(segment, i + 1, free);
-        continue;
-      }
-      if (t.value === 'function') {
-        i = parseFunctionExpression(segment, i, free);
-        continue;
-      }
-      if (t.value === 'for') {
-        i = parseExpressionWithScope(segment, i + 1, free, [';', ')']);
-        continue;
-      }
-      if (t.value === 'catch') {
-        i = handleCatchParameter(segment, i, free);
-        continue;
-      }
-    }
-
-    if (t.type === 'punctuator' && t.value === '=>') {
-      i = parseArrowExpression(segment, i, free);
       continue;
     }
 
     if (t.type === 'identifier') {
       if (!isDeclared(t.value) && !BUILTINS.has(t.value) && !RESERVED.has(t.value)) {
-        const prev = i > 0 ? segment[i - 1] : null;
-        const next = i + 1 < segment.length ? segment[i + 1] : null;
+        const prev = i > 0 ? tokens[i - 1] : null;
+        const next = i + 1 < tokens.length ? tokens[i + 1] : null;
         const isProperty = prev && prev.type === 'punctuator' && prev.value === '.';
         const isKey = next && next.type === 'punctuator' && next.value === ':';
         if (!isProperty && !isKey && free.indexOf(t.value) === -1) {
@@ -668,34 +685,6 @@ const analyzeSegment = (segment, free) => {
     }
 
     i += 1;
-  }
-};
-
-const detectFreeIdentifiers = (source) => {
-  const tokens = tokenize(source);
-  const segments = segmentTokens(tokens);
-
-  scopes.length = 0;
-  scopes.push({});
-  const free = [];
-
-  for (const segment of segments) {
-    const last = segment[segment.length - 1];
-
-    if (last && last.type === 'punctuator' && last.value === '{') {
-      pushScope();
-    }
-
-    const segmentFree = [];
-    analyzeSegment(segment, segmentFree);
-
-    if (last && last.type === 'punctuator' && last.value === '}') {
-      popScope();
-    }
-
-    for (const id of segmentFree) {
-      if (free.indexOf(id) === -1) free.push(id);
-    }
   }
 
   return free;
