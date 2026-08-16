@@ -6,9 +6,11 @@ import {
 
 // ==================== CHARACTER AND STRING HELPERS ====================
 
+const DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
 
 export const camelToKebab = (str) => str.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
 export const kebabToCamel = (str) => str.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+
 export const tokenizeWhitespace = (str) => String(str).trim().split(/\s+/).filter(Boolean);
 
 const findHexColor = (str) => {
@@ -28,14 +30,14 @@ const anyColorToHex = (color) => {
 
 // ==================== UNIT CONVERSION & PARSING ====================
 
-const LENGTH_FACTORS = {
+export const LENGTH_FACTORS = {
   px: 1, '': 1, '%': (n, ref) => (n / 100) * ref, em: (n, ref) => n * ref,
   rem: (n) => n * 16, pt: (n) => n * (96 / 72), pc: (n) => n * 16,
   in: (n) => n * 96, cm: (n) => n * (96 / 2.54), mm: (n) => n * (96 / 25.4),
   q: (n) => n * (96 / 101.6)
 };
 
-const KEYWORD_LENGTHS = {
+export const KEYWORD_LENGTHS = {
   auto: 1, medium: 1.3, large: 1.5, small: 0.7, tiny: 0.5
 };
 
@@ -186,9 +188,9 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
 // ==================== INTRINSIC SIZE CALCULATOR ====================
 
 export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
-    const DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
-    if (!node) return { width: 0, height: 0 };
-    if (node.nodeType === 3) {
+  if (!node) return { width: 0, height: 0 };
+
+  if (node.nodeType === 3) {
     const txt = node.nodeValue.trim();
     if (!txt) return { width: 0, height: 0 };
     const fontSize = inheritedProps.fontSize || 16;

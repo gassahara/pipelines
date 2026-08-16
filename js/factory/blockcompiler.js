@@ -231,6 +231,21 @@ const BUILTINS = new Set(['Math','Date','JSON','Object','Array','String','Number
 const tokenize = (source) => {
   const tokens = [];
   let i = 0;
+  let previousToken = null;
+
+  const lastSignificant = () => previousToken;
+
+  const canStartRegex = () => {
+    const prev = lastSignificant();
+    if (!prev) return true;
+    if (prev.type === 'keyword') {
+      return ['return','typeof','instanceof','in','of','new','delete','void','case'].includes(prev.value);
+    }
+    if (prev.type === 'punctuator') {
+      return ['(', '=', ',', '[', ':', '=>', ';', '{', '}'].includes(prev.value);
+    }
+    return false;
+  };
 
   while (i < source.length) {
     const ch = source[i];
@@ -250,6 +265,25 @@ const tokenize = (source) => {
       continue;
     }
 
+    if (ch === '/' && canStartRegex()) {
+      i += 1;
+      let escaped = false;
+      let charClass = false;
+      while (i < source.length) {
+        const c = source[i];
+        if (escaped) { escaped = false; i += 1; continue; }
+        if (c === '\\') { escaped = true; i += 1; continue; }
+        if (c === '[') { charClass = true; i += 1; continue; }
+        if (c === ']') { charClass = false; i += 1; continue; }
+        if (c === '/' && !charClass) { i += 1; break; }
+        i += 1;
+      }
+      while (i < source.length && isIdentifierPart(source[i])) i += 1;
+      tokens.push({ type: 'literal', value: 'regex' });
+      previousToken = tokens[tokens.length - 1];
+      continue;
+    }
+
     if (ch === '"' || ch === "'" || ch === '`') {
       const quote = ch;
       i += 1;
@@ -259,6 +293,7 @@ const tokenize = (source) => {
         i += 1;
       }
       tokens.push({ type: 'literal', value: 'string' });
+      previousToken = tokens[tokens.length - 1];
       continue;
     }
 
@@ -270,11 +305,13 @@ const tokenize = (source) => {
         else break;
       }
       tokens.push({ type: 'literal', value: 'number' });
+      previousToken = tokens[tokens.length - 1];
       continue;
     }
 
     if (ch === '=' && i + 1 < source.length && source[i + 1] === '>') {
       tokens.push({ type: 'punctuator', value: '=>' });
+      previousToken = tokens[tokens.length - 1];
       i += 2;
       continue;
     }
@@ -285,11 +322,13 @@ const tokenize = (source) => {
       while (i < source.length && isIdentifierPart(source[i])) i += 1;
       const value = source.slice(start, i);
       tokens.push({ type: RESERVED.has(value) ? 'keyword' : 'identifier', value });
+      previousToken = tokens[tokens.length - 1];
       continue;
     }
 
     if ('{}()[].,;:=<>+-*/%&|!?~'.includes(ch)) {
       tokens.push({ type: 'punctuator', value: ch });
+      previousToken = tokens[tokens.length - 1];
       i += 1;
       continue;
     }
