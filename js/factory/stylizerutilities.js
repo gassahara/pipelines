@@ -11,35 +11,20 @@ export const kebabToCamel = (str) => str.replace(/-([a-z])/g, (_, c) => c.toUppe
 
 export const tokenizeWhitespace = (str) => String(str).trim().split(/\s+/).filter(Boolean);
 
-const findHexColor = (str) => {
-  const m = String(str).match(/#[0-9a-fA-F]{3,6}/);
-  return m ? m[0] : null;
-};
-
-const findRgbColor = (str) => {
-  const m = String(str).match(/rgb\([^)]+\)/);
-  return m ? m[0] : null;
-};
-
-const anyColorToHex = (color) => {
-  const rgb = hexToRgb(color);
-  return Array.isArray(rgb) ? rgbToHex(...rgb) : '#000000';
-};
-
 // ==================== UNIT CONVERSION & PARSING ====================
 
-export const LENGTH_FACTORS = {
-  px: 1, '': 1, '%': (n, ref) => (n / 100) * ref, em: (n, ref) => n * ref,
-  rem: (n) => n * 16, pt: (n) => n * (96 / 72), pc: (n) => n * 16,
-  in: (n) => n * 96, cm: (n) => n * (96 / 2.54), mm: (n) => n * (96 / 25.4),
-  q: (n) => n * (96 / 101.6)
-};
-
-export const KEYWORD_LENGTHS = {
-  auto: 1, medium: 1.3, large: 1.5, small: 0.7, tiny: 0.5
-};
-
 export function parseLength(value, referencePx = 16) {
+  const KEYWORD_LENGTHS = {
+    auto: 1, medium: 1.3, large: 1.5, small: 0.7, tiny: 0.5
+  };
+
+  const LENGTH_FACTORS = {
+    px: 1, '': 1, '%': (n, ref) => (n / 100) * ref, em: (n, ref) => n * ref,
+    rem: (n) => n * 16, pt: (n) => n * (96 / 72), pc: (n) => n * 16,
+    in: (n) => n * 96, cm: (n) => n * (96 / 2.54), mm: (n) => n * (96 / 25.4),
+    q: (n) => n * (96 / 101.6)
+  };
+
   if (typeof value === 'number') return value;
   if (!value) return 0;
   if (KEYWORD_LENGTHS[value] !== undefined) value = referencePx * KEYWORD_LENGTHS[value];
@@ -75,31 +60,26 @@ export function parseShorthandLengths(value, referencePx) {
 
 // ==================== RECURSIVE PATH ENGINE ====================
 
-const getAncestors = (el) => {
-  const acc = [];
-  let p = el.parentNode;
-  while (p && p.nodeType === 1) { acc.push(p); p = p.parentNode; }
-  return acc;
-};
-
-export function getAllDescendants(el) {
-  const children = Array.from(el.children || []);
-  return children.reduce((all, child) => all.concat(child, getAllDescendants(child)), []);
-}
-
-const getSiblings = (el, dir) => {
-  const acc = [];
-  let s = el[dir];
-  while (s) { if (s.nodeType === 1) acc.push(s); s = s[dir]; }
-  return acc;
-};
-
-const getDepth = (ancestor, descendant) => {
-  if (!descendant || descendant === ancestor) return 0;
-  return descendant.nodeType !== 1 ? getDepth(ancestor, descendant.parentNode) : 1 + getDepth(ancestor, descendant.parentNode);
-};
-
 export function applyStep(nodes, step, filterFn = null) {
+  const getAncestors = (el) => {
+    const acc = [];
+    let p = el.parentNode;
+    while (p && p.nodeType === 1) { acc.push(p); p = p.parentNode; }
+    return acc;
+  };
+
+  const getSiblings = (el, dir) => {
+    const acc = [];
+    let s = el[dir];
+    while (s) { if (s.nodeType === 1) acc.push(s); s = s[dir]; }
+    return acc;
+  };
+
+  const getDepth = (ancestor, descendant) => {
+    if (!descendant || descendant === ancestor) return 0;
+    return descendant.nodeType !== 1 ? getDepth(ancestor, descendant.parentNode) : 1 + getDepth(ancestor, descendant.parentNode);
+  };
+
   return nodes.reduce((next, node) => {
     let candidates = [];
     switch (step.axis || 'child') {
@@ -136,7 +116,10 @@ export function applyStep(nodes, step, filterFn = null) {
   }, []);
 }
 
-const resolvePath = (root, steps) => steps.reduce((nodes, step) => applyStep(nodes, step), [root]);
+export function getAllDescendants(el) {
+  const children = Array.from(el.children || []);
+  return children.reduce((all, child) => all.concat(child, getAllDescendants(child)), []);
+}
 
 // ==================== PROPERTY MAP ====================
 
@@ -186,8 +169,10 @@ export function buildLayoutPropertyMap(rootEl, viewportWidth, inheritedFontSize 
 // ==================== INTRINSIC SIZE CALCULATOR ====================
 
 export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
-    if (!node) return { width: 0, height: 0 };
-    const DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
+  const DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
+
+  if (!node) return { width: 0, height: 0 };
+
   if (node.nodeType === 3) {
     const txt = node.nodeValue.trim();
     if (!txt) return { width: 0, height: 0 };
@@ -250,6 +235,8 @@ export function computeIntrinsicSize(node, propertyMap, inheritedProps = {}) {
 // ==================== STYLIZER FUNCTION ====================
 
 export function rewritestyleattrs(html, rules) {
+  const resolvePath = (root, steps) => steps.reduce((nodes, step) => applyStep(nodes, step), [root]);
+
   const doc = new DOMParser().parseFromString(html, 'text/html');
   rules.forEach(rule => {
     let els = [];
@@ -357,14 +344,24 @@ export function consolidateStyles(html) {
   return doc.body.innerHTML;
 }
 
-const extractBgFromShorthand = (el) => {
-  if (el.style.backgroundColor) return el.style.backgroundColor;
-  const bg = el.style.background;
-  if (!bg) return null;
-  return findHexColor(bg) || findRgbColor(bg) || null;
-};
-
 const getEffectiveBackground = (el) => {
+  const findHexColor = (str) => {
+    const m = String(str).match(/#[0-9a-fA-F]{3,6}/);
+    return m ? m[0] : null;
+  };
+
+  const findRgbColor = (str) => {
+    const m = String(str).match(/rgb\([^)]+\)/);
+    return m ? m[0] : null;
+  };
+
+  const extractBgFromShorthand = (el) => {
+    if (el.style.backgroundColor) return el.style.backgroundColor;
+    const bg = el.style.background;
+    if (!bg) return null;
+    return findHexColor(bg) || findRgbColor(bg) || null;
+  };
+
   let curr = el;
   while (curr && curr.nodeType === 1) {
     const bg = extractBgFromShorthand(curr);
@@ -372,10 +369,6 @@ const getEffectiveBackground = (el) => {
     curr = curr.parentNode;
   }
   return '#ffffff';
-};
-
-const mergeAndApplyStyles = (el, newStyles) => {
-  Object.entries(newStyles).forEach(([prop, val]) => { el.style[prop] = val; });
 };
 
 export function estimateRecursiveBounds(node) {
@@ -414,8 +407,8 @@ export function verifyContrast(html, minRatio = 4.5) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const walk = (el) => {
     if (el.nodeType === 1 && el.textContent.trim() && el.style.color) {
-      const fgHex = anyColorToHex(el.style.color);
-      const bgHex = anyColorToHex(getEffectiveBackground(el));
+      const fgHex = rgbToHex(...hexToRgb(el.style.color));
+      const bgHex = rgbToHex(...hexToRgb(getEffectiveBackground(el)));
       if (contrastRatio(fgHex, bgHex) < minRatio) {
         el.style.color = getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
       }
@@ -465,8 +458,8 @@ export function verifyHarmony(html, options = {}) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   Array.from(doc.getElementsByTagName('*')).forEach(el => {
     if (!el.textContent.trim() || !el.style.color) return;
-    const fg = anyColorToHex(el.style.color);
-    const bg = anyColorToHex(getEffectiveBackground(el));
+    const fg = rgbToHex(...hexToRgb(el.style.color));
+    const bg = rgbToHex(...hexToRgb(getEffectiveBackground(el)));
     const score = colorHarmonyScore(fg, bg);
     if (score < 0.5) {
       violations.push({ element: el.tagName + (el.id ? '#' + el.id : ''), score, color: fg, bg });
@@ -590,8 +583,8 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
         els.forEach(el => {
           if (el.textContent.trim() && el.style.color) {
             const bg = getEffectiveBackground(el);
-            const fgHex = anyColorToHex(el.style.color);
-            const bgHex = anyColorToHex(bg);
+            const fgHex = rgbToHex(...hexToRgb(el.style.color));
+            const bgHex = rgbToHex(...hexToRgb(bg));
             if (contrastRatio(fgHex, bgHex) < minRatio) {
               const newFg = getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
               el.style.color = newFg;
@@ -604,8 +597,8 @@ export function optimizeStyleHTML(html, goals, themeStyles = {}, maxIterations =
         els.forEach(el => {
           if (el.textContent.trim() && el.style.color) {
             const bg = getEffectiveBackground(el);
-            const fg = anyColorToHex(el.style.color);
-            const bgHex = anyColorToHex(bg);
+            const fg = rgbToHex(...hexToRgb(el.style.color));
+            const bgHex = rgbToHex(...hexToRgb(bg));
             if (colorHarmonyScore(fg, bgHex) < 0.5) {
               const pal = getHarmoniousPalette(bgHex, 3, { scheme: 'analogous' });
               if (pal.length) {

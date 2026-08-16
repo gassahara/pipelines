@@ -1,11 +1,4 @@
-import {
-  rewritestyleattrs,
-  applyStep,
-  getAllDescendants,
-  buildLayoutPropertyMap,
-  computeIntrinsicSize,
-  kebabToCamel
-} from './stylizerutilities.js';
+import { rewritestyleattrs, applyStep, getAllDescendants, buildLayoutPropertyMap, computeIntrinsicSize, kebabToCamel } from './stylizerutilities.js';
 import { logdebug, logwarn } from '../verbosity.js';
 
 // ==================== DIRECTIVE PARSING ====================
@@ -86,33 +79,34 @@ export function parseDirectives(str) {
 }
 
 // ==================== STATIC POSITION & CORNER LOOKUP TABLES ====================
-
-const POSITION_MAP = {
-  'top': { position: 'relative', top: '0' },
-  'bottom': { position: 'relative', bottom: '0' },
-  'left': { position: 'relative', left: '0' },
-  'right': { position: 'relative', right: '0' },
-  'middle': { position: 'relative', top: '50%', transform: 'translateY(-50%)' },
-  'center': { maxWidth: '960px', margin: '0 auto' },
-  'top-left': { position: 'relative', top: '0', left: '0' },
-  'top-right': { position: 'relative', top: '0', right: '0' },
-  'bottom-left': { position: 'relative', bottom: '0', left: '0' },
-  'bottom-right': { position: 'relative', bottom: '0', right: '0' },
-  'screen-top-left': { position: 'fixed', top: '0', left: '0' },
-  'screen-top-right': { position: 'fixed', top: '0', right: '0' },
-  'screen-bottom-left': { position: 'fixed', bottom: '0', left: '0' },
-  'screen-bottom-right': { position: 'fixed', bottom: '0', right: '0' },
-  'screen-center': { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
-};
-
-const CORNER_MAP = {
-  'top-left': { position: 'fixed', top: '0', left: '0' },
-  'top-right': { position: 'fixed', top: '0', right: '0' },
-  'bottom-left': { position: 'fixed', bottom: '0', left: '0' },
-  'bottom-right': { position: 'fixed', bottom: '0', right: '0' }
-};
+// POSITION_MAP and CORNER_MAP are now local to generateCSSFromDirectives.
 
 export function generateCSSFromDirectives(elementId, directives, breakpointMap = {}) {
+  const POSITION_MAP = {
+    'top': { position: 'relative', top: '0' },
+    'bottom': { position: 'relative', bottom: '0' },
+    'left': { position: 'relative', left: '0' },
+    'right': { position: 'relative', right: '0' },
+    'middle': { position: 'relative', top: '50%', transform: 'translateY(-50%)' },
+    'center': { maxWidth: '960px', margin: '0 auto' },
+    'top-left': { position: 'relative', top: '0', left: '0' },
+    'top-right': { position: 'relative', top: '0', right: '0' },
+    'bottom-left': { position: 'relative', bottom: '0', left: '0' },
+    'bottom-right': { position: 'relative', bottom: '0', right: '0' },
+    'screen-top-left': { position: 'fixed', top: '0', left: '0' },
+    'screen-top-right': { position: 'fixed', top: '0', right: '0' },
+    'screen-bottom-left': { position: 'fixed', bottom: '0', left: '0' },
+    'screen-bottom-right': { position: 'fixed', bottom: '0', right: '0' },
+    'screen-center': { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
+  };
+
+  const CORNER_MAP = {
+    'top-left': { position: 'fixed', top: '0', left: '0' },
+    'top-right': { position: 'fixed', top: '0', right: '0' },
+    'bottom-left': { position: 'fixed', bottom: '0', left: '0' },
+    'bottom-right': { position: 'fixed', bottom: '0', right: '0' }
+  };
+
   const inlineStyles = {};
 
   const applyDirective = (d) => {
@@ -153,50 +147,6 @@ export function generateCSSFromDirectives(elementId, directives, breakpointMap =
 }
 
 // ==================== LAYOUT OPTIMIZATION ENGINE ====================
-
-export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {}) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  const allRules = [];
-  const { viewportWidth = 1024, containerWidths = {} } = options;
-
-  for (let iter = 0; iter < maxIterations; iter++) {
-    let anyCorrection = false;
-    for (const goal of goals) {
-      if (goal.type === 'overflow') continue;
-      let violations = [];
-      let correctFn = null;
-
-      if (goal.type === 'minVerticalGap') {
-        const minGap = goal.options?.minGap ?? 12;
-        violations = checkSpacingDoc(doc, minGap);
-        if (violations.length) correctFn = () => correctSpacingDoc(doc, minGap);
-      } else if (goal.type === 'preventOverlap') {
-        violations = checkOverlapDoc(doc);
-        if (violations.length) correctFn = () => correctOverlapDoc(doc);
-      } else if (goal.type === 'scrollability') {
-        violations = checkScrollabilityDoc(doc);
-        if (violations.length) correctFn = () => correctScrollabilityDoc(doc);
-      } else if (goal.type === 'controlledOverlay') {
-        violations = checkControlledOverlayDoc(doc);
-        if (violations.length) correctFn = () => correctControlledOverlayDoc(doc);
-      }
-
-      if (correctFn && violations.length) {
-        allRules.push(...correctFn());
-        anyCorrection = true;
-      }
-    }
-    if (!anyCorrection) break;
-  }
-
-  const overflowViolations = checkOverflowDoc(doc, viewportWidth, containerWidths);
-  if (overflowViolations.length) {
-    allRules.push(...correctOverflowDoc(doc, overflowViolations));
-  }
-
-  return { html: doc.body.innerHTML, rules: allRules };
-}
 
 export function getCandidateElements(doc) {
   return applyStep([doc.body], { axis: 'descendant' }).filter(el => {
@@ -250,7 +200,7 @@ export function correctOverflowDoc(doc, overflowElements) {
   return rules;
 }
 
-export function checkSpacingDoc(doc, minGap) {
+function checkSpacingDoc(doc, minGap) {
   const violations = [];
   const walk = (parent) => {
     const children = getAllDescendants(parent).filter(el => {
@@ -259,8 +209,7 @@ export function checkSpacingDoc(doc, minGap) {
         ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li'].includes(el.tagName.toLowerCase());
     });
     for (let i = 0; i < children.length - 1; i++) {
-	const a = children[i];
-	const b = children[i+1];
+      const a = children[i], b = children[i+1];
       const gap = (parseFloat(a.style.marginBottom) || 0) + (parseFloat(b.style.marginTop) || 0);
       if (gap < minGap) {
         violations.push({ elementA: a.tagName + (a.id ? '#'+a.id : ''), elementB: b.tagName + (b.id ? '#'+b.id : ''), gap });
@@ -272,7 +221,7 @@ export function checkSpacingDoc(doc, minGap) {
   return violations;
 }
 
-export function correctSpacingDoc(doc, minGap) {
+function correctSpacingDoc(doc, minGap) {
   const rules = [];
   checkSpacingDoc(doc, minGap).forEach(({ elementA, elementB }) => {
     const el = doc.getElementById(elementA.replace(/^[^#]*#/, '')) || doc.querySelector(elementA);
@@ -284,13 +233,12 @@ export function correctSpacingDoc(doc, minGap) {
   return rules;
 }
 
-export function checkOverlapDoc(doc) {
+function checkOverlapDoc(doc) {
   const violations = [];
   const positioned = Array.from(doc.getElementsByTagName('*')).filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
   for (let i = 0; i < positioned.length; i++) {
     for (let j = i + 1; j < positioned.length; j++) {
-	const a = positioned[i];
-	const b = positioned[j];
+      const a = positioned[i], b = positioned[j];
       const aTop = parseFloat(a.style.top) || 0, aLeft = parseFloat(a.style.left) || 0, aW = parseFloat(a.style.width) || 0, aH = parseFloat(a.style.height) || 0;
       const bTop = parseFloat(b.style.top) || 0, bLeft = parseFloat(b.style.left) || 0, bW = parseFloat(b.style.width) || 0, bH = parseFloat(b.style.height) || 0;
       if (aW && aH && bW && bH && aLeft < bLeft + bW && aLeft + aW > bLeft && aTop < bTop + bH && aTop + aH > bTop) {
@@ -301,7 +249,7 @@ export function checkOverlapDoc(doc) {
   return violations;
 }
 
-export function correctOverlapDoc(doc) {
+function correctOverlapDoc(doc) {
   const rules = [];
   checkOverlapDoc(doc).forEach(({ elementB }) => {
     const el = doc.getElementById(elementB.replace(/^[^#]*#/, '')) || doc.querySelector(elementB);
@@ -313,14 +261,14 @@ export function correctOverlapDoc(doc) {
   return rules;
 }
 
-export function checkScrollabilityDoc(doc) {
+function checkScrollabilityDoc(doc) {
   return Array.from(doc.getElementsByTagName('*')).filter(el => {
     const s = el.style;
     return s && (s.overflow === 'auto' || s.overflow === 'scroll') && !s.touchAction;
   }).map(el => ({ element: el.tagName + (el.id ? '#'+el.id : '') }));
 }
 
-export function correctScrollabilityDoc(doc) {
+function correctScrollabilityDoc(doc) {
   const rules = [];
   checkScrollabilityDoc(doc).forEach(({ element }) => {
     const el = doc.getElementById(element.replace(/^[^#]*#/, '')) || doc.querySelector(element);
@@ -332,14 +280,14 @@ export function correctScrollabilityDoc(doc) {
   return rules;
 }
 
-export function checkControlledOverlayDoc(doc) {
+function checkControlledOverlayDoc(doc) {
   return Array.from(doc.getElementsByTagName('*')).filter(el => {
     const s = el.style;
     return s && (s.position === 'absolute' || s.position === 'fixed') && !s.zIndex;
   }).map(el => ({ element: el.tagName + (el.id ? '#'+el.id : '') }));
 }
 
-export function correctControlledOverlayDoc(doc) {
+function correctControlledOverlayDoc(doc) {
   const rules = [];
   checkControlledOverlayDoc(doc).forEach(({ element }) => {
     const el = doc.getElementById(element.replace(/^[^#]*#/, '')) || doc.querySelector(element);
@@ -364,4 +312,48 @@ export function applyDirectiveToSelector(html, selector, directiveString) {
   });
 
   return doc.body.innerHTML;
+}
+
+export function optimizeLayoutHTML(html, goals, maxIterations = 5, options = {}) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const allRules = [];
+  const { viewportWidth = 1024, containerWidths = {} } = options;
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    let anyCorrection = false;
+    for (const goal of goals) {
+      if (goal.type === 'overflow') continue;
+      let violations = [];
+      let correctFn = null;
+
+      if (goal.type === 'minVerticalGap') {
+        const minGap = goal.options?.minGap ?? 12;
+        violations = checkSpacingDoc(doc, minGap);
+        if (violations.length) correctFn = () => correctSpacingDoc(doc, minGap);
+      } else if (goal.type === 'preventOverlap') {
+        violations = checkOverlapDoc(doc);
+        if (violations.length) correctFn = () => correctOverlapDoc(doc);
+      } else if (goal.type === 'scrollability') {
+        violations = checkScrollabilityDoc(doc);
+        if (violations.length) correctFn = () => correctScrollabilityDoc(doc);
+      } else if (goal.type === 'controlledOverlay') {
+        violations = checkControlledOverlayDoc(doc);
+        if (violations.length) correctFn = () => correctControlledOverlayDoc(doc);
+      }
+
+      if (correctFn && violations.length) {
+        allRules.push(...correctFn());
+        anyCorrection = true;
+      }
+    }
+    if (!anyCorrection) break;
+  }
+
+  const overflowViolations = checkOverflowDoc(doc, viewportWidth, containerWidths);
+  if (overflowViolations.length) {
+    allRules.push(...correctOverflowDoc(doc, overflowViolations));
+  }
+
+  return { html: doc.body.innerHTML, rules: allRules };
 }
