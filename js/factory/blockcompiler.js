@@ -228,9 +228,18 @@ const RESERVED = new Set([
 const BUILTINS = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt']);
 
 const detectFreeIdentifiers = (source) => {
-  const declared = new Set();
+  const scope = {};
   const free = [];
   let i = 0;
+
+  const readPreviousWord = (start) => {
+    let wordStart = start - 1;
+    while (wordStart >= 0 && isWhitespace(source[wordStart])) wordStart -= 1;
+    const wordEnd = wordStart + 1;
+    wordStart = wordEnd;
+    while (wordStart > 0 && isIdentifierPart(source[wordStart - 1])) wordStart -= 1;
+    return source.slice(wordStart, wordEnd);
+  };
 
   while (i < source.length) {
     const ch = source[i];
@@ -299,16 +308,13 @@ const detectFreeIdentifiers = (source) => {
         continue;
       }
 
-      // local declaration: preceding non-whitespace ends with const/let/var/function
-      let declEnd = start - 1;
-      while (declEnd >= 0 && isWhitespace(source[declEnd])) declEnd -= 1;
-      const beforeText = source.slice(0, declEnd + 1);
-      if (beforeText === 'const' || beforeText === 'let' || beforeText === 'var' || beforeText === 'function') {
-        declared.add(id);
+      // declaration context: previous word is const/let/var/function, or inside parameter list
+      const previousWord = readPreviousWord(start);
+      if (previousWord === 'const' || previousWord === 'let' || previousWord === 'var' || previousWord === 'function') {
+        scope[id] = true;
         continue;
       }
 
-      // function parameter detection via unmatched '(' before identifier
       let depth = 0;
       let lastParenOpen = -1;
       for (let k = start - 1; k >= 0; k -= 1) {
@@ -319,11 +325,11 @@ const detectFreeIdentifiers = (source) => {
         }
       }
       if (lastParenOpen !== -1) {
-        declared.add(id);
+        scope[id] = true;
         continue;
       }
 
-      if (!declared.has(id) && free.indexOf(id) === -1) free.push(id);
+      if (scope[id] === undefined && free.indexOf(id) === -1) free.push(id);
       continue;
     }
 
@@ -333,6 +339,25 @@ const detectFreeIdentifiers = (source) => {
   return free;
 };
 
+const resolveFromBriefcase = (id, container) => {
+  if (container === null || typeof container !== 'object') {
+    return { found: false, value: undefined };
+  }
+
+  if (container[id] !== undefined) {
+    return { found: true, value: container[id] };
+  }
+
+  for (const value of Object.values(container)) {
+    if (value && typeof value === 'object') {
+      const result = resolveFromBriefcase(id, value);
+      if (result.found) return result;
+    }
+  }
+
+  return { found: false, value: undefined };
+};
+
 const prepareFunctionForSerialization = (fn, env, briefcase) => {
   const source = fn.toString();
   const freeIds = detectFreeIdentifiers(source);
@@ -340,8 +365,10 @@ const prepareFunctionForSerialization = (fn, env, briefcase) => {
   const missing = [];
 
   for (const id of freeIds) {
-    if (briefcase && briefcase[id] !== undefined) deps[id] = briefcase[id];
-    else if (env && env[id] !== undefined) {
+    const resolved = resolveFromBriefcase(id, briefcase);
+    if (resolved.found) {
+      deps[id] = resolved.value;
+    } else if (env && env[id] !== undefined) {
       deps[id] = env[id];
       if (briefcase) briefcase[id] = env[id];
     } else {
