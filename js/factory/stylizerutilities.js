@@ -67,7 +67,7 @@ export function computeBaseSpacing(viewportWidth, baseFontSize = 16) {
   };
 }
 
-function parseShorthandLengths(value, referencePx) {
+export function parseShorthandLengths(value, referencePx) {
   if (!value) return null;
   const tokens = tokenizeWhitespace(String(value));
   if (!tokens.length) return null;
