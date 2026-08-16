@@ -31,7 +31,6 @@ const BLOCKTYPES = Object.freeze({
 
 const INHERITEDKEYS = ['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents'];
 
-// Pure path accessor without `new Function`
 const compilepathaccessor = (pathstr) => {
   if (typeof pathstr !== 'string') return () => pathstr;
   const parts = pathstr.split('.').flatMap(p => p.split(/[\[\]]/).filter(Boolean).map(k => k.replace(/['"]/g, '')));
@@ -46,7 +45,6 @@ const buildproperties = (merged, inherited = {}) => {
   return result;
 };
 
-// Canonical pure data sanitizer for DB / state persistence
 const sanitizeEnv = (env, maxBytes = 128 * 1024) => {
   const out = {};
   for (const [key, value] of Object.entries(env || {})) {
@@ -215,6 +213,95 @@ const validaterevivableobject = (obj, label = 'briefcase') => {
   return errors;
 };
 
+const detectFreeIdentifiers = (source) => {
+  const builtins = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt']);
+  const declared = new Set();
+  for (const match of source.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) declared.add(match[1]);
+  for (const match of source.matchAll(/function\s+([A-Za-z_$][\w$]*)/g)) declared.add(match[1]);
+  for (const match of source.matchAll(/\(([^)]*)\)\s*=>/g)) {
+    match[1].split(',').map(s => s.trim()).filter(Boolean).forEach(p => declared.add(p.replace(/[=].*$/, '').trim()));
+  }
+  const ids = [];
+  for (const match of source.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)) {
+    const id = match[1];
+    if (builtins.has(id) || declared.has(id)) continue;
+    const before = source.slice(0, match.index);
+    const after = source.slice(match.index + id.length);
+    if (before.match(/\.\s*$/) || after.match(/^\s*:/)) continue;
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+};
+
+const prepareFunctionForSerialization = (fn, env, briefcase) => {
+  const source = fn.toString();
+  const freeIds = detectFreeIdentifiers(source);
+  const deps = {};
+  const missing = [];
+
+  for (const id of freeIds) {
+    if (briefcase && briefcase[id] !== undefined) deps[id] = briefcase[id];
+    else if (env && env[id] !== undefined) {
+      deps[id] = env[id];
+      if (briefcase) briefcase[id] = env[id];
+    } else {
+      missing.push(id);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`[prepareDnaForSerialization] Missing dependencies for function ${fn.name || '<anonymous>'}: ${missing.join(', ')}. Add them to the briefcase.`);
+  }
+
+  const depKeys = Object.keys(deps);
+  const destructure = depKeys.length ? `\n    const { ${depKeys.join(', ')} } = __deps;` : '';
+  let rewritten = source;
+
+  if (depKeys.length) {
+    const fnMatch = source.match(/^(async\s+)?function\s*\(([^)]*)\)\s*\{/);
+    const arrowMatch = source.match(/^(async\s+)?\(([^)]*)\)\s*=>\s*\{/);
+    if (fnMatch) {
+      const prefix = fnMatch[1] || '';
+      const params = fnMatch[2];
+      const newParams = params + (params.trim() ? ', ' : '') + '__deps';
+      rewritten = source.replace(/^(async\s+)?function\s*\(([^)]*)\)\s*\{/, `${prefix}function(${newParams}) {${destructure}`);
+    } else if (arrowMatch) {
+      const prefix = arrowMatch[1] || '';
+      const params = arrowMatch[2];
+      const newParams = params + (params.trim() ? ', ' : '') + '__deps';
+      rewritten = source.replace(/^(async\s+)?\(([^)]*)\)\s*=>\s*\{/, `${prefix}(${newParams}) => {${destructure}`);
+    } else {
+      const braceIdx = source.indexOf('{');
+      if (braceIdx !== -1) {
+        rewritten = source.slice(0, braceIdx + 1) + destructure + source.slice(braceIdx + 1);
+      }
+    }
+  }
+
+  return {
+    __fn__: true,
+    source: rewritten,
+    deps
+  };
+};
+
+const prepareDnaForSerialization = (node, env, briefcase) => {
+  if (typeof node === 'function') {
+    return prepareFunctionForSerialization(node, env, briefcase);
+  }
+  if (Array.isArray(node)) {
+    return node.map(item => prepareDnaForSerialization(item, env, briefcase));
+  }
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const [key, value] of Object.entries(node)) {
+      out[key] = prepareDnaForSerialization(value, env, briefcase);
+    }
+    return out;
+  }
+  return node;
+};
+
 const BLOCKANALYZERS = {
   [BLOCKTYPES.FN]: (block) => {
     const errors = [];
@@ -264,7 +351,6 @@ const BLOCKANALYZERS = {
   [BLOCKTYPES.STOREQUERY]: createBlockAnalyzer([{ field: 'command', required: true, message: 'storequery requires command', custom: v => v && typeof v.COMMAND === 'string' }])
 };
 
-// Parameterized HTTP Block (API / Fetch)
 const compileHttpBlock = (merged, id, sig, isTextual = false) => {
   const blockfn = async (env) => {
     const label = `${isTextual ? 'fetch' : 'api'}:${merged.endpoint || id}`;
@@ -492,6 +578,12 @@ const mapOrderedChildren = (children) => children.map(ch => ({
 
 const compileStageElement = (stage, pipelineId = 'default_pipeline', resumeFrom = null, parentPath = [], inheritedBriefcase = {}) => {
   const stageBriefcase = { ...inheritedBriefcase, ...(stage.briefcase || {}) };
+
+  const stageBriefcaseErrors = validaterevivableobject(stageBriefcase, `stage.${stage.id}.briefcase`);
+  if (stageBriefcaseErrors.length > 0) {
+    throw new Error(`[compileStageElement] briefcase revivability failed: ${stageBriefcaseErrors.join(', ')}`);
+  }
+
   const stagePath = [...parentPath, stage.id];
   const children = (stage.elements || []).map(el => {
     if (el.element === 'BLOCK') return createPersistentElementWrapper(compileElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase), el, stagePath, pipelineId);
@@ -651,8 +743,6 @@ const buildSpawnBootstrapMap = (pipeline) => {
   return map;
 };
 
-// ==================== TRAMPOLINE RUNNER ====================
-
 const runTrampoline = async (env, stages, pipelineId) => {
   if (!env.executionStack) {
     env.executionStack = stages.map((s, idx) => s.id || s.stagemeta?.stageid || ('stage_' + idx));
@@ -760,7 +850,9 @@ export const compilepipeline = async (pipeline, accessors, sinks, pipelineIdOver
   }
 
   await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(err => console.warn('[compilepipeline] pipeline loaded failed:', err));
-  await enqueueExecutionRegisterPipeline(pipelineId, pipeline, {}).catch(err => console.warn('[compilepipeline] register pipeline failed:', err));
+
+  const preparedDna = prepareDnaForSerialization(pipeline, {}, pipelineBriefcase);
+  await enqueueExecutionRegisterPipeline(pipelineId, preparedDna, {}).catch(err => console.warn('[compilepipeline] register pipeline failed:', err));
 
   const spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
   const compiled = compileElements(pipeline.elements, pipelineId, null, [], pipelineBriefcase);
@@ -779,15 +871,14 @@ export const bootGlobalSnapshot = async (envEnhancer = null) => {
     const { pipelines, htmlSnapshot } = recoveryData;
     const pipelineEntries = Object.entries(pipelines || {});
 
-    // FIRST-RUN / EMPTY-DB GUARD
     if (pipelineEntries.length === 0) {
       logdebug('[BOOTLOADER] No persisted pipelines found. First run or empty snapshot.');
       return { recovered: false, pipelineCount: 0, htmlRestored: false };
     }
 
-    // Phase 1: Rehydrate pipelines only; do not touch DOM.
     let rehydratedCount = 0;
     const rehydratedPipelines = [];
+
     for (const [pid, pdata] of pipelineEntries) {
       if (pdata.status !== 'running') continue;
       if (!pdata.dna) {
@@ -803,7 +894,6 @@ export const bootGlobalSnapshot = async (envEnhancer = null) => {
       }
     }
 
-    // Phase 2: Restore HTML only if at least one pipeline was rehydrated.
     let htmlRestored = false;
     if (rehydratedCount > 0 && typeof htmlSnapshot === 'string' && htmlSnapshot.length > 0) {
       await enqueueRenderRestoreBodyHtml(htmlSnapshot);
@@ -812,7 +902,6 @@ export const bootGlobalSnapshot = async (envEnhancer = null) => {
       logdebug('[BOOTLOADER] Global HTML snapshot restored');
     }
 
-    // Phase 3: Run rehydrated pipelines; if HTML was restored, they will operate on it.
     for (const { pid, compiled, env } of rehydratedPipelines) {
       const runtimeEnv = typeof envEnhancer === 'function'
         ? { ...env, ...envEnhancer(pid, env) }

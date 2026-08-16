@@ -64,6 +64,9 @@ function dnaReplacer(key, value) {
 function dnaReviver(key, value) {
   if (value && typeof value === 'object' && value[FN_TAG] === true) {
     try {
+      if (value.deps) {
+        return new Function('__deps', 'return (' + value.source + ')')(value.deps);
+      }
       return new Function('return (' + value.source + ')')();
     } catch (err) {
       console.warn('[DNA] failed to revive function using new Function:', err);
@@ -117,6 +120,14 @@ export function consolidateGraph(node) {
 
     if (Array.isArray(node)) {
       return node.map(consolidateGraph);
+    }
+
+    if (node.briefcase && typeof node.briefcase === 'object') {
+      const briefcase = node.briefcase;
+      for (const [key, value] of Object.entries(briefcase)) {
+        const refId = storePair(key, value);
+        briefcase[key] = { __pairref: refId };
+      }
     }
 
     if (node.element === 'BLOCK') {
@@ -181,6 +192,115 @@ export function deserializePairStore(json) {
   for (const [key, value] of Object.entries(parsed || {})) {
     PAIRSTORE.set(key, value);
   }
+}
+
+// ==================== POST-SERIALIZATION OPTIMIZATION ====================
+
+const measureLength = (obj) => JSON.stringify(obj).length;
+
+export function optimizeSerializedDna(jsonString) {
+  const obj = JSON.parse(jsonString);
+
+  const passObjectPairDedup = (node) => {
+    if (Array.isArray(node)) {
+      return node.map(passObjectPairDedup);
+    }
+    if (node && typeof node === 'object') {
+      if (node.__pairref) return node;
+      if (node.element === 'BLOCK') {
+        for (const key of Object.keys(node)) {
+          if (key === 'elements') continue;
+          const identity = pairIdentity(key, node[key]);
+          let refId = PAIRSTORE.get(identity);
+          if (!refId) {
+            pairCounter += 1;
+            refId = 'pair_' + pairCounter;
+            PAIRSTORE.set(identity, refId);
+            PAIRSTORE.set('ref:' + refId, { key, value: node[key] });
+          }
+          node[key] = { __pairref: refId };
+        }
+        return node;
+      }
+      if (node.briefcase && typeof node.briefcase === 'object') {
+        for (const key of Object.keys(node.briefcase)) {
+          const identity = pairIdentity(key, node.briefcase[key]);
+          let refId = PAIRSTORE.get(identity);
+          if (!refId) {
+            pairCounter += 1;
+            refId = 'pair_' + pairCounter;
+            PAIRSTORE.set(identity, refId);
+            PAIRSTORE.set('ref:' + refId, { key, value: node.briefcase[key] });
+          }
+          node.briefcase[key] = { __pairref: refId };
+        }
+      }
+      for (const key of Object.keys(node)) {
+        node[key] = passObjectPairDedup(node[key]);
+      }
+      return node;
+    }
+    return node;
+  };
+
+  const passInnerDedup = (node) => {
+    if (Array.isArray(node)) {
+      return node.map(passInnerDedup);
+    }
+    if (node && typeof node === 'object') {
+      if (node.__fn__ === true && typeof node.source === 'string') {
+        // Placeholder: inner source literal dedup intentionally not expanded here.
+        // Future optimization passes can replace repeated literals with briefcase references.
+        return node;
+      }
+      for (const key of Object.keys(node)) {
+        node[key] = passInnerDedup(node[key]);
+      }
+      return node;
+    }
+    return node;
+  };
+
+  let current = obj;
+  let optimized = current;
+  do {
+    const before = measureLength(optimized);
+    let candidate = JSON.parse(JSON.stringify(optimized));
+    candidate = passObjectPairDedup(candidate);
+    candidate = passInnerDedup(candidate);
+    if (measureLength(candidate) < before) {
+      optimized = candidate;
+    } else {
+      break;
+    }
+  } while (true);
+
+  optimized.__FRAMEWORK_PAIRSTORE__ = serializePairStore();
+  return JSON.stringify(optimized);
+}
+
+export function deoptimizeSerializedDna(jsonString) {
+  const obj = JSON.parse(jsonString);
+
+  if (obj.__FRAMEWORK_PAIRSTORE__) {
+    deserializePairStore(obj.__FRAMEWORK_PAIRSTORE__);
+    delete obj.__FRAMEWORK_PAIRSTORE__;
+  }
+
+  const resolveNode = (node) => {
+    if (Array.isArray(node)) return node.map(resolveNode);
+    if (node && typeof node === 'object') {
+      if (node.__pairref) {
+        const entry = PAIRSTORE.get('ref:' + node.__pairref);
+        return entry ? entry.value : undefined;
+      }
+      for (const key of Object.keys(node)) node[key] = resolveNode(node[key]);
+      return node;
+    }
+    return node;
+  };
+
+  return JSON.stringify(resolveNode(obj));
 }
 
 // ==================== ACTOR BEHAVIOR ====================
