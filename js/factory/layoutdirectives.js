@@ -250,7 +250,7 @@ export function correctOverflowDoc(doc, overflowElements) {
   return rules;
 }
 
-function checkSpacingDoc(doc, minGap) {
+export function checkSpacingDoc(doc, minGap) {
   const violations = [];
   const walk = (parent) => {
     const children = getAllDescendants(parent).filter(el => {
@@ -271,7 +271,7 @@ function checkSpacingDoc(doc, minGap) {
   return violations;
 }
 
-function correctSpacingDoc(doc, minGap) {
+export function correctSpacingDoc(doc, minGap) {
   const rules = [];
   checkSpacingDoc(doc, minGap).forEach(({ elementA, elementB }) => {
     const el = doc.getElementById(elementA.replace(/^[^#]*#/, '')) || doc.querySelector(elementA);
@@ -283,7 +283,7 @@ function correctSpacingDoc(doc, minGap) {
   return rules;
 }
 
-function checkOverlapDoc(doc) {
+export function checkOverlapDoc(doc) {
   const violations = [];
   const positioned = Array.from(doc.getElementsByTagName('*')).filter(el => el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'));
   for (let i = 0; i < positioned.length; i++) {
@@ -299,7 +299,7 @@ function checkOverlapDoc(doc) {
   return violations;
 }
 
-function correctOverlapDoc(doc) {
+export function correctOverlapDoc(doc) {
   const rules = [];
   checkOverlapDoc(doc).forEach(({ elementB }) => {
     const el = doc.getElementById(elementB.replace(/^[^#]*#/, '')) || doc.querySelector(elementB);
@@ -311,14 +311,14 @@ function correctOverlapDoc(doc) {
   return rules;
 }
 
-function checkScrollabilityDoc(doc) {
+export function checkScrollabilityDoc(doc) {
   return Array.from(doc.getElementsByTagName('*')).filter(el => {
     const s = el.style;
     return s && (s.overflow === 'auto' || s.overflow === 'scroll') && !s.touchAction;
   }).map(el => ({ element: el.tagName + (el.id ? '#'+el.id : '') }));
 }
 
-function correctScrollabilityDoc(doc) {
+export function correctScrollabilityDoc(doc) {
   const rules = [];
   checkScrollabilityDoc(doc).forEach(({ element }) => {
     const el = doc.getElementById(element.replace(/^[^#]*#/, '')) || doc.querySelector(element);
@@ -330,14 +330,14 @@ function correctScrollabilityDoc(doc) {
   return rules;
 }
 
-function checkControlledOverlayDoc(doc) {
+export function checkControlledOverlayDoc(doc) {
   return Array.from(doc.getElementsByTagName('*')).filter(el => {
     const s = el.style;
     return s && (s.position === 'absolute' || s.position === 'fixed') && !s.zIndex;
   }).map(el => ({ element: el.tagName + (el.id ? '#'+el.id : '') }));
 }
 
-function correctControlledOverlayDoc(doc) {
+export function correctControlledOverlayDoc(doc) {
   const rules = [];
   checkControlledOverlayDoc(doc).forEach(({ element }) => {
     const el = doc.getElementById(element.replace(/^[^#]*#/, '')) || doc.querySelector(element);
