@@ -338,6 +338,66 @@ const parseBindingPattern = (tokens, start) => {
   return i;
 };
 
+const isExpressionContext = (tokens, index) => {
+  if (index === 0) return false;
+  const prev = tokens[index - 1];
+  if (!prev) return false;
+  if (prev.type === 'keyword' && prev.value === 'return') return true;
+  if (prev.type === 'punctuator') {
+    if (['(', '=', ',', '[', ':', '=>'].includes(prev.value)) return true;
+  }
+  return false;
+};
+
+const parseObjectLiteral = (tokens, start, free) => {
+  let depth = 1;
+  let i = start + 1;
+
+  while (i < tokens.length && depth > 0) {
+    const t = tokens[i];
+
+    if (t.type === 'punctuator') {
+      if (t.value === '{') {
+        depth += 1;
+        i += 1;
+        continue;
+      }
+      if (t.value === '}') {
+        depth -= 1;
+        i += 1;
+        if (depth === 0) return i;
+        continue;
+      }
+    }
+
+    if (t.type === 'identifier') {
+      const next = i + 1 < tokens.length ? tokens[i + 1] : null;
+      if (next && next.type === 'punctuator' && next.value === ':') {
+        i = parseExpressionWithScope(tokens, i + 2, free, [',', '}']);
+        continue;
+      }
+      if (next && next.type === 'punctuator' && (next.value === ',' || next.value === '}')) {
+        i += 1;
+        continue;
+      }
+    }
+
+    if (t.type === 'literal') {
+      const next = i + 1 < tokens.length ? tokens[i + 1] : null;
+      if (next && next.type === 'punctuator' && next.value === ':') {
+        i = parseExpressionWithScope(tokens, i + 2, free, [',', '}']);
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  return i;
+};
+
 const removeFree = (free, id) => {
   const idx = free.indexOf(id);
   if (idx !== -1) free.splice(idx, 1);
@@ -349,6 +409,11 @@ const parseExpressionWithScope = (tokens, start, free, stopTokens) => {
 
   while (i < tokens.length) {
     const t = tokens[i];
+
+    if (t.type === 'punctuator' && t.value === '{' && isExpressionContext(tokens, i)) {
+      i = parseObjectLiteral(tokens, i, free);
+      continue;
+    }
 
     if (t.type === 'punctuator') {
       if (t.value === '(' || t.value === '[' || t.value === '{') {
@@ -469,6 +534,11 @@ const parseBlock = (tokens, start, free) => {
 
   while (i < tokens.length && depth > 0) {
     const t = tokens[i];
+
+    if (t.type === 'punctuator' && t.value === '{' && isExpressionContext(tokens, i)) {
+      i = parseObjectLiteral(tokens, i, free);
+      continue;
+    }
 
     if (t.type === 'punctuator') {
       if (t.value === '{') {
