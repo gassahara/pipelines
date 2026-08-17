@@ -109,35 +109,6 @@ function persistExecutionWorldmap(state) {
   });
 }
 
-async function loadInitialState() {
-  try {
-    var saved = await enqueueDbRestore('actor:state:execution');
-    if (saved) {
-      return {
-        pipelines: saved.pipelines || {},
-        htmlSnapshot: saved.htmlSnapshot || null,
-        tasks: saved.tasks || {},
-        taskCounter: saved.taskCounter || 0,
-        worldmap: saved,
-        debugState: { currentContinuation: null }
-      };
-    }
-  } catch (err) {
-    console.warn('[EXECUTIONACTOR] state restore failed:', err);
-  }
-  return {
-    pipelines: {},
-    htmlSnapshot: null,
-    tasks: {},
-    taskCounter: 0,
-    worldmap: createInitialExecutionWorldmap(),
-    debugState: { currentContinuation: null }
-  };
-}
-
-var initialState = await loadInitialState();
-var EXECUTIONACTOR = createactor(executionbehavior, initialState, MESSAGEINTERFACES);
-
 function nextTaskId(state) {
   state.taskCounter += 1;
   return 'task_' + Date.now() + '_' + state.taskCounter + '_' + Math.random().toString(36).slice(2, 8);
@@ -166,42 +137,6 @@ function makeTask(state, descriptor) {
   return task;
 }
 
-async function runElementTask(taskid, descriptor) {
-  try {
-    var executionContext = {
-      env: descriptor.env,
-      inputs: descriptor.signature && descriptor.signature.inputs ? descriptor.signature.inputs : [],
-      outputs: descriptor.signature && descriptor.signature.outputs ? descriptor.signature.outputs : {},
-      properties: descriptor.properties || {}
-    };
-    var result = await descriptor.executor(executionContext);
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: result || {} }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
-  } catch (err) {
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
-  }
-}
-
-async function runStageTask(taskid, descriptor) {
-  try {
-    await descriptor.stageExecutor(descriptor.env);
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
-  } catch (err) {
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
-  }
-}
-
-async function runSpawnTask(taskid, descriptor) {
-  try {
-    await descriptor.childRunner({
-      id: descriptor.childPipelineId,
-      env: descriptor.childEnv || {}
-    });
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
-  } catch (err) {
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
-  }
-}
-
 function cancelTask(state, taskid) {
   var task = state.tasks[taskid];
   if (!task) return;
@@ -224,6 +159,8 @@ function ensurePipeline(state, pipelineid) {
   }
   return state.pipelines[pipelineid];
 }
+
+// ==================== ACTOR BEHAVIOR ====================
 
 var executionbehavior = function(state, message) {
   var readOnly = [
@@ -381,7 +318,7 @@ var executionbehavior = function(state, message) {
     case EXECUTIONMESSAGETYPES.CCC_ABORT:
     case EXECUTIONMESSAGETYPES.CCC_CONTINUE:
     case EXECUTIONMESSAGETYPES.CCC_RETRY: {
-      // CCC behavior as consolidated in prior analysis; minimal here.
+      // CCC behavior consolidated in prior analysis; minimal here.
       resolveMessage(message, true);
       break;
     }
@@ -429,6 +366,73 @@ var executionbehavior = function(state, message) {
 
   return nextState;
 };
+
+// ==================== ACTOR CREATION ====================
+
+async function loadInitialState() {
+  try {
+    var saved = await enqueueDbRestore('actor:state:execution');
+    if (saved) {
+      return {
+        pipelines: saved.pipelines || {},
+        htmlSnapshot: saved.htmlSnapshot || null,
+        tasks: saved.tasks || {},
+        taskCounter: saved.taskCounter || 0,
+        worldmap: saved,
+        debugState: { currentContinuation: null }
+      };
+    }
+  } catch (err) {
+    console.warn('[EXECUTIONACTOR] state restore failed:', err);
+  }
+  return {
+    pipelines: {},
+    htmlSnapshot: null,
+    tasks: {},
+    taskCounter: 0,
+    worldmap: createInitialExecutionWorldmap(),
+    debugState: { currentContinuation: null }
+  };
+}
+
+async function runElementTask(taskid, descriptor) {
+  try {
+    var executionContext = {
+      env: descriptor.env,
+      inputs: descriptor.signature && descriptor.signature.inputs ? descriptor.signature.inputs : [],
+      outputs: descriptor.signature && descriptor.signature.outputs ? descriptor.signature.outputs : {},
+      properties: descriptor.properties || {}
+    };
+    var result = await descriptor.executor(executionContext);
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: result || {} }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+  } catch (err) {
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+  }
+}
+
+async function runStageTask(taskid, descriptor) {
+  try {
+    await descriptor.stageExecutor(descriptor.env);
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+  } catch (err) {
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+  }
+}
+
+async function runSpawnTask(taskid, descriptor) {
+  try {
+    await descriptor.childRunner({
+      id: descriptor.childPipelineId,
+      env: descriptor.childEnv || {}
+    });
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+  } catch (err) {
+    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+  }
+}
+
+var initialState = await loadInitialState();
+var EXECUTIONACTOR = createactor(executionbehavior, initialState, MESSAGEINTERFACES);
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {
