@@ -1,39 +1,38 @@
-// ==================== COLOR SPACE CONVERSIONS ====================
+function createColorConstants() {
+  return Object.freeze({
+    CANDIDATE_HUES: [180, 150, 210, 120, 240, 60, 300, 90, 270],
+    SATURATIONS: [100, 80, 60, 40],
+    MAX_FOREGROUND_ADJUSTMENTS: 20
+  });
+}
 
-export function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0, l = (max + min) / 2;
-
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
-  }
+function rgbToHsl(r, g, b) {
+  var nr = r / 255, ng = g / 255, nb = b / 255;
+  var max = Math.max(nr, ng, nb);
+  var min = Math.min(nr, ng, nb);
+  var d = max - min;
+  var l = (max + min) / 2;
+  var s = d === 0 ? 0 : l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  var h = d === 0 ? 0 : (max === nr ? (ng - nb) / d + (ng < nb ? 6 : 0) : max === ng ? (nb - nr) / d + 2 : (nr - ng) / d + 4) / 6;
   return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
 }
 
-export function hslToRgb(h, s, l) {
+function hslToRgb(h, s, l) {
   h /= 360; s /= 100; l /= 100;
   if (s === 0) {
-    const val = Math.round(l * 255);
+    var val = Math.round(l * 255);
     return { r: val, g: val, b: val };
   }
-  const hue2rgb = (p, q, t) => {
+  function hue2rgb(p, q, t) {
     if (t < 0) t += 1;
     if (t > 1) t -= 1;
     if (t < 1 / 6) return p + (q - p) * 6 * t;
     if (t < 1 / 2) return q;
     if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
     return p;
-  };
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
+  }
+  var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  var p = 2 * l - q;
   return {
     r: Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
     g: Math.round(hue2rgb(p, q, h) * 255),
@@ -41,170 +40,224 @@ export function hslToRgb(h, s, l) {
   };
 }
 
-const parseComponent = (comp) => {
-  if (typeof comp === 'number') return Number.isInteger(comp) && comp >= 0 && comp <= 255 ? comp : null;
+function parseComponent(comp) {
+  if (typeof comp === 'number') return comp === Math.floor(comp) && comp >= 0 && comp <= 255 ? comp : null;
   if (typeof comp !== 'string') return null;
-  const s = comp.trim().replace(/^0x/i, '');
+  var s = comp.trim().replace(/^0x/i, '');
   if (!s || !/^[0-9a-fA-F]+$/.test(s)) return null;
-  const val = parseInt(s, /[a-fA-F]/.test(s) ? 16 : 10);
+  var val = parseInt(s, /[a-fA-F]/.test(s) ? 16 : 10);
   return isNaN(val) || val < 0 || val > 255 ? null : val;
-};
+}
 
-export function hexToRgb(input) {
-  if (typeof input === 'string' && input.trim().startsWith('rgb(')) {
-    const parts = input.trim().slice(4, -1).split(',').map(s => s.trim()).map(parseComponent);
-    return parts.length === 3 && parts.every(n => n !== null) ? parts : [0, 0, 0];
+function hexToRgb(input) {
+  if (typeof input === 'string' && input.trim().indexOf('rgb(') === 0) {
+    var parts = input.trim().slice(4, -1).split(',').map(function(s) { return s.trim(); }).map(parseComponent);
+    return parts.length === 3 && parts.every(function(n) { return n !== null; }) ? parts : [0, 0, 0];
   }
   if (typeof input !== 'string') return [0, 0, 0];
-  const hex = input.trim().replace(/^#|^0x/i, '');
+  var hex = input.trim().replace(/^#|^0x/i, '');
   if (hex.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(hex)) return [0, 0, 0];
   return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
 }
 
-export function rgbToHex(r, g, b) {
-  const nums = [r, g, b].map(parseComponent);
-  if (nums.some(n => n === null)) return "#000000";
-  return `#${nums.map(n => n.toString(16).padStart(2, '0')).join('')}`;
+function pad2(n) {
+  return n < 16 ? '0' + n.toString(16) : n.toString(16);
 }
 
-export function hslToHex(h, s, l) {
-  const { r, g, b } = hslToRgb(h, s, l);
-  return rgbToHex(r, g, b);
+function rgbToHex(r, g, b) {
+  var nums = [r, g, b].map(parseComponent);
+  if (nums.some(function(n) { return n === null; })) return "#000000";
+  return "#" + nums.map(function(n) { return pad2(n); }).join('');
 }
 
-// ==================== LUMINANCE & CONTRAST ====================
+function hslToHex(h, s, l) {
+  var rgb = hslToRgb(h, s, l);
+  return rgbToHex(rgb.r, rgb.g, rgb.b);
+}
 
-export const relativeLuminance = ([r, g, b]) => {
-  const toLinear = c => (c /= 255) <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+function relativeLuminance(rgb) {
+  var r = rgb[0], g = rgb[1], b = rgb[2];
+  function toLinear(c) {
+    c /= 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
   return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
-};
+}
 
-export function contrastRatio(color1, color2) {
-  const rgb1 = hexToRgb(color1);
-  const rgb2 = hexToRgb(color2);
-  const l1 = relativeLuminance(rgb1);
-  const l2 = relativeLuminance(rgb2);
+function contrastRatio(color1, color2) {
+  var rgb1 = hexToRgb(color1);
+  var rgb2 = hexToRgb(color2);
+  var l1 = relativeLuminance(rgb1);
+  var l2 = relativeLuminance(rgb2);
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
-export function computeForeground(desired, bg, minRatio = 4.5) {
-  let fgHex = desired;
-  if (contrastRatio(fgHex, bg) >= minRatio) return fgHex;
-
-  const fgHsl = rgbToHsl(...hexToRgb(fgHex));
-  const bgHsl = rgbToHsl(...hexToRgb(bg));
-  const step = bgHsl.l > 50 ? -5 : 5;
-
-  for (let i = 0; i < 20; i++) {
-    fgHsl.l = Math.max(0, Math.min(100, fgHsl.l + step));
-    fgHex = hslToHex(fgHsl.h, fgHsl.s, fgHsl.l);
-    if (contrastRatio(fgHex, bg) >= minRatio) break;
+function computeForeground(desired, bg, minRatio) {
+  if (minRatio === undefined) minRatio = 4.5;
+  if (contrastRatio(desired, bg) >= minRatio) return desired;
+  var constants = createColorConstants();
+  var bgHsl = rgbToHsl.apply(null, hexToRgb(bg));
+  var step = bgHsl.l > 50 ? -5 : 5;
+  function adjust(attempt, current) {
+    if (attempt === 0 || contrastRatio(current, bg) >= minRatio) return current;
+    var hsl = rgbToHsl.apply(null, hexToRgb(current));
+    var next = hslToHex(hsl.h, hsl.s, Math.max(0, Math.min(100, hsl.l + step)));
+    return adjust(attempt - 1, next);
   }
-  return fgHex;
+  return adjust(constants.MAX_FOREGROUND_ADJUSTMENTS, desired);
 }
 
-export function emphasize(color, bg, intensity = 1) {
-  const fgHsl = rgbToHsl(...hexToRgb(String(color)));
-  const bgHsl = rgbToHsl(...hexToRgb(String(bg)));
+function emphasize(color, bg, intensity) {
+  if (intensity === undefined) intensity = 1;
+  var fgHsl = rgbToHsl.apply(null, hexToRgb(String(color)));
+  var bgHsl = rgbToHsl.apply(null, hexToRgb(String(bg)));
+  var h = Math.abs(fgHsl.h - bgHsl.h) < 30 ? (fgHsl.h + 30) % 360 : fgHsl.h;
+  var s = Math.min(100, fgHsl.s + 15 * intensity);
+  var l = Math.abs(fgHsl.l - bgHsl.l) < 40 ? (fgHsl.l > bgHsl.l ? Math.min(100, fgHsl.l + 20) : Math.max(0, fgHsl.l - 20)) : fgHsl.l;
+  return hslToHex(h, s, l);
+}
 
-  if (Math.abs(fgHsl.h - bgHsl.h) < 30) fgHsl.h = (fgHsl.h + 30) % 360;
-  fgHsl.s = Math.min(100, fgHsl.s + 15 * intensity);
-  if (Math.abs(fgHsl.l - bgHsl.l) < 40) {
-    fgHsl.l = fgHsl.l > bgHsl.l ? Math.min(100, fgHsl.l + 20) : Math.max(0, fgHsl.l - 20);
+function extractInlineStyle(el, prop) {
+  return el.style[prop] || '';
+}
+
+function shiftHues(hex, shifts) {
+  var hsl = rgbToHsl.apply(null, hexToRgb(hex));
+  return shifts.map(function(shift) {
+    return hslToHex((hsl.h + shift + 360) % 360, hsl.s, hsl.l);
+  });
+}
+
+function complementary(hex) {
+  return shiftHues(hex, [180]);
+}
+
+function analogous(hex, count, step) {
+  if (count === undefined) count = 3;
+  if (step === undefined) step = 30;
+  var hsl = rgbToHsl.apply(null, hexToRgb(hex));
+  var startH = hsl.h - (step * (count - 1)) / 2;
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    result.push(hslToHex(((startH + i * step) % 360 + 360) % 360, hsl.s, hsl.l));
   }
-  return hslToHex(fgHsl.h, fgHsl.s, fgHsl.l);
+  return result;
 }
 
-export const extractInlineStyle = (el, prop) => el.style[prop] || '';
-
-// ==================== HARMONY & PALETTES ====================
-
-const shiftHues = (hex, shifts) => {
-  const { h, s, l } = rgbToHsl(...hexToRgb(hex));
-  return shifts.map(shift => hslToHex((h + shift + 360) % 360, s, l));
-};
-
-export const complementary = (hex) => shiftHues(hex, [180]);
-
-export function analogous(hex, count = 3, step = 30) {
-  const { h, s, l } = rgbToHsl(...hexToRgb(hex));
-  const startH = h - (step * (count - 1)) / 2;
-  return Array.from({ length: count }, (_, i) => hslToHex(((startH + i * step) % 360 + 360) % 360, s, l));
+function triadic(hex) {
+  return [hex].concat(shiftHues(hex, [120, 240]));
 }
 
-export const triadic = (hex) => [hex, ...shiftHues(hex, [120, 240])];
-export const splitComplementary = (hex) => [hex, ...shiftHues(hex, [150, 210])];
-export const tetradic = (hex) => [hex, ...shiftHues(hex, [60, 180, 240])];
-
-export function monochromatic(hex, count = 5, lightnessRange = 60) {
-  const { h, s, l } = rgbToHsl(...hexToRgb(hex));
-  const startL = Math.max(0, l - lightnessRange / 2);
-  const endL = Math.min(100, l + lightnessRange / 2);
-  return Array.from({ length: count }, (_, i) =>
-    hslToHex(h, s, count === 1 ? l : startL + ((endL - startL) * i) / (count - 1))
-  );
+function splitComplementary(hex) {
+  return [hex].concat(shiftHues(hex, [150, 210]));
 }
 
-export function shades(hex, count = 5) {
-  const { h, s, l } = rgbToHsl(...hexToRgb(hex));
-  return Array.from({ length: count }, (_, i) => hslToHex(h, s, count === 1 ? l : l - (l * i) / (count - 1)));
+function tetradic(hex) {
+  return [hex].concat(shiftHues(hex, [60, 180, 240]));
 }
 
-export function tints(hex, count = 5) {
-  const { h, s, l } = rgbToHsl(...hexToRgb(hex));
-  return Array.from({ length: count }, (_, i) => hslToHex(h, s, count === 1 ? l : l + ((100 - l) * i) / (count - 1)));
+function monochromatic(hex, count, lightnessRange) {
+  if (count === undefined) count = 5;
+  if (lightnessRange === undefined) lightnessRange = 60;
+  var hsl = rgbToHsl.apply(null, hexToRgb(hex));
+  var startL = Math.max(0, hsl.l - lightnessRange / 2);
+  var endL = Math.min(100, hsl.l + lightnessRange / 2);
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    result.push(hslToHex(hsl.h, hsl.s, count === 1 ? hsl.l : startL + ((endL - startL) * i) / (count - 1)));
+  }
+  return result;
 }
 
-export const pick = (colors, index) => colors[Math.max(0, Math.min(index, colors.length - 1))];
+function shades(hex, count) {
+  if (count === undefined) count = 5;
+  var hsl = rgbToHsl.apply(null, hexToRgb(hex));
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    result.push(hslToHex(hsl.h, hsl.s, count === 1 ? hsl.l : hsl.l - (hsl.l * i) / (count - 1)));
+  }
+  return result;
+}
 
-export function contrastingLevel(colors, bg, level = 50) {
-  const sorted = colors.slice().sort((a, b) => contrastRatio(a, bg) - contrastRatio(b, bg));
+function tints(hex, count) {
+  if (count === undefined) count = 5;
+  var hsl = rgbToHsl.apply(null, hexToRgb(hex));
+  var result = [];
+  for (var i = 0; i < count; i++) {
+    result.push(hslToHex(hsl.h, hsl.s, count === 1 ? hsl.l : hsl.l + ((100 - hsl.l) * i) / (count - 1)));
+  }
+  return result;
+}
+
+function pick(colors, index) {
+  return colors[Math.max(0, Math.min(index, colors.length - 1))];
+}
+
+function contrastingLevel(colors, bg, level) {
+  if (level === undefined) level = 50;
+  var sorted = colors.slice().sort(function(a, b) { return contrastRatio(a, bg) - contrastRatio(b, bg); });
   return sorted[Math.round((level / 100) * (sorted.length - 1))];
 }
 
-export const emphaticLevel = (color, bg, level = 50) => emphasize(color, bg, (level / 100) * 2);
-
-export function getContrastingPalette(baseHex, minContrast = 4.5, options = {}) {
-  const bgRgb = hexToRgb(baseHex);
-  const bgHsl = rgbToHsl(...bgRgb);
-  const bgLum = relativeLuminance(bgRgb);
-  const candidateHues = [180, 150, 210, 120, 240, 60, 300, 90, 270].map(s => (bgHsl.h + s) % 360);
-
-  const results = [];
-  const saturations = [100, 80, 60, 40];
-  const direction = bgLum > 0.4 ? 'lighter' : 'darker';
-
-  for (const hue of candidateHues) {
-    for (const sat of saturations) {
-      let low = direction === 'lighter' ? 25 : 0;
-      let high = direction === 'lighter' ? 50 : 25;
-      let bestLight = null;
-
-      for (let i = 0; i < 30; i++) {
-        const mid = Math.round((low + high) / 2);
-        const hex = hslToHex(hue, sat, mid);
-        if (contrastRatio(hex, baseHex) >= minContrast) {
-          bestLight = mid;
-          break;
-        }
-        if (direction === 'lighter') low = Math.min(100, low + 5);
-        else high = Math.max(0, high - 5);
-      }
-      if (bestLight !== null) {
-        const fgHex = hslToHex(hue, sat, bestLight);
-        results.push({ hex: fgHex, ratio: contrastRatio(fgHex, baseHex) });
-      }
-    }
-  }
-
-  const seen = new Set();
-  const unique = results.filter(r => !seen.has(r.hex.toLowerCase()) && seen.add(r.hex.toLowerCase()));
-  unique.sort((a, b) => a.ratio - b.ratio);
-  return (options.maxColors != null ? unique.slice(0, options.maxColors) : unique).map(c => c.hex);
+function emphaticLevel(color, bg, level) {
+  if (level === undefined) level = 50;
+  return emphasize(color, bg, (level / 100) * 2);
 }
 
-export function getHarmoniousPalette(baseHex, count = 3, options = {}) {
-  const scheme = options.scheme || 'analogous';
+function getContrastingPalette(baseHex, minContrast, options) {
+  if (minContrast === undefined) minContrast = 4.5;
+  if (options === undefined) options = {};
+  var constants = createColorConstants();
+  var bgRgb = hexToRgb(baseHex);
+  var bgHsl = rgbToHsl.apply(null, bgRgb);
+  var bgLum = relativeLuminance(bgRgb);
+  var candidateHues = constants.CANDIDATE_HUES.map(function(s) { return (bgHsl.h + s) % 360; });
+  var saturations = constants.SATURATIONS;
+  var direction = bgLum > 0.4 ? 'lighter' : 'darker';
+
+  function findBestLight(hue, sat) {
+    var low = direction === 'lighter' ? 25 : 0;
+    var high = direction === 'lighter' ? 50 : 25;
+    for (var i = 0; i < 30; i++) {
+      var mid = Math.round((low + high) / 2);
+      var hex = hslToHex(hue, sat, mid);
+      if (contrastRatio(hex, baseHex) >= minContrast) return mid;
+      if (direction === 'lighter') low = Math.min(100, low + 5);
+      else high = Math.max(0, high - 5);
+    }
+    return null;
+  }
+
+  var results = candidateHues.reduce(function(acc, hue) {
+    return saturations.reduce(function(innerAcc, sat) {
+      var bestLight = findBestLight(hue, sat);
+      if (bestLight !== null) {
+        var fgHex = hslToHex(hue, sat, bestLight);
+        innerAcc.push({ hex: fgHex, ratio: contrastRatio(fgHex, baseHex) });
+      }
+      return innerAcc;
+    }, acc);
+  }, []);
+
+  var uniqueResult = results.reduce(function(acc, r) {
+    var lower = r.hex.toLowerCase();
+    if (acc.seen.indexOf(lower) === -1) {
+      acc.seen.push(lower);
+      acc.unique.push(r);
+    }
+    return acc;
+  }, { seen: [], unique: [] });
+
+  var unique = uniqueResult.unique;
+  unique.sort(function(a, b) { return a.ratio - b.ratio; });
+  var limited = options.maxColors != null ? unique.slice(0, options.maxColors) : unique;
+  return limited.map(function(c) { return c.hex; });
+}
+
+function getHarmoniousPalette(baseHex, count, options) {
+  if (count === undefined) count = 3;
+  if (options === undefined) options = {};
+  var scheme = options.scheme || 'analogous';
   switch (scheme) {
     case 'complementary': return complementary(baseHex).slice(0, count);
     case 'triadic': return triadic(baseHex).slice(0, count);
@@ -215,11 +268,11 @@ export function getHarmoniousPalette(baseHex, count = 3, options = {}) {
   }
 }
 
-export function colorHarmonyScore(fgHex, bgHex) {
-  const fgHsl = rgbToHsl(...hexToRgb(fgHex));
-  const bgHsl = rgbToHsl(...hexToRgb(bgHex));
-  const hueDist = Math.abs(fgHsl.h - bgHsl.h);
-  const normalizedDist = hueDist > 180 ? 360 - hueDist : hueDist;
+function colorHarmonyScore(fgHex, bgHex) {
+  var fgHsl = rgbToHsl.apply(null, hexToRgb(fgHex));
+  var bgHsl = rgbToHsl.apply(null, hexToRgb(bgHex));
+  var hueDist = Math.abs(fgHsl.h - bgHsl.h);
+  var normalizedDist = hueDist > 180 ? 360 - hueDist : hueDist;
   if (normalizedDist < 30) return 1;
   if (normalizedDist < 60) return 0.9;
   if (normalizedDist > 150 && normalizedDist < 180) return 0.95;
@@ -227,25 +280,56 @@ export function colorHarmonyScore(fgHex, bgHex) {
   return 0.7;
 }
 
-export function getOptimalForeground(bgHex, minRatio = 4.5, options = {}) {
-  const scheme = options.scheme || 'complementary';
-  const preference = options.preference || 'balanced';
+function getOptimalForeground(bgHex, minRatio, options) {
+  if (minRatio === undefined) minRatio = 4.5;
+  if (options === undefined) options = {};
+  var scheme = options.scheme || 'complementary';
+  var preference = options.preference || 'balanced';
 
-  let palette = getHarmoniousPalette(bgHex, 5, { scheme });
+  var palette = getHarmoniousPalette(bgHex, 5, { scheme: scheme });
   if (palette.length < 5) palette = getHarmoniousPalette(bgHex, 5, { scheme: 'analogous' });
 
-  const candidates = palette
-    .map(c => ({ hex: c, ratio: contrastRatio(c, bgHex), harmony: colorHarmonyScore(c, bgHex) }))
-    .filter(c => c.ratio >= minRatio);
+  var candidates = palette
+    .map(function(c) { return { hex: c, ratio: contrastRatio(c, bgHex), harmony: colorHarmonyScore(c, bgHex) }; })
+    .filter(function(c) { return c.ratio >= minRatio; });
 
   if (candidates.length === 0) {
-    const lightPalette = getContrastingPalette(bgHex, minRatio);
+    var lightPalette = getContrastingPalette(bgHex, minRatio);
     return lightPalette.length ? lightPalette[0] : computeForeground('#ffffff', bgHex, minRatio);
   }
 
-  if (preference === 'contrast') candidates.sort((a, b) => b.ratio - a.ratio);
-  else if (preference === 'harmony') candidates.sort((a, b) => b.harmony - a.harmony);
-  else candidates.sort((a, b) => (b.ratio * 0.5 + b.harmony * 0.5) - (a.ratio * 0.5 + a.harmony * 0.5));
+  if (preference === 'contrast') candidates.sort(function(a, b) { return b.ratio - a.ratio; });
+  else if (preference === 'harmony') candidates.sort(function(a, b) { return b.harmony - a.harmony; });
+  else candidates.sort(function(a, b) { return (b.ratio * 0.5 + b.harmony * 0.5) - (a.ratio * 0.5 + a.harmony * 0.5); });
 
   return candidates[0].hex;
 }
+
+export {
+  createColorConstants,
+  rgbToHsl,
+  hslToRgb,
+  hexToRgb,
+  rgbToHex,
+  hslToHex,
+  relativeLuminance,
+  contrastRatio,
+  computeForeground,
+  emphasize,
+  extractInlineStyle,
+  complementary,
+  analogous,
+  triadic,
+  splitComplementary,
+  tetradic,
+  monochromatic,
+  shades,
+  tints,
+  pick,
+  contrastingLevel,
+  emphaticLevel,
+  getContrastingPalette,
+  getHarmoniousPalette,
+  colorHarmonyScore,
+  getOptimalForeground
+};

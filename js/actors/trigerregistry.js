@@ -1,64 +1,67 @@
-// triggerregistry.js – Framework trigger garbage collector
-// Maintains a map of registered TRIGGER listeners and re‑attaches them
-// after DOM mutations that may destroy elements.
-
-const triggerMap = new Map(); // id -> Map(event, handler)
-
-/**
- * Registers a trigger so it can be restored after DOM changes.
- * Does NOT overwrite handlers for other events on the same element.
- * @param {string} id - The DOM element id (sourceid).
- * @param {string} event - The event type (e.g., 'click').
- * @param {Function} handler - The event handler function.
- */
-export function registerTrigger(id, event, handler) {
-    if (!triggerMap.has(id)) {
-        triggerMap.set(id, new Map());
-    }
-    triggerMap.get(id).set(event, handler);
+function createTriggerRegistry() {
+  return Object.freeze({ map: Object.freeze({}) });
 }
 
-/**
- * Removes a trigger from the registry.
- * If an event is provided, only that event is removed.
- * Otherwise the entire element entry is removed.
- * @param {string} id - The DOM element id.
- * @param {string} [event] - Optional event type to remove.
- */
-export function unregisterTrigger(id, event = null) {
-    if (event) {
-        const events = triggerMap.get(id);
-        if (events) {
-            events.delete(event);
-            if (events.size === 0) {
-                triggerMap.delete(id);
-            }
-        }
-    } else {
-        triggerMap.delete(id);
-    }
-}
-
-/**
- * Re‑validates all registered triggers by checking if their target elements
- * exist in the DOM and, if so, re‑attaching all stored listeners.
- * This should be called after any DOM mutation that might destroy elements.
- */
-export function revalidateAll() {
-    triggerMap.forEach((events, id) => {
-        const el = document.getElementById(id);
-        if (el) {
-            events.forEach((handler, event) => {
-                // Remove any existing listener (old element would have been destroyed, but safe)
-                el.removeEventListener(event, handler);
-                // Attach fresh listener on the new element
-                el.addEventListener(event, handler);
-            });
-        }
+function cloneRegistryMap(map) {
+  var out = {};
+  Object.keys(map).forEach(function(id) {
+    var events = map[id];
+    var newEvents = {};
+    Object.keys(events).forEach(function(event) {
+      newEvents[event] = events[event];
     });
+    out[id] = newEvents;
+  });
+  return out;
 }
 
-// Optional: expose for debugging
-export function getTriggerMap() {
-    return triggerMap;
+function registerTrigger(registry, id, event, handler) {
+  var newMap = cloneRegistryMap(registry.map);
+  var events = newMap[id] || {};
+  var newEvents = {};
+  Object.keys(events).forEach(function(k) { newEvents[k] = events[k]; });
+  newEvents[event] = handler;
+  newMap[id] = newEvents;
+  return Object.freeze({ map: Object.freeze(newMap) });
 }
+
+function unregisterTrigger(registry, id, event) {
+  var newMap = cloneRegistryMap(registry.map);
+  if (event === undefined || event === null) {
+    delete newMap[id];
+  } else if (newMap[id]) {
+    var newEvents = {};
+    Object.keys(newMap[id]).forEach(function(k) {
+      if (k !== event) newEvents[k] = newMap[id][k];
+    });
+    if (Object.keys(newEvents).length > 0) newMap[id] = newEvents;
+    else delete newMap[id];
+  }
+  return Object.freeze({ map: Object.freeze(newMap) });
+}
+
+function revalidateAll(registry) {
+  var map = registry.map;
+  Object.keys(map).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) {
+      var events = map[id];
+      Object.keys(events).forEach(function(event) {
+        el.removeEventListener(event, events[event]);
+        el.addEventListener(event, events[event]);
+      });
+    }
+  });
+}
+
+function getTriggerMap(registry) {
+  return registry.map;
+}
+
+export {
+  createTriggerRegistry,
+  registerTrigger,
+  unregisterTrigger,
+  revalidateAll,
+  getTriggerMap
+};

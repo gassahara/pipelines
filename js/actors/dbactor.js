@@ -1,62 +1,67 @@
 import { createactor, createMessageValidator } from './actorkernel.js';
 
-export const DBMESSAGETYPES = Object.freeze({
+var DBMESSAGETYPES = Object.freeze({
   STORE: 'store',
   RESTORE: 'restore',
   LIST: 'list',
   DELETE: 'delete'
 });
 
-const MESSAGEINTERFACES = Object.freeze({
-  [DBMESSAGETYPES.STORE]: { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' },
-  [DBMESSAGETYPES.RESTORE]: { key: 'string', resolve: 'function?', reject: 'function?' },
-  [DBMESSAGETYPES.LIST]: { resolve: 'function?', reject: 'function?' },
-  [DBMESSAGETYPES.DELETE]: { key: 'string', resolve: 'function?', reject: 'function?' }
-});
+var MESSAGEINTERFACES = {};
+MESSAGEINTERFACES[DBMESSAGETYPES.STORE] = { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[DBMESSAGETYPES.RESTORE] = { key: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[DBMESSAGETYPES.LIST] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[DBMESSAGETYPES.DELETE] = { key: 'string', resolve: 'function?', reject: 'function?' };
+Object.freeze(MESSAGEINTERFACES);
 
-const ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
-const MAX_KEYS = 100;
-const MAX_ENTRY_BYTES = 2 * 1024 * 1024; // 2MB unified cap
+var ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
+var MAX_KEYS = 100;
+var MAX_ENTRY_BYTES = 2 * 1024 * 1024; // 2MB unified cap
 
-const loadInitialState = () => {
+function loadInitialState() {
   try {
-    const raw = (typeof localStorage !== 'undefined' ? localStorage : globalThis.localStorage)?.getItem(ROOT_KEY);
-    if (raw) return { store: new Map(Object.entries(JSON.parse(raw).keys || {})) };
+    var storage = typeof localStorage !== 'undefined' ? localStorage : globalThis.localStorage;
+    var raw = storage && storage.getItem(ROOT_KEY);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      var keys = parsed.keys || {};
+      return { store: Object.keys(keys).reduce(function(acc, k) { acc[k] = keys[k]; return acc; }, {}) };
+    }
   } catch (err) {
     console.warn('[DBACTOR] loadInitialState failed:', err);
   }
-  return { store: new Map() };
-};
+  return { store: {} };
+}
 
-const persist = (store) => {
-  const root = { namespace: 'FRAMEWORK_DBACTOR_V1', updatedAt: Date.now(), keys: Object.fromEntries(store) };
-  const storage = typeof localStorage !== 'undefined' ? localStorage : globalThis.localStorage;
+function persist(store) {
+  var root = { namespace: 'FRAMEWORK_DBACTOR_V1', updatedAt: Date.now(), keys: store };
+  var storage = typeof localStorage !== 'undefined' ? localStorage : globalThis.localStorage;
   if (!storage) return false;
 
-  for (let attempt = 0; attempt <= 2; attempt++) {
+  for (var attempt = 0; attempt <= 2; attempt++) {
     try {
       storage.setItem(ROOT_KEY, JSON.stringify(root));
       return true;
     } catch (err) {
-      const keys = [...store.keys()];
+      var keys = Object.keys(store);
       if (!keys.length) return false;
-      const removeCount = Math.max(1, Math.floor(keys.length * 0.25));
-      for (let i = 0; i < removeCount; i++) store.delete(keys[i]);
-      root.keys = Object.fromEntries(store);
+      var removeCount = Math.max(1, Math.floor(keys.length * 0.25));
+      for (var i = 0; i < removeCount; i++) delete store[keys[i]];
+      root.keys = store;
     }
   }
   return false;
-};
+}
 
-const validatemessage = createMessageValidator(MESSAGEINTERFACES);
+var validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
 
-const FN_TAG = '__fn__';
+var FN_TAG = '__fn__';
 
 function dnaReplacer(key, value) {
   if (typeof value === 'function') {
-    return { [FN_TAG]: true, source: value.toString() };
+    return { __fn__: true, source: value.toString() };
   }
   return value;
 }
@@ -76,23 +81,23 @@ function dnaReviver(key, value) {
   return value;
 }
 
-export const serializeDna = (dna) => JSON.stringify(dna, dnaReplacer);
-export const deserializeDna = (json) => JSON.parse(json, dnaReviver);
+export var serializeDna = function(dna) { return JSON.stringify(dna, dnaReplacer); };
+export var deserializeDna = function(json) { return JSON.parse(json, dnaReviver); };
 
 // ==================== PROPERTY PAIR STORE ====================
 
-const PAIRSTORE = new Map();
-let pairCounter = 0;
+var PAIRSTORE = {};
+var pairCounter = 0;
 
 function pairIdentity(key, value) {
-  let normalized;
+  var normalized;
   if (typeof value === 'function') {
     normalized = 'function:' + value.toString();
   } else if (typeof value === 'object' && value !== null) {
     try {
       normalized = 'json:' + JSON.stringify(value);
-    } catch {
-      normalized = 'object:' + (value.constructor?.name || 'Object');
+    } catch (e) {
+      normalized = 'object:' + (value.constructor && value.constructor.name ? value.constructor.name : 'Object');
     }
   } else {
     normalized = typeof value + ':' + String(value);
@@ -101,13 +106,13 @@ function pairIdentity(key, value) {
 }
 
 function storePair(key, value) {
-  const identity = pairIdentity(key, value);
-  let refId = PAIRSTORE.get(identity);
+  var identity = pairIdentity(key, value);
+  var refId = PAIRSTORE[identity];
   if (!refId) {
     pairCounter += 1;
     refId = 'pair_' + pairCounter;
-    PAIRSTORE.set(identity, refId);
-    PAIRSTORE.set('ref:' + refId, { key, value });
+    PAIRSTORE[identity] = refId;
+    PAIRSTORE['ref:' + refId] = { key: key, value: value };
   }
   return refId;
 }
@@ -123,25 +128,25 @@ export function consolidateGraph(node) {
     }
 
     if (node.briefcase && typeof node.briefcase === 'object') {
-      const briefcase = node.briefcase;
-      for (const [key, value] of Object.entries(briefcase)) {
-        const refId = storePair(key, value);
+      var briefcase = node.briefcase;
+      Object.keys(briefcase).forEach(function(key) {
+        var refId = storePair(key, briefcase[key]);
         briefcase[key] = { __pairref: refId };
-      }
+      });
     }
 
     if (node.element === 'BLOCK') {
-      for (const [key, value] of Object.entries(node)) {
-        if (key === 'elements') continue;
-        const refId = storePair(key, value);
+      Object.keys(node).forEach(function(key) {
+        if (key === 'elements') return;
+        var refId = storePair(key, node[key]);
         node[key] = { __pairref: refId };
-      }
+      });
       return node;
     }
 
-    for (const [key, value] of Object.entries(node)) {
-      node[key] = consolidateGraph(value);
-    }
+    Object.keys(node).forEach(function(key) {
+      node[key] = consolidateGraph(node[key]);
+    });
     return node;
   }
 
@@ -153,7 +158,7 @@ export function restoreGraph(node) {
 
   if (typeof node === 'object') {
     if (node.__pairref) {
-      const entry = PAIRSTORE.get('ref:' + node.__pairref);
+      var entry = PAIRSTORE['ref:' + node.__pairref];
       return entry ? entry.value : undefined;
     }
 
@@ -161,9 +166,9 @@ export function restoreGraph(node) {
       return node.map(restoreGraph);
     }
 
-    for (const [key, value] of Object.entries(node)) {
-      node[key] = restoreGraph(value);
-    }
+    Object.keys(node).forEach(function(key) {
+      node[key] = restoreGraph(node[key]);
+    });
     return node;
   }
 
@@ -171,16 +176,14 @@ export function restoreGraph(node) {
 }
 
 export function serializePairStore() {
-  const output = {};
-  for (const [key, value] of PAIRSTORE.entries()) {
-    output[key] = value;
-  }
+  var output = {};
+  Object.keys(PAIRSTORE).forEach(function(key) { output[key] = PAIRSTORE[key]; });
   return JSON.stringify(output, dnaReplacer);
 }
 
 export function deserializePairStore(json) {
   if (!json) return;
-  let parsed;
+  var parsed;
   try {
     parsed = JSON.parse(json, dnaReviver);
   } catch (err) {
@@ -188,84 +191,82 @@ export function deserializePairStore(json) {
     return;
   }
 
-  PAIRSTORE.clear();
-  for (const [key, value] of Object.entries(parsed || {})) {
-    PAIRSTORE.set(key, value);
-  }
+  Object.keys(PAIRSTORE).forEach(function(key) { delete PAIRSTORE[key]; });
+  Object.keys(parsed || {}).forEach(function(key) {
+    PAIRSTORE[key] = parsed[key];
+  });
 }
 
 // ==================== POST-SERIALIZATION OPTIMIZATION ====================
 
-const measureLength = (obj) => JSON.stringify(obj).length;
+function measureLength(obj) { return JSON.stringify(obj).length; }
 
 export function optimizeSerializedDna(jsonString) {
-  const obj = JSON.parse(jsonString);
+  var obj = JSON.parse(jsonString);
 
-  const passObjectPairDedup = (node) => {
+  var passObjectPairDedup = function(node) {
     if (Array.isArray(node)) {
       return node.map(passObjectPairDedup);
     }
     if (node && typeof node === 'object') {
       if (node.__pairref) return node;
       if (node.element === 'BLOCK') {
-        for (const key of Object.keys(node)) {
-          if (key === 'elements') continue;
-          const identity = pairIdentity(key, node[key]);
-          let refId = PAIRSTORE.get(identity);
+        Object.keys(node).forEach(function(key) {
+          if (key === 'elements') return;
+          var identity = pairIdentity(key, node[key]);
+          var refId = PAIRSTORE[identity];
           if (!refId) {
             pairCounter += 1;
             refId = 'pair_' + pairCounter;
-            PAIRSTORE.set(identity, refId);
-            PAIRSTORE.set('ref:' + refId, { key, value: node[key] });
+            PAIRSTORE[identity] = refId;
+            PAIRSTORE['ref:' + refId] = { key: key, value: node[key] };
           }
           node[key] = { __pairref: refId };
-        }
+        });
         return node;
       }
       if (node.briefcase && typeof node.briefcase === 'object') {
-        for (const key of Object.keys(node.briefcase)) {
-          const identity = pairIdentity(key, node.briefcase[key]);
-          let refId = PAIRSTORE.get(identity);
+        Object.keys(node.briefcase).forEach(function(key) {
+          var identity = pairIdentity(key, node.briefcase[key]);
+          var refId = PAIRSTORE[identity];
           if (!refId) {
             pairCounter += 1;
             refId = 'pair_' + pairCounter;
-            PAIRSTORE.set(identity, refId);
-            PAIRSTORE.set('ref:' + refId, { key, value: node.briefcase[key] });
+            PAIRSTORE[identity] = refId;
+            PAIRSTORE['ref:' + refId] = { key: key, value: node.briefcase[key] };
           }
           node.briefcase[key] = { __pairref: refId };
-        }
+        });
       }
-      for (const key of Object.keys(node)) {
+      Object.keys(node).forEach(function(key) {
         node[key] = passObjectPairDedup(node[key]);
-      }
+      });
       return node;
     }
     return node;
   };
 
-  const passInnerDedup = (node) => {
+  var passInnerDedup = function(node) {
     if (Array.isArray(node)) {
       return node.map(passInnerDedup);
     }
     if (node && typeof node === 'object') {
       if (node.__fn__ === true && typeof node.source === 'string') {
-        // Placeholder: inner source literal dedup intentionally not expanded here.
-        // Future optimization passes can replace repeated literals with briefcase references.
         return node;
       }
-      for (const key of Object.keys(node)) {
+      Object.keys(node).forEach(function(key) {
         node[key] = passInnerDedup(node[key]);
-      }
+      });
       return node;
     }
     return node;
   };
 
-  let current = obj;
-  let optimized = current;
+  var current = obj;
+  var optimized = current;
   do {
-    const before = measureLength(optimized);
-    let candidate = JSON.parse(JSON.stringify(optimized));
+    var before = measureLength(optimized);
+    var candidate = JSON.parse(JSON.stringify(optimized));
     candidate = passObjectPairDedup(candidate);
     candidate = passInnerDedup(candidate);
     if (measureLength(candidate) < before) {
@@ -280,21 +281,21 @@ export function optimizeSerializedDna(jsonString) {
 }
 
 export function deoptimizeSerializedDna(jsonString) {
-  const obj = JSON.parse(jsonString);
+  var obj = JSON.parse(jsonString);
 
   if (obj.__FRAMEWORK_PAIRSTORE__) {
     deserializePairStore(obj.__FRAMEWORK_PAIRSTORE__);
     delete obj.__FRAMEWORK_PAIRSTORE__;
   }
 
-  const resolveNode = (node) => {
+  var resolveNode = function(node) {
     if (Array.isArray(node)) return node.map(resolveNode);
     if (node && typeof node === 'object') {
       if (node.__pairref) {
-        const entry = PAIRSTORE.get('ref:' + node.__pairref);
+        var entry = PAIRSTORE['ref:' + node.__pairref];
         return entry ? entry.value : undefined;
       }
-      for (const key of Object.keys(node)) node[key] = resolveNode(node[key]);
+      Object.keys(node).forEach(function(key) { node[key] = resolveNode(node[key]); });
       return node;
     }
     return node;
@@ -305,55 +306,64 @@ export function deoptimizeSerializedDna(jsonString) {
 
 // ==================== ACTOR BEHAVIOR ====================
 
-const dbbehavior = (state, message) => {
-  const check = validatemessage(message);
+var dbbehavior = function(state, message) {
+  var check = validatemessage(message);
   if (!check.valid) {
     if (typeof message.reject === 'function') message.reject(new Error('[DBACTOR:INVALID] ' + check.error));
     return state;
   }
 
-  const store = new Map(state.store);
-  const resolve = (val) => typeof message.resolve === 'function' && message.resolve(val);
+  var store = Object.keys(state.store || {}).reduce(function(acc, k) { acc[k] = state.store[k]; return acc; }, {});
+  var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
 
   switch (message.type) {
     case DBMESSAGETYPES.STORE: {
       try {
-        const serialized = JSON.stringify(message.value);
+        var serialized = JSON.stringify(message.value);
         if (serialized.length > MAX_ENTRY_BYTES) {
           console.warn('[DBACTOR] value too large for key:', message.key, 'bytes:', serialized.length);
           resolve(false);
           return state;
         }
-      } catch {
+      } catch (e) {
         resolve(false);
         return state;
       }
 
-      if (store.size >= MAX_KEYS && !store.has(message.key)) {
-        const oldest = store.keys().next().value;
-        if (oldest) store.delete(oldest);
+      var keys = Object.keys(store);
+      if (keys.length >= MAX_KEYS && !store[message.key]) {
+        var oldest = keys[0];
+        if (oldest) delete store[oldest];
       }
-      store.set(message.key, message.value);
+      store[message.key] = message.value;
       resolve(persist(store));
       break;
     }
-    case DBMESSAGETYPES.RESTORE: resolve(store.has(message.key) ? store.get(message.key) : null); break;
-    case DBMESSAGETYPES.LIST: resolve([...store.keys()]); break;
+    case DBMESSAGETYPES.RESTORE:
+      resolve(store[message.key] !== undefined ? store[message.key] : null);
+      break;
+    case DBMESSAGETYPES.LIST:
+      resolve(Object.keys(store));
+      break;
     case DBMESSAGETYPES.DELETE: {
-      store.delete(message.key);
+      delete store[message.key];
       resolve(persist(store));
       break;
     }
   }
-  return { store };
+
+  return { store: store };
 };
 
-export const DBACTOR = createactor(dbbehavior, loadInitialState());
+export var DBACTOR = createactor(dbbehavior, loadInitialState());
 
-const enqueue = (type, payload = {}) =>
-  new Promise((resolve, reject) => DBACTOR.send({ type, ...payload, resolve, reject }));
+var enqueue = function(type, payload) {
+  return new Promise(function(resolve, reject) {
+    DBACTOR.send(Object.assign({}, payload, { type: type, resolve: resolve, reject: reject }));
+  });
+};
 
-export const enqueueDbStore = (key, value) => enqueue(DBMESSAGETYPES.STORE, { key, value });
-export const enqueueDbRestore = (key) => enqueue(DBMESSAGETYPES.RESTORE, { key });
-export const enqueueDbList = () => enqueue(DBMESSAGETYPES.LIST);
-export const enqueueDbDelete = (key) => enqueue(DBMESSAGETYPES.DELETE, { key });
+export var enqueueDbStore = function(key, value) { return enqueue(DBMESSAGETYPES.STORE, { key: key, value: value }); };
+export var enqueueDbRestore = function(key) { return enqueue(DBMESSAGETYPES.RESTORE, { key: key }); };
+export var enqueueDbList = function() { return enqueue(DBMESSAGETYPES.LIST); };
+export var enqueueDbDelete = function(key) { return enqueue(DBMESSAGETYPES.DELETE, { key: key }); };

@@ -1,8 +1,9 @@
 import { createactor, createMessageValidator } from './actorkernel.js';
+import { createActorRegistry, setRenderActor } from './actorregistry.js';
+import { createTriggerRegistry, revalidateAll } from './trigerregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
-import { revalidateAll } from './trigerregistry.js';
 
-export const MESSAGETYPES = Object.freeze({
+var MESSAGETYPES = Object.freeze({
   RENDER: 'render',
   CLEAR: 'clear',
   HTML: 'html',
@@ -34,291 +35,402 @@ export const MESSAGETYPES = Object.freeze({
   RESTORE_BODY_HTML: 'restore_body_html'
 });
 
-const MESSAGEINTERFACES = Object.freeze({
-  [MESSAGETYPES.RENDER]: { id: 'string', renderer: 'function', data: 'any', env: 'object', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.CLEAR]: { id: 'string', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.HTML]: { id: 'string', markup: 'string', append: 'boolean', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.REMOVE]: { id: 'string', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.SETSTYLES]: { id: 'string', styles: 'object', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.SETATTR]: { id: 'string', name: 'string', value: 'string', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.TOGGLECLASS]: { id: 'string', classname: 'string', force: 'boolean', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.CRYPTO]: { bytes: 'number', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GEOLOCATION]: { enablehighaccuracy: 'boolean', timeout: 'number', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.PERSISTENCE]: { action: 'string', key: 'string?', value: 'string?', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.CREATEELEMENT]: { tag: 'string', props: 'object?', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.CREATECONTAINER]: { resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.CREATEFROMHTML]: { html: 'string', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.PROPERTY]: { id: 'string', name: 'string', arguments: 'array?', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GETHTML]: { id: 'string', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GETVALUE]: { id: 'string', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GETSTYLE]: { id: 'string', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GETPOSITION]: { id: 'string', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GETLAYOUT]: { id: 'string', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.SETHTML]: { id: 'string', value: 'string', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.SETPOSITION]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.SETSTYLE]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.SETVALUE]: { id: 'string', value: 'any', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.SETLAYOUT]: { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.GETVIEWPORT]: { resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GETSCREEN]:   { resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.MATCHMEDIA]:  { query: 'string', resolve: 'function', reject: 'function?' },
-  [MESSAGETYPES.GET_BODY_HTML]: { resolve: 'function?', reject: 'function?' },
-  [MESSAGETYPES.RESTORE_BODY_HTML]: { html: 'string', resolve: 'function?', reject: 'function?' }
-});
+var MESSAGEINTERFACES = {};
+MESSAGEINTERFACES[MESSAGETYPES.RENDER] = { id: 'string', renderer: 'function', data: 'any', env: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.CLEAR] = { id: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.HTML] = { id: 'string', markup: 'string', append: 'boolean', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.REMOVE] = { id: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.SETSTYLES] = { id: 'string', styles: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.SETATTR] = { id: 'string', name: 'string', value: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.TOGGLECLASS] = { id: 'string', classname: 'string', force: 'boolean', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.CRYPTO] = { bytes: 'number', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GEOLOCATION] = { enablehighaccuracy: 'boolean', timeout: 'number', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.PERSISTENCE] = { action: 'string', key: 'string?', value: 'string?', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.CREATEELEMENT] = { tag: 'string', props: 'object?', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.CREATECONTAINER] = { resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.CREATEFROMHTML] = { html: 'string', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.PROPERTY] = { id: 'string', name: 'string', arguments: 'array?', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GETHTML] = { id: 'string', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GETVALUE] = { id: 'string', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GETSTYLE] = { id: 'string', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GETPOSITION] = { id: 'string', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GETLAYOUT] = { id: 'string', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.SETHTML] = { id: 'string', value: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.SETPOSITION] = { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.SETSTYLE] = { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.SETVALUE] = { id: 'string', value: 'any', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.SETLAYOUT] = { id: 'string', value: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GETVIEWPORT] = { resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GETSCREEN] = { resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.MATCHMEDIA] = { query: 'string', resolve: 'function', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.GET_BODY_HTML] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
+Object.freeze(MESSAGEINTERFACES);
 
-const validatemessage = createMessageValidator(MESSAGEINTERFACES);
+var validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
-const withElement = (id, reject, fn) => {
+function withElement(id, reject, fn) {
   if (!id || typeof id !== 'string') {
     if (typeof reject === 'function') reject(new Error('[RENDERACTOR] id must be a non-empty string'));
     return null;
   }
-  const el = document.getElementById(id);
+  var el = document.getElementById(id);
   if (!el) {
     if (typeof reject === 'function') reject(new Error('[RENDERACTOR] element not found: ' + id));
     return null;
   }
   return fn(el);
+}
+
+function resolveMsg(msg, val) { if (typeof msg.resolve === 'function') msg.resolve(val); }
+function rejectMsg(msg, err) { if (typeof msg.reject === 'function') msg.reject(err); }
+
+var HANDLERS = {};
+
+HANDLERS[MESSAGETYPES.RENDER] = function(state, msg) {
+  var target = msg.id ? document.getElementById(msg.id) : null;
+  if (typeof msg.renderer === 'function') {
+    try { msg.renderer(target, msg.data, msg.env || {}); }
+    catch (err) { console.error('[RENDERACTOR] Renderer error:', err); throw err; }
+  }
 };
 
-const resolveMsg = (msg, val) => typeof msg.resolve === 'function' && msg.resolve(val);
-const rejectMsg = (msg, err) => typeof msg.reject === 'function' && msg.reject(err);
-
-// Declarative Message Handlers Map
-const HANDLERS = {
-  [MESSAGETYPES.RENDER]: (state, msg) => {
-    const target = msg.id ? document.getElementById(msg.id) : null;
-    if (typeof msg.renderer === 'function') {
-      try { msg.renderer(target, msg.data, msg.env || {}); }
-      catch (err) { console.error('[RENDERACTOR] Renderer error:', err); throw err; }
-    }
-  },
-  [MESSAGETYPES.CLEAR]: (state, msg) => withElement(msg.id, msg.reject, el => {
+HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
     el.innerHTML = '';
-    revalidateAll();
+    revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
-  }),
-  [MESSAGETYPES.HTML]: (state, msg) => withElement(msg.id, msg.reject, el => {
+  });
+};
+
+HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
     if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
-    else { el.innerHTML = msg.markup; revalidateAll(); }
+    else { el.innerHTML = msg.markup; revalidateAll(state.triggerRegistry); }
     resolveMsg(msg);
-  }),
-  [MESSAGETYPES.REMOVE]: (state, msg) => withElement(msg.id, msg.reject, el => {
+  });
+};
+
+HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
     el.remove();
-    revalidateAll();
+    revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
-  }),
-  [MESSAGETYPES.SETSTYLES]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    if (msg.styles && typeof msg.styles === 'object') Object.assign(el.style, msg.styles);
+  });
+};
+
+HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    if (msg.styles && typeof msg.styles === 'object') {
+      Object.keys(msg.styles).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
+    }
     resolveMsg(msg);
-  }),
-  [MESSAGETYPES.SETATTR]: (state, msg) => withElement(msg.id, msg.reject, el => {
+  });
+};
+
+HANDLERS[MESSAGETYPES.SETATTR] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
     if (typeof msg.name === 'string') el.setAttribute(msg.name, msg.value);
     resolveMsg(msg);
-  }),
-  [MESSAGETYPES.TOGGLECLASS]: (state, msg) => withElement(msg.id, msg.reject, el => {
+  });
+};
+
+HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
     if (typeof msg.classname === 'string') el.classList.toggle(msg.classname, msg.force);
     resolveMsg(msg);
-  }),
-  [MESSAGETYPES.CRYPTO]: (state, msg) => {
-    const win = typeof window !== 'undefined' ? window : globalThis;
-    const array = new Uint8Array(msg.bytes);
-    win.crypto.getRandomValues(array);
-    resolveMsg(msg, Array.from(array));
-  },
-  [MESSAGETYPES.GEOLOCATION]: (state, msg) => {
-    const win = typeof window !== 'undefined' ? window : globalThis;
-    const geo = win.navigator?.geolocation;
-    if (!geo) return rejectMsg(msg, new Error('geolocation API unavailable'));
-    geo.getCurrentPosition(
-      pos => resolveMsg(msg, { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }),
-      err => rejectMsg(msg, new Error('geolocation failed: ' + err.message)),
-      { enablehighaccuracy: msg.enablehighaccuracy || false, timeout: msg.timeout || 5000 }
-    );
-  },
-  [MESSAGETYPES.PERSISTENCE]: (state, msg) => {
-    const storage = (typeof window !== 'undefined' ? window : globalThis).localStorage;
-    if (!storage) return rejectMsg(msg, new Error('localStorage unavailable'));
-    try {
-      if (msg.action === 'getItem') resolveMsg(msg, { value: storage.getItem(msg.key) });
-      else if (msg.action === 'setItem') { storage.setItem(msg.key, msg.value); resolveMsg(msg, { success: true }); }
-      else if (msg.action === 'removeItem') { storage.removeItem(msg.key); resolveMsg(msg, { success: true }); }
-      else if (msg.action === 'clear') { storage.clear(); resolveMsg(msg, { success: true }); }
-      else rejectMsg(msg, new Error('unknown persistence action: ' + msg.action));
-    } catch (err) { rejectMsg(msg, err); }
-  },
-  [MESSAGETYPES.CREATEELEMENT]: (state, msg) => {
-    try {
-      const el = document.createElement(msg.tag);
-      if (msg.props && typeof msg.props === 'object') Object.assign(el, msg.props);
-      resolveMsg(msg, CREATEDOMREF(el));
-    } catch (err) { rejectMsg(msg, err); }
-  },
-  [MESSAGETYPES.CREATECONTAINER]: (state, msg) => {
-    try { resolveMsg(msg, CREATEDOMREF(document.createElement('div'))); }
-    catch (err) { rejectMsg(msg, err); }
-  },
-  [MESSAGETYPES.CREATEFROMHTML]: (state, msg) => {
-    try {
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = msg.html;
-      resolveMsg(msg, CREATEDOMREF(wrapper.firstElementChild || wrapper));
-    } catch (err) { rejectMsg(msg, err); }
-  },
-  [MESSAGETYPES.PROPERTY]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    const fn = el[msg.name];
-    if (typeof fn !== 'function') return rejectMsg(msg, new Error(`property "${msg.name}" is not a function on element ${msg.id}`));
+  });
+};
+
+HANDLERS[MESSAGETYPES.CRYPTO] = function(state, msg) {
+  var win = typeof window !== 'undefined' ? window : globalThis;
+  var array = new Uint8Array(msg.bytes);
+  win.crypto.getRandomValues(array);
+  resolveMsg(msg, Array.prototype.slice.call(array));
+};
+
+HANDLERS[MESSAGETYPES.GEOLOCATION] = function(state, msg) {
+  var win = typeof window !== 'undefined' ? window : globalThis;
+  var geo = win.navigator && win.navigator.geolocation;
+  if (!geo) return rejectMsg(msg, new Error('geolocation API unavailable'));
+  geo.getCurrentPosition(
+    function(pos) { resolveMsg(msg, { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }); },
+    function(err) { rejectMsg(msg, new Error('geolocation failed: ' + err.message)); },
+    { enablehighaccuracy: msg.enablehighaccuracy || false, timeout: msg.timeout || 5000 }
+  );
+};
+
+HANDLERS[MESSAGETYPES.PERSISTENCE] = function(state, msg) {
+  var storage = (typeof window !== 'undefined' ? window : globalThis).localStorage;
+  if (!storage) return rejectMsg(msg, new Error('localStorage unavailable'));
+  try {
+    if (msg.action === 'getItem') resolveMsg(msg, { value: storage.getItem(msg.key) });
+    else if (msg.action === 'setItem') { storage.setItem(msg.key, msg.value); resolveMsg(msg, { success: true }); }
+    else if (msg.action === 'removeItem') { storage.removeItem(msg.key); resolveMsg(msg, { success: true }); }
+    else if (msg.action === 'clear') { storage.clear(); resolveMsg(msg, { success: true }); }
+    else rejectMsg(msg, new Error('unknown persistence action: ' + msg.action));
+  } catch (err) { rejectMsg(msg, err); }
+};
+
+HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(state, msg) {
+  try {
+    var el = document.createElement(msg.tag);
+    if (msg.props && typeof msg.props === 'object') {
+      Object.keys(msg.props).forEach(function(prop) { el[prop] = msg.props[prop]; });
+    }
+    resolveMsg(msg, CREATEDOMREF(el, state.actorRegistry));
+  } catch (err) { rejectMsg(msg, err); }
+};
+
+HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(state, msg) {
+  try { resolveMsg(msg, CREATEDOMREF(document.createElement('div'), state.actorRegistry)); }
+  catch (err) { rejectMsg(msg, err); }
+};
+
+HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(state, msg) {
+  try {
+    var wrapper = document.createElement('div');
+    wrapper.innerHTML = msg.html;
+    var child = wrapper.firstElementChild || wrapper;
+    resolveMsg(msg, CREATEDOMREF(child, state.actorRegistry));
+  } catch (err) { rejectMsg(msg, err); }
+};
+
+HANDLERS[MESSAGETYPES.PROPERTY] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    var fn = el[msg.name];
+    if (typeof fn !== 'function') return rejectMsg(msg, new Error('property "' + msg.name + '" is not a function on element ' + msg.id));
     try { resolveMsg(msg, fn.apply(el, msg.arguments || [])); }
     catch (e) { rejectMsg(msg, e); }
-  }),
-  [MESSAGETYPES.GETHTML]: (state, msg) => withElement(msg.id, msg.reject, el => {
+  });
+};
+
+HANDLERS[MESSAGETYPES.GETHTML] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
     resolveMsg(msg, { tag: el.tagName.toLowerCase(), innerHTML: el.innerHTML });
-  }),
-  [MESSAGETYPES.GETVALUE]: (state, msg) => withElement(msg.id, msg.reject, el => resolveMsg(msg, el.value)),
-  [MESSAGETYPES.GETSTYLE]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    const computed = window.getComputedStyle(el);
-    const styleobj = {};
-    for (let si = 0; si < computed.length; si++) styleobj[computed[si]] = computed.getPropertyValue(computed[si]);
+  });
+};
+
+HANDLERS[MESSAGETYPES.GETVALUE] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) { resolveMsg(msg, el.value); });
+};
+
+HANDLERS[MESSAGETYPES.GETSTYLE] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    var computed = window.getComputedStyle(el);
+    var styleobj = {};
+    for (var si = 0; si < computed.length; si++) styleobj[computed[si]] = computed.getPropertyValue(computed[si]);
     resolveMsg(msg, styleobj);
-  }),
-  [MESSAGETYPES.GETPOSITION]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    const rect = el.getBoundingClientRect();
+  });
+};
+
+HANDLERS[MESSAGETYPES.GETPOSITION] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    var rect = el.getBoundingClientRect();
     resolveMsg(msg, { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
-  }),
-  [MESSAGETYPES.GETLAYOUT]: (state, msg) => withElement(msg.id, msg.reject, el => {
+  });
+};
+
+HANDLERS[MESSAGETYPES.GETLAYOUT] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
     resolveMsg(msg, {
       offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight,
       offsetLeft: el.offsetLeft, offsetTop: el.offsetTop,
       scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight,
       clientWidth: el.clientWidth, clientHeight: el.clientHeight
     });
-  }),
-  [MESSAGETYPES.SETHTML]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    el.innerHTML = msg.value;
-    revalidateAll();
-    resolveMsg(msg);
-  }),
-  [MESSAGETYPES.SETPOSITION]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    if (msg.value && typeof msg.value === 'object') Object.assign(el.style, msg.value);
-    resolveMsg(msg);
-  }),
-  [MESSAGETYPES.SETSTYLE]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    if (msg.value && typeof msg.value === 'object') Object.assign(el.style, msg.value);
-    resolveMsg(msg);
-  }),
-  [MESSAGETYPES.SETVALUE]: (state, msg) => withElement(msg.id, msg.reject, el => { el.value = msg.value; resolveMsg(msg); }),
-  [MESSAGETYPES.SETLAYOUT]: (state, msg) => withElement(msg.id, msg.reject, el => {
-    if (msg.value && typeof msg.value === 'object') Object.assign(el, msg.value);
-    resolveMsg(msg);
-  }),
-  [MESSAGETYPES.GETVIEWPORT]: (state, msg) => {
-    const doc = document.documentElement;
-    resolveMsg(msg, { viewportWidth: doc.clientWidth, viewportHeight: doc.clientHeight });
-  },
-  [MESSAGETYPES.GETSCREEN]: (state, msg) => {
-    const scr = window.screen;
-    resolveMsg(msg, { screenWidth: scr.width, screenHeight: scr.height, availWidth: scr.availWidth, availHeight: scr.availHeight });
-  },
-  [MESSAGETYPES.MATCHMEDIA]: (state, msg) => resolveMsg(msg, { matches: window.matchMedia(msg.query).matches }),
-  [MESSAGETYPES.GET_BODY_HTML]: (state, msg) => resolveMsg(msg, document.body ? document.body.innerHTML : ''),
-  [MESSAGETYPES.RESTORE_BODY_HTML]: (state, msg) => {
-    if (document.body) { document.body.innerHTML = msg.html; revalidateAll(); }
-    resolveMsg(msg, true);
-  }
+  });
 };
 
-let refcounter = 0;
-const renderbehavior = (state, message) => {
+HANDLERS[MESSAGETYPES.SETHTML] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    el.innerHTML = msg.value;
+    revalidateAll(state.triggerRegistry);
+    resolveMsg(msg);
+  });
+};
+
+HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    if (msg.value && typeof msg.value === 'object') {
+      Object.keys(msg.value).forEach(function(prop) { el.style[prop] = msg.value[prop]; });
+    }
+    resolveMsg(msg);
+  });
+};
+
+HANDLERS[MESSAGETYPES.SETSTYLE] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    if (msg.value && typeof msg.value === 'object') {
+      Object.keys(msg.value).forEach(function(prop) { el.style[prop] = msg.value[prop]; });
+    }
+    resolveMsg(msg);
+  });
+};
+
+HANDLERS[MESSAGETYPES.SETVALUE] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) { el.value = msg.value; resolveMsg(msg); });
+};
+
+HANDLERS[MESSAGETYPES.SETLAYOUT] = function(state, msg) {
+  withElement(msg.id, msg.reject, function(el) {
+    if (msg.value && typeof msg.value === 'object') {
+      Object.keys(msg.value).forEach(function(prop) { el[prop] = msg.value[prop]; });
+    }
+    resolveMsg(msg);
+  });
+};
+
+HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(state, msg) {
+  var doc = document.documentElement;
+  resolveMsg(msg, { viewportWidth: doc.clientWidth, viewportHeight: doc.clientHeight });
+};
+
+HANDLERS[MESSAGETYPES.GETSCREEN] = function(state, msg) {
+  var scr = window.screen;
+  resolveMsg(msg, { screenWidth: scr.width, screenHeight: scr.height, availWidth: scr.availWidth, availHeight: scr.availHeight });
+};
+
+HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(state, msg) {
+  resolveMsg(msg, { matches: window.matchMedia(msg.query).matches });
+};
+
+HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(state, msg) {
+  resolveMsg(msg, document.body ? document.body.innerHTML : '');
+};
+
+HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
+  if (document.body) {
+    document.body.innerHTML = msg.html;
+    revalidateAll(state.triggerRegistry);
+  }
+  resolveMsg(msg, true);
+};
+
+var refcounter = 0;
+
+var renderbehavior = function(state, message) {
   if (message.type === MESSAGETYPES.RENDER && (message.id === null || message.id === undefined)) {
     refcounter += 1;
     message.id = '__ref_render_' + Date.now() + '_' + refcounter;
   }
 
-  const check = validatemessage(message);
+  var check = validatemessage(message);
   if (!check.valid) {
     console.error('[RENDERACTOR:UNKNOWNTYPE] type=' + check.type + ' error=' + check.error);
     return state;
   }
 
-  const handler = HANDLERS[message.type];
+  var handler = HANDLERS[message.type];
   if (handler) handler(state, message);
   return state;
 };
 
-export const RENDERACTOR = createactor(renderbehavior, {});
+var initialState = {
+  triggerRegistry: createTriggerRegistry(),
+  actorRegistry: createActorRegistry()
+};
 
-const createEnqueuer = (type, idRequired, extraPayloadFn) => (...args) => {
-  const id = idRequired ? args[0] : undefined;
-  const rest = idRequired ? args.slice(1) : args;
-  return new Promise((resolve, reject) => {
-    if (idRequired && (!id || typeof id !== 'string' || !document.getElementById(id))) {
-      reject(new Error(`[${type}] invalid or missing element id: ${id}`));
-      return;
+export var RENDERACTOR = createactor(renderbehavior, initialState);
+
+// Bind actor registry to this render actor.
+initialState.actorRegistry = setRenderActor(initialState.actorRegistry, RENDERACTOR);
+
+function createEnqueuer(type, idRequired, extraPayloadFn) {
+  return function() {
+    var args = Array.prototype.slice.call(arguments);
+    var id;
+    var rest;
+    if (idRequired) {
+      id = args[0];
+      rest = args.slice(1);
+    } else {
+      id = undefined;
+      rest = args;
     }
-    const extra = extraPayloadFn ? extraPayloadFn(rest) : {};
-    RENDERACTOR.send({ type, id, resolve, reject, ...extra });
+    return new Promise(function(resolve, reject) {
+      if (idRequired && (!id || typeof id !== 'string' || !document.getElementById(id))) {
+        reject(new Error('[' + type + '] invalid or missing element id: ' + id));
+        return;
+      }
+      var extra = extraPayloadFn ? extraPayloadFn(rest) : {};
+      var message = { type: type, id: id, resolve: resolve, reject: reject };
+      Object.keys(extra).forEach(function(k) { message[k] = extra[k]; });
+      RENDERACTOR.send(message);
+    });
+  };
+}
+
+export var enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, function(rest) { return { renderer: rest[0], data: rest[1], env: rest[2] }; });
+export var enqueueclear = createEnqueuer(MESSAGETYPES.CLEAR, true);
+export var enqueuehtml = createEnqueuer(MESSAGETYPES.HTML, true, function(rest) { return { markup: rest[0], append: rest[1] }; });
+export var enqueueremove = createEnqueuer(MESSAGETYPES.REMOVE, true);
+export var enqueuestyles = createEnqueuer(MESSAGETYPES.SETSTYLES, true, function(rest) { return { styles: rest[0] }; });
+export var enqueuesetattr = createEnqueuer(MESSAGETYPES.SETATTR, true, function(rest) { return { name: rest[0], value: rest[1] }; });
+export var enqueuetoggleclass = createEnqueuer(MESSAGETYPES.TOGGLECLASS, true, function(rest) { return { classname: rest[0], force: rest[1] }; });
+export var enqueuecreateelement = createEnqueuer(MESSAGETYPES.CREATEELEMENT, false, function(rest) { return { tag: rest[0], props: rest[1] }; });
+export var enqueuecreatecontainer = createEnqueuer(MESSAGETYPES.CREATECONTAINER, false);
+export var enqueuecreatefromhtml = createEnqueuer(MESSAGETYPES.CREATEFROMHTML, false, function(rest) { return { html: rest[0] }; });
+export var enqueuegethtml = createEnqueuer(MESSAGETYPES.GETHTML, true);
+export var enqueuegetvalue = createEnqueuer(MESSAGETYPES.GETVALUE, true);
+export var enqueuegetstyle = createEnqueuer(MESSAGETYPES.GETSTYLE, true);
+export var enqueuegetposition = createEnqueuer(MESSAGETYPES.GETPOSITION, true);
+export var enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, function(rest) { return { value: rest[0] }; });
+export var enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, function(rest) { return { value: rest[0] }; });
+export var enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, function(rest) { return { value: rest[0] }; });
+export var enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, function(rest) { return { value: rest[0] }; });
+export var enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, function(rest) { return { name: rest[0], arguments: rest[1] }; });
+export var enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
+export var enqueusetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
+export var enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
+export var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
+export var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
+
+export var DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
+export var DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
+export var DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
+
+export var expectelement = function(id, timeout) {
+  if (timeout === undefined) timeout = 30000;
+  return new Promise(function(resolve, reject) {
+    var existing = document.getElementById(id);
+    if (existing) return resolve(CREATEDOMREF(existing, initialState.actorRegistry));
+
+    var observer = null;
+    var timeoutid = setTimeout(function() {
+      if (observer) observer.disconnect();
+      reject(new Error('[expectelement] element not found: ' + id));
+    }, timeout);
+
+    observer = new MutationObserver(function() {
+      var el = document.getElementById(id);
+      if (el) {
+        clearTimeout(timeoutid);
+        observer.disconnect();
+        resolve(CREATEDOMREF(el, initialState.actorRegistry));
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   });
 };
 
-export const enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, ([renderer, data, env]) => ({ renderer, data, env }));
-export const enqueueclear = createEnqueuer(MESSAGETYPES.CLEAR, true);
-export const enqueuehtml = createEnqueuer(MESSAGETYPES.HTML, true, ([markup, append]) => ({ markup, append }));
-export const enqueueremove = createEnqueuer(MESSAGETYPES.REMOVE, true);
-export const enqueuestyles = createEnqueuer(MESSAGETYPES.SETSTYLES, true, ([styles]) => ({ styles }));
-export const enqueuesetattr = createEnqueuer(MESSAGETYPES.SETATTR, true, ([name, value]) => ({ name, value }));
-export const enqueuetoggleclass = createEnqueuer(MESSAGETYPES.TOGGLECLASS, true, ([classname, force]) => ({ classname, force }));
-export const enqueuecreateelement = createEnqueuer(MESSAGETYPES.CREATEELEMENT, false, ([tag, props]) => ({ tag, props }));
-export const enqueuecreatecontainer = createEnqueuer(MESSAGETYPES.CREATECONTAINER, false);
-export const enqueuecreatefromhtml = createEnqueuer(MESSAGETYPES.CREATEFROMHTML, false, ([html]) => ({ html }));
-export const enqueuegethtml = createEnqueuer(MESSAGETYPES.GETHTML, true);
-export const enqueuegetvalue = createEnqueuer(MESSAGETYPES.GETVALUE, true);
-export const enqueuegetstyle = createEnqueuer(MESSAGETYPES.GETSTYLE, true);
-export const enqueuegetposition = createEnqueuer(MESSAGETYPES.GETPOSITION, true);
-export const enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, ([value]) => ({ value }));
-export const enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, ([value]) => ({ value }));
-export const enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, ([value]) => ({ value }));
-export const enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, ([value]) => ({ value }));
-export const enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, ([name, args]) => ({ name, arguments: args }));
-export const enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
-export const enqueusetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, ([value]) => ({ value }));
-export const enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
-export const enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
-export const enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, ([query]) => ({ query }));
-
-export const DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
-export const DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
-export const DOMQUERYMESSAGES = Object.freeze([...DOMQUERYGETTERS, ...DOMQUERYSETTERS]);
-
-export const expectelement = (id, timeout = 30000) => new Promise((resolve, reject) => {
-  const existing = document.getElementById(id);
-  if (existing) return resolve(CREATEDOMREF(existing));
-
-  let observer = null;
-  const timeoutid = setTimeout(() => {
-    if (observer) observer.disconnect();
-    reject(new Error('[expectelement] element not found: ' + id));
-  }, timeout);
-
-  observer = new MutationObserver(() => {
-    const el = document.getElementById(id);
-    if (el) {
-      clearTimeout(timeoutid);
-      observer.disconnect();
-      resolve(CREATEDOMREF(el));
-    }
+export var handlefilereaderrequest = function(payload) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function(e) { resolve({ text: e.target.result }); };
+    reader.onerror = function() { reject(new Error('[renderactor] FileReader error')); };
+    reader.readAsText(payload.file);
   });
-  observer.observe(document.body, { childList: true, subtree: true });
-});
+};
 
-export const handlefilereaderrequest = (payload) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = (e) => resolve({ text: e.target.result });
-  reader.onerror = () => reject(new Error('[renderactor] FileReader error'));
-  reader.readAsText(payload.file);
-});
+export var enqueueRenderGetBodyHtml = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.GET_BODY_HTML, resolve: resolve, reject: reject });
+  });
+};
 
-export const enqueueRenderGetBodyHtml = () =>
-  new Promise((resolve, reject) => RENDERACTOR.send({ type: MESSAGETYPES.GET_BODY_HTML, resolve, reject }));
-
-export const enqueueRenderRestoreBodyHtml = (html) =>
-  new Promise((resolve, reject) => RENDERACTOR.send({ type: MESSAGETYPES.RESTORE_BODY_HTML, html, resolve, reject }));
+export var enqueueRenderRestoreBodyHtml = function(html) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.RESTORE_BODY_HTML, html: html, resolve: resolve, reject: reject });
+  });
+};

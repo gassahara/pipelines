@@ -1,3 +1,6 @@
+// executionactor.js — ES5 execution actor. Singleton actor preserved.
+// Map/Set replaced with ES5 plain objects/arrays where required.
+
 import { createactor, createMessageValidator } from './actorkernel.js';
 import {
   enqueueDbStore,
@@ -10,16 +13,11 @@ import {
   deserializePairStore
 } from './dbactor.js';
 
-// -- Message Types --
-// Lean set: Task Runner + Global Snapshot + Pipeline Registry
-export const EXECUTIONMESSAGETYPES = Object.freeze({
-  // Pipeline lifecycle
+var EXECUTIONMESSAGETYPES = Object.freeze({
   PIPELINE_LOADED: 'pipeline_loaded',
   STAGE_STATE: 'stage_state',
   ENV_UPDATED: 'env_updated',
   GET_STATUS: 'get_status',
-
-  // Task runner (kept: blockcompiler uses these to execute elements/stages)
   EXECUTE_ELEMENT: 'execute_element',
   EXECUTE_STAGE: 'execute_stage',
   AWAIT_TASK: 'await_task',
@@ -28,139 +26,83 @@ export const EXECUTIONMESSAGETYPES = Object.freeze({
   CANCEL_TASK: 'cancel_task',
   STOP_TASK: 'stop_task',
   SPAWN_PIPELINE: 'spawn_pipeline',
-
-  // Stage control (kept: blockcompiler executionquery block uses these)
   STOP_STAGE: 'stop_stage',
   CANCEL_STAGE: 'cancel_stage',
   BREAK_STAGE: 'break_stage',
   RESTART_STAGE: 'restart_stage',
   CONTINUE_STAGE: 'continue_stage',
-
-  // CCC error handling (kept: blockcompiler uses these)
   CCC_ABORT: 'ccc_abort',
   CCC_CONTINUE: 'ccc_continue',
   CCC_RETRY: 'ccc_retry',
-
-  // Global Snapshot (NEW)
   GLOBAL_SNAPSHOT: 'global_snapshot',
   RECOVER: 'recover',
-
-  // Pipeline registration for Global Snapshot (NEW)
   REGISTER_PIPELINE: 'register_pipeline'
 });
 
-const MESSAGEINTERFACES = Object.freeze({
-  [EXECUTIONMESSAGETYPES.PIPELINE_LOADED]: {
-    pipelineid: 'string', env: 'object?', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.STAGE_STATE]: {
-    pipelineid: 'string', stageid: 'string', state: 'object', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.ENV_UPDATED]: {
-    pipelineid: 'string', env: 'object', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.GET_STATUS]: {
-    pipelineid: 'string?', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT]: {
-    pipelineid: 'string', path: 'array', elementid: 'string',
-    env: 'object', signature: 'object', executor: 'function',
-    properties: 'object?', async: 'boolean?', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.EXECUTE_STAGE]: {
-    pipelineid: 'string', path: 'array', stageid: 'string',
-    stageExecutor: 'function', env: 'object', parentTaskid: 'string?',
-    resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.AWAIT_TASK]: {
-    taskid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.GET_TASKS]: {
-    pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?',
-    resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.GET_TASK_STATUS]: {
-    taskid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.CANCEL_TASK]: {
-    taskid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.STOP_TASK]: {
-    taskid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.SPAWN_PIPELINE]: {
-    parentPipelineId: 'string', childPipelineId: 'string', childRunner: 'function',
-    childEnv: 'object', containerref: 'string?', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.STOP_STAGE]: {
-    pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.CANCEL_STAGE]: {
-    pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.BREAK_STAGE]: {
-    pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.RESTART_STAGE]: {
-    pipelineid: 'string', stageid: 'string', elementid: 'string?', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.CONTINUE_STAGE]: {
-    pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.CCC_ABORT]: {
-    pipelineid: 'string', path: 'array', elementid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.CCC_CONTINUE]: {
-    pipelineid: 'string', path: 'array', elementid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.CCC_RETRY]: {
-    pipelineid: 'string', path: 'array', elementid: 'string', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT]: {
-    html: 'string?', resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.RECOVER]: {
-    resolve: 'function?', reject: 'function?'
-  },
-  [EXECUTIONMESSAGETYPES.REGISTER_PIPELINE]: {
-    pipelineid: 'string', dna: 'object?', env: 'object?', resolve: 'function?', reject: 'function?'
-  }
-});
+var MESSAGEINTERFACES = {};
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PIPELINE_LOADED] = { pipelineid: 'string', env: 'object?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STAGE_STATE] = { pipelineid: 'string', stageid: 'string', state: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.ENV_UPDATED] = { pipelineid: 'string', env: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_STATUS] = { pipelineid: 'string?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_STAGE] = { pipelineid: 'string', path: 'array', stageid: 'string', stageExecutor: 'function', env: 'object', parentTaskid: 'string?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.AWAIT_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASK_STATUS] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CANCEL_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STOP_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.SPAWN_PIPELINE] = { parentPipelineId: 'string', childPipelineId: 'string', childRunner: 'function', childEnv: 'object', containerref: 'string?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STOP_STAGE] = { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CANCEL_STAGE] = { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.BREAK_STAGE] = { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.RESTART_STAGE] = { pipelineid: 'string', stageid: 'string', elementid: 'string?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CONTINUE_STAGE] = { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_ABORT] = { pipelineid: 'string', path: 'array', elementid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_CONTINUE] = { pipelineid: 'string', path: 'array', elementid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_RETRY] = { pipelineid: 'string', path: 'array', elementid: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT] = { html: 'string?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?', resolve: 'function?', reject: 'function?' };
+Object.freeze(MESSAGEINTERFACES);
 
-const validatemessage = createMessageValidator(MESSAGEINTERFACES);
-const DB_KEY = 'GLOBAL_SNAPSHOT_V1';
+var validatemessage = createMessageValidator(MESSAGEINTERFACES);
+var DB_KEY = 'GLOBAL_SNAPSHOT_V1';
 
-const resolveMessage = (message, value = true) => {
+function resolveMessage(message, value) {
+  if (value === undefined) value = true;
   if (message && typeof message.resolve === 'function') message.resolve(value);
-};
+}
 
-const rejectMessage = (message, error) => {
+function rejectMessage(message, error) {
   if (message && typeof message.reject === 'function') message.reject(error);
-};
+}
 
-// -- Sanitizer (strip DOM/functions for DB persistence) --
-const sanitizeForState = (value, seen = new WeakSet()) => {
+function sanitizeForState(value, seen) {
   if (value === null || value === undefined) return value;
   if (typeof value === 'function') return '[Function]';
   if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) return '[DOM_NODE]';
   if (typeof Node !== 'undefined' && value instanceof Node) return '[DOM_NODE]';
   if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) return '[EventTarget]';
   if (typeof value !== 'object') return value;
-  if (seen.has(value)) return '[Circular]';
-  seen.add(value);
-  if (Array.isArray(value)) return value.map(item => sanitizeForState(item, seen));
-  const out = {};
-  for (const [key, item] of Object.entries(value)) {
-    out[key] = sanitizeForState(item, seen);
+  if (seen === undefined) seen = [];
+  if (seen.indexOf(value) !== -1) return '[Circular]';
+  seen.push(value);
+  if (Array.isArray(value)) {
+    var arr = value.map(function(item) { return sanitizeForState(item, seen); });
+    seen.pop();
+    return arr;
   }
-  seen.delete(value);
+  var out = {};
+  Object.keys(value).forEach(function(key) {
+    out[key] = sanitizeForState(value[key], seen);
+  });
+  seen.pop();
   return out;
-};
+}
 
-// -- Global Snapshot Persistence --
-const persistGlobalSnapshot = async (state) => {
+async function persistGlobalSnapshot(state) {
   try {
-    const snapshot = {
+    var snapshot = {
       version: 1,
       savedAt: Date.now(),
       pipelines: {},
@@ -168,43 +110,47 @@ const persistGlobalSnapshot = async (state) => {
       pairstore: serializePairStore()
     };
 
-    for (const [pid, pdata] of Object.entries(state.pipelines)) {
-      const dnaClone = deserializeDna(serializeDna(pdata.dna || {}));
-      const consolidatedDna = consolidateGraph(dnaClone);
+    Object.keys(state.pipelines).forEach(function(pid) {
+      var pdata = state.pipelines[pid];
+      var dnaClone = deserializeDna(serializeDna(pdata.dna || {}));
+      var consolidatedDna = consolidateGraph(dnaClone);
       snapshot.pipelines[pid] = {
         status: pdata.status,
         env: sanitizeForState(pdata.env || {}),
         dna: serializeDna(consolidatedDna),
         stageStatuses: pdata.stageStatuses || {}
       };
-    }
+    });
 
     await enqueueDbStore(DB_KEY, snapshot);
   } catch (err) {
     console.warn('[EXECUTIONACTOR] global snapshot persist failed:', err);
   }
-};
+}
 
-const loadInitialState = async () => {
+async function loadInitialState() {
   try {
-    const stored = await enqueueDbRestore(DB_KEY);
+    var stored = await enqueueDbRestore(DB_KEY);
     if (stored && stored.version === 1 && stored.pipelines) {
       if (stored.pairstore) {
         deserializePairStore(stored.pairstore);
       }
 
-      const pipelines = {};
-      for (const [pid, pdata] of Object.entries(stored.pipelines || {})) {
-        let dna = pdata.dna ? deserializeDna(pdata.dna) : null;
+      var pipelines = {};
+      Object.keys(stored.pipelines || {}).forEach(function(pid) {
+        var pdata = stored.pipelines[pid];
+        var dna = pdata.dna ? deserializeDna(pdata.dna) : null;
         if (dna) dna = restoreGraph(dna);
         pipelines[pid] = {
-          ...pdata,
-          dna
+          status: pdata.status,
+          env: pdata.env || {},
+          dna: dna,
+          stageStatuses: pdata.stageStatuses || {}
         };
-      }
+      });
 
       return {
-        pipelines,
+        pipelines: pipelines,
         htmlSnapshot: stored.htmlSnapshot || null
       };
     }
@@ -212,58 +158,59 @@ const loadInitialState = async () => {
     console.warn('[EXECUTIONACTOR] load initial state failed:', err);
   }
   return { pipelines: {}, htmlSnapshot: null };
-};
+}
 
-// -- Task Runner --
-const tasks = new Map();
-let taskCounter = 0;
+var tasks = {};
+var taskCounter = 0;
 
-const nextTaskId = () => {
+function nextTaskId() {
   taskCounter += 1;
   return 'task_' + Date.now() + '_' + taskCounter + '_' + Math.random().toString(36).slice(2, 8);
-};
+}
 
-const makeTask = (descriptor) => {
-  let resolveTask, rejectTask;
-  const promise = new Promise((resolve, reject) => {
-    resolveTask = resolve;
-    rejectTask = reject;
+function makeTask(descriptor) {
+  var taskid = nextTaskId();
+  var promise = new Promise(function(resolve, reject) {
+    tasks[taskid] = {
+      taskid: taskid,
+      kind: descriptor.kind || 'element',
+      pipelineid: descriptor.pipelineid || null,
+      stageid: descriptor.stageid || null,
+      elementid: descriptor.elementid || null,
+      parentTaskid: descriptor.parentTaskid || null,
+      childTaskIds: [],
+      status: 'WAITING',
+      resolveTask: resolve,
+      rejectTask: reject,
+      promise: null
+    };
+    tasks[taskid].promise = promise;
   });
-  return {
-    taskid: nextTaskId(),
-    kind: descriptor.kind || 'element',
-    pipelineid: descriptor.pipelineid || null,
-    stageid: descriptor.stageid || null,
-    elementid: descriptor.elementid || null,
-    parentTaskid: descriptor.parentTaskid || null,
-    childTaskIds: [],
-    status: 'WAITING',
-    resolveTask, rejectTask, promise
-  };
-};
+  return tasks[taskid];
+}
 
-const runElementTask = async (taskid, descriptor) => {
-  const task = tasks.get(taskid);
+async function runElementTask(taskid, descriptor) {
+  var task = tasks[taskid];
   if (!task) return;
   try {
     task.status = 'RUNNING';
-    const executionContext = {
+    var executionContext = {
       env: descriptor.env,
-      inputs: descriptor.signature?.inputs || [],
-      outputs: descriptor.signature?.outputs || {},
+      inputs: descriptor.signature && descriptor.signature.inputs ? descriptor.signature.inputs : [],
+      outputs: descriptor.signature && descriptor.signature.outputs ? descriptor.signature.outputs : {},
       properties: descriptor.properties || {}
     };
-    const result = await descriptor.executor(executionContext);
+    var result = await descriptor.executor(executionContext);
     task.status = 'EXECUTED';
     task.resolveTask(result || {});
   } catch (err) {
     task.status = 'FAILED';
     task.rejectTask(err);
   }
-};
+}
 
-const runStageTask = async (taskid, descriptor) => {
-  const task = tasks.get(taskid);
+async function runStageTask(taskid, descriptor) {
+  var task = tasks[taskid];
   if (!task) return;
   try {
     task.status = 'RUNNING';
@@ -274,10 +221,10 @@ const runStageTask = async (taskid, descriptor) => {
     task.status = 'FAILED';
     task.rejectTask(err);
   }
-};
+}
 
-const runSpawnTask = async (taskid, descriptor) => {
-  const task = tasks.get(taskid);
+async function runSpawnTask(taskid, descriptor) {
+  var task = tasks[taskid];
   if (!task) return;
   try {
     task.status = 'RUNNING';
@@ -291,235 +238,218 @@ const runSpawnTask = async (taskid, descriptor) => {
     task.status = 'FAILED';
     task.rejectTask(err);
   }
-};
+}
 
-const cancelTask = (taskid) => {
-  const task = tasks.get(taskid);
+function cancelTask(taskid) {
+  var task = tasks[taskid];
   if (!task) return;
   task.status = 'CANCELLED';
-  for (const childId of task.childTaskIds || []) cancelTask(childId);
+  (task.childTaskIds || []).forEach(function(childId) { cancelTask(childId); });
   if (task.rejectTask) task.rejectTask(new Error('Task cancelled: ' + taskid));
-};
+}
 
-const stopTask = (taskid) => {
-  const task = tasks.get(taskid);
+function stopTask(taskid) {
+  var task = tasks[taskid];
   if (!task) return;
   task.status = 'STOPPED';
-};
+}
 
-// -- Ensure Pipeline (simple) --
-const ensurePipeline = (state, pipelineid) => {
+function ensurePipeline(state, pipelineid) {
   if (!state.pipelines[pipelineid]) {
     state.pipelines[pipelineid] = {
       status: 'running', env: {}, dna: null, stageStatuses: {}
     };
   }
   return state.pipelines[pipelineid];
-};
+}
 
-// -- Behavior (State Reducer) --
-const executionbehavior = (state, message) => {
-  const check = validatemessage(message);
+var executionbehavior = function(state, message) {
+  var check = validatemessage(message);
   if (!check.valid) {
     rejectMessage(message, new Error('[EXECUTIONACTOR:INVALID] ' + check.error));
     return state;
   }
 
-  const nextState = {
-    pipelines: { ...state.pipelines },
+  var nextState = {
+    pipelines: {},
     htmlSnapshot: state.htmlSnapshot
   };
+  Object.keys(state.pipelines).forEach(function(pid) {
+    nextState.pipelines[pid] = state.pipelines[pid];
+  });
 
   try {
     switch (message.type) {
-
-      // -- Pipeline Lifecycle --
       case EXECUTIONMESSAGETYPES.PIPELINE_LOADED: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
+        var pipeline = ensurePipeline(nextState, message.pipelineid);
         if (message.env && Object.keys(message.env).length > 0) pipeline.env = message.env;
         pipeline.status = 'running';
         resolveMessage(message, true);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.STAGE_STATE: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (!pipeline.stageStatuses) pipeline.stageStatuses = {};
+        var p2 = ensurePipeline(nextState, message.pipelineid);
+        if (!p2.stageStatuses) p2.stageStatuses = {};
         if (message.state && message.state.status) {
-          pipeline.stageStatuses[message.stageid] = message.state.status;
+          p2.stageStatuses[message.stageid] = message.state.status;
         }
         resolveMessage(message, true);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.ENV_UPDATED: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        pipeline.env = sanitizeForState(message.env || {});
+        var p3 = ensurePipeline(nextState, message.pipelineid);
+        p3.env = sanitizeForState(message.env || {});
         resolveMessage(message, true);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.GET_STATUS: {
         if (message.pipelineid) {
-          const p = nextState.pipelines[message.pipelineid] || null;
-          if (p && p.stageStatuses) {
-            const stages = {};
-            for (const [sid, status] of Object.entries(p.stageStatuses)) {
-              stages[sid] = { status };
-            }
-            resolveMessage(message, { ...p, stages });
+          var p4 = nextState.pipelines[message.pipelineid] || null;
+          if (p4 && p4.stageStatuses) {
+            var stages = {};
+            Object.keys(p4.stageStatuses).forEach(function(sid) {
+              stages[sid] = { status: p4.stageStatuses[sid] };
+            });
+            resolveMessage(message, { status: p4.status, env: p4.env, dna: p4.dna, stageStatuses: p4.stageStatuses, stages: stages });
           } else {
-            resolveMessage(message, p);
+            resolveMessage(message, p4);
           }
         } else {
           resolveMessage(message, nextState.pipelines);
         }
         break;
       }
-
-      // -- Stage Control --
       case EXECUTIONMESSAGETYPES.STOP_STAGE: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (!pipeline.stageStatuses) pipeline.stageStatuses = {};
-        pipeline.stageStatuses[message.stageid] = 'stopped';
+        var p5 = ensurePipeline(nextState, message.pipelineid);
+        if (!p5.stageStatuses) p5.stageStatuses = {};
+        p5.stageStatuses[message.stageid] = 'stopped';
         resolveMessage(message, true);
         break;
       }
       case EXECUTIONMESSAGETYPES.CANCEL_STAGE: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (!pipeline.stageStatuses) pipeline.stageStatuses = {};
-        pipeline.stageStatuses[message.stageid] = 'cancelled';
+        var p6 = ensurePipeline(nextState, message.pipelineid);
+        if (!p6.stageStatuses) p6.stageStatuses = {};
+        p6.stageStatuses[message.stageid] = 'cancelled';
         resolveMessage(message, true);
         break;
       }
       case EXECUTIONMESSAGETYPES.BREAK_STAGE: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (!pipeline.stageStatuses) pipeline.stageStatuses = {};
-        pipeline.stageStatuses[message.stageid] = 'awaiting';
+        var p7 = ensurePipeline(nextState, message.pipelineid);
+        if (!p7.stageStatuses) p7.stageStatuses = {};
+        p7.stageStatuses[message.stageid] = 'awaiting';
         resolveMessage(message, true);
         break;
       }
       case EXECUTIONMESSAGETYPES.RESTART_STAGE: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (!pipeline.stageStatuses) pipeline.stageStatuses = {};
-        pipeline.stageStatuses[message.stageid] = 'running';
+        var p8 = ensurePipeline(nextState, message.pipelineid);
+        if (!p8.stageStatuses) p8.stageStatuses = {};
+        p8.stageStatuses[message.stageid] = 'running';
         resolveMessage(message, true);
         break;
       }
       case EXECUTIONMESSAGETYPES.CONTINUE_STAGE: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (!pipeline.stageStatuses) pipeline.stageStatuses = {};
-        const current = pipeline.stageStatuses[message.stageid];
-        if (current === 'stopped' || current === 'awaiting') {
-          pipeline.stageStatuses[message.stageid] = 'running';
+        var p9 = ensurePipeline(nextState, message.pipelineid);
+        if (!p9.stageStatuses) p9.stageStatuses = {};
+        var currentStatus = p9.stageStatuses[message.stageid];
+        if (currentStatus === 'stopped' || currentStatus === 'awaiting') {
+          p9.stageStatuses[message.stageid] = 'running';
         }
         resolveMessage(message, true);
         break;
       }
-
-      // -- Task Runner --
       case EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT: {
-        const task = makeTask({
+        var task = makeTask({
           kind: 'element',
           pipelineid: message.pipelineid,
-          stageid: message.path?.[message.path.length - 2] || null,
+          stageid: message.path && message.path.length > 1 ? message.path[message.path.length - 2] : null,
           elementid: message.elementid
         });
-        tasks.set(task.taskid, task);
+        tasks[task.taskid] = task;
         runElementTask(task.taskid, message);
         resolveMessage(message, { taskid: task.taskid });
         break;
       }
-
       case EXECUTIONMESSAGETYPES.EXECUTE_STAGE: {
-        const task = makeTask({
+        var task2 = makeTask({
           kind: 'stage',
           pipelineid: message.pipelineid,
           stageid: message.stageid,
           parentTaskid: message.parentTaskid || null
         });
         if (message.parentTaskid) {
-          const parentTask = tasks.get(message.parentTaskid);
-          if (parentTask) parentTask.childTaskIds.push(task.taskid);
+          var parentTask = tasks[message.parentTaskid];
+          if (parentTask) parentTask.childTaskIds.push(task2.taskid);
         }
-        tasks.set(task.taskid, task);
-        runStageTask(task.taskid, message);
-        resolveMessage(message, { taskid: task.taskid });
+        tasks[task2.taskid] = task2;
+        runStageTask(task2.taskid, message);
+        resolveMessage(message, { taskid: task2.taskid });
         break;
       }
-
       case EXECUTIONMESSAGETYPES.AWAIT_TASK: {
-        const task = tasks.get(message.taskid);
-        if (!task) {
+        var awaitTask = tasks[message.taskid];
+        if (!awaitTask) {
           rejectMessage(message, new Error('[EXECUTIONACTOR] unknown task: ' + message.taskid));
         } else {
-          resolveMessage(message, task.promise);
+          resolveMessage(message, awaitTask.promise);
         }
         break;
       }
-
       case EXECUTIONMESSAGETYPES.GET_TASKS: {
-        const result = [];
-        for (const task of tasks.values()) {
-          if (message.pipelineid && task.pipelineid !== message.pipelineid) continue;
-          if (message.stageid && task.stageid !== message.stageid) continue;
-          if (message.elementid && task.elementid !== message.elementid) continue;
-          if (message.kind && task.kind !== message.kind) continue;
+        var result = [];
+        Object.keys(tasks).forEach(function(tid) {
+          var t = tasks[tid];
+          if (message.pipelineid && t.pipelineid !== message.pipelineid) return;
+          if (message.stageid && t.stageid !== message.stageid) return;
+          if (message.elementid && t.elementid !== message.elementid) return;
+          if (message.kind && t.kind !== message.kind) return;
           result.push({
-            taskid: task.taskid, kind: task.kind,
-            pipelineid: task.pipelineid, stageid: task.stageid,
-            elementid: task.elementid, parentTaskid: task.parentTaskid,
-            status: task.status
+            taskid: t.taskid, kind: t.kind,
+            pipelineid: t.pipelineid, stageid: t.stageid,
+            elementid: t.elementid, parentTaskid: t.parentTaskid,
+            status: t.status
           });
-        }
+        });
         resolveMessage(message, result);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.GET_TASK_STATUS: {
-        const task = tasks.get(message.taskid);
-        resolveMessage(message, task ? {
-          taskid: task.taskid, kind: task.kind,
-          pipelineid: task.pipelineid, stageid: task.stageid,
-          elementid: task.elementid, parentTaskid: task.parentTaskid,
-          status: task.status
+        var t2 = tasks[message.taskid];
+        resolveMessage(message, t2 ? {
+          taskid: t2.taskid, kind: t2.kind,
+          pipelineid: t2.pipelineid, stageid: t2.stageid,
+          elementid: t2.elementid, parentTaskid: t2.parentTaskid,
+          status: t2.status
         } : null);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.CANCEL_TASK: {
         cancelTask(message.taskid);
         resolveMessage(message, true);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.STOP_TASK: {
         stopTask(message.taskid);
         resolveMessage(message, true);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.SPAWN_PIPELINE: {
-        const task = makeTask({
+        var task3 = makeTask({
           kind: 'spawn',
           pipelineid: message.childPipelineId,
-          stageid: null, elementid: null
+          stageid: null,
+          elementid: null
         });
-        tasks.set(task.taskid, task);
-        runSpawnTask(task.taskid, message);
-        resolveMessage(message, { taskid: task.taskid });
+        tasks[task3.taskid] = task3;
+        runSpawnTask(task3.taskid, message);
+        resolveMessage(message, { taskid: task3.taskid });
         break;
       }
-
-      // -- CCC Error Handling (simplified: just resolve, no tree walking) --
       case EXECUTIONMESSAGETYPES.CCC_ABORT:
       case EXECUTIONMESSAGETYPES.CCC_CONTINUE:
       case EXECUTIONMESSAGETYPES.CCC_RETRY: {
         resolveMessage(message, true);
         break;
       }
-
-      // -- Global Snapshot (NEW) --
       case EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT: {
         if (message.html !== undefined) {
           nextState.htmlSnapshot = message.html;
@@ -528,7 +458,6 @@ const executionbehavior = (state, message) => {
         resolveMessage(message, true);
         break;
       }
-
       case EXECUTIONMESSAGETYPES.RECOVER: {
         resolveMessage(message, {
           pipelines: nextState.pipelines,
@@ -536,15 +465,13 @@ const executionbehavior = (state, message) => {
         });
         break;
       }
-
       case EXECUTIONMESSAGETYPES.REGISTER_PIPELINE: {
-        const pipeline = ensurePipeline(nextState, message.pipelineid);
-        if (message.dna) pipeline.dna = message.dna;
-        if (message.env) pipeline.env = sanitizeForState(message.env);
+        var p10 = ensurePipeline(nextState, message.pipelineid);
+        if (message.dna) p10.dna = message.dna;
+        if (message.env) p10.env = sanitizeForState(message.env);
         resolveMessage(message, true);
         break;
       }
-
       default:
         rejectMessage(message, new Error('[EXECUTIONACTOR] unknown message type'));
         return state;
@@ -554,105 +481,58 @@ const executionbehavior = (state, message) => {
     return state;
   }
 
-  const readOnly = [
+  var readOnly = [
     EXECUTIONMESSAGETYPES.GET_STATUS,
     EXECUTIONMESSAGETYPES.RECOVER,
     EXECUTIONMESSAGETYPES.AWAIT_TASK,
     EXECUTIONMESSAGETYPES.GET_TASKS,
     EXECUTIONMESSAGETYPES.GET_TASK_STATUS
   ];
-  if (!readOnly.includes(message.type) && message.type !== EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT) {
+  if (readOnly.indexOf(message.type) === -1 && message.type !== EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT) {
     persistGlobalSnapshot(nextState);
   }
 
   return nextState;
 };
 
-// -- Boot --
-const initialState = await loadInitialState();
-export const EXECUTIONACTOR = createactor(executionbehavior, initialState);
+var initialState = await loadInitialState();
+export var EXECUTIONACTOR = createactor(executionbehavior, initialState);
 
-// -- Public Enqueue Functions --
-const enqueue = (type, payload = {}) =>
-  new Promise((resolve, reject) =>
-    EXECUTIONACTOR.send({ type, ...payload, resolve, reject })
-  );
+var enqueue = function(type, payload) {
+  return new Promise(function(resolve, reject) {
+    var message = {};
+    if (payload) {
+      Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
+    }
+    message.type = type;
+    message.resolve = resolve;
+    message.reject = reject;
+    EXECUTIONACTOR.send(message);
+  });
+};
 
-export const enqueueExecutionPipelineLoaded = (pipelineid, env) =>
-  enqueue(EXECUTIONMESSAGETYPES.PIPELINE_LOADED, { pipelineid, env });
-
-export const enqueueExecutionStageState = (pipelineid, stageid, state) =>
-  enqueue(EXECUTIONMESSAGETYPES.STAGE_STATE, { pipelineid, stageid, state });
-
-export const enqueueExecutionSubmit = (descriptor) =>
-  enqueue(EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT, descriptor);
-
-export const enqueueExecutionSubmitStage = (descriptor) =>
-  enqueue(EXECUTIONMESSAGETYPES.EXECUTE_STAGE, descriptor);
-
-export const enqueueExecutionAwaitTask = (taskid) =>
-  enqueue(EXECUTIONMESSAGETYPES.AWAIT_TASK, { taskid });
-
-export const enqueueExecutionGetTasks = (filters = {}) =>
-  enqueue(EXECUTIONMESSAGETYPES.GET_TASKS, filters);
-
-export const enqueueExecutionGetTaskStatus = (taskid) =>
-  enqueue(EXECUTIONMESSAGETYPES.GET_TASK_STATUS, { taskid });
-
-export const enqueueExecutionCancelTask = (taskid) =>
-  enqueue(EXECUTIONMESSAGETYPES.CANCEL_TASK, { taskid });
-
-export const enqueueExecutionStopTask = (taskid) =>
-  enqueue(EXECUTIONMESSAGETYPES.STOP_TASK, { taskid });
-
-export const enqueueExecutionStopStage = (pipelineid, stageid) =>
-  enqueue(EXECUTIONMESSAGETYPES.STOP_STAGE, { pipelineid, stageid });
-
-export const enqueueExecutionCancelStage = (pipelineid, stageid) =>
-  enqueue(EXECUTIONMESSAGETYPES.CANCEL_STAGE, { pipelineid, stageid });
-
-export const enqueueExecutionBreakStage = (pipelineid, stageid) =>
-  enqueue(EXECUTIONMESSAGETYPES.BREAK_STAGE, { pipelineid, stageid });
-
-export const enqueueExecutionRestartStage = (pipelineid, stageid, elementid) =>
-  enqueue(EXECUTIONMESSAGETYPES.RESTART_STAGE, { pipelineid, stageid, elementid });
-
-export const enqueueExecutionContinueStage = (pipelineid, stageid) =>
-  enqueue(EXECUTIONMESSAGETYPES.CONTINUE_STAGE, { pipelineid, stageid });
-
-export const enqueueExecutionGetStatus = (pipelineid) =>
-  enqueue(EXECUTIONMESSAGETYPES.GET_STATUS, { pipelineid });
-
-export const enqueueExecutionEnvUpdated = (pipelineid, env) =>
-  enqueue(EXECUTIONMESSAGETYPES.ENV_UPDATED, { pipelineid, env });
-
-export const enqueueExecutionSnapshot = () =>
-  enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, {});
-
-export const enqueueExecutionRecover = () =>
-  enqueue(EXECUTIONMESSAGETYPES.RECOVER, {});
-
-export const enqueueExecutionCccAbort = (pipelineid, path, elementid) =>
-  enqueue(EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid, path, elementid });
-
-export const enqueueExecutionCccContinue = (pipelineid, path, elementid) =>
-  enqueue(EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid, path, elementid });
-
-export const enqueueExecutionCccRetry = (pipelineid, path, elementid) =>
-  enqueue(EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid, path, elementid });
-
-export const enqueueExecutionSpawnPipeline = (descriptor) =>
-  enqueue(EXECUTIONMESSAGETYPES.SPAWN_PIPELINE, descriptor);
-
-// Removed exports (no longer needed):
-// enqueueExecutionGetInterruptedStage - Global Snapshot replaces this
-export const enqueueExecutionGetInterruptedStage = () =>
-  Promise.resolve(null);
-
-// Register a pipeline's DNA and env for Global Snapshot recovery
-export const enqueueExecutionRegisterPipeline = (pipelineid, dna, env) =>
-  enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid, dna, env });
-
-// Take a global snapshot (with optional HTML)
-export const enqueueGlobalSnapshot = (html) =>
-enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, { html });
+export var enqueueExecutionPipelineLoaded = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }); };
+export var enqueueExecutionStageState = function(pipelineid, stageid, state) { return enqueue(EXECUTIONMESSAGETYPES.STAGE_STATE, { pipelineid: pipelineid, stageid: stageid, state: state }); };
+export var enqueueExecutionSubmit = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT, descriptor); };
+export var enqueueExecutionSubmitStage = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.EXECUTE_STAGE, descriptor); };
+export var enqueueExecutionAwaitTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.AWAIT_TASK, { taskid: taskid }); };
+export var enqueueExecutionGetTasks = function(filters) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASKS, filters || {}); };
+export var enqueueExecutionGetTaskStatus = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }); };
+export var enqueueExecutionCancelTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.CANCEL_TASK, { taskid: taskid }); };
+export var enqueueExecutionStopTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.STOP_TASK, { taskid: taskid }); };
+export var enqueueExecutionStopStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.STOP_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+export var enqueueExecutionCancelStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.CANCEL_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+export var enqueueExecutionBreakStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.BREAK_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+export var enqueueExecutionRestartStage = function(pipelineid, stageid, elementid) { return enqueue(EXECUTIONMESSAGETYPES.RESTART_STAGE, { pipelineid: pipelineid, stageid: stageid, elementid: elementid }); };
+export var enqueueExecutionContinueStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.CONTINUE_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+export var enqueueExecutionGetStatus = function(pipelineid) { return enqueue(EXECUTIONMESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }); };
+export var enqueueExecutionEnvUpdated = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }); };
+export var enqueueExecutionSnapshot = function() { return enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, {}); };
+export var enqueueExecutionRecover = function() { return enqueue(EXECUTIONMESSAGETYPES.RECOVER, {}); };
+export var enqueueExecutionCccAbort = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid }); };
+export var enqueueExecutionCccContinue = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid }); };
+export var enqueueExecutionCccRetry = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid }); };
+export var enqueueExecutionSpawnPipeline = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.SPAWN_PIPELINE, descriptor); };
+export var enqueueExecutionGetInterruptedStage = function() { return Promise.resolve(null); };
+export var enqueueExecutionRegisterPipeline = function(pipelineid, dna, env) { return enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }); };
+export var enqueueGlobalSnapshot = function(html) { return enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, { html: html }); };
