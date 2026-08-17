@@ -22,25 +22,25 @@ function createVerbosityFunctions(constants) {
 
   function logerror(state, message) {
     if (getverbosity(state) >= constants.ERROR) {
-      console.error.apply(console, Array.prototype.slice.call(arguments, 1));
+      console.error.apply(console, Array.prototype.slice.call(message, 1));
     }
   }
 
   function logwarn(state, message) {
     if (getverbosity(state) >= constants.WARN) {
-      console.warn.apply(console, Array.prototype.slice.call(arguments, 1));
+      console.warn.apply(console, Array.prototype.slice.call(message, 1));
     }
   }
 
   function loginfo(state, message) {
     if (getverbosity(state) >= constants.INFO) {
-      console.log.apply(console, Array.prototype.slice.call(arguments, 1));
+      console.log.apply(console, Array.prototype.slice.call(message, 1));
     }
   }
 
   function logdebug(state, message) {
     if (getverbosity(state) >= constants.DEBUG) {
-      console.log.apply(console, Array.prototype.slice.call(arguments, 1));
+      console.log.apply(console, Array.prototype.slice.call(message, 1));
     }
   }
 
