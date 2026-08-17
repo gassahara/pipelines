@@ -508,7 +508,7 @@ const parseExpressionWithScope = (tokens, start, free, stopTokens) => {
   return i;
 };
 
-const parseDeclarationList = (tokens, start, free) => {
+const parseDeclarationList = (tokens, start, free, stopTokens = [',', ';', ')']) => {
   let i = start;
   let expectName = true;
 
@@ -530,7 +530,7 @@ const parseDeclarationList = (tokens, start, free) => {
       }
 
       if (t.value === '=') {
-        i = parseExpressionWithScope(tokens, i + 1, free, [',', ';', ')']);
+        i = parseExpressionWithScope(tokens, i + 1, free, stopTokens);
         expectName = false;
         continue;
       }
@@ -541,12 +541,238 @@ const parseDeclarationList = (tokens, start, free) => {
         continue;
       }
 
-      if (t.value === ';' || t.value === ')') {
+      if (stopTokens.includes(t.value)) {
         return i;
       }
     }
 
+    if (t.type === 'keyword' && (t.value === 'of' || t.value === 'in') && stopTokens.includes(t.value)) {
+      return i;
+    }
+
     i += 1;
+  }
+
+  return i;
+};
+
+const parseStatement = (tokens, start, free) => {
+  let i = start;
+  const t = tokens[i];
+  if (!t) return i;
+
+  if (t.type === 'punctuator' && t.value === '{') {
+    return parseBlock(tokens, i, free);
+  }
+
+  if (t.type === 'punctuator' && t.value === ';') {
+    return i + 1;
+  }
+
+  if (t.type === 'keyword') {
+    switch (t.value) {
+      case 'const':
+      case 'let':
+      case 'var':
+        return parseDeclarationList(tokens, i + 1, free, [';']);
+
+      case 'function': {
+        const next = i + 1 < tokens.length ? tokens[i + 1] : null;
+        if (next && next.type === 'identifier') {
+          declareInScope(next.value);
+          removeFree(free, next.value);
+        }
+        return parseFunctionExpression(tokens, i, free);
+      }
+
+      case 'if':
+        return parseIfStatement(tokens, i, free);
+
+      case 'for':
+        return parseForStatement(tokens, i, free);
+
+      case 'while':
+        return parseWhileStatement(tokens, i, free);
+
+      case 'try':
+        return parseTryStatement(tokens, i, free);
+
+      case 'switch':
+        return parseSwitchStatement(tokens, i, free);
+
+      case 'return':
+      case 'throw':
+      case 'break':
+      case 'continue': {
+        let idx = parseExpressionWithScope(tokens, i + 1, free, [';']);
+        if (tokens[idx] && tokens[idx].type === 'punctuator' && tokens[idx].value === ';') idx += 1;
+        return idx;
+      }
+
+      default:
+        return parseExpressionWithScope(tokens, i, free, [';']);
+    }
+  }
+
+  let idx = parseExpressionWithScope(tokens, i, free, [';']);
+  if (tokens[idx] && tokens[idx].type === 'punctuator' && tokens[idx].value === ';') idx += 1;
+  return idx;
+};
+
+const parseIfStatement = (tokens, start, free) => {
+  let i = start + 1;
+
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    i = parseExpressionWithScope(tokens, i + 1, free, [')']);
+    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') i += 1;
+  }
+
+  i = parseStatement(tokens, i, free);
+
+  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'else') {
+    i += 1;
+    i = parseStatement(tokens, i, free);
+  }
+
+  return i;
+};
+
+const parseForStatement = (tokens, start, free) => {
+  let i = start + 1;
+
+  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'await') {
+    i += 1;
+  }
+
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    pushScope();
+    i = parseForHeader(tokens, i, free);
+    i = parseStatement(tokens, i, free);
+    popScope();
+  }
+
+  return i;
+};
+
+const parseForHeader = (tokens, start, free) => {
+  let i = start + 1; // after '('
+
+  if (tokens[i] && tokens[i].type === 'keyword' && (tokens[i].value === 'const' || tokens[i].value === 'let' || tokens[i].value === 'var')) {
+    i = parseDeclarationList(tokens, i + 1, free, ['of', 'in', ';', ')']);
+
+    if (tokens[i] && tokens[i].type === 'keyword' && (tokens[i].value === 'of' || tokens[i].value === 'in')) {
+      i += 1;
+      i = parseExpressionWithScope(tokens, i, free, [')']);
+      if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
+      return i;
+    }
+
+    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') {
+      i += 1;
+      if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';')) {
+        i = parseExpressionWithScope(tokens, i, free, [';']);
+      }
+      if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') i += 1;
+      if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')')) {
+        i = parseExpressionWithScope(tokens, i, free, [')']);
+      }
+      if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
+      return i;
+    }
+
+    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
+    return i;
+  }
+
+  if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';')) {
+    i = parseExpressionWithScope(tokens, i, free, [';']);
+  }
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') i += 1;
+  if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';')) {
+    i = parseExpressionWithScope(tokens, i, free, [';']);
+  }
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') i += 1;
+  if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')')) {
+    i = parseExpressionWithScope(tokens, i, free, [')']);
+  }
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
+  return i;
+};
+
+const parseWhileStatement = (tokens, start, free) => {
+  let i = start + 1;
+
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    i = parseExpressionWithScope(tokens, i + 1, free, [')']);
+    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') i += 1;
+  }
+
+  return parseStatement(tokens, i, free);
+};
+
+const parseTryStatement = (tokens, start, free) => {
+  let i = start + 1;
+
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
+    i = parseBlock(tokens, i, free);
+  }
+
+  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'catch') {
+    i = handleCatchParameter(tokens, i, free);
+  }
+
+  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'finally') {
+    i += 1;
+    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
+      i = parseBlock(tokens, i, free);
+    }
+  }
+
+  return i;
+};
+
+const parseSwitchStatement = (tokens, start, free) => {
+  let i = start + 1;
+
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
+    i = parseExpressionWithScope(tokens, i + 1, free, [')']);
+    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') i += 1;
+  }
+
+  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
+    pushScope();
+    let depth = 1;
+    i += 1;
+
+    while (i < tokens.length && depth > 0) {
+      const t = tokens[i];
+
+      if (t.type === 'keyword' && (t.value === 'case' || t.value === 'default')) {
+        const isCase = t.value === 'case';
+        i += 1;
+        if (isCase) {
+          i = parseExpressionWithScope(tokens, i, free, [':']);
+          if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ':') i += 1;
+        } else {
+          if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ':') i += 1;
+        }
+        continue;
+      }
+
+      if (t.type === 'punctuator') {
+        if (t.value === '{') depth += 1;
+        else if (t.value === '}') {
+          depth -= 1;
+          i += 1;
+          if (depth === 0) break;
+          continue;
+        }
+      }
+
+      i += 1;
+    }
+
+    popScope();
   }
 
   return i;
@@ -568,73 +794,17 @@ const findMatchingParen = (tokens, start) => {
 
 const parseBlock = (tokens, start, free) => {
   pushScope();
-  let depth = 1;
   let i = start + 1;
 
-  while (i < tokens.length && depth > 0) {
+  while (i < tokens.length) {
     const t = tokens[i];
 
-    if (t.type === 'punctuator' && t.value === '{' && isExpressionContext(tokens, i)) {
-      i = parseObjectLiteral(tokens, i, free);
-      continue;
-    }
-
-    if (t.type === 'punctuator') {
-      if (t.value === '{') {
-        depth += 1;
-        i += 1;
-        continue;
-      }
-      if (t.value === '}') {
-        depth -= 1;
-        if (depth === 0) {
-          i += 1;
-          break;
-        }
-        i += 1;
-        continue;
-      }
-    }
-
-    if (t.type === 'keyword') {
-      if (t.value === 'const' || t.value === 'let' || t.value === 'var') {
-        i = parseDeclarationList(tokens, i + 1, free);
-        continue;
-      }
-      if (t.value === 'function') {
-        i = parseFunctionExpression(tokens, i, free);
-        continue;
-      }
-      if (t.value === 'for') {
-        i = parseExpressionWithScope(tokens, i + 1, free, [';', ')']);
-        continue;
-      }
-      if (t.value === 'catch') {
-        i = handleCatchParameter(tokens, i, free);
-        continue;
-      }
-    }
-
-    if (t.type === 'punctuator' && t.value === '=>') {
-      i = parseArrowExpression(tokens, i, free);
-      continue;
-    }
-
-    if (t.type === 'identifier') {
-      if (!isDeclared(t.value) && !BUILTINS.has(t.value) && !RESERVED.has(t.value)) {
-        const prev = i > 0 ? tokens[i - 1] : null;
-        const next = i + 1 < tokens.length ? tokens[i + 1] : null;
-        const isProperty = prev && prev.type === 'punctuator' && prev.value === '.';
-        const isKey = next && next.type === 'punctuator' && next.value === ':';
-        if (!isProperty && !isKey && free.indexOf(t.value) === -1) {
-          free.push(t.value);
-        }
-      }
+    if (t.type === 'punctuator' && t.value === '}') {
       i += 1;
-      continue;
+      break;
     }
 
-    i += 1;
+    i = parseStatement(tokens, i, free);
   }
 
   popScope();
@@ -695,12 +865,17 @@ const parseFunctionExpression = (tokens, start, free) => {
   let i = start + 1;
   if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '*') i += 1;
 
+  let functionName = null;
   if (tokens[i] && tokens[i].type === 'identifier') {
+    functionName = tokens[i].value;
     i += 1;
   }
 
   if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
     pushScope();
+    if (functionName) {
+      declareInScope(functionName);
+    }
     const endParen = findMatchingParen(tokens, i);
     for (let m = i + 1; m < endParen; m += 1) {
       const t = tokens[m];
@@ -755,45 +930,12 @@ const detectFreeIdentifiers = (source) => {
   while (i < tokens.length) {
     const t = tokens[i];
 
-    if (t.type === 'keyword') {
-      if (t.value === 'const' || t.value === 'let' || t.value === 'var') {
-        i = parseDeclarationList(tokens, i + 1, free);
-        continue;
-      }
-      if (t.value === 'function') {
-        i = parseFunctionExpression(tokens, i, free);
-        continue;
-      }
-      if (t.value === 'for') {
-        i = parseExpressionWithScope(tokens, i + 1, free, [';', ')']);
-        continue;
-      }
-      if (t.value === 'catch') {
-        i = handleCatchParameter(tokens, i, free);
-        continue;
-      }
-    }
-
-    if (t.type === 'punctuator' && t.value === '=>') {
-      i = parseArrowExpression(tokens, i, free);
-      continue;
-    }
-
-    if (t.type === 'identifier') {
-      if (!isDeclared(t.value) && !BUILTINS.has(t.value) && !RESERVED.has(t.value)) {
-        const prev = i > 0 ? tokens[i - 1] : null;
-        const next = i + 1 < tokens.length ? tokens[i + 1] : null;
-        const isProperty = prev && prev.type === 'punctuator' && prev.value === '.';
-        const isKey = next && next.type === 'punctuator' && next.value === ':';
-        if (!isProperty && !isKey && free.indexOf(t.value) === -1) {
-          free.push(t.value);
-        }
-      }
+    if (t.type === 'punctuator' && t.value === ';') {
       i += 1;
       continue;
     }
 
-    i += 1;
+    i = parseStatement(tokens, i, free);
   }
 
   return free;
