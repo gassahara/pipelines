@@ -1,4 +1,4 @@
-import { createactor, createMessageValidator } from './actorkernel.js';
+import { createactor } from './actorkernel.js';
 import { createApiConstants } from '../utils.js';
 
 var MESSAGETYPES = Object.freeze({
@@ -15,15 +15,7 @@ MESSAGEINTERFACES[MESSAGETYPES.FETCH] = {
 };
 Object.freeze(MESSAGEINTERFACES);
 
-var validatemessage = createMessageValidator(MESSAGEINTERFACES);
-
 var apibehavior = function(state, message) {
-  var check = validatemessage(message);
-  if (!check.valid) {
-    console.error('[APIACTOR:INVALID] ' + check.error);
-    return state;
-  }
-
   if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
     var apiConstants = createApiConstants();
     var url = apiConstants.APIBASE + '/' + message.endpoint;
@@ -60,9 +52,9 @@ var apibehavior = function(state, message) {
   return state;
 };
 
-export var APIACTOR = createactor(apibehavior, {});
+var APIACTOR = createactor(apibehavior, {}, MESSAGEINTERFACES);
 
-export function enqueueapi(endpoint, method, payload, options) {
+function enqueueapi(endpoint, method, payload, options) {
   return new Promise(function(resolve, reject) {
     APIACTOR.send({
       type: MESSAGETYPES.API,
@@ -76,7 +68,7 @@ export function enqueueapi(endpoint, method, payload, options) {
   });
 }
 
-export function enqueuefetch(endpoint, method, payload, options) {
+function enqueuefetch(endpoint, method, payload, options) {
   return new Promise(function(resolve, reject) {
     APIACTOR.send({
       type: MESSAGETYPES.FETCH,
@@ -90,4 +82,9 @@ export function enqueuefetch(endpoint, method, payload, options) {
   });
 }
 
-export { MESSAGETYPES };
+export {
+  APIACTOR,
+  MESSAGETYPES,
+  enqueueapi,
+  enqueuefetch
+};

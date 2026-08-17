@@ -4,6 +4,12 @@ var UPDATE = 'update';
 var OBSERVE = 'observe';
 var UNOBSERVE = 'unobserve';
 
+var MESSAGEINTERFACES = {};
+MESSAGEINTERFACES[UPDATE] = { patch: 'object' };
+MESSAGEINTERFACES[OBSERVE] = { observer: 'function' };
+MESSAGEINTERFACES[UNOBSERVE] = { observer: 'function' };
+Object.freeze(MESSAGEINTERFACES);
+
 function deepmerge(target, patch) {
   if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return patch;
   if (target === null || typeof target !== 'object' || Array.isArray(target)) return patch;
@@ -38,20 +44,27 @@ var worldmapbehavior = function(state, message) {
   return state;
 };
 
-var WORLDMAPACTOR = createactor(worldmapbehavior, { worldmap: {}, observers: [] });
+var WORLDMAPACTOR = createactor(worldmapbehavior, { worldmap: {}, observers: [] }, MESSAGEINTERFACES);
 
-export var updateworldmap = function(patch) {
+var updateworldmap = function(patch) {
   return WORLDMAPACTOR.send({ type: UPDATE, patch: patch });
 };
 
-export var observeworldmap = function(observer) {
+var observeworldmap = function(observer) {
   return WORLDMAPACTOR.send({ type: OBSERVE, observer: observer });
 };
 
-export var unobserveworldmap = function(observer) {
+var unobserveworldmap = function(observer) {
   return WORLDMAPACTOR.send({ type: UNOBSERVE, observer: observer });
 };
 
-export var getworldmap = function() {
+var getworldmap = function() {
   return WORLDMAPACTOR.getstate().worldmap;
+};
+
+export {
+  updateworldmap,
+  observeworldmap,
+  unobserveworldmap,
+  getworldmap
 };

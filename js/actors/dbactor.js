@@ -1,4 +1,4 @@
-import { createactor, createMessageValidator } from './actorkernel.js';
+import { createactor } from './actorkernel.js';
 
 var DBMESSAGETYPES = Object.freeze({
   STORE: 'store',
@@ -16,7 +16,7 @@ Object.freeze(MESSAGEINTERFACES);
 
 var ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
 var MAX_KEYS = 100;
-var MAX_ENTRY_BYTES = 2 * 1024 * 1024; // 2MB unified cap
+var MAX_ENTRY_BYTES = 2 * 1024 * 1024;
 
 function loadInitialState() {
   try {
@@ -53,8 +53,6 @@ function persist(store) {
   return false;
 }
 
-var validatemessage = createMessageValidator(MESSAGEINTERFACES);
-
 // ==================== DNA FUNCTION SERIALIZATION ====================
 
 var FN_TAG = '__fn__';
@@ -81,8 +79,8 @@ function dnaReviver(key, value) {
   return value;
 }
 
-export var serializeDna = function(dna) { return JSON.stringify(dna, dnaReplacer); };
-export var deserializeDna = function(json) { return JSON.parse(json, dnaReviver); };
+var serializeDna = function(dna) { return JSON.stringify(dna, dnaReplacer); };
+var deserializeDna = function(json) { return JSON.parse(json, dnaReviver); };
 
 // ==================== PROPERTY PAIR STORE ====================
 
@@ -117,7 +115,7 @@ function storePair(key, value) {
   return refId;
 }
 
-export function consolidateGraph(node) {
+function consolidateGraph(node) {
   if (node === null || node === undefined) return node;
 
   if (typeof node === 'object') {
@@ -153,7 +151,7 @@ export function consolidateGraph(node) {
   return node;
 }
 
-export function restoreGraph(node) {
+function restoreGraph(node) {
   if (node === null || node === undefined) return node;
 
   if (typeof node === 'object') {
@@ -175,13 +173,13 @@ export function restoreGraph(node) {
   return node;
 }
 
-export function serializePairStore() {
+function serializePairStore() {
   var output = {};
   Object.keys(PAIRSTORE).forEach(function(key) { output[key] = PAIRSTORE[key]; });
   return JSON.stringify(output, dnaReplacer);
 }
 
-export function deserializePairStore(json) {
+function deserializePairStore(json) {
   if (!json) return;
   var parsed;
   try {
@@ -201,7 +199,7 @@ export function deserializePairStore(json) {
 
 function measureLength(obj) { return JSON.stringify(obj).length; }
 
-export function optimizeSerializedDna(jsonString) {
+function optimizeSerializedDna(jsonString) {
   var obj = JSON.parse(jsonString);
 
   var passObjectPairDedup = function(node) {
@@ -280,7 +278,7 @@ export function optimizeSerializedDna(jsonString) {
   return JSON.stringify(optimized);
 }
 
-export function deoptimizeSerializedDna(jsonString) {
+function deoptimizeSerializedDna(jsonString) {
   var obj = JSON.parse(jsonString);
 
   if (obj.__FRAMEWORK_PAIRSTORE__) {
@@ -307,12 +305,6 @@ export function deoptimizeSerializedDna(jsonString) {
 // ==================== ACTOR BEHAVIOR ====================
 
 var dbbehavior = function(state, message) {
-  var check = validatemessage(message);
-  if (!check.valid) {
-    if (typeof message.reject === 'function') message.reject(new Error('[DBACTOR:INVALID] ' + check.error));
-    return state;
-  }
-
   var store = Object.keys(state.store || {}).reduce(function(acc, k) { acc[k] = state.store[k]; return acc; }, {});
   var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
 
@@ -355,15 +347,39 @@ var dbbehavior = function(state, message) {
   return { store: store };
 };
 
-export var DBACTOR = createactor(dbbehavior, loadInitialState());
+var DBACTOR = createactor(dbbehavior, loadInitialState(), MESSAGEINTERFACES);
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {
-    DBACTOR.send(Object.assign({}, payload, { type: type, resolve: resolve, reject: reject }));
+    var message = {};
+    if (payload) {
+      Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
+    }
+    message.type = type;
+    message.resolve = resolve;
+    message.reject = reject;
+    DBACTOR.send(message);
   });
 };
 
-export var enqueueDbStore = function(key, value) { return enqueue(DBMESSAGETYPES.STORE, { key: key, value: value }); };
-export var enqueueDbRestore = function(key) { return enqueue(DBMESSAGETYPES.RESTORE, { key: key }); };
-export var enqueueDbList = function() { return enqueue(DBMESSAGETYPES.LIST); };
-export var enqueueDbDelete = function(key) { return enqueue(DBMESSAGETYPES.DELETE, { key: key }); };
+var enqueueDbStore = function(key, value) { return enqueue(DBMESSAGETYPES.STORE, { key: key, value: value }); };
+var enqueueDbRestore = function(key) { return enqueue(DBMESSAGETYPES.RESTORE, { key: key }); };
+var enqueueDbList = function() { return enqueue(DBMESSAGETYPES.LIST); };
+var enqueueDbDelete = function(key) { return enqueue(DBMESSAGETYPES.DELETE, { key: key }); };
+
+export {
+  DBMESSAGETYPES,
+  DBACTOR,
+  serializeDna,
+  deserializeDna,
+  consolidateGraph,
+  restoreGraph,
+  serializePairStore,
+  deserializePairStore,
+  optimizeSerializedDna,
+  deoptimizeSerializedDna,
+  enqueueDbStore,
+  enqueueDbRestore,
+  enqueueDbList,
+  enqueueDbDelete
+};

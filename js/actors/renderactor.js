@@ -1,4 +1,4 @@
-import { createactor, createMessageValidator } from './actorkernel.js';
+import { createactor } from './actorkernel.js';
 import { createActorRegistry, setRenderActor } from './actorregistry.js';
 import { createTriggerRegistry, revalidateAll } from './trigerregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
@@ -66,8 +66,6 @@ MESSAGEINTERFACES[MESSAGETYPES.MATCHMEDIA] = { query: 'string', resolve: 'functi
 MESSAGEINTERFACES[MESSAGETYPES.GET_BODY_HTML] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
-
-var validatemessage = createMessageValidator(MESSAGEINTERFACES);
 
 function withElement(id, reject, fn) {
   if (!id || typeof id !== 'string') {
@@ -315,12 +313,6 @@ var renderbehavior = function(state, message) {
     message.id = '__ref_render_' + Date.now() + '_' + refcounter;
   }
 
-  var check = validatemessage(message);
-  if (!check.valid) {
-    console.error('[RENDERACTOR:UNKNOWNTYPE] type=' + check.type + ' error=' + check.error);
-    return state;
-  }
-
   var handler = HANDLERS[message.type];
   if (handler) handler(state, message);
   return state;
@@ -331,9 +323,8 @@ var initialState = {
   actorRegistry: createActorRegistry()
 };
 
-export var RENDERACTOR = createactor(renderbehavior, initialState);
+var RENDERACTOR = createactor(renderbehavior, initialState, MESSAGEINTERFACES);
 
-// Bind actor registry to this render actor.
 initialState.actorRegistry = setRenderActor(initialState.actorRegistry, RENDERACTOR);
 
 function createEnqueuer(type, idRequired, extraPayloadFn) {
@@ -361,36 +352,36 @@ function createEnqueuer(type, idRequired, extraPayloadFn) {
   };
 }
 
-export var enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, function(rest) { return { renderer: rest[0], data: rest[1], env: rest[2] }; });
-export var enqueueclear = createEnqueuer(MESSAGETYPES.CLEAR, true);
-export var enqueuehtml = createEnqueuer(MESSAGETYPES.HTML, true, function(rest) { return { markup: rest[0], append: rest[1] }; });
-export var enqueueremove = createEnqueuer(MESSAGETYPES.REMOVE, true);
-export var enqueuestyles = createEnqueuer(MESSAGETYPES.SETSTYLES, true, function(rest) { return { styles: rest[0] }; });
-export var enqueuesetattr = createEnqueuer(MESSAGETYPES.SETATTR, true, function(rest) { return { name: rest[0], value: rest[1] }; });
-export var enqueuetoggleclass = createEnqueuer(MESSAGETYPES.TOGGLECLASS, true, function(rest) { return { classname: rest[0], force: rest[1] }; });
-export var enqueuecreateelement = createEnqueuer(MESSAGETYPES.CREATEELEMENT, false, function(rest) { return { tag: rest[0], props: rest[1] }; });
-export var enqueuecreatecontainer = createEnqueuer(MESSAGETYPES.CREATECONTAINER, false);
-export var enqueuecreatefromhtml = createEnqueuer(MESSAGETYPES.CREATEFROMHTML, false, function(rest) { return { html: rest[0] }; });
-export var enqueuegethtml = createEnqueuer(MESSAGETYPES.GETHTML, true);
-export var enqueuegetvalue = createEnqueuer(MESSAGETYPES.GETVALUE, true);
-export var enqueuegetstyle = createEnqueuer(MESSAGETYPES.GETSTYLE, true);
-export var enqueuegetposition = createEnqueuer(MESSAGETYPES.GETPOSITION, true);
-export var enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, function(rest) { return { value: rest[0] }; });
-export var enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, function(rest) { return { value: rest[0] }; });
-export var enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, function(rest) { return { value: rest[0] }; });
-export var enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, function(rest) { return { value: rest[0] }; });
-export var enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, function(rest) { return { name: rest[0], arguments: rest[1] }; });
-export var enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
-export var enqueusetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
-export var enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
-export var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
-export var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
+var enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, function(rest) { return { renderer: rest[0], data: rest[1], env: rest[2] }; });
+var enqueueclear = createEnqueuer(MESSAGETYPES.CLEAR, true);
+var enqueuehtml = createEnqueuer(MESSAGETYPES.HTML, true, function(rest) { return { markup: rest[0], append: rest[1] }; });
+var enqueueremove = createEnqueuer(MESSAGETYPES.REMOVE, true);
+var enqueuestyles = createEnqueuer(MESSAGETYPES.SETSTYLES, true, function(rest) { return { styles: rest[0] }; });
+var enqueuesetattr = createEnqueuer(MESSAGETYPES.SETATTR, true, function(rest) { return { name: rest[0], value: rest[1] }; });
+var enqueuetoggleclass = createEnqueuer(MESSAGETYPES.TOGGLECLASS, true, function(rest) { return { classname: rest[0], force: rest[1] }; });
+var enqueuecreateelement = createEnqueuer(MESSAGETYPES.CREATEELEMENT, false, function(rest) { return { tag: rest[0], props: rest[1] }; });
+var enqueuecreatecontainer = createEnqueuer(MESSAGETYPES.CREATECONTAINER, false);
+var enqueuecreatefromhtml = createEnqueuer(MESSAGETYPES.CREATEFROMHTML, false, function(rest) { return { html: rest[0] }; });
+var enqueuegethtml = createEnqueuer(MESSAGETYPES.GETHTML, true);
+var enqueuegetvalue = createEnqueuer(MESSAGETYPES.GETVALUE, true);
+var enqueuegetstyle = createEnqueuer(MESSAGETYPES.GETSTYLE, true);
+var enqueuegetposition = createEnqueuer(MESSAGETYPES.GETPOSITION, true);
+var enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, function(rest) { return { value: rest[0] }; });
+var enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, function(rest) { return { value: rest[0] }; });
+var enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, function(rest) { return { value: rest[0] }; });
+var enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, function(rest) { return { value: rest[0] }; });
+var enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, function(rest) { return { name: rest[0], arguments: rest[1] }; });
+var enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
+var enqueusetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
+var enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
+var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
+var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
 
-export var DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
-export var DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
-export var DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
+var DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
+var DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
+var DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
 
-export var expectelement = function(id, timeout) {
+var expectelement = function(id, timeout) {
   if (timeout === undefined) timeout = 30000;
   return new Promise(function(resolve, reject) {
     var existing = document.getElementById(id);
@@ -414,7 +405,7 @@ export var expectelement = function(id, timeout) {
   });
 };
 
-export var handlefilereaderrequest = function(payload) {
+var handlefilereaderrequest = function(payload) {
   return new Promise(function(resolve, reject) {
     var reader = new FileReader();
     reader.onload = function(e) { resolve({ text: e.target.result }); };
@@ -423,14 +414,50 @@ export var handlefilereaderrequest = function(payload) {
   });
 };
 
-export var enqueueRenderGetBodyHtml = function() {
+var enqueueRenderGetBodyHtml = function() {
   return new Promise(function(resolve, reject) {
     RENDERACTOR.send({ type: MESSAGETYPES.GET_BODY_HTML, resolve: resolve, reject: reject });
   });
 };
 
-export var enqueueRenderRestoreBodyHtml = function(html) {
+var enqueueRenderRestoreBodyHtml = function(html) {
   return new Promise(function(resolve, reject) {
     RENDERACTOR.send({ type: MESSAGETYPES.RESTORE_BODY_HTML, html: html, resolve: resolve, reject: reject });
   });
+};
+
+export {
+  RENDERACTOR,
+  MESSAGETYPES,
+  enqueuerender,
+  enqueueclear,
+  enqueuehtml,
+  enqueueremove,
+  enqueuestyles,
+  enqueuesetattr,
+  enqueuetoggleclass,
+  enqueuecreateelement,
+  enqueuecreatecontainer,
+  enqueuecreatefromhtml,
+  enqueuegethtml,
+  enqueuegetvalue,
+  enqueuegetstyle,
+  enqueuegetposition,
+  enqueuesethtml,
+  enqueuesetposition,
+  enqueuesetstyle,
+  enqueuesetvalue,
+  enqueueproperty,
+  enqueuegetlayout,
+  enqueusetlayout,
+  enqueuegetviewport,
+  enqueuegetscreen,
+  enqueuematchmedia,
+  DOMQUERYGETTERS,
+  DOMQUERYSETTERS,
+  DOMQUERYMESSAGES,
+  expectelement,
+  handlefilereaderrequest,
+  enqueueRenderGetBodyHtml,
+  enqueueRenderRestoreBodyHtml
 };

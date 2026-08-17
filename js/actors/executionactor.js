@@ -1,7 +1,4 @@
-// executionactor.js — ES5 execution actor. Singleton actor preserved.
-// Map/Set replaced with ES5 plain objects/arrays where required.
-
-import { createactor, createMessageValidator } from './actorkernel.js';
+import { createactor } from './actorkernel.js';
 import {
   enqueueDbStore,
   enqueueDbRestore,
@@ -65,7 +62,6 @@ MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.RECOVER] = { resolve: 'function?', rejec
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
-var validatemessage = createMessageValidator(MESSAGEINTERFACES);
 var DB_KEY = 'GLOBAL_SNAPSHOT_V1';
 
 function resolveMessage(message, value) {
@@ -170,23 +166,25 @@ function nextTaskId() {
 
 function makeTask(descriptor) {
   var taskid = nextTaskId();
-  var promise = new Promise(function(resolve, reject) {
-    tasks[taskid] = {
-      taskid: taskid,
-      kind: descriptor.kind || 'element',
-      pipelineid: descriptor.pipelineid || null,
-      stageid: descriptor.stageid || null,
-      elementid: descriptor.elementid || null,
-      parentTaskid: descriptor.parentTaskid || null,
-      childTaskIds: [],
-      status: 'WAITING',
-      resolveTask: resolve,
-      rejectTask: reject,
-      promise: null
-    };
-    tasks[taskid].promise = promise;
+  var task = {
+    taskid: taskid,
+    kind: descriptor.kind || 'element',
+    pipelineid: descriptor.pipelineid || null,
+    stageid: descriptor.stageid || null,
+    elementid: descriptor.elementid || null,
+    parentTaskid: descriptor.parentTaskid || null,
+    childTaskIds: [],
+    status: 'WAITING',
+    resolveTask: null,
+    rejectTask: null,
+    promise: null
+  };
+  task.promise = new Promise(function(resolve, reject) {
+    task.resolveTask = resolve;
+    task.rejectTask = reject;
   });
-  return tasks[taskid];
+  tasks[taskid] = task;
+  return task;
 }
 
 async function runElementTask(taskid, descriptor) {
@@ -264,12 +262,6 @@ function ensurePipeline(state, pipelineid) {
 }
 
 var executionbehavior = function(state, message) {
-  var check = validatemessage(message);
-  if (!check.valid) {
-    rejectMessage(message, new Error('[EXECUTIONACTOR:INVALID] ' + check.error));
-    return state;
-  }
-
   var nextState = {
     pipelines: {},
     htmlSnapshot: state.htmlSnapshot
@@ -496,7 +488,7 @@ var executionbehavior = function(state, message) {
 };
 
 var initialState = await loadInitialState();
-export var EXECUTIONACTOR = createactor(executionbehavior, initialState);
+var EXECUTIONACTOR = createactor(executionbehavior, initialState, MESSAGEINTERFACES);
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {
@@ -511,28 +503,58 @@ var enqueue = function(type, payload) {
   });
 };
 
-export var enqueueExecutionPipelineLoaded = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }); };
-export var enqueueExecutionStageState = function(pipelineid, stageid, state) { return enqueue(EXECUTIONMESSAGETYPES.STAGE_STATE, { pipelineid: pipelineid, stageid: stageid, state: state }); };
-export var enqueueExecutionSubmit = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT, descriptor); };
-export var enqueueExecutionSubmitStage = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.EXECUTE_STAGE, descriptor); };
-export var enqueueExecutionAwaitTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.AWAIT_TASK, { taskid: taskid }); };
-export var enqueueExecutionGetTasks = function(filters) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASKS, filters || {}); };
-export var enqueueExecutionGetTaskStatus = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }); };
-export var enqueueExecutionCancelTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.CANCEL_TASK, { taskid: taskid }); };
-export var enqueueExecutionStopTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.STOP_TASK, { taskid: taskid }); };
-export var enqueueExecutionStopStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.STOP_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
-export var enqueueExecutionCancelStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.CANCEL_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
-export var enqueueExecutionBreakStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.BREAK_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
-export var enqueueExecutionRestartStage = function(pipelineid, stageid, elementid) { return enqueue(EXECUTIONMESSAGETYPES.RESTART_STAGE, { pipelineid: pipelineid, stageid: stageid, elementid: elementid }); };
-export var enqueueExecutionContinueStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.CONTINUE_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
-export var enqueueExecutionGetStatus = function(pipelineid) { return enqueue(EXECUTIONMESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }); };
-export var enqueueExecutionEnvUpdated = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }); };
-export var enqueueExecutionSnapshot = function() { return enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, {}); };
-export var enqueueExecutionRecover = function() { return enqueue(EXECUTIONMESSAGETYPES.RECOVER, {}); };
-export var enqueueExecutionCccAbort = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid }); };
-export var enqueueExecutionCccContinue = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid }); };
-export var enqueueExecutionCccRetry = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid }); };
-export var enqueueExecutionSpawnPipeline = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.SPAWN_PIPELINE, descriptor); };
-export var enqueueExecutionGetInterruptedStage = function() { return Promise.resolve(null); };
-export var enqueueExecutionRegisterPipeline = function(pipelineid, dna, env) { return enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }); };
-export var enqueueGlobalSnapshot = function(html) { return enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, { html: html }); };
+var enqueueExecutionPipelineLoaded = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }); };
+var enqueueExecutionStageState = function(pipelineid, stageid, state) { return enqueue(EXECUTIONMESSAGETYPES.STAGE_STATE, { pipelineid: pipelineid, stageid: stageid, state: state }); };
+var enqueueExecutionSubmit = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT, descriptor); };
+var enqueueExecutionSubmitStage = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.EXECUTE_STAGE, descriptor); };
+var enqueueExecutionAwaitTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.AWAIT_TASK, { taskid: taskid }); };
+var enqueueExecutionGetTasks = function(filters) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASKS, filters || {}); };
+var enqueueExecutionGetTaskStatus = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }); };
+var enqueueExecutionCancelTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.CANCEL_TASK, { taskid: taskid }); };
+var enqueueExecutionStopTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.STOP_TASK, { taskid: taskid }); };
+var enqueueExecutionStopStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.STOP_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+var enqueueExecutionCancelStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.CANCEL_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+var enqueueExecutionBreakStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.BREAK_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+var enqueueExecutionRestartStage = function(pipelineid, stageid, elementid) { return enqueue(EXECUTIONMESSAGETYPES.RESTART_STAGE, { pipelineid: pipelineid, stageid: stageid, elementid: elementid }); };
+var enqueueExecutionContinueStage = function(pipelineid, stageid) { return enqueue(EXECUTIONMESSAGETYPES.CONTINUE_STAGE, { pipelineid: pipelineid, stageid: stageid }); };
+var enqueueExecutionGetStatus = function(pipelineid) { return enqueue(EXECUTIONMESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }); };
+var enqueueExecutionEnvUpdated = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }); };
+var enqueueExecutionSnapshot = function() { return enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, {}); };
+var enqueueExecutionRecover = function() { return enqueue(EXECUTIONMESSAGETYPES.RECOVER, {}); };
+var enqueueExecutionCccAbort = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid }); };
+var enqueueExecutionCccContinue = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid }); };
+var enqueueExecutionCccRetry = function(pipelineid, path, elementid) { return enqueue(EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid }); };
+var enqueueExecutionSpawnPipeline = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.SPAWN_PIPELINE, descriptor); };
+var enqueueExecutionGetInterruptedStage = function() { return Promise.resolve(null); };
+var enqueueExecutionRegisterPipeline = function(pipelineid, dna, env) { return enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }); };
+var enqueueGlobalSnapshot = function(html) { return enqueue(EXECUTIONMESSAGETYPES.GLOBAL_SNAPSHOT, { html: html }); };
+
+export {
+  EXECUTIONMESSAGETYPES,
+  EXECUTIONACTOR,
+  enqueueExecutionPipelineLoaded,
+  enqueueExecutionStageState,
+  enqueueExecutionSubmit,
+  enqueueExecutionSubmitStage,
+  enqueueExecutionAwaitTask,
+  enqueueExecutionGetTasks,
+  enqueueExecutionGetTaskStatus,
+  enqueueExecutionCancelTask,
+  enqueueExecutionStopTask,
+  enqueueExecutionStopStage,
+  enqueueExecutionCancelStage,
+  enqueueExecutionBreakStage,
+  enqueueExecutionRestartStage,
+  enqueueExecutionContinueStage,
+  enqueueExecutionGetStatus,
+  enqueueExecutionEnvUpdated,
+  enqueueExecutionSnapshot,
+  enqueueExecutionRecover,
+  enqueueExecutionCccAbort,
+  enqueueExecutionCccContinue,
+  enqueueExecutionCccRetry,
+  enqueueExecutionSpawnPipeline,
+  enqueueExecutionGetInterruptedStage,
+  enqueueExecutionRegisterPipeline,
+  enqueueGlobalSnapshot
+};

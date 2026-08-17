@@ -13,7 +13,7 @@ function getRawElement(ref) {
   return null;
 }
 
-export function GETRAWELEMENT(ref) {
+function GETRAWELEMENT(ref) {
   if (!ref || typeof ref !== 'object') {
     throw new Error('[GETRAWELEMENT] Invalid domref');
   }
@@ -22,7 +22,7 @@ export function GETRAWELEMENT(ref) {
   return raw;
 }
 
-export function CREATEDOMREF(rawelement, actorRegistry) {
+function CREATEDOMREF(rawelement, actorRegistry) {
   if (!rawelement || !(rawelement instanceof HTMLElement)) {
     throw new Error('[CREATEDOMREF] Invalid element');
   }
@@ -69,6 +69,12 @@ export function CREATEDOMREF(rawelement, actorRegistry) {
   return ref;
 }
 
-export function ISVALIDDOMREF(ref) {
+function ISVALIDDOMREF(ref) {
   return ref && typeof ref === 'object' && typeof ref.project === 'function';
 }
+
+export {
+  GETRAWELEMENT,
+  CREATEDOMREF,
+  ISVALIDDOMREF
+};

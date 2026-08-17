@@ -18,7 +18,7 @@ import {
   enqueuegetscreen, enqueuematchmedia, enqueueRenderGetBodyHtml,
   enqueueRenderRestoreBodyHtml
 } from '../actors/renderactor.js';
-import { registerTrigger, revalidateAll } from '../actors/trigerregistry.js';
+import { createTriggerRegistry, registerTrigger, revalidateAll } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
 import {
   enqueueExecutionPipelineLoaded, enqueueExecutionStageState,
@@ -533,7 +533,7 @@ function compileblock(block, inheritedBriefcase, constants) {
   return compiler(block, block.id, block.signature || { inputs: [], outputs: {} }, inheritedBriefcase);
 }
 
-function compileElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants) {
+function compileElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
   if (el.element === 'BLOCK') {
     var fn = compileblock(el, inheritedBriefcase, constants);
@@ -541,7 +541,7 @@ function compileElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcas
     fn.kind = 'element';
     return fn;
   }
-  if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants);
+  if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
   throw new Error('unknown element type: ' + el.element);
 }
 
@@ -557,7 +557,7 @@ function mapOrderedChildren(children) {
   });
 }
 
-function compileStageElement(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants) {
+function compileStageElement(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
   var stageBriefcase = cloneObject(inheritedBriefcase);
   Object.keys(stage.briefcase || {}).forEach(function(key) { stageBriefcase[key] = stage.briefcase[key]; });
@@ -569,14 +569,14 @@ function compileStageElement(stage, pipelineId, resumeFrom, parentPath, inherite
 
   var stagePath = parentPath.concat([stage.id]);
   var children = (stage.elements || []).map(function(el) {
-    if (el.element === 'BLOCK') return createPersistentElementWrapper(compileElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants), el, stagePath, pipelineId);
-    if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants);
+    if (el.element === 'BLOCK') return createPersistentElementWrapper(compileElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry), el, stagePath, pipelineId);
+    if (el.element === 'STAGE') return compileStageElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry);
     throw new Error('unknown element type: ' + el.element);
   });
 
   var isResumeStage = resumeFrom && resumeFrom.path && resumeFrom.path[0] === stage.id;
   var startIndex = isResumeStage ? Math.max(0, findIndex(stage.elements || [], function(el) { return el.id === resumeFrom.path[resumeFrom.path.length - 1]; })) : 0;
-  var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom);
+  var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, triggerRegistry);
   fn.id = stage.id;
   fn.kind = 'stage';
 
@@ -605,11 +605,11 @@ function findIndex(arr, predicate) {
   return -1;
 }
 
-function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stagePath) {
+function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stagePath, triggerRegistry) {
   var control = stage.control;
   var id = stage.id;
   if (!control || !control.command) return defaultRunner(id, children, startIndex, pipelineId, stagePath);
-  if (control.command === 'TRIGGER') return triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath);
+  if (control.command === 'TRIGGER') return triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath, triggerRegistry);
   if (control.command === 'LOOP') return loopRunner(id, control, children, startIndex, pipelineId, stagePath);
   throw new Error('unknown stage command: ' + control.command);
 }
@@ -654,7 +654,7 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath) {
   };
 }
 
-function triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath) {
+function triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath, triggerRegistry) {
   return async function(env) {
     var rs = env.registersubscription;
     if (!control.sourceid || !control.event || !rs) {
@@ -678,9 +678,7 @@ function triggerRunner(id, control, children, stage, pipelineId, startIndex, res
     };
 
     rs(control.sourceid, control.event, handler);
-    // Registry state parameter integration (to be updated after triggerregistry refactor):
-    // Currently registerTrigger uses module-level state. We'll update in INDEX 9 and adjust here later if needed.
-    registerTrigger(control.sourceid, control.event, handler);
+    triggerRegistry = registerTrigger(triggerRegistry, control.sourceid, control.event, handler);
 
     if (resumeStage) {
       var submitted2 = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: function(execEnv) { return runTrigger(execEnv, startIndex > 0 ? children.slice(startIndex) : children); }, env: env });
@@ -761,9 +759,9 @@ function executeChildren(children, env, stageid) {
   return collect(0, []);
 }
 
-function compileElements(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants) {
+function compileElements(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
-  return elements.map(function(el) { return compileElement(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants); });
+  return elements.map(function(el) { return compileElement(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry); });
 }
 
 function buildSpawnBootstrapMap(pipeline) {
@@ -887,6 +885,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     ANALYZERS: ANALYZERS,
     COMPILERS: COMPILERS
   };
+  var triggerRegistry = createTriggerRegistry();
 
   var pipelineId = pipelineIdOverride || pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline';
 
@@ -918,7 +917,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   await enqueueExecutionRegisterPipeline(pipelineId, preparedDna, {}).catch(function(err) { console.warn('[compilepipeline] register pipeline failed:', err); });
 
   var spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
-  var compiled = compileElements(pipeline.elements, pipelineId, null, [], pipelineBriefcase, compilerConstants, dnaConstants);
+  var compiled = compileElements(pipeline.elements, pipelineId, null, [], pipelineBriefcase, compilerConstants, dnaConstants, triggerRegistry);
   var compiledpipeline = createpipeline(compiled, sinks, undefined, { pipelineId: pipelineId });
 
   return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap };
@@ -967,7 +966,7 @@ async function bootGlobalSnapshot(envEnhancer) {
       var restorePromise = Promise.resolve();
       if (rehydratedCount > 0 && typeof htmlSnapshot === 'string' && htmlSnapshot.length > 0) {
         restorePromise = enqueueRenderRestoreBodyHtml(htmlSnapshot).then(function() {
-          revalidateAll();
+          revalidateAll(createTriggerRegistry());
           htmlRestored = true;
           logger.debug('[BOOTLOADER] Global HTML snapshot restored');
         });

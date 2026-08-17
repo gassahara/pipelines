@@ -1,54 +1,4 @@
-// actorkernel.js — ES5 actor kernel. Stateful actor instances preserved.
-
-export function createactor(behavior, initialstate) {
-  var currentstate = initialstate;
-  var mailbox = [];
-  var scheduled = false;
-  var drainpromise = null;
-  var drainresolve = null;
-
-  var drain = function() {
-    if (mailbox.length === 0) {
-      scheduled = false;
-      if (drainresolve) {
-        var res = drainresolve;
-        drainresolve = null;
-        drainpromise = null;
-        res(currentstate);
-      }
-      return;
-    }
-    var message = mailbox.shift();
-    currentstate = behavior(currentstate, message);
-    queueMicrotask(drain);
-  };
-
-  var send = function(message) {
-    mailbox.push(message);
-    if (!scheduled) {
-      scheduled = true;
-      queueMicrotask(drain);
-    }
-  };
-
-  var waitforemptymailbox = function() {
-    if (!scheduled && mailbox.length === 0) return Promise.resolve(currentstate);
-    if (!drainpromise) {
-      drainpromise = new Promise(function(resolve) { drainresolve = resolve; });
-    }
-    return drainpromise;
-  };
-
-  var getstate = function() { return currentstate; };
-
-  return Object.freeze({
-    send: send,
-    getstate: getstate,
-    waitforemptymailbox: waitforemptymailbox
-  });
-}
-
-export function createMessageValidator(interfaceMap) {
+function createMessageValidator(interfaceMap) {
   return function(message) {
     if (!message || typeof message !== 'object') {
       return { valid: false, error: 'message must be a non-null object', type: 'null' };
@@ -93,3 +43,75 @@ export function createMessageValidator(interfaceMap) {
     return { valid: true, error: null, type: type };
   };
 }
+
+function createactor(behavior, initialstate, messageInterface) {
+  var currentstate = initialstate;
+  var mailbox = [];
+  var scheduled = false;
+  var drainpromise = null;
+  var drainresolve = null;
+  var validator = messageInterface ? createMessageValidator(messageInterface) : null;
+
+  var drain = function() {
+    if (mailbox.length === 0) {
+      scheduled = false;
+      if (drainresolve) {
+        var res = drainresolve;
+        drainresolve = null;
+        drainpromise = null;
+        res(currentstate);
+      }
+      return;
+    }
+
+    var message = mailbox.shift();
+
+    if (validator) {
+      var check = validator(message);
+      if (!check.valid) {
+        if (typeof message.reject === 'function') {
+          message.reject(new Error('[ACTOR:INVALID] ' + check.error));
+        } else {
+          console.error('[ACTOR:INVALID] ' + check.error);
+        }
+        queueMicrotask(drain);
+        return;
+      }
+    }
+
+    currentstate = behavior(currentstate, message);
+    queueMicrotask(drain);
+  };
+
+  var send = function(message) {
+    if (!message || typeof message !== 'object') {
+      message = { type: message };
+    }
+    mailbox.push(message);
+    if (!scheduled) {
+      scheduled = true;
+      queueMicrotask(drain);
+    }
+  };
+
+  var waitforemptymailbox = function() {
+    if (!scheduled && mailbox.length === 0) return Promise.resolve(currentstate);
+    if (!drainpromise) {
+      drainpromise = new Promise(function(resolve) { drainresolve = resolve; });
+    }
+    return drainpromise;
+  };
+
+  var getstate = function() { return currentstate; };
+
+  return Object.freeze({
+    send: send,
+    getstate: getstate,
+    waitforemptymailbox: waitforemptymailbox
+  });
+}
+
+export {
+  createactor,
+  createMessageValidator
+};
