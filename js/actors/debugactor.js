@@ -111,8 +111,6 @@ var debugbehavior = function(state, message) {
             type: DEBUG_MESSAGETYPES.SHOW,
             error: e.error || e,
             continuation: null
-          }).catch(function(err) {
-            console.warn('[DEBUGACTOR] SHOW send failed:', err);
           });
         }
       });
@@ -125,8 +123,6 @@ var debugbehavior = function(state, message) {
               type: DEBUG_MESSAGETYPES.SHOW,
               error: e.reason,
               continuation: e.reason.diagnostic.continuation || null
-            }).catch(function(err) {
-              console.warn('[DEBUGACTOR] SHOW send failed:', err);
             });
           }
         }

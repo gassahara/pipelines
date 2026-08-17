@@ -707,6 +707,7 @@ export {
   injectResponsiveStyles,
   extractAllTagStyles,
   consolidateStyles,
+  getEffectiveBackground,
   estimateRecursiveBounds,
   verifyContrast,
   verifyTextVisibility,

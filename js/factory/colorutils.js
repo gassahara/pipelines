@@ -49,6 +49,10 @@ function parseComponent(comp) {
   return isNaN(val) || val < 0 || val > 255 ? null : val;
 }
 
+function pad2(n) {
+  return n < 16 ? '0' + n.toString(16) : n.toString(16);
+}
+
 function hexToRgb(input) {
   if (typeof input === 'string' && input.trim().indexOf('rgb(') === 0) {
     var parts = input.trim().slice(4, -1).split(',').map(function(s) { return s.trim(); }).map(parseComponent);
@@ -58,10 +62,6 @@ function hexToRgb(input) {
   var hex = input.trim().replace(/^#|^0x/i, '');
   if (hex.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(hex)) return [0, 0, 0];
   return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
-}
-
-function pad2(n) {
-  return n < 16 ? '0' + n.toString(16) : n.toString(16);
 }
 
 function rgbToHex(r, g, b) {
@@ -309,6 +309,8 @@ export {
   createColorConstants,
   rgbToHsl,
   hslToRgb,
+  parseComponent,
+  pad2,
   hexToRgb,
   rgbToHex,
   hslToHex,
@@ -317,6 +319,7 @@ export {
   computeForeground,
   emphasize,
   extractInlineStyle,
+  shiftHues,
   complementary,
   analogous,
   triadic,
