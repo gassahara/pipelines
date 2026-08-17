@@ -447,5 +447,6 @@ export {
   checkControlledOverlayDoc,
   correctControlledOverlayDoc,
   applyDirectiveToSelector,
-  optimizeLayoutHTML
+    optimizeLayoutHTML,
+        createLogger,
 };
