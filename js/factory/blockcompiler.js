@@ -1,7 +1,6 @@
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
 import { callwithstack } from './callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
-import { detectFreeIdentifiers } from './freevarparser.js';
 import {
   createDnaSerializerConstants,
   validaterevivablefunctionblock,
@@ -15,8 +14,7 @@ import {
   enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout,
   enqueusetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
   DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport,
-  enqueuegetscreen, enqueuematchmedia, enqueueRenderGetBodyHtml,
-  enqueueRenderRestoreBodyHtml
+  enqueuegetscreen, enqueuematchmedia
 } from '../actors/renderactor.js';
 import { createTriggerRegistry, registerTrigger, revalidateAll } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
@@ -27,7 +25,7 @@ import {
   enqueueExecutionStopStage, enqueueExecutionCancelStage, enqueueExecutionBreakStage,
   enqueueExecutionRestartStage, enqueueExecutionContinueStage, enqueueExecutionGetTasks,
   enqueueExecutionGetTaskStatus, enqueueExecutionCancelTask, enqueueExecutionStopTask,
-  enqueueExecutionSpawnPipeline, enqueueGlobalSnapshot, enqueueExecutionRegisterPipeline
+  enqueueExecutionSpawnPipeline, enqueueExecutionRegisterPipeline
 } from '../actors/executionactor.js';
 
 function createBlockCompilerConstants() {
@@ -819,28 +817,16 @@ function runTrampoline(env, stages, pipelineId) {
       return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'completed' }).catch(function() {}).then(function() {
         return enqueueExecutionEnvUpdated(pipelineId, newEnv).catch(function() {});
       }).then(function() {
-        return enqueueRenderGetBodyHtml().then(function(currentHtml) {
-          if (typeof currentHtml === 'string') return enqueueGlobalSnapshot(currentHtml).catch(function(snapErr) {
-            logger.debug('[SNAPSHOT] stage snapshot persist warning:', snapErr);
-          });
-        }).catch(function(snapErr) {
-          logger.debug('[SNAPSHOT] stage snapshot persist warning:', snapErr);
-        }).then(function() {
-          return step(stack.slice(1), newEnv);
-        });
+        return step(stack.slice(1), newEnv);
       });
     }).catch(function(err) {
       logger.info('[PIPELINE] Error at stage:', nextStageId);
       return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'failed' }).catch(function() {}).then(function() {
         return enqueueExecutionEnvUpdated(pipelineId, currentEnv).catch(function() {});
       }).then(function() {
-        return enqueueRenderGetBodyHtml().then(function(currentHtml) {
-          if (typeof currentHtml === 'string') return enqueueGlobalSnapshot(currentHtml).catch(function() {});
-        }).catch(function() {}).then(function() {
-          err.diagnostic = err.diagnostic || {};
-          err.diagnostic.pipelinestage = nextStageId;
-          throw err;
-        });
+        err.diagnostic = err.diagnostic || {};
+        err.diagnostic.pipelinestage = nextStageId;
+        throw err;
       });
     });
   }
@@ -923,74 +909,8 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap };
 }
 
-async function bootGlobalSnapshot(envEnhancer) {
-  if (envEnhancer === undefined) envEnhancer = null;
-  var logger = createBlockCompilerLogger();
-  try {
-    var recoveryData = await enqueueExecutionRecover();
-    if (!recoveryData || typeof recoveryData !== 'object') {
-      return { recovered: false, pipelineCount: 0, htmlRestored: false };
-    }
-
-    var pipelines = recoveryData.pipelines || {};
-    var htmlSnapshot = recoveryData.htmlSnapshot;
-    var pipelineEntries = Object.keys(pipelines).map(function(pid) { return [pid, pipelines[pid]]; });
-
-    if (pipelineEntries.length === 0) {
-      logger.debug('[BOOTLOADER] No persisted pipelines found. First run or empty snapshot.');
-      return { recovered: false, pipelineCount: 0, htmlRestored: false };
-    }
-
-    var resultAcc = { count: 0, pipelines: [] };
-
-    return pipelineEntries.reduce(function(promise, entry) {
-      var pid = entry[0];
-      var pdata = entry[1];
-      if (pdata.status !== 'running') return promise;
-      if (!pdata.dna) {
-        logger.warn('[BOOTLOADER] No DNA for pipeline:', pid);
-        return promise;
-      }
-      return promise.then(function(acc) {
-        return compilepipeline(pdata.dna, null, [], pid).then(function(compiled) {
-          return { count: acc.count + 1, pipelines: acc.pipelines.concat([{ pid: pid, compiled: compiled, env: pdata.env || {} }]) };
-        }).catch(function(pipeErr) {
-          logger.warn('[BOOTLOADER] Failed to re-compile pipeline:', pid, pipeErr);
-          return acc;
-        });
-      });
-    }, Promise.resolve(resultAcc)).then(function(acc) {
-      var rehydratedCount = acc.count;
-      var rehydratedPipelines = acc.pipelines;
-      var htmlRestored = false;
-      var restorePromise = Promise.resolve();
-      if (rehydratedCount > 0 && typeof htmlSnapshot === 'string' && htmlSnapshot.length > 0) {
-        restorePromise = enqueueRenderRestoreBodyHtml(htmlSnapshot).then(function() {
-          revalidateAll(createTriggerRegistry());
-          htmlRestored = true;
-          logger.debug('[BOOTLOADER] Global HTML snapshot restored');
-        });
-      }
-      return restorePromise.then(function() {
-        rehydratedPipelines.forEach(function(entry) {
-          var runtimeEnv = typeof envEnhancer === 'function'
-            ? extendObject(cloneObject(entry.env), envEnhancer(entry.pid, entry.env))
-            : entry.env;
-          entry.compiled.pipeline({ id: entry.pid, env: runtimeEnv }).catch(function(err) { logger.warn('[BOOTLOADER] Pipeline resume failed:', entry.pid, err); });
-        });
-        logger.debug('[BOOTLOADER] Global recovery complete. Rehydrated pipelines:', rehydratedCount);
-        return { recovered: rehydratedCount > 0, pipelineCount: rehydratedCount, htmlRestored: htmlRestored };
-      });
-    });
-  } catch (err) {
-    logger.warn('[BOOTLOADER] Global Snapshot recovery failed:', err);
-    return { recovered: false, pipelineCount: 0, htmlRestored: false };
-  }
-}
-
 export {
   compilepipeline,
-  bootGlobalSnapshot,
   createBlockCompilerConstants,
   createBlockAnalyzers,
   createBlockCompilers

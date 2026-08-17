@@ -2,6 +2,7 @@ import { createactor } from './actorkernel.js';
 import { createActorRegistry, setRenderActor } from './actorregistry.js';
 import { createTriggerRegistry, revalidateAll } from './trigerregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
+import { enqueueDbStore, enqueueDbRestore } from './dbactor.js';
 
 var MESSAGETYPES = Object.freeze({
   RENDER: 'render',
@@ -32,7 +33,8 @@ var MESSAGETYPES = Object.freeze({
   GETSCREEN: 'getscreen',
   MATCHMEDIA: 'matchmedia',
   GET_BODY_HTML: 'get_body_html',
-  RESTORE_BODY_HTML: 'restore_body_html'
+  RESTORE_BODY_HTML: 'restore_body_html',
+  RECOVER: 'recover'
 });
 
 var MESSAGEINTERFACES = {};
@@ -65,7 +67,22 @@ MESSAGEINTERFACES[MESSAGETYPES.GETSCREEN] = { resolve: 'function', reject: 'func
 MESSAGEINTERFACES[MESSAGETYPES.MATCHMEDIA] = { query: 'string', resolve: 'function', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.GET_BODY_HTML] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
+
+function createInitialRenderWorldmap() {
+  return {
+    html: '',
+    viewport: null
+  };
+}
+
+function persistRenderWorldmap(state) {
+  state.worldmap.html = document.body ? document.body.innerHTML : '';
+  enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
+    console.warn('[RENDERACTOR] state persist failed:', e);
+  });
+}
 
 function withElement(id, reject, fn) {
   if (!id || typeof id !== 'string') {
@@ -94,50 +111,62 @@ HANDLERS[MESSAGETYPES.RENDER] = function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     el.innerHTML = '';
     revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
     else { el.innerHTML = msg.markup; revalidateAll(state.triggerRegistry); }
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     el.remove();
     revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (msg.styles && typeof msg.styles === 'object') {
       Object.keys(msg.styles).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
     }
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.SETATTR] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (typeof msg.name === 'string') el.setAttribute(msg.name, msg.value);
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (typeof msg.classname === 'string') el.classList.toggle(msg.classname, msg.force);
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.CRYPTO] = function(state, msg) {
@@ -171,6 +200,7 @@ HANDLERS[MESSAGETYPES.PERSISTENCE] = function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(state, msg) {
+  persistRenderWorldmap(state);
   try {
     var el = document.createElement(msg.tag);
     if (msg.props && typeof msg.props === 'object') {
@@ -178,20 +208,25 @@ HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(state, msg) {
     }
     resolveMsg(msg, CREATEDOMREF(el, state.actorRegistry));
   } catch (err) { rejectMsg(msg, err); }
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(state, msg) {
+  persistRenderWorldmap(state);
   try { resolveMsg(msg, CREATEDOMREF(document.createElement('div'), state.actorRegistry)); }
   catch (err) { rejectMsg(msg, err); }
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(state, msg) {
+  persistRenderWorldmap(state);
   try {
     var wrapper = document.createElement('div');
     wrapper.innerHTML = msg.html;
     var child = wrapper.firstElementChild || wrapper;
     resolveMsg(msg, CREATEDOMREF(child, state.actorRegistry));
   } catch (err) { rejectMsg(msg, err); }
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.PROPERTY] = function(state, msg) {
@@ -241,42 +276,55 @@ HANDLERS[MESSAGETYPES.GETLAYOUT] = function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.SETHTML] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     el.innerHTML = msg.value;
     revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (msg.value && typeof msg.value === 'object') {
       Object.keys(msg.value).forEach(function(prop) { el.style[prop] = msg.value[prop]; });
     }
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.SETSTYLE] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (msg.value && typeof msg.value === 'object') {
       Object.keys(msg.value).forEach(function(prop) { el.style[prop] = msg.value[prop]; });
     }
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.SETVALUE] = function(state, msg) {
-  withElement(msg.id, msg.reject, function(el) { el.value = msg.value; resolveMsg(msg); });
+  persistRenderWorldmap(state);
+  withElement(msg.id, msg.reject, function(el) {
+    el.value = msg.value;
+    resolveMsg(msg);
+  });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.SETLAYOUT] = function(state, msg) {
+  persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (msg.value && typeof msg.value === 'object') {
       Object.keys(msg.value).forEach(function(prop) { el[prop] = msg.value[prop]; });
     }
     resolveMsg(msg);
   });
+  persistRenderWorldmap(state);
 };
 
 HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(state, msg) {
@@ -298,11 +346,29 @@ HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
+  persistRenderWorldmap(state);
   if (document.body) {
     document.body.innerHTML = msg.html;
     revalidateAll(state.triggerRegistry);
   }
+  persistRenderWorldmap(state);
   resolveMsg(msg, true);
+};
+
+HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
+  enqueueDbRestore('actor:state:render').then(function(saved) {
+    if (saved) {
+      state.worldmap = saved;
+      if (document.body) {
+        document.body.innerHTML = saved.html;
+        revalidateAll(state.triggerRegistry);
+      }
+    }
+    if (typeof msg.resolve === 'function') msg.resolve(state);
+  }).catch(function(e) {
+    console.warn('[RENDERACTOR] state restore failed:', e);
+    if (typeof msg.resolve === 'function') msg.resolve(state);
+  });
 };
 
 var refcounter = 0;
@@ -320,7 +386,8 @@ var renderbehavior = function(state, message) {
 
 var initialState = {
   triggerRegistry: createTriggerRegistry(),
-  actorRegistry: createActorRegistry()
+  actorRegistry: createActorRegistry(),
+  worldmap: createInitialRenderWorldmap()
 };
 
 var RENDERACTOR = createactor(renderbehavior, initialState, MESSAGEINTERFACES);
@@ -426,6 +493,12 @@ var enqueueRenderRestoreBodyHtml = function(html) {
   });
 };
 
+var enqueueRenderRecover = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.RECOVER, resolve: resolve, reject: reject });
+  });
+};
+
 export {
   RENDERACTOR,
   MESSAGETYPES,
@@ -459,5 +532,6 @@ export {
   expectelement,
   handlefilereaderrequest,
   enqueueRenderGetBodyHtml,
-  enqueueRenderRestoreBodyHtml
+  enqueueRenderRestoreBodyHtml,
+  enqueueRenderRecover
 };

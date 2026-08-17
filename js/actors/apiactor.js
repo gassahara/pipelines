@@ -1,5 +1,6 @@
 import { createactor } from './actorkernel.js';
 import { createApiConstants } from '../utils.js';
+import { enqueueDbStore } from './dbactor.js';
 
 var MESSAGETYPES = Object.freeze({
   API: 'api',
@@ -15,8 +16,37 @@ MESSAGEINTERFACES[MESSAGETYPES.FETCH] = {
 };
 Object.freeze(MESSAGEINTERFACES);
 
+function createInitialApiWorldmap() {
+  return {
+    lastRequest: null,
+    requestCount: 0
+  };
+}
+
+function persistApiWorldmap(state) {
+  enqueueDbStore('actor:state:api', state.worldmap).catch(function(e) {
+    console.warn('[APIACTOR] state persist failed:', e);
+  });
+}
+
 var apibehavior = function(state, message) {
   if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
+    // PERSIST BEFORE action
+    persistApiWorldmap(state);
+
+    state.worldmap.lastRequest = {
+      type: message.type,
+      endpoint: message.endpoint,
+      method: message.method,
+      payload: message.payload || {},
+      token: message.token || '',
+      timestamp: Date.now()
+    };
+    state.worldmap.requestCount = (state.worldmap.requestCount || 0) + 1;
+
+    // PERSIST AFTER action
+    persistApiWorldmap(state);
+
     var apiConstants = createApiConstants();
     var url = apiConstants.APIBASE + '/' + message.endpoint;
     var isTextual = message.type === MESSAGETYPES.FETCH;
@@ -52,7 +82,7 @@ var apibehavior = function(state, message) {
   return state;
 };
 
-var APIACTOR = createactor(apibehavior, {}, MESSAGEINTERFACES);
+var APIACTOR = createactor(apibehavior, { worldmap: createInitialApiWorldmap() }, MESSAGEINTERFACES);
 
 function enqueueapi(endpoint, method, payload, options) {
   return new Promise(function(resolve, reject) {
