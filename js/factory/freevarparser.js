@@ -15,7 +15,7 @@ const RESERVED = new Set([
   'function','if','return','let','const','var','switch','case','break','continue','null','true','false','of','in','new','typeof','instanceof','else','do','while','for','try','catch','finally','throw','this','super','class','extends','import','export','default','void','delete','yield','await','async','static','get','set','debugger','with','enum','implements','interface','package','private','protected','public'
 ]);
 
-const BUILTINS = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt']);
+const BUILTINS = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt', 'arguments']);
 
 const tokenize = (source) => {
   const tokens = [];
