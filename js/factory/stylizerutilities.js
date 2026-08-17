@@ -700,6 +700,7 @@ export {
   applyStep,
   getAllDescendants,
   buildLayoutPropertyMap,
+  getPropsFromMap,
   computeIntrinsicSize,
   rewritestyleattrs,
   computecolorscheme,

@@ -1,7 +1,3 @@
-// debugactor.js — ES5 debug/CCC actor with unified message validation and full-state persistence.
-// Encapsulates debug overlay and CCC actions. Persists worldmap before/after every debug/CCC action.
-// RECOVER restores overlay state from persisted worldmap or defaults on empty DB.
-
 import { createactor } from './actorkernel.js';
 import { frames } from '../evalstack.js';
 import { formatdebugtrace } from '../debugformatter.js';
@@ -26,6 +22,8 @@ MESSAGEINTERFACES[DEBUG_MESSAGETYPES.SHOW] = { error: 'object', continuation: 'o
 MESSAGEINTERFACES[DEBUG_MESSAGETYPES.HIDE] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[DEBUG_MESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
+
+var DEBUGACTOR_INSTANCE = null;
 
 function createInitialDebugWorldmap() {
   return {
@@ -102,6 +100,39 @@ var debugbehavior = function(state, message) {
   if (message.type === DEBUG_MESSAGETYPES.INIT_OVERLAY) {
     persistDebugWorldmap(state); // PERSIST BEFORE
     ensureOverlay(state);
+
+    if (!state.globalListenersInstalled) {
+      state.globalListenersInstalled = true;
+
+      window.addEventListener('error', function(e) {
+        e.preventDefault();
+        if (DEBUGACTOR_INSTANCE) {
+          DEBUGACTOR_INSTANCE.send({
+            type: DEBUG_MESSAGETYPES.SHOW,
+            error: e.error || e,
+            continuation: null
+          }).catch(function(err) {
+            console.warn('[DEBUGACTOR] SHOW send failed:', err);
+          });
+        }
+      });
+
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e.reason && e.reason.diagnostic) {
+          e.preventDefault();
+          if (DEBUGACTOR_INSTANCE) {
+            DEBUGACTOR_INSTANCE.send({
+              type: DEBUG_MESSAGETYPES.SHOW,
+              error: e.reason,
+              continuation: e.reason.diagnostic.continuation || null
+            }).catch(function(err) {
+              console.warn('[DEBUGACTOR] SHOW send failed:', err);
+            });
+          }
+        }
+      });
+    }
+
     state.worldmap.overlayVisible = false;
     persistDebugWorldmap(state); // PERSIST AFTER
     return state;
@@ -209,11 +240,13 @@ var debugbehavior = function(state, message) {
 };
 
 function createDebugActor() {
-  return createactor(debugbehavior, {
+  var actor = createactor(debugbehavior, {
     overlay: null,
     currentContinuation: null,
     worldmap: createInitialDebugWorldmap()
   }, MESSAGEINTERFACES);
+  DEBUGACTOR_INSTANCE = actor;
+  return actor;
 }
 
 export {

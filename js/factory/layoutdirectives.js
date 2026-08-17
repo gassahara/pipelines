@@ -1,4 +1,12 @@
-import { rewritestyleattrs, applyStep, getAllDescendants, buildLayoutPropertyMap, computeIntrinsicSize, kebabToCamel } from './stylizerutilities.js';
+import {
+  rewritestyleattrs,
+  applyStep,
+  getAllDescendants,
+  buildLayoutPropertyMap,
+  computeIntrinsicSize,
+  kebabToCamel,
+  getPropsFromMap
+} from './stylizerutilities.js';
 import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
 
 function createLayoutConstants() {
@@ -209,13 +217,6 @@ function getCandidateElements(doc) {
     if (tag === 'div' && el.style && (el.style.width || el.style.maxWidth)) return true;
     return false;
   });
-}
-
-function getPropsFromMap(propsMap, el) {
-  for (var i = 0; i < propsMap.length; i++) {
-    if (propsMap[i].element === el) return propsMap[i].props;
-  }
-  return null;
 }
 
 function checkOverflowDoc(doc, viewportWidth, containerWidths) {
