@@ -339,11 +339,26 @@ var executionbehavior = function(state, message) {
           nextState.pipelines = saved.pipelines || {};
           nextState.tasks = saved.tasks || {};
           nextState.htmlSnapshot = saved.htmlSnapshot || null;
+        } else {
+          nextState.worldmap = createInitialExecutionWorldmap();
+          nextState.pipelines = nextState.worldmap.pipelines || {};
+          nextState.tasks = nextState.worldmap.tasks || {};
+          nextState.htmlSnapshot = nextState.worldmap.htmlSnapshot || null;
+          enqueueDbStore('actor:state:execution', nextState.worldmap).catch(function(e) {
+            console.warn('[EXECUTIONACTOR] default state persist failed:', e);
+          });
         }
-        if (typeof message.resolve === 'function') message.resolve(nextState);
+        resolveMessage(message, nextState);
       }).catch(function(e) {
         console.warn('[EXECUTIONACTOR] state restore failed:', e);
-        if (typeof message.resolve === 'function') message.resolve(nextState);
+        nextState.worldmap = createInitialExecutionWorldmap();
+        nextState.pipelines = {};
+        nextState.tasks = {};
+        nextState.htmlSnapshot = null;
+        enqueueDbStore('actor:state:execution', nextState.worldmap).catch(function(e2) {
+          console.warn('[EXECUTIONACTOR] default state persist failed:', e2);
+        });
+        resolveMessage(message, nextState);
       });
       return state;
     }
@@ -385,7 +400,8 @@ async function loadInitialState() {
   } catch (err) {
     console.warn('[EXECUTIONACTOR] state restore failed:', err);
   }
-  return {
+
+  var defaultState = {
     pipelines: {},
     htmlSnapshot: null,
     tasks: {},
@@ -393,6 +409,10 @@ async function loadInitialState() {
     worldmap: createInitialExecutionWorldmap(),
     debugState: { currentContinuation: null }
   };
+  enqueueDbStore('actor:state:execution', defaultState.worldmap).catch(function(e) {
+    console.warn('[EXECUTIONACTOR] default state persist failed:', e);
+  });
+  return defaultState;
 }
 
 async function runElementTask(taskid, descriptor) {

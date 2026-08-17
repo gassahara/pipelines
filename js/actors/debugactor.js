@@ -1,3 +1,7 @@
+// debugactor.js — ES5 debug/CCC actor with unified message validation and full-state persistence.
+// Encapsulates debug overlay and CCC actions. Persists worldmap before/after every debug/CCC action.
+// RECOVER restores overlay state from persisted worldmap or defaults on empty DB.
+
 import { createactor } from './actorkernel.js';
 import { frames } from '../evalstack.js';
 import { formatdebugtrace } from '../debugformatter.js';
@@ -187,11 +191,15 @@ var debugbehavior = function(state, message) {
         if (saved.cccState && saved.cccState.currentContinuation) {
           state.currentContinuation = saved.cccState.currentContinuation;
         }
-        persistDebugWorldmap(state); // PERSIST AFTER RECOVER
+      } else {
+        state.worldmap = createInitialDebugWorldmap();
+        persistDebugWorldmap(state);
       }
       if (typeof message.resolve === 'function') message.resolve(state);
     }).catch(function(e) {
       console.warn('[DEBUGACTOR] state restore failed:', e);
+      state.worldmap = createInitialDebugWorldmap();
+      persistDebugWorldmap(state);
       if (typeof message.resolve === 'function') message.resolve(state);
     });
     return state;

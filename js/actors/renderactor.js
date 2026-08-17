@@ -363,10 +363,15 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
         document.body.innerHTML = saved.html;
         revalidateAll(state.triggerRegistry);
       }
+    } else {
+      state.worldmap = createInitialRenderWorldmap();
+      persistRenderWorldmap(state);
     }
     if (typeof msg.resolve === 'function') msg.resolve(state);
   }).catch(function(e) {
     console.warn('[RENDERACTOR] state restore failed:', e);
+    state.worldmap = createInitialRenderWorldmap();
+    persistRenderWorldmap(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   });
 };

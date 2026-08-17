@@ -108,7 +108,6 @@ function rewriteFunctionSource(source, destructure) {
   var i = 0;
   var len = source.length;
 
-  // Skip leading whitespace and optional async keyword.
   while (i < len && source[i] === ' ') i++;
   if (source.slice(i, i + 5) === 'async') {
     i += 5;
@@ -124,10 +123,8 @@ function rewriteFunctionSource(source, destructure) {
   }
 
   if (nextWord === 'function') {
-    // function declaration
     i = j;
     while (i < len && source[i] === ' ') i++;
-    // Skip optional function name.
     if (isIdentifierStart(source[i])) {
       while (i < len && isIdentifierPart(source[i])) i++;
       while (i < len && source[i] === ' ') i++;
@@ -139,13 +136,16 @@ function rewriteFunctionSource(source, destructure) {
     var params = source.slice(openParen + 1, closeParen).trim();
     var newParams = params.length === 0 ? '__deps' : params + ', __deps';
     var newSource = source.slice(0, openParen + 1) + newParams + source.slice(closeParen);
-    // Find body brace after the parenthesis.
-    var bodyBrace = findBodyBrace(newSource, closeParen + newParams.length + 1);
+
+    var newCloseParen = findMatchingParen(newSource, openParen);
+    if (newCloseParen === -1) throw new Error('[dnaserializer] unmatched paren after injection');
+
+    var bodyBrace = findBodyBrace(newSource, newCloseParen + 1);
     if (bodyBrace === -1) throw new Error('[dnaserializer] function body not found');
+
     return newSource.slice(0, bodyBrace + 1) + destructure + newSource.slice(bodyBrace + 1);
   }
 
-  // Arrow function
   if (source[i] === '(') {
     var openParen = i;
     var closeParen = findMatchingParen(source, openParen);
@@ -153,39 +153,46 @@ function rewriteFunctionSource(source, destructure) {
     var params = source.slice(openParen + 1, closeParen).trim();
     var newParams = params.length === 0 ? '__deps' : params + ', __deps';
     var newSource = source.slice(0, openParen + 1) + newParams + source.slice(closeParen);
-    var arrowIndex = newSource.indexOf('=>', closeParen + newParams.length);
+
+    var newCloseParen = findMatchingParen(newSource, openParen);
+    if (newCloseParen === -1) throw new Error('[dnaserializer] unmatched paren after injection');
+
+    var arrowIndex = newSource.indexOf('=>', newCloseParen + 1);
     if (arrowIndex === -1) throw new Error('[dnaserializer] arrow not found');
+
     var afterArrow = arrowIndex + 2;
     while (afterArrow < newSource.length && newSource[afterArrow] === ' ') afterArrow++;
     if (newSource[afterArrow] !== '{') {
-      // Expression body; cannot inject deps safely. Return unchanged.
       return source;
     }
+
     var bodyBrace = afterArrow;
     return newSource.slice(0, bodyBrace + 1) + destructure + newSource.slice(bodyBrace + 1);
   }
 
-  // Arrow with single identifier parameter.
   if (isIdentifierStart(source[i])) {
     var identStart = i;
     while (i < len && isIdentifierPart(source[i])) i++;
     var ident = source.slice(identStart, i);
     while (i < len && source[i] === ' ') i++;
     if (source.slice(i, i + 2) !== '=>') return source;
-    var arrowIndex = i + 2;
-    var afterArrow = arrowIndex;
-    while (afterArrow < len && source[afterArrow] === ' ') afterArrow++;
-    if (source[afterArrow] !== '{') return source;
+
     var newParams = '(' + ident + ', __deps) =>';
     var beforeArrow = source.slice(0, identStart);
     var afterIdent = source.slice(i);
     var newSource = beforeArrow + newParams + afterIdent;
-    var bodyBrace = findBodyBrace(newSource, afterArrow + (newParams.length - ident.length));
-    if (bodyBrace === -1) throw new Error('[dnaserializer] function body not found');
+
+    var arrowPos = newSource.indexOf('=>');
+    if (arrowPos === -1) return source;
+
+    var afterArrow = arrowPos + 2;
+    while (afterArrow < newSource.length && newSource[afterArrow] === ' ') afterArrow++;
+    if (newSource[afterArrow] !== '{') return source;
+
+    var bodyBrace = afterArrow;
     return newSource.slice(0, bodyBrace + 1) + destructure + newSource.slice(bodyBrace + 1);
   }
 
-  // Unsupported signature.
   return source;
 }
 
