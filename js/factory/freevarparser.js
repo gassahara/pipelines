@@ -824,6 +824,12 @@ function parseExpression(state, stopTokens) {
 function parseOperandAndThenBinary(state, stopTokens) {
   state = parsePrimaryAndMemberAndCall(state);
 
+  // Consume postfix update operators.
+  var postfix = peek(state);
+  if (postfix.type === 'Punctuator' && (postfix.value === '++' || postfix.value === '--')) {
+    state = advance(state);
+  }
+
   while (true) {
     var t = peek(state);
     if (t.type === 'EOF') break;
@@ -877,8 +883,14 @@ function parsePrimaryAndMemberAndCall(state) {
     state = parseArrayLiteral(state);
   } else if (t.type === 'Punctuator' && t.value === '{') {
     state = parseObjectLiteral(state);
+  } else if (t.type === 'Punctuator' && contains(['!', '~', '+', '-', '++', '--'], t.value)) {
+    state = advance(state); // prefix unary operator
+    state = parsePrimaryAndMemberAndCall(state); // parse operand
+  } else if (t.type === 'Keyword' && contains(['typeof', 'void', 'delete', 'await', 'yield'], t.value)) {
+    state = advance(state); // prefix keyword operator
+    state = parsePrimaryAndMemberAndCall(state); // parse operand
   } else {
-    state = advance(state);
+    state = advance(state); // safe fallback for unsupported token
   }
 
   while (true) {
