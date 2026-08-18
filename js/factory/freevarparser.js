@@ -1,7 +1,3 @@
-// freevarparser.js — Standalone lexer/parser for free-variable detection.
-// Exports: detectFreeIdentifiers
-// Pure module; no dependencies.
-
 const isWhitespace = (ch) => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\v' || ch === '\f' || ch === '\uFEFF';
 const isLineTerminator = (ch) => ch === '\n' || ch === '\r' || ch === '\u2028' || ch === '\u2029';
 const isDigit = (ch) => ch >= '0' && ch <= '9';
@@ -12,720 +8,682 @@ const isIdentifierStart = (ch) =>
 const isIdentifierPart = (ch) => isIdentifierStart(ch) || isDigit(ch);
 
 const RESERVED = new Set([
-  'function','if','return','let','const','var','switch','case','break','continue','null','true','false','of','in','new','typeof','instanceof','else','do','while','for','try','catch','finally','throw','this','super','class','extends','import','export','default','void','delete','yield','await','async','static','get','set','debugger','with','enum','implements','interface','package','private','protected','public'
+  'function','if','return','let','const','var','switch','case','break','continue',
+  'null','true','false','of','in','new','typeof','instanceof','else','do','while','for',
+  'try','catch','finally','throw','this','super','class','extends','import','export','default',
+  'void','delete','yield','await','async','static','get','set','debugger','with','enum',
+  'implements','interface','package','private','protected','public'
 ]);
 
-const BUILTINS = new Set(['Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp','Error','TypeError','ReferenceError','console','document','window','globalThis','undefined','NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map','WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt', 'arguments']);
+const BUILTINS = new Set([
+  'Math','Date','JSON','Object','Array','String','Number','Boolean','Promise','RegExp',
+  'Error','TypeError','ReferenceError','console','document','window','globalThis','undefined',
+  'NaN','Infinity','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent',
+  'decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map',
+  'WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt','arguments'
+]);
 
-const tokenize = (source) => {
+const PUNCTUATORS = [
+  ['===','binary'], ['!==','binary'], ['>>>','binary'], ['**=','assignment'],
+  ['==','binary'], ['!=','binary'], ['<=','binary'], ['>=','binary'],
+  ['&&','binary'], ['||','binary'], ['??','binary'],
+  ['++','prefixOrPostfix'], ['--','prefixOrPostfix'],
+  ['+=','assignment'], ['-=','assignment'], ['*=','assignment'], ['/=','assignment'],
+  ['%=','assignment'], ['&=','assignment'], ['|=','assignment'], ['^=','assignment'],
+  ['<<=','assignment'], ['>>=','assignment'], ['>>>=','assignment'],
+  ['<<','binary'], ['>>','binary'], ['**','binary'], ['=>','arrow'], ['...','spread'],
+  ['{','open'], ['}','close'], ['(','open'], [')','close'], ['[','open'], [']','close'],
+  ['.','dot'], [';','separator'], [',','separator'], [':','colon'], ['?','conditional'],
+  ['+','binaryOrPrefix'], ['-','binaryOrPrefix'], ['*','binary'], ['%','binary'],
+  ['&','binary'], ['|','binary'], ['^','binary'], ['~','prefix'], ['!','prefix'],
+  ['<','binary'], ['>','binary'], ['=','assignment']
+];
+
+function matchPunctuator(source, i) {
+  for (const [str, kind] of PUNCTUATORS) {
+    if (source.startsWith(str, i)) return { value: str, kind, length: str.length };
+  }
+  return null;
+}
+
+function scanRegExp(source, start) {
+  if (source[start] !== '/') return null;
+  let i = start + 1;
+  let body = '';
+  let inClass = false;
+  let escaped = false;
+  while (i < source.length) {
+    const c = source[i];
+    if (escaped) {
+      body += '\\' + c;
+      escaped = false;
+      i += 1;
+      continue;
+    }
+    if (c === '\\') {
+      body += c;
+      escaped = true;
+      i += 1;
+      continue;
+    }
+    if (c === '[') {
+      inClass = true;
+      body += c;
+      i += 1;
+      continue;
+    }
+    if (c === ']') {
+      inClass = false;
+      body += c;
+      i += 1;
+      continue;
+    }
+    if (c === '/' && !inClass) {
+      i += 1;
+      let flags = '';
+      while (i < source.length && isIdentifierPart(source[i])) {
+        flags += source[i];
+        i += 1;
+      }
+      return { body, flags, end: i };
+    }
+    if (isLineTerminator(c)) return null;
+    body += c;
+    i += 1;
+  }
+  return null;
+}
+
+function scanString(source, start, quote) {
+  let i = start + 1;
+  let value = '';
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '\\') {
+      value += c + (source[i + 1] || '');
+      i += 2;
+      continue;
+    }
+    if (c === quote) {
+      i += 1;
+      return { value, end: i };
+    }
+    if (isLineTerminator(c)) return null;
+    value += c;
+    i += 1;
+  }
+  return null;
+}
+
+function scanTemplate(source, start) {
+  let i = start + 1;
+  let value = '';
+  const expressions = [];
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '\\') {
+      value += c + (source[i + 1] || '');
+      i += 2;
+      continue;
+    }
+    if (c === '`') {
+      i += 1;
+      return { value, expressions, end: i };
+    }
+    if (c === '$' && source[i + 1] === '{') {
+      const exprStart = i + 2;
+      let j = exprStart;
+      let depth = 1;
+      while (j < source.length && depth > 0) {
+        if (source[j] === '{') depth += 1;
+        else if (source[j] === '}') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+        j += 1;
+      }
+      if (depth === 0) {
+        const expr = source.slice(exprStart, j);
+        expressions.push({ raw: expr });
+        i = j + 1;
+        continue;
+      }
+    }
+    value += c;
+    i += 1;
+  }
+  return { value, expressions, end: i };
+}
+
+function scanNumber(source, start) {
+  let i = start;
+  let value = '';
+  while (i < source.length) {
+    const c = source[i];
+    if (isDigit(c) || c === '.' || c === '_') {
+      value += c;
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  if (value.length === 0) return null;
+  return { value, end: i };
+}
+
+function tokenize(source) {
   const tokens = [];
   let i = 0;
-  let previousToken = null;
+  let exprAllowed = true;
 
-  const lastSignificant = () => previousToken;
-
-  const canStartRegex = () => {
-    const prev = lastSignificant();
-    if (!prev) return true;
-    if (prev.type === 'keyword') {
-      return ['return','typeof','instanceof','in','of','new','delete','void','case'].includes(prev.value);
+  const pushToken = (token) => {
+    tokens.push(token);
+    // update exprAllowed from token grammatical role
+    if (token.type === 'RegExpLiteral' || token.type === 'StringLiteral' ||
+        token.type === 'NumericLiteral' || token.type === 'Identifier' ||
+        token.type === 'TemplateLiteral' || token.type === 'CloseParen' ||
+        token.type === 'CloseBracket' || token.type === 'CloseBrace') {
+      exprAllowed = false;
+    } else if (token.type === 'Punctuator') {
+      if (token.kind === 'open' || token.kind === 'separator' ||
+          token.kind === 'prefix' || token.kind === 'binary' ||
+          token.kind === 'assignment' || token.kind === 'conditional' ||
+          token.kind === 'colon' || token.kind === 'arrow' ||
+          token.kind === 'spread' || token.kind === 'prefixOrPostfix') {
+        exprAllowed = true;
+      } else if (token.kind === 'close' || token.kind === 'dot') {
+        exprAllowed = false;
+      } else {
+        exprAllowed = false;
+      }
+    } else if (token.type === 'Keyword') {
+      exprAllowed = ['return','throw','case','new','typeof','void','delete','yield','await','else','in','instanceof'].includes(token.value);
+    } else {
+      exprAllowed = false;
     }
-    if (prev.type === 'punctuator') {
-      return ['(', '=', ',', '[', ':', '=>', ';', '{', '}'].includes(prev.value);
-    }
-    return false;
   };
 
   while (i < source.length) {
-    const ch = source[i];
+    if (isWhitespace(source[i]) || isLineTerminator(source[i])) { i += 1; continue; }
 
-    if (isWhitespace(ch) || isLineTerminator(ch)) { i += 1; continue; }
-
-    if (ch === '/' && i + 1 < source.length && source[i + 1] === '/') {
+    // comments
+    if (source[i] === '/' && source[i + 1] === '/') {
       i += 2;
       while (i < source.length && source[i] !== '\n') i += 1;
       continue;
     }
-
-    if (ch === '/' && i + 1 < source.length && source[i + 1] === '*') {
+    if (source[i] === '/' && source[i + 1] === '*') {
       i += 2;
       while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
       i += 2;
       continue;
     }
 
-    if (ch === '/' && canStartRegex()) {
-      i += 1;
-      let escaped = false;
-      let charClass = false;
-      while (i < source.length) {
-        const c = source[i];
-        if (escaped) { escaped = false; i += 1; continue; }
-        if (c === '\\') { escaped = true; i += 1; continue; }
-        if (c === '[') { charClass = true; i += 1; continue; }
-        if (c === ']') { charClass = false; i += 1; continue; }
-        if (c === '/' && !charClass) { i += 1; break; }
-        i += 1;
+    // regex or division
+    if (source[i] === '/') {
+      const regex = exprAllowed ? scanRegExp(source, i) : null;
+      if (regex) {
+        pushToken({ type: 'RegExpLiteral', value: regex.body, flags: regex.flags });
+        i = regex.end;
+        continue;
       }
-      while (i < source.length && isIdentifierPart(source[i])) i += 1;
-      tokens.push({ type: 'literal', value: 'regex' });
-      previousToken = tokens[tokens.length - 1];
-      continue;
-    }
-
-    if (ch === '"' || ch === "'" || ch === '`') {
-      const quote = ch;
+      pushToken({ type: 'Punctuator', value: '/', kind: 'binary' });
       i += 1;
-      while (i < source.length) {
-        if (source[i] === '\\') { i += 2; continue; }
-        if (source[i] === quote) { i += 1; break; }
-        i += 1;
+      continue;
+    }
+
+    // strings and template
+    if (source[i] === '"' || source[i] === "'") {
+      const str = scanString(source, i, source[i]);
+      if (str) {
+        pushToken({ type: 'StringLiteral', value: str.value });
+        i = str.end;
+        continue;
       }
-      tokens.push({ type: 'literal', value: 'string' });
-      previousToken = tokens[tokens.length - 1];
-      continue;
+      throw new Error('[freevarparser] Unterminated string literal at ' + i);
     }
-
-    if (isDigit(ch) || (ch === '.' && i + 1 < source.length && isDigit(source[i + 1]))) {
-      i += 1;
-      while (i < source.length) {
-        const c = source[i];
-        if (isDigit(c) || c === '.' || c === '_' || c === 'x' || c === 'X' || c === 'a' || c === 'A' || c === 'b' || c === 'B' || c === 'c' || c === 'C' || c === 'd' || c === 'D' || c === 'e' || c === 'E' || c === 'f' || c === 'F') i += 1;
-        else break;
+    if (source[i] === '`') {
+      const tpl = scanTemplate(source, i);
+      if (tpl) {
+        pushToken({ type: 'TemplateLiteral', value: tpl.value, expressions: tpl.expressions });
+        i = tpl.end;
+        continue;
       }
-      tokens.push({ type: 'literal', value: 'number' });
-      previousToken = tokens[tokens.length - 1];
-      continue;
+      throw new Error('[freevarparser] Unterminated template literal at ' + i);
     }
 
-    if (ch === '=' && i + 1 < source.length && source[i + 1] === '>') {
-      tokens.push({ type: 'punctuator', value: '=>' });
-      previousToken = tokens[tokens.length - 1];
-      i += 2;
-      continue;
+    // number
+    if (isDigit(source[i]) || (source[i] === '.' && isDigit(source[i + 1]))) {
+      const num = scanNumber(source, i);
+      if (num) {
+        pushToken({ type: 'NumericLiteral', value: num.value });
+        i = num.end;
+        continue;
+      }
     }
 
-    if (isIdentifierStart(ch)) {
+    // identifier/keyword
+    if (isIdentifierStart(source[i])) {
       const start = i;
       i += 1;
       while (i < source.length && isIdentifierPart(source[i])) i += 1;
       const value = source.slice(start, i);
-      tokens.push({ type: RESERVED.has(value) ? 'keyword' : 'identifier', value });
-      previousToken = tokens[tokens.length - 1];
+      if (RESERVED.has(value)) {
+        pushToken({ type: 'Keyword', value });
+      } else {
+        pushToken({ type: 'Identifier', value });
+      }
       continue;
     }
 
-    if ('{}()[].,;:=<>+-*/%&|!?~'.includes(ch)) {
-      tokens.push({ type: 'punctuator', value: ch });
-      previousToken = tokens[tokens.length - 1];
-      i += 1;
+    // punctuator
+    const punct = matchPunctuator(source, i);
+    if (punct) {
+      pushToken({ type: 'Punctuator', value: punct.value, kind: punct.kind });
+      i += punct.length;
       continue;
     }
 
-    i += 1;
+    i += 1; // unknown, skip
   }
 
+  tokens.push({ type: 'EOF' });
   return tokens;
-};
+}
 
-const scopes = [];
-const pushScope = () => { scopes.push(Object.create(currentScope())); };
-const popScope = () => { scopes.pop(); };
-const currentScope = () => scopes.length > 0 ? scopes[scopes.length - 1] : null;
-const declareInScope = (id) => { if (currentScope()) currentScope()[id] = true; };
-const isDeclared = (id) => {
-  for (let s = scopes.length - 1; s >= 0; s -= 1) {
-    if (scopes[s][id] !== undefined) return true;
-  }
-  return false;
-};
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
 
-const parseBindingPattern = (tokens, start) => {
-  let depth = 0;
-  let i = start;
-  while (i < tokens.length) {
-    const t = tokens[i];
-    if (t.type === 'punctuator') {
-      if (t.value === '{' || t.value === '[') {
-        depth += 1;
-        i += 1;
-        continue;
-      }
-      if (t.value === '}' || t.value === ']') {
-        depth -= 1;
-        i += 1;
-        if (depth === 0) return i;
-        continue;
-      }
-    }
-    if (t.type === 'identifier') {
-      declareInScope(t.value);
-    }
-    i += 1;
-  }
-  return i;
-};
-
-const isExpressionContext = (tokens, index) => {
-  if (index === 0) return false;
-  const prev = tokens[index - 1];
-  if (!prev) return false;
-  if (prev.type === 'keyword' && prev.value === 'return') return true;
-  if (prev.type === 'punctuator') {
-    if (['(', '=', ',', '[', ':', '=>'].includes(prev.value)) return true;
-  }
-  return false;
-};
-
-const parseObjectLiteral = (tokens, start, free) => {
-  let depth = 1;
-  let i = start + 1;
-
-  while (i < tokens.length && depth > 0) {
-    const t = tokens[i];
-
-    if (t.type === 'punctuator') {
-      if (t.value === '{') {
-        depth += 1;
-        i += 1;
-        continue;
-      }
-      if (t.value === '}') {
-        depth -= 1;
-        i += 1;
-        if (depth === 0) return i;
-        continue;
-      }
-    }
-
-    if (t.type === 'identifier') {
-      const next = i + 1 < tokens.length ? tokens[i + 1] : null;
-      if (next && next.type === 'punctuator' && next.value === ':') {
-        i = parseExpressionWithScope(tokens, i + 2, free, [',', '}']);
-        continue;
-      }
-      if (next && next.type === 'punctuator' && (next.value === ',' || next.value === '}')) {
-        i += 1;
-        continue;
-      }
-    }
-
-    if (t.type === 'literal') {
-      const next = i + 1 < tokens.length ? tokens[i + 1] : null;
-      if (next && next.type === 'punctuator' && next.value === ':') {
-        i = parseExpressionWithScope(tokens, i + 2, free, [',', '}']);
-        continue;
-      }
-      i += 1;
-      continue;
-    }
-
-    i += 1;
+class Parser {
+  constructor(tokens, scopes = null, freeVars = null) {
+    this.tokens = tokens;
+    this.pos = 0;
+    this.scopes = scopes || [Object.create(null)];
+    this.freeVars = freeVars || new Set();
   }
 
-  return i;
-};
-
-const removeFree = (free, id) => {
-  const idx = free.indexOf(id);
-  if (idx !== -1) free.splice(idx, 1);
-};
-
-const parseExpressionWithScope = (tokens, start, free, stopTokens) => {
-  let depth = 0;
-  let i = start;
-
-  while (i < tokens.length) {
-    const t = tokens[i];
-
-    if (t.type === 'punctuator' && t.value === '{' && isExpressionContext(tokens, i)) {
-      i = parseObjectLiteral(tokens, i, free);
-      continue;
+  peek() { return this.tokens[this.pos]; }
+  next() { return this.tokens[this.pos++]; }
+  eat(type, value) {
+    const t = this.peek();
+    if (t.type !== type || (value !== undefined && t.value !== value)) {
+      throw new Error(`Expected ${type} ${value ?? ''} but got ${t.type} ${t.value}`);
     }
+    return this.next();
+  }
+  match(type, value) {
+    const t = this.peek();
+    return t.type === type && (value === undefined || t.value === value);
+  }
 
-    if (t.type === 'punctuator') {
-      if (t.value === '(' || t.value === '[' || t.value === '{') {
-        depth += 1;
-        i += 1;
-        continue;
-      }
+  currentScope() { return this.scopes[this.scopes.length - 1]; }
+  pushScope() { this.scopes.push(Object.create(this.currentScope())); }
+  popScope() { this.scopes.pop(); }
+  declare(id) { this.currentScope()[id] = true; }
+  isDeclared(id) {
+    for (let s = this.scopes.length - 1; s >= 0; s -= 1) {
+      if (s < this.scopes.length && this.scopes[s][id] !== undefined) return true;
+    }
+    return false;
+  }
+  recordFree(id) {
+    if (!this.isDeclared(id) && !BUILTINS.has(id) && !RESERVED.has(id)) {
+      this.freeVars.add(id);
+    }
+  }
 
-      if (t.value === ')' || t.value === ']' || t.value === '}') {
-        if (depth === 0) return i;
-        depth -= 1;
-        i += 1;
-        continue;
-      }
+  parseProgram() {
+    while (this.peek().type !== 'EOF') {
+      this.parseStatement();
+    }
+    return Array.from(this.freeVars);
+  }
 
-      if (depth === 0 && stopTokens && stopTokens.includes(t.value)) {
-        return i;
+  parseStatement() {
+    const t = this.peek();
+    if (t.type === 'Punctuator' && t.value === '{') {
+      this.parseBlock();
+      return;
+    }
+    if (t.type === 'Keyword') {
+      switch (t.value) {
+        case 'const': case 'let': case 'var':
+          this.parseVariableDeclaration();
+          return;
+        case 'function':
+          this.parseFunctionDeclaration();
+          return;
+        case 'if':
+          this.parseIfStatement();
+          return;
+        case 'for':
+          this.parseForStatement();
+          return;
+        case 'while':
+          this.parseWhileStatement();
+          return;
+        case 'do':
+          this.parseDoStatement();
+          return;
+        case 'try':
+          this.parseTryStatement();
+          return;
+        case 'switch':
+          this.parseSwitchStatement();
+          return;
+        case 'return':
+          this.next();
+          if (!this.match('Punctuator',';') && !this.match('Punctuator','}') && this.peek().type !== 'EOF') {
+            this.parseExpression();
+          }
+          this.consumeSemicolon();
+          return;
+        case 'throw':
+          this.next();
+          this.parseExpression();
+          this.consumeSemicolon();
+          return;
+        case 'break':
+        case 'continue':
+          this.next();
+          this.consumeSemicolon();
+          return;
+        case 'class':
+          this.parseClassDeclaration();
+          return;
       }
     }
+    // expression statement
+    this.parseExpression();
+    this.consumeSemicolon();
+  }
 
-    if (t.type === 'punctuator' && t.value === '=>') {
-      i = parseArrowExpression(tokens, i, free);
-      continue;
+  parseBlock() {
+    this.eat('Punctuator', '{');
+    this.pushScope();
+    while (!this.match('Punctuator','}') && this.peek().type !== 'EOF') {
+      this.parseStatement();
     }
+    this.eat('Punctuator','}');
+    this.popScope();
+  }
 
-    if (t.type === 'keyword' && t.value === 'function') {
-      i = parseFunctionExpression(tokens, i, free);
-      continue;
-    }
-
-    if (t.type === 'keyword' && (t.value === 'const' || t.value === 'let' || t.value === 'var')) {
-      i = parseDeclarationList(tokens, i + 1, free, [',', ';', ')']);
-      continue;
-    }
-
-    if (t.type === 'identifier') {
-      if (!isDeclared(t.value) && !BUILTINS.has(t.value) && !RESERVED.has(t.value)) {
-        const prev = i > 0 ? tokens[i - 1] : null;
-        const next = i + 1 < tokens.length ? tokens[i + 1] : null;
-        const isProperty = prev && prev.type === 'punctuator' && prev.value === '.';
-        const isKey = next && next.type === 'punctuator' && next.value === ':';
-        if (!isProperty && !isKey && free.indexOf(t.value) === -1) {
-          free.push(t.value);
-        }
+  parseVariableDeclaration() {
+    this.next(); // var/let/const
+    while (true) {
+      const t = this.peek();
+      if (t.type === 'Identifier') {
+        this.next();
+        this.declare(t.value);
+        this.freeVars.delete(t.value);
+      } else if (t.type === 'Punctuator' && (t.value === '{' || t.value === '[')) {
+        this.parseBindingPattern();
       }
-      i += 1;
-      continue;
-    }
-
-    i += 1;
-  }
-
-  return i;
-};
-
-// Corrected declaration list parser.
-// Follows ECMAScript BindingList / VariableDeclarationList grammar:
-//   BindingList : LexicalBinding (',' LexicalBinding)*
-// Each LexicalBinding may have an initializer.
-const parseDeclarationList = (tokens, start, free, outerStopTokens = [',', ';', ')']) => {
-  let i = start;
-
-  while (i < tokens.length) {
-    const t = tokens[i];
-
-    // Parse one binding.
-    if (t.type === 'punctuator' && (t.value === '{' || t.value === '[')) {
-      i = parseBindingPattern(tokens, i);
-    } else if (t.type === 'identifier') {
-      declareInScope(t.value);
-      removeFree(free, t.value);
-      i += 1;
-    } else {
-      // Unexpected token; avoid infinite loop.
-      return i;
-    }
-
-    // Optional initializer.
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '=') {
-      // The initializer must stop at comma or any outer terminator.
-      const initStopTokens = [',', ...outerStopTokens];
-      i = parseExpressionWithScope(tokens, i + 1, free, initStopTokens);
-    }
-
-    // After the binding, expect either a comma (continue) or outer terminator (stop).
-    const next = tokens[i];
-    if (next && next.type === 'punctuator' && next.value === ',') {
-      i += 1;
-      continue;
-    }
-
-    if (next && next.type === 'keyword' && (next.value === 'of' || next.value === 'in') && outerStopTokens.includes(next.value)) {
-      // For-of/in loop header; do not consume the keyword.
-      return i;
-    }
-
-    // Outer terminator: return without consuming it.
-    return i;
-  }
-
-  return i;
-};
-
-const parseStatement = (tokens, start, free) => {
-  let i = start;
-  const t = tokens[i];
-  if (!t) return i;
-
-  if (t.type === 'punctuator' && t.value === '{') {
-    return parseBlock(tokens, i, free);
-  }
-
-  if (t.type === 'punctuator' && t.value === ';') {
-    return i + 1;
-  }
-
-  if (t.type === 'keyword') {
-    switch (t.value) {
-      case 'const':
-      case 'let':
-      case 'var':
-        return parseDeclarationList(tokens, i + 1, free, [';']);
-
-      case 'function': {
-        const next = i + 1 < tokens.length ? tokens[i + 1] : null;
-        if (next && next.type === 'identifier') {
-          declareInScope(next.value);
-          removeFree(free, next.value);
-        }
-        return parseFunctionExpression(tokens, i, free);
+      if (this.match('Punctuator','=')) {
+        this.next();
+        this.parseExpression();
       }
-
-      case 'if':
-        return parseIfStatement(tokens, i, free);
-
-      case 'for':
-        return parseForStatement(tokens, i, free);
-
-      case 'while':
-        return parseWhileStatement(tokens, i, free);
-
-      case 'try':
-        return parseTryStatement(tokens, i, free);
-
-      case 'switch':
-        return parseSwitchStatement(tokens, i, free);
-
-      case 'return':
-      case 'throw':
-      case 'break':
-      case 'continue': {
-        let idx = parseExpressionWithScope(tokens, i + 1, free, [';']);
-        if (tokens[idx] && tokens[idx].type === 'punctuator' && tokens[idx].value === ';') idx += 1;
-        return idx;
-      }
-
-      default:
-        return parseExpressionWithScope(tokens, i, free, [';']);
-    }
-  }
-
-  let idx = parseExpressionWithScope(tokens, i, free, [';']);
-  if (tokens[idx] && tokens[idx].type === 'punctuator' && tokens[idx].value === ';') idx += 1;
-  return idx;
-};
-
-const parseIfStatement = (tokens, start, free) => {
-  let i = start + 1;
-
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    i = parseExpressionWithScope(tokens, i + 1, free, [')']);
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') i += 1;
-  }
-
-  i = parseStatement(tokens, i, free);
-
-  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'else') {
-    i += 1;
-    i = parseStatement(tokens, i, free);
-  }
-
-  return i;
-};
-
-const parseForStatement = (tokens, start, free) => {
-  let i = start + 1;
-
-  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'await') {
-    i += 1;
-  }
-
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    pushScope();
-    i = parseForHeader(tokens, i, free);
-    i = parseStatement(tokens, i, free);
-    popScope();
-  }
-
-  return i;
-};
-
-const parseForHeader = (tokens, start, free) => {
-  let i = start + 1; // after '('
-
-  if (tokens[i] && tokens[i].type === 'keyword' && (tokens[i].value === 'const' || tokens[i].value === 'let' || tokens[i].value === 'var')) {
-    i = parseDeclarationList(tokens, i + 1, free, ['of', 'in', ';', ')']);
-
-    if (tokens[i] && tokens[i].type === 'keyword' && (tokens[i].value === 'of' || tokens[i].value === 'in')) {
-      i += 1;
-      i = parseExpressionWithScope(tokens, i, free, [')']);
-      if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
-      return i;
-    }
-
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') {
-      i += 1;
-      if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';')) {
-        i = parseExpressionWithScope(tokens, i, free, [';']);
-      }
-      if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') i += 1;
-      if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')')) {
-        i = parseExpressionWithScope(tokens, i, free, [')']);
-      }
-      if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
-      return i;
-    }
-
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
-    return i;
-  }
-
-  if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';')) {
-    i = parseExpressionWithScope(tokens, i, free, [';']);
-  }
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') i += 1;
-  if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';')) {
-    i = parseExpressionWithScope(tokens, i, free, [';']);
-  }
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ';') i += 1;
-  if (!(tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')')) {
-    i = parseExpressionWithScope(tokens, i, free, [')']);
-  }
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') return i + 1;
-  return i;
-};
-
-const parseWhileStatement = (tokens, start, free) => {
-  let i = start + 1;
-
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    i = parseExpressionWithScope(tokens, i + 1, free, [')']);
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') i += 1;
-  }
-
-  return parseStatement(tokens, i, free);
-};
-
-const parseTryStatement = (tokens, start, free) => {
-  let i = start + 1;
-
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
-    i = parseBlock(tokens, i, free);
-  }
-
-  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'catch') {
-    i = handleCatchParameter(tokens, i, free);
-  }
-
-  if (tokens[i] && tokens[i].type === 'keyword' && tokens[i].value === 'finally') {
-    i += 1;
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
-      i = parseBlock(tokens, i, free);
-    }
-  }
-
-  return i;
-};
-
-const parseSwitchStatement = (tokens, start, free) => {
-  let i = start + 1;
-
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    i = parseExpressionWithScope(tokens, i + 1, free, [')']);
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ')') i += 1;
-  }
-
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
-    pushScope();
-    let depth = 1;
-    i += 1;
-
-    while (i < tokens.length && depth > 0) {
-      const t = tokens[i];
-
-      if (t.type === 'keyword' && (t.value === 'case' || t.value === 'default')) {
-        const isCase = t.value === 'case';
-        i += 1;
-        if (isCase) {
-          i = parseExpressionWithScope(tokens, i, free, [':']);
-          if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ':') i += 1;
-        } else {
-          if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === ':') i += 1;
-        }
-        continue;
-      }
-
-      if (t.type === 'punctuator') {
-        if (t.value === '{') depth += 1;
-        else if (t.value === '}') {
-          depth -= 1;
-          i += 1;
-          if (depth === 0) break;
-          continue;
-        }
-      }
-
-      i += 1;
-    }
-
-    popScope();
-  }
-
-  return i;
-};
-
-const findMatchingParen = (tokens, start) => {
-  let depth = 0;
-  for (let i = start; i < tokens.length; i += 1) {
-    const t = tokens[i];
-    if (t.type !== 'punctuator') continue;
-    if (t.value === '(') depth += 1;
-    else if (t.value === ')') {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return tokens.length;
-};
-
-const parseBlock = (tokens, start, free) => {
-  pushScope();
-  let i = start + 1;
-
-  while (i < tokens.length) {
-    const t = tokens[i];
-
-    if (t.type === 'punctuator' && t.value === '}') {
-      i += 1;
+      if (this.match('Punctuator',',')) { this.next(); continue; }
       break;
     }
-
-    i = parseStatement(tokens, i, free);
+    this.consumeSemicolon();
   }
 
-  popScope();
-  return i;
-};
+  parseBindingPattern() {
+    // destructuring: declare all identifiers inside pattern
+    let depth = 0;
+    while (this.pos < this.tokens.length) {
+      const t = this.peek();
+      if (t.type === 'Punctuator' && (t.value === '{' || t.value === '[')) depth += 1;
+      else if (t.type === 'Punctuator' && (t.value === '}' || t.value === ']')) {
+        depth -= 1;
+        if (depth === 0) { this.next(); return; }
+      } else if (t.type === 'Identifier') {
+        this.declare(t.value);
+        this.freeVars.delete(t.value);
+      }
+      this.next();
+    }
+  }
 
-const parseArrowExpression = (tokens, arrowIndex, free) => {
-  pushScope();
+  parseFunctionDeclaration() {
+    this.next(); // function
+    const name = this.peek();
+    if (name.type === 'Identifier') {
+      this.next();
+      this.declare(name.value);
+      this.freeVars.delete(name.value);
+    }
+    this.parseFunctionBody();
+  }
 
-  const prev = arrowIndex > 0 ? tokens[arrowIndex - 1] : null;
-  if (prev) {
-    if (prev.type === 'identifier') {
-      declareInScope(prev.value);
-      removeFree(free, prev.value);
-    } else if (prev.type === 'punctuator' && prev.value === ')') {
-      let openIdx = -1;
-      let depth = 0;
-      for (let k = arrowIndex - 1; k >= 0; k -= 1) {
-        const tk = tokens[k];
-        if (tk.type === 'punctuator') {
-          if (tk.value === ')') depth += 1;
-          else if (tk.value === '(') {
-            depth -= 1;
-            if (depth === 0) { openIdx = k; break; }
-          }
+  parseFunctionBody() {
+    if (this.match('Punctuator','(')) {
+      this.pushScope();
+      this.next();
+      while (!this.match('Punctuator',')') && this.peek().type !== 'EOF') {
+        const p = this.peek();
+        if (p.type === 'Identifier') {
+          this.next();
+          this.declare(p.value);
+        } else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) {
+          this.parseBindingPattern();
+        } else {
+          this.next();
         }
+        if (this.match('Punctuator',',')) this.next();
       }
-      if (openIdx !== -1) {
-        let m = openIdx + 1;
-        while (m < arrowIndex - 1) {
-          const t = tokens[m];
-          if (t.type === 'identifier') {
-            declareInScope(t.value);
-            removeFree(free, t.value);
-          } else if (t.type === 'punctuator' && (t.value === '{' || t.value === '[')) {
-            m = parseBindingPattern(tokens, m) - 1;
-          }
-          m += 1;
-        }
-      }
+      this.eat('Punctuator',')');
     }
-  }
-
-  const bodyStart = arrowIndex + 1;
-  const next = bodyStart < tokens.length ? tokens[bodyStart] : null;
-  let index;
-  if (next && next.type === 'punctuator' && next.value === '{') {
-    index = parseBlock(tokens, bodyStart, free);
-  } else {
-    index = parseExpressionWithScope(tokens, bodyStart, free, [',', ';', ')', ']', '}']);
-  }
-
-  popScope();
-  return index;
-};
-
-const parseFunctionExpression = (tokens, start, free) => {
-  let i = start + 1;
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '*') i += 1;
-
-  let functionName = null;
-  if (tokens[i] && tokens[i].type === 'identifier') {
-    functionName = tokens[i].value;
-    i += 1;
-  }
-
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    pushScope();
-    if (functionName) {
-      declareInScope(functionName);
-    }
-    const endParen = findMatchingParen(tokens, i);
-    for (let m = i + 1; m < endParen; m += 1) {
-      const t = tokens[m];
-      if (t.type === 'identifier') {
-        declareInScope(t.value);
-        removeFree(free, t.value);
-      } else if (t.type === 'punctuator' && (t.value === '{' || t.value === '[')) {
-        m = parseBindingPattern(tokens, m) - 1;
-      }
-    }
-    i = endParen + 1;
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
-      i = parseBlock(tokens, i, free);
+    if (this.match('Punctuator','{')) {
+      this.parseBlock();
     } else {
-      i = parseExpressionWithScope(tokens, i, free, [',', ';', ')', ']', '}']);
+      this.parseExpression();
     }
-    popScope();
+    this.popScope();
   }
 
-  return i;
-};
-
-const handleCatchParameter = (tokens, start, free) => {
-  let i = start + 1;
-  if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '(') {
-    pushScope();
-    i += 1;
-    if (tokens[i] && tokens[i].type === 'identifier') {
-      declareInScope(tokens[i].value);
-      removeFree(free, tokens[i].value);
-      i += 1;
-    } else if (tokens[i] && tokens[i].type === 'punctuator' && (tokens[i].value === '{' || tokens[i].value === '[')) {
-      i = parseBindingPattern(tokens, i);
+  parseIfStatement() {
+    this.next(); // if
+    if (this.match('Punctuator','(')) {
+      this.next();
+      this.parseExpression();
+      this.eat('Punctuator',')');
     }
-    while (i < tokens.length && !(tokens[i].type === 'punctuator' && tokens[i].value === ')')) i += 1;
-    i += 1;
-    if (tokens[i] && tokens[i].type === 'punctuator' && tokens[i].value === '{') {
-      i = parseBlock(tokens, i, free);
+    this.parseStatement();
+    if (this.peek().type === 'Keyword' && this.peek().value === 'else') {
+      this.next();
+      this.parseStatement();
     }
-    popScope();
   }
-  return i;
-};
+
+  parseForStatement() {
+    this.next(); // for
+    this.pushScope();
+    if (this.match('Punctuator','(')) this.next();
+    // init
+    if (this.peek().type === 'Keyword' && ['var','let','const'].includes(this.peek().value)) {
+      this.parseVariableDeclaration();
+    } else {
+      if (!this.match('Punctuator',';')) this.parseExpression();
+      this.eat('Punctuator',';');
+    }
+    if (!this.match('Punctuator',';')) this.parseExpression();
+    this.eat('Punctuator',';');
+    if (!this.match('Punctuator',')')) this.parseExpression();
+    if (this.match('Punctuator',')')) this.next();
+    this.parseStatement();
+    this.popScope();
+  }
+
+  parseWhileStatement() {
+    this.next(); // while
+    if (this.match('Punctuator','(')) {
+      this.next();
+      this.parseExpression();
+      this.eat('Punctuator',')');
+    }
+    this.parseStatement();
+  }
+
+  parseDoStatement() {
+    this.next(); // do
+    this.parseStatement();
+    this.eat('Keyword','while');
+    if (this.match('Punctuator','(')) {
+      this.next();
+      this.parseExpression();
+      this.eat('Punctuator',')');
+    }
+    this.consumeSemicolon();
+  }
+
+  parseTryStatement() {
+    this.next(); // try
+    if (this.match('Punctuator','{')) this.parseBlock();
+    if (this.peek().type === 'Keyword' && this.peek().value === 'catch') {
+      this.next();
+      this.pushScope();
+      if (this.match('Punctuator','(')) {
+        this.next();
+        const p = this.peek();
+        if (p.type === 'Identifier') { this.next(); this.declare(p.value); }
+        else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) this.parseBindingPattern();
+        this.eat('Punctuator',')');
+      }
+      if (this.match('Punctuator','{')) this.parseBlock();
+      this.popScope();
+    }
+    if (this.peek().type === 'Keyword' && this.peek().value === 'finally') {
+      this.next();
+      if (this.match('Punctuator','{')) this.parseBlock();
+    }
+  }
+
+  parseSwitchStatement() {
+    this.next(); // switch
+    if (this.match('Punctuator','(')) {
+      this.next();
+      this.parseExpression();
+      this.eat('Punctuator',')');
+    }
+    if (this.match('Punctuator','{')) {
+      this.next();
+      while (!this.match('Punctuator','}') && this.peek().type !== 'EOF') {
+        const t = this.peek();
+        if (t.type === 'Keyword' && t.value === 'case') {
+          this.next();
+          this.parseExpression();
+          this.eat('Punctuator',':');
+        } else if (t.type === 'Keyword' && t.value === 'default') {
+          this.next();
+          this.eat('Punctuator',':');
+        } else {
+          this.parseStatement();
+        }
+      }
+      this.eat('Punctuator','}');
+    }
+  }
+
+  parseClassDeclaration() {
+    this.next(); // class
+    const name = this.peek();
+    if (name.type === 'Identifier') {
+      this.next();
+      this.declare(name.value);
+      this.freeVars.delete(name.value);
+    }
+    if (this.match('Keyword','extends')) {
+      this.next();
+      this.parseExpression();
+    }
+    if (this.match('Punctuator','{')) {
+      // class body; collect identifiers in methods as nested scopes
+      this.pushScope();
+      this.next();
+      while (!this.match('Punctuator','}') && this.peek().type !== 'EOF') {
+        if (this.peek().type === 'Identifier' || this.peek().type === 'Keyword') {
+          this.next(); // method name
+        }
+        if (this.match('Punctuator','(')) {
+          this.pushScope();
+          this.next();
+          while (!this.match('Punctuator',')')) {
+            const p = this.peek();
+            if (p.type === 'Identifier') { this.next(); this.declare(p.value); }
+            else this.next();
+          }
+          this.eat('Punctuator',')');
+          if (this.match('Punctuator','{')) this.parseBlock();
+          this.popScope();
+        } else {
+          this.next();
+        }
+      }
+      this.eat('Punctuator','}');
+      this.popScope();
+    }
+  }
+
+  consumeSemicolon() {
+    if (this.match('Punctuator',';')) this.next();
+  }
+
+  parseExpression() {
+    this.parseExpressionWithScope(new Set([',', ';', ')', ']', '}']));
+  }
+
+  parseExpressionWithScope(stopTokens) {
+    let depth = 0;
+    while (this.pos < this.tokens.length) {
+      const t = this.peek();
+      if (t.type === 'EOF') return;
+      if (t.type === 'Punctuator') {
+        if (t.value === '(' || t.value === '[' || t.value === '{') {
+          depth += 1;
+          this.next();
+          continue;
+        }
+        if (t.value === ')' || t.value === ']' || t.value === '}') {
+          if (depth === 0) return;
+          depth -= 1;
+          this.next();
+          continue;
+        }
+        if (depth === 0 && stopTokens.has(t.value)) return;
+      }
+      if (t.type === 'Identifier') {
+        this.recordFree(t.value);
+        this.next();
+        continue;
+      }
+      if (t.type === 'TemplateLiteral') {
+        this.next();
+        for (const expr of t.expressions) {
+          this.parseExpressionFromSource(expr.raw);
+        }
+        continue;
+      }
+      if (t.type === 'Keyword' && t.value === 'function') {
+        this.next();
+        this.parseFunctionBody();
+        continue;
+      }
+      this.next();
+    }
+  }
+
+  parseExpressionFromSource(source) {
+    const subTokens = tokenize(source);
+    const subParser = new Parser(subTokens, this.scopes, this.freeVars);
+    subParser.parseExpression();
+  }
+}
 
 export function detectFreeIdentifiers(source) {
   const tokens = tokenize(source);
-  scopes.length = 0;
-  scopes.push({});
-  const free = [];
-
-  let i = 0;
-  while (i < tokens.length) {
-    const t = tokens[i];
-
-    if (t.type === 'punctuator' && t.value === ';') {
-      i += 1;
-      continue;
-    }
-
-    i = parseStatement(tokens, i, free);
-  }
-
-  return free;
+  const parser = new Parser(tokens);
+  return parser.parseProgram();
 }
