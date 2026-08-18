@@ -100,14 +100,14 @@ var StylizerCore = {
     var LENGTH_FACTORS = {
       px: 1, '': 1,
       '%': function(n, ref) { return (n / 100) * ref; },
-      em: function(n, ref) { return n * ref; },
-      rem: function(n) { return n * 16; },
-      pt: function(n) { return n * (96 / 72); },
-      pc: function(n) { return n * 16; },
-      in: function(n) { return n * 96; },
-      cm: function(n) { return n * (96 / 2.54); },
-      mm: function(n) { return n * (96 / 25.4); },
-      q: function(n) { return n * (96 / 101.6); }
+      "em": function(n, ref) { return n * ref; },
+      "rem": function(n) { return n * 16; },
+      "pt": function(n) { return n * (96 / 72); },
+      "pc": function(n) { return n * 16; },
+      "in": function(n) { return n * 96; },
+      "cm": function(n) { return n * (96 / 2.54); },
+      "mm": function(n) { return n * (96 / 25.4); },
+      "q": function(n) { return n * (96 / 101.6); }
     };
 
     if (typeof value === 'number') return value;
