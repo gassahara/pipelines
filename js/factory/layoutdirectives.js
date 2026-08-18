@@ -1,5 +1,4 @@
 import { StylizerCore, StylizerRewrite } from './stylizerutilities.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
 
 var LayoutDirectiveCore = {
   has: function(obj, key) {
@@ -34,6 +33,7 @@ var LayoutDirectiveCore = {
     });
   },
 
+  // No self-reference; no change.
   parseDirectives: function(str) {
     if (!str) return [];
 
@@ -113,7 +113,8 @@ var LayoutDirectiveCore = {
     });
   },
 
-  generateCSSFromDirectives: function(elementId, directives, breakpointMap) {
+  // UPDATED: added LayoutDirectiveCore as parameter because it calls LayoutDirectiveCore.has and LayoutDirectiveCore.createLayoutConstants
+  generateCSSFromDirectives: function(elementId, directives, breakpointMap, LayoutDirectiveCore) {
     if (breakpointMap === undefined) breakpointMap = {};
 
     var constants = LayoutDirectiveCore.createLayoutConstants();
@@ -211,7 +212,8 @@ var LayoutDirectiveCore = {
     return { inline: inlineStyles };
   },
 
-  applyDirectiveToSelector: function(html, selector, directiveString) {
+  // UPDATED: added LayoutDirectiveCore as parameter because it calls LayoutDirectiveCore.parseDirectives and LayoutDirectiveCore.generateCSSFromDirectives
+  applyDirectiveToSelector: function(html, selector, directiveString, LayoutDirectiveCore) {
     var parser = new DOMParser();
     var doc = parser.parseFromString(html, 'text/html');
     var directives = LayoutDirectiveCore.parseDirectives(directiveString);
@@ -219,7 +221,7 @@ var LayoutDirectiveCore = {
 
     elements.forEach(function(el, idx) {
       var id = el.id || '_gen_id_' + idx;
-      var result = LayoutDirectiveCore.generateCSSFromDirectives(id, directives);
+      var result = LayoutDirectiveCore.generateCSSFromDirectives(id, directives, undefined, LayoutDirectiveCore);
 
       for (var prop in result.inline) {
         if (LayoutDirectiveCore.has(result.inline, prop)) {
@@ -244,15 +246,9 @@ var LayoutCorrection = {
     return Object.prototype.hasOwnProperty.call(obj, key);
   },
 
-  createLogger: function() {
-    var constants = createVerbosityConstants();
-    var fns = createVerbosityFunctions(constants);
-    var state = Object.freeze({ level: constants.DEBUG });
-    return { fns: fns, state: state };
-  },
-
-  getCandidateElements: function(doc) {
-    return StylizerCore.applyStep([doc.body], { axis: 'descendant' }).filter(function(el) {
+  // UPDATED: added StylizerCore and LayoutCorrection as parameters because they call StylizerCore.applyStep, etc.
+  getCandidateElements: function(doc, StylizerCore) {
+    return StylizerCore.applyStep([doc.body], { axis: 'descendant' }, null, StylizerCore).filter(function(el) {
       var tag = el.tagName.toLowerCase();
       if (tag === 'table' || tag === 'pre' || tag === 'img') return true;
       if (tag === 'div' && el.style && (el.style.width || el.style.maxWidth)) return true;
@@ -260,11 +256,8 @@ var LayoutCorrection = {
     });
   },
 
-  checkOverflowDoc: function(doc, viewportWidth, containerWidths) {
-    var logger = LayoutCorrection.createLogger();
-    var fns = logger.fns;
-    var state = logger.state;
-
+  // UPDATED: removed createLogger; uses StylizerCore.log directly
+  checkOverflowDoc: function(doc, viewportWidth, containerWidths, StylizerCore, LayoutCorrection) {
     function isInsideScrollWrapper(el) {
       var parent = el.parentElement;
       while (parent) {
@@ -277,24 +270,25 @@ var LayoutCorrection = {
       return false;
     }
 
-    var propertyMap = StylizerCore.buildLayoutPropertyMap(doc.body, viewportWidth);
+    var propertyMap = StylizerCore.buildLayoutPropertyMap(doc.body, viewportWidth, undefined, StylizerCore);
 
-    return LayoutCorrection.getCandidateElements(doc)
+    return LayoutCorrection.getCandidateElements(doc, StylizerCore)
       .filter(function(el) { return !isInsideScrollWrapper(el); })
       .filter(function(el) {
-        var props = StylizerCore.getPropsFromMap(propertyMap, el);
+        var props = StylizerCore.getPropsFromMap(propertyMap, el, StylizerCore);
         if (!props) return false;
 
         try {
-          var size = StylizerCore.computeIntrinsicSize(el, propertyMap, props);
+          var size = StylizerCore.computeIntrinsicSize(el, propertyMap, props, StylizerCore);
           return size.width > props.availableWidth;
         } catch (err) {
-          fns.logwarn(state, '[checkOverflowDoc] Failed to compute intrinsic size:', el.tagName, err);
+          StylizerCore.warn('[checkOverflowDoc] Failed to compute intrinsic size:', el.tagName, err);
           return false;
         }
       });
   },
 
+  // No self or StylizerCore calls – no change.
   correctOverflowDoc: function(doc, overflowElements) {
     function isInsideScrollWrapper(el) {
       var parent = el.parentElement;
@@ -322,10 +316,11 @@ var LayoutCorrection = {
     });
   },
 
-  checkSpacingDoc: function(doc, minGap) {
+  // UPDATED: added StylizerCore as parameter because it calls StylizerCore.getAllDescendants
+  checkSpacingDoc: function(doc, minGap, StylizerCore) {
     if (minGap === undefined) minGap = 12;
 
-    var children = StylizerCore.getAllDescendants(doc.body).filter(function(el) {
+    var children = StylizerCore.getAllDescendants(doc.body, StylizerCore).filter(function(el) {
       var d = el.style.display || 'inline';
       return d === 'block' || d === 'flex' || d === 'grid' ||
         ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li']
@@ -348,10 +343,11 @@ var LayoutCorrection = {
     }, []);
   },
 
-  correctSpacingDoc: function(doc, minGap) {
+  // UPDATED: added StylizerCore and LayoutCorrection as parameters because it calls LayoutCorrection.checkSpacingDoc
+  correctSpacingDoc: function(doc, minGap, StylizerCore, LayoutCorrection) {
     if (minGap === undefined) minGap = 12;
 
-    return LayoutCorrection.checkSpacingDoc(doc, minGap).map(function(violation) {
+    return LayoutCorrection.checkSpacingDoc(doc, minGap, StylizerCore).map(function(violation) {
       var id = extractElementId(violation.elementA);
       var el = id !== null ? doc.getElementById(id) : null;
       if (!el) el = doc.querySelector(violation.elementA);
@@ -368,6 +364,7 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
+  // No sibling calls – no change.
   checkOverlapDoc: function(doc) {
     var positioned = Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       return el.style && (el.style.position === 'absolute' || el.style.position === 'fixed');
@@ -397,7 +394,8 @@ var LayoutCorrection = {
     return violations;
   },
 
-  correctOverlapDoc: function(doc) {
+  // UPDATED: added LayoutCorrection as parameter because it calls LayoutCorrection.checkOverlapDoc
+  correctOverlapDoc: function(doc, LayoutCorrection) {
     return LayoutCorrection.checkOverlapDoc(doc).map(function(violation) {
       var id = extractElementId(violation.elementB);
       var el = id !== null ? doc.getElementById(id) : null;
@@ -415,6 +413,7 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
+  // No sibling calls – no change.
   checkScrollabilityDoc: function(doc) {
     return Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       var s = el.style;
@@ -424,7 +423,8 @@ var LayoutCorrection = {
     });
   },
 
-  correctScrollabilityDoc: function(doc) {
+  // UPDATED: added LayoutCorrection as parameter because it calls LayoutCorrection.checkScrollabilityDoc
+  correctScrollabilityDoc: function(doc, LayoutCorrection) {
     return LayoutCorrection.checkScrollabilityDoc(doc).map(function(violation) {
       var id = extractElementId(violation.element);
       var el = id !== null ? doc.getElementById(id) : null;
@@ -442,6 +442,7 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
+  // No sibling calls – no change.
   checkControlledOverlayDoc: function(doc) {
     return Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       var s = el.style;
@@ -451,7 +452,8 @@ var LayoutCorrection = {
     });
   },
 
-  correctControlledOverlayDoc: function(doc) {
+  // UPDATED: added LayoutCorrection as parameter because it calls LayoutCorrection.checkControlledOverlayDoc
+  correctControlledOverlayDoc: function(doc, LayoutCorrection) {
     return LayoutCorrection.checkControlledOverlayDoc(doc).map(function(violation) {
       var id = extractElementId(violation.element);
       var el = id !== null ? doc.getElementById(id) : null;
@@ -469,7 +471,8 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
-  optimizeLayoutHTML: function(html, goals, maxIterations, options) {
+  // UPDATED: added StylizerCore, LayoutDirectiveCore, LayoutCorrection as parameters; no createLogger
+  optimizeLayoutHTML: function(html, goals, maxIterations, options, StylizerCore, LayoutDirectiveCore, LayoutCorrection) {
     if (maxIterations === undefined) maxIterations = 5;
     if (options === undefined) options = {};
 
@@ -490,17 +493,17 @@ var LayoutCorrection = {
 
         if (goal.type === 'minVerticalGap') {
           var minGap = goal.options && goal.options.minGap != null ? goal.options.minGap : 12;
-          violations = LayoutCorrection.checkSpacingDoc(doc, minGap);
-          if (violations.length) correctFn = function() { return LayoutCorrection.correctSpacingDoc(doc, minGap); };
+          violations = LayoutCorrection.checkSpacingDoc(doc, minGap, StylizerCore);
+          if (violations.length) correctFn = function() { return LayoutCorrection.correctSpacingDoc(doc, minGap, StylizerCore, LayoutCorrection); };
         } else if (goal.type === 'preventOverlap') {
           violations = LayoutCorrection.checkOverlapDoc(doc);
-          if (violations.length) correctFn = function() { return LayoutCorrection.correctOverlapDoc(doc); };
+          if (violations.length) correctFn = function() { return LayoutCorrection.correctOverlapDoc(doc, LayoutCorrection); };
         } else if (goal.type === 'scrollability') {
           violations = LayoutCorrection.checkScrollabilityDoc(doc);
-          if (violations.length) correctFn = function() { return LayoutCorrection.correctScrollabilityDoc(doc); };
+          if (violations.length) correctFn = function() { return LayoutCorrection.correctScrollabilityDoc(doc, LayoutCorrection); };
         } else if (goal.type === 'controlledOverlay') {
           violations = LayoutCorrection.checkControlledOverlayDoc(doc);
-          if (violations.length) correctFn = function() { return LayoutCorrection.correctControlledOverlayDoc(doc); };
+          if (violations.length) correctFn = function() { return LayoutCorrection.correctControlledOverlayDoc(doc, LayoutCorrection); };
         }
 
         if (correctFn && violations.length) {
@@ -512,7 +515,7 @@ var LayoutCorrection = {
       if (!anyCorrection) break;
     }
 
-    var overflowViolations = LayoutCorrection.checkOverflowDoc(doc, viewportWidth, containerWidths);
+    var overflowViolations = LayoutCorrection.checkOverflowDoc(doc, viewportWidth, containerWidths, StylizerCore, LayoutCorrection);
     if (overflowViolations.length) {
       allRules = allRules.concat(LayoutCorrection.correctOverflowDoc(doc, overflowViolations));
     }

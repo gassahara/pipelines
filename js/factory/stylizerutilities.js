@@ -158,7 +158,8 @@ var StylizerCore = {
     };
   },
 
-  parseShorthandLengths: function(value, referencePx) {
+  // UPDATED: uses StylizerCore.tokenizeWhitespace via parameter
+  parseShorthandLengths: function(value, referencePx, StylizerCore) {
     if (!value) return null;
     var tokens = StylizerCore.tokenizeWhitespace(String(value));
     if (!tokens.length) return null;
@@ -171,7 +172,8 @@ var StylizerCore = {
     return { top: t, right: r, bottom: b, left: l };
   },
 
-  applyStep: function(nodes, step, filterFn) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.getAllDescendants
+  applyStep: function(nodes, step, filterFn, StylizerCore) {
     if (filterFn === undefined) filterFn = null;
 
     function getAncestors(el) {
@@ -208,7 +210,7 @@ var StylizerCore = {
         case 'parent': if (node.parentNode) candidates = [node.parentNode]; break;
         case 'ancestor': candidates = getAncestors(node); break;
         case 'child': candidates = Array.prototype.slice.call(node.children || []); break;
-        case 'descendant': candidates = StylizerCore.getAllDescendants(node); break;
+        case 'descendant': candidates = StylizerCore.getAllDescendants(node, StylizerCore); break;
         case 'nextSibling': candidates = getSiblings(node, 'nextSibling'); break;
         case 'previousSibling': candidates = getSiblings(node, 'previousSibling'); break;
         default: throw new Error('Unknown axis: ' + step.axis);
@@ -260,14 +262,16 @@ var StylizerCore = {
     }, []);
   },
 
-  getAllDescendants: function(el) {
+  // UPDATED: added StylizerCore parameter
+  getAllDescendants: function(el, StylizerCore) {
     var children = Array.prototype.slice.call(el.children || []);
     return children.reduce(function(all, child) {
-      return all.concat(child, StylizerCore.getAllDescendants(child));
+      return all.concat(child, StylizerCore.getAllDescendants(child, StylizerCore));
     }, []);
   },
 
-  buildLayoutPropertyMap: function(rootEl, viewportWidth, inheritedFontSize) {
+  // UPDATED: added StylizerCore parameter
+  buildLayoutPropertyMap: function(rootEl, viewportWidth, inheritedFontSize, StylizerCore) {
     if (inheritedFontSize === undefined) inheritedFontSize = 16;
 
     function walk(el, parentAvailableWidth, parentFontSize, acc) {
@@ -310,7 +314,7 @@ var StylizerCore = {
       });
 
       if (style.margin) {
-        var sh = StylizerCore.parseShorthandLengths(style.margin, parentAvailableWidth);
+        var sh = StylizerCore.parseShorthandLengths(style.margin, parentAvailableWidth, StylizerCore);
         if (sh) {
           props.marginTop = sh.top;
           props.marginRight = sh.right;
@@ -319,7 +323,7 @@ var StylizerCore = {
         }
       }
       if (style.padding) {
-        var sh2 = StylizerCore.parseShorthandLengths(style.padding, parentAvailableWidth);
+        var sh2 = StylizerCore.parseShorthandLengths(style.padding, parentAvailableWidth, StylizerCore);
         if (sh2) {
           props.paddingTop = sh2.top;
           props.paddingRight = sh2.right;
@@ -342,7 +346,7 @@ var StylizerCore = {
       props.availableWidth = selfAvailable;
 
       var nextAcc = acc.concat([{ element: el, props: props }]);
-      var children = StylizerCore.applyStep([el], { axis: 'child' });
+      var children = StylizerCore.applyStep([el], { axis: 'child' }, null, StylizerCore);
 
       return children.reduce(function(innerAcc, child) {
         return walk(child, selfAvailable, props.fontSize, innerAcc);
@@ -352,14 +356,16 @@ var StylizerCore = {
     return walk(rootEl, viewportWidth, inheritedFontSize, []);
   },
 
-  getPropsFromMap: function(propsMap, el) {
+  // UPDATED: added StylizerCore parameter
+  getPropsFromMap: function(propsMap, el, StylizerCore) {
     for (var i = 0; i < propsMap.length; i++) {
       if (propsMap[i].element === el) return propsMap[i].props;
     }
     return null;
   },
 
-  computeIntrinsicSize: function(node, propertyMap, inheritedProps) {
+  // UPDATED: added StylizerCore parameter; replaced console.warn with StylizerCore.log('warn', ...)
+  computeIntrinsicSize: function(node, propertyMap, inheritedProps, StylizerCore) {
     if (inheritedProps === undefined) inheritedProps = {};
     var DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
 
@@ -384,8 +390,9 @@ var StylizerCore = {
 
     if (node.nodeType !== 1) return { width: 0, height: 0 };
 
-    var props = StylizerCore.getPropsFromMap(propertyMap, node);
+    var props = StylizerCore.getPropsFromMap(propertyMap, node, StylizerCore);
     if (!props) {
+      StylizerCore.log('error', '[computeIntrinsicSize] Missing property map entry:', node.tagName);
       throw new Error('[computeIntrinsicSize] Missing property map entry: ' + node.tagName);
     }
 
@@ -398,19 +405,20 @@ var StylizerCore = {
       if (props.width !== null) {
         return { width: props.width, height: props.height || (props.width * 0.75) };
       }
+      StylizerCore.log('error', '[computeIntrinsicSize] Image without explicit width:', tag);
       throw new Error('[computeIntrinsicSize] Image without explicit width');
     }
 
     if (tag === 'table') {
       if (props.width !== null) return { width: props.width, height: props.height || 0 };
-      var rows = StylizerCore.applyStep([node], { axis: 'descendant', tag: 'tr' });
+      var rows = StylizerCore.applyStep([node], { axis: 'descendant', tag: 'tr' }, null, StylizerCore);
       var colMax = {};
       var totalH = 0;
 
       rows.forEach(function(row) {
         var rowH = 0;
-        StylizerCore.applyStep([row], { axis: 'child' }).forEach(function(cell, idx) {
-          var s = StylizerCore.computeIntrinsicSize(cell, propertyMap, props);
+        StylizerCore.applyStep([row], { axis: 'child' }, null, StylizerCore).forEach(function(cell, idx) {
+          var s = StylizerCore.computeIntrinsicSize(cell, propertyMap, props, StylizerCore);
           colMax[idx] = Math.max(colMax[idx] || 0, s.width);
           rowH = Math.max(rowH, s.height);
         });
@@ -431,7 +439,7 @@ var StylizerCore = {
     var totalW = 0, maxW = 0, totalH = 0;
 
     children.forEach(function(child) {
-      var s = StylizerCore.computeIntrinsicSize(child, propertyMap, props);
+      var s = StylizerCore.computeIntrinsicSize(child, propertyMap, props, StylizerCore);
       if (isFlexRow) {
         totalW += s.width;
         totalH = Math.max(totalH, s.height);
@@ -444,7 +452,8 @@ var StylizerCore = {
     return { width: (isFlexRow ? totalW : maxW) + padH, height: totalH + padV };
   },
 
-  estimateRecursiveBounds: function(node) {
+  // UPDATED: added StylizerCore parameter
+  estimateRecursiveBounds: function(node, StylizerCore) {
     if (node.nodeType === 3) {
       var txt = node.nodeValue.trim();
       if (!txt) return 0;
@@ -483,7 +492,7 @@ var StylizerCore = {
       var totalW = 0;
 
       Array.prototype.slice.call(node.childNodes).forEach(function(child) {
-        var w = StylizerCore.estimateRecursiveBounds(child);
+        var w = StylizerCore.estimateRecursiveBounds(child, StylizerCore);
         totalW = isFlexRow ? totalW + w : Math.max(totalW, w);
       });
 
@@ -493,7 +502,8 @@ var StylizerCore = {
     return 0;
   },
 
-  getEffectiveBackground: function(el) {
+  // UPDATED: added StylizerCore parameter (no color deps needed here)
+  getEffectiveBackground: function(el, StylizerCore) {
     function isHexDigit(ch) {
       return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
     }
@@ -546,8 +556,61 @@ var StylizerCore = {
   }
 };
 
+// ATTACH COLOR UTILITIES TO StylizerCore
+StylizerCore.color = {
+  core: ColorCore,
+  harmony: ColorHarmony,
+  contrast: ColorContrast
+};
+
+// ATTACH VERBOSITY UTILITIES TO StylizerCore
+var verbosityConstants = createVerbosityConstants();
+var verbosityFunctions = createVerbosityFunctions(verbosityConstants);
+var verbosityState = Object.freeze({ level: verbosityConstants.DEBUG });
+
+StylizerCore.verbosity = {
+  constants: verbosityConstants,
+  functions: verbosityFunctions,
+  state: verbosityState
+};
+
+// ADD UNIFIED LOG METHOD TO StylizerCore
+StylizerCore.log = function(level) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  var fns = StylizerCore.verbosity.functions;
+  var state = StylizerCore.verbosity.state;
+  switch (level) {
+    case 'debug': fns.logdebug.apply(null, [state].concat(args)); break;
+    case 'warn': fns.logwarn.apply(null, [state].concat(args)); break;
+    case 'error': fns.logerror.apply(null, [state].concat(args)); break;
+    default: fns.loginfo.apply(null, [state].concat(args)); break;
+  }
+};
+
+// Convenience methods for direct logging (optional but consistent)
+StylizerCore.debug = function() {
+  var args = Array.prototype.slice.call(arguments);
+  StylizerCore.log.apply(StylizerCore, ['debug'].concat(args));
+};
+
+StylizerCore.warn = function() {
+  var args = Array.prototype.slice.call(arguments);
+  StylizerCore.log.apply(StylizerCore, ['warn'].concat(args));
+};
+
+StylizerCore.error = function() {
+  var args = Array.prototype.slice.call(arguments);
+  StylizerCore.log.apply(StylizerCore, ['error'].concat(args));
+};
+
+StylizerCore.info = function() {
+  var args = Array.prototype.slice.call(arguments);
+  StylizerCore.log.apply(StylizerCore, ['info'].concat(args));
+};
+
 var StylizerRewrite = {
-  rewritestyleattrs: function(html, rules) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.applyStep
+  rewritestyleattrs: function(html, rules, StylizerCore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
     rules.forEach(function(rule) {
@@ -555,7 +618,7 @@ var StylizerRewrite = {
 
       if (rule.path) {
         els = rule.path.reduce(function(nodes, step) {
-          return StylizerCore.applyStep(nodes, step);
+          return StylizerCore.applyStep(nodes, step, null, StylizerCore);
         }, [doc.body]);
       } else if (rule.id) {
         els = [doc.getElementById(rule.id)];
@@ -579,7 +642,8 @@ var StylizerRewrite = {
     return doc.body.innerHTML;
   },
 
-  injectResponsiveStyles: function(html, breakpointRules) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.camelToKebab
+  injectResponsiveStyles: function(html, breakpointRules, StylizerCore) {
     if (!breakpointRules || !breakpointRules.length) return html;
 
     var css = '<style data-responsive="true">';
@@ -606,7 +670,8 @@ var StylizerRewrite = {
     return lastDiv !== -1 ? html.slice(0, lastDiv) + css + html.slice(lastDiv) : html + css;
   },
 
-  extractAllTagStyles: function(referenceHTML) {
+  // UPDATED: added StylizerCore parameter
+  extractAllTagStyles: function(referenceHTML, StylizerCore) {
     var doc = new DOMParser().parseFromString(referenceHTML, 'text/html');
     var refRoot = doc.getElementById('theme-reference');
     if (!refRoot) return {};
@@ -634,7 +699,8 @@ var StylizerRewrite = {
     return map;
   },
 
-  consolidateStyles: function(html) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.createStylizerConstants
+  consolidateStyles: function(html, StylizerCore) {
     var constants = StylizerCore.createStylizerConstants();
     var doc = new DOMParser().parseFromString(html, 'text/html');
     var safeProps = constants.SAFE_PROPS;
@@ -657,7 +723,8 @@ var StylizerRewrite = {
     return doc.body.innerHTML;
   },
 
-  computecolorscheme: function(pos, tilecols, cellw, cellh, gridcols) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.color.contrast, StylizerCore.color.harmony, StylizerCore.color.core
+  computecolorscheme: function(pos, tilecols, cellw, cellh, gridcols, StylizerCore) {
     var colstart = Math.max(0, Math.min(Math.floor((pos.clientx || 0) / cellw), gridcols - 1));
     var rowstart = Math.max(0, Math.min(Math.floor((pos.clienty || 0) / cellh), gridcols - 1));
     var colend = Math.max(1, Math.min(Math.ceil(((pos.clientx || 0) + (pos.width || cellw)) / cellw), gridcols));
@@ -693,7 +760,8 @@ var StylizerRewrite = {
     };
   },
 
-  optimizeStyleHTML: function(html, goals, themeStyles, maxIterations) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.color.contrast, StylizerCore.color.harmony, StylizerCore.color.core
+  optimizeStyleHTML: function(html, goals, themeStyles, maxIterations, StylizerCore) {
     if (themeStyles === undefined) themeStyles = {};
     if (maxIterations === undefined) maxIterations = 5;
 
@@ -711,12 +779,12 @@ var StylizerRewrite = {
 
           els.forEach(function(el) {
             if (el.textContent.trim() && el.style.color) {
-              var bg = StylizerCore.getEffectiveBackground(el);
-              var fgHex = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(el.style.color));
-              var bgHex = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(bg));
+              var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+              var fgHex = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(el.style.color, StylizerCore.color.core));
+              var bgHex = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(bg, StylizerCore.color.core));
 
-              if (ColorContrast.contrastRatio(fgHex, bgHex) < minRatio) {
-                var newFg = ColorContrast.getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
+              if (StylizerCore.color.contrast.contrastRatio(fgHex, bgHex, StylizerCore.color.core) < minRatio) {
+                var newFg = StylizerCore.color.contrast.getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' }, StylizerCore.color.harmony, StylizerCore.color.contrast, StylizerCore.color.core);
                 el.style.color = newFg;
                 allRules.push({
                   selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() },
@@ -729,12 +797,12 @@ var StylizerRewrite = {
         } else if (goal.type === 'harmony') {
           els.forEach(function(el) {
             if (el.textContent.trim() && el.style.color) {
-              var bg = StylizerCore.getEffectiveBackground(el);
-              var fg = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(el.style.color));
-              var bgHex = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(bg));
+              var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+              var fg = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(el.style.color, StylizerCore.color.core));
+              var bgHex = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(bg, StylizerCore.color.core));
 
-              if (ColorHarmony.colorHarmonyScore(fg, bgHex) < 0.5) {
-                var pal = ColorHarmony.getHarmoniousPalette(bgHex, 3, { scheme: 'analogous' });
+              if (StylizerCore.color.harmony.colorHarmonyScore(fg, bgHex, StylizerCore.color.core) < 0.5) {
+                var pal = StylizerCore.color.harmony.getHarmoniousPalette(bgHex, 3, { scheme: 'analogous' }, StylizerCore.color.harmony, StylizerCore.color.core);
                 if (pal.length) {
                   el.style.color = pal[0];
                   allRules.push({
@@ -786,7 +854,7 @@ var StylizerRewrite = {
             var w = parseFloat(btn.style.width) || 0;
             var h = parseFloat(btn.style.height) || 0;
             var styles = {};
-            var minW = Math.max(44, StylizerCore.estimateRecursiveBounds(btn) + 24);
+            var minW = Math.max(44, StylizerCore.estimateRecursiveBounds(btn, StylizerCore) + 24);
 
             if (w < minW) styles.minWidth = minW + 'px';
             if (h < 44) styles.minHeight = '44px';
@@ -814,17 +882,18 @@ var StylizerRewrite = {
 };
 
 var StylizerVerify = {
-  verifyContrast: function(html, minRatio) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.color.contrast, StylizerCore.color.core
+  verifyContrast: function(html, minRatio, StylizerCore) {
     if (minRatio === undefined) minRatio = 4.5;
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
     function walk(el) {
       if (el.nodeType === 1 && el.textContent.trim() && el.style.color) {
-        var fgHex = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(el.style.color));
-        var bgHex = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(StylizerCore.getEffectiveBackground(el)));
+        var fgHex = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(el.style.color, StylizerCore.color.core));
+        var bgHex = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(StylizerCore.getEffectiveBackground(el, StylizerCore), StylizerCore.color.core));
 
-        if (ColorContrast.contrastRatio(fgHex, bgHex) < minRatio) {
-          el.style.color = ColorContrast.getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' });
+        if (StylizerCore.color.contrast.contrastRatio(fgHex, bgHex, StylizerCore.color.core) < minRatio) {
+          el.style.color = StylizerCore.color.contrast.getOptimalForeground(bgHex, minRatio, { scheme: 'complementary' }, StylizerCore.color.harmony, StylizerCore.color.contrast, StylizerCore.color.core);
         }
       }
 
@@ -835,7 +904,8 @@ var StylizerVerify = {
     return doc.body.innerHTML;
   },
 
-  verifyTextVisibility: function(html) {
+  // UPDATED: added StylizerCore parameter
+  verifyTextVisibility: function(html, StylizerCore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
@@ -858,7 +928,8 @@ var StylizerVerify = {
     return violations;
   },
 
-  verifyButtonVisibility: function(html) {
+  // UPDATED: added StylizerCore parameter
+  verifyButtonVisibility: function(html, StylizerCore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
@@ -879,7 +950,8 @@ var StylizerVerify = {
     return violations;
   },
 
-  verifyHarmony: function(html, options) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.color.harmony, StylizerCore.color.core
+  verifyHarmony: function(html, options, StylizerCore) {
     if (options === undefined) options = {};
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -887,9 +959,9 @@ var StylizerVerify = {
     Array.prototype.slice.call(doc.getElementsByTagName('*')).forEach(function(el) {
       if (!el.textContent.trim() || !el.style.color) return;
 
-      var fg = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(el.style.color));
-      var bg = ColorCore.rgbToHex.apply(null, ColorCore.hexToRgb(StylizerCore.getEffectiveBackground(el)));
-      var score = ColorHarmony.colorHarmonyScore(fg, bg);
+      var fg = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(el.style.color, StylizerCore.color.core));
+      var bg = StylizerCore.color.core.rgbToHex.apply(null, StylizerCore.color.core.hexToRgb(StylizerCore.getEffectiveBackground(el, StylizerCore), StylizerCore.color.core));
+      var score = StylizerCore.color.harmony.colorHarmonyScore(fg, bg, StylizerCore.color.core);
 
       if (score < 0.5) {
         violations.push({
@@ -900,7 +972,7 @@ var StylizerVerify = {
         });
 
         if (options.autoCorrect) {
-          var pal = ColorHarmony.getHarmoniousPalette(bg, 3, { scheme: 'analogous' });
+          var pal = StylizerCore.color.harmony.getHarmoniousPalette(bg, 3, { scheme: 'analogous' }, StylizerCore.color.harmony, StylizerCore.color.core);
           if (pal.length) el.style.color = pal[0];
         }
       }
@@ -912,7 +984,8 @@ var StylizerVerify = {
     };
   },
 
-  checkSpacing: function(html, minGap) {
+  // UPDATED: added StylizerCore parameter
+  checkSpacing: function(html, minGap, StylizerCore) {
     if (minGap === undefined) minGap = 12;
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -941,7 +1014,8 @@ var StylizerVerify = {
     return violations;
   },
 
-  checkOverlap: function(html) {
+  // UPDATED: added StylizerCore parameter
+  checkOverlap: function(html, StylizerCore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
     var pos = Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
@@ -970,7 +1044,8 @@ var StylizerVerify = {
     return violations;
   },
 
-  checkOverflow: function(html) {
+  // UPDATED: added StylizerCore parameter
+  checkOverflow: function(html, StylizerCore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
@@ -993,7 +1068,8 @@ var StylizerVerify = {
     return violations;
   },
 
-  checkScrollability: function(html) {
+  // UPDATED: added StylizerCore parameter
+  checkScrollability: function(html, StylizerCore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
@@ -1013,7 +1089,8 @@ var StylizerVerify = {
     return violations;
   },
 
-  checkControlledOverlay: function(html) {
+  // UPDATED: added StylizerCore parameter
+  checkControlledOverlay: function(html, StylizerCore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
     return Array.prototype.slice.call(doc.getElementsByTagName('*'))
       .filter(function(el) {
@@ -1027,7 +1104,8 @@ var StylizerVerify = {
       });
   },
 
-  checkFocusVisibility: function(html) {
+  // UPDATED: added StylizerCore parameter
+  checkFocusVisibility: function(html, StylizerCore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
     return Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       var tag = el.tagName.toLowerCase();
@@ -1045,17 +1123,18 @@ var StylizerVerify = {
     });
   },
 
-  runVerification: function(html, goals) {
+  // UPDATED: added StylizerCore parameter; uses StylizerCore.color, StylizerCore.warn, StylizerCore.error
+  runVerification: function(html, goals, StylizerCore) {
     if (goals === undefined) goals = [];
     var result = { passed: true, violations: [], correctedHtml: html };
 
     goals.forEach(function(goal) {
       switch (goal) {
         case 'contrast':
-          result.correctedHtml = StylizerVerify.verifyContrast(result.correctedHtml);
+          result.correctedHtml = StylizerVerify.verifyContrast(result.correctedHtml, undefined, StylizerCore);
           break;
         case 'spacing': {
-          var v = StylizerVerify.checkSpacing(result.correctedHtml);
+          var v = StylizerVerify.checkSpacing(result.correctedHtml, undefined, StylizerCore);
           if (v.length) {
             result.passed = false;
             result.violations = result.violations.concat(v);
@@ -1063,7 +1142,7 @@ var StylizerVerify = {
           break;
         }
         case 'overlap': {
-          var v2 = StylizerVerify.checkOverlap(result.correctedHtml);
+          var v2 = StylizerVerify.checkOverlap(result.correctedHtml, StylizerCore);
           if (v2.length) {
             result.passed = false;
             result.violations = result.violations.concat(v2);
@@ -1071,7 +1150,7 @@ var StylizerVerify = {
           break;
         }
         case 'overflow': {
-          var v3 = StylizerVerify.checkOverflow(result.correctedHtml);
+          var v3 = StylizerVerify.checkOverflow(result.correctedHtml, StylizerCore);
           if (v3.length) {
             result.passed = false;
             result.violations = result.violations.concat(v3);
@@ -1079,7 +1158,7 @@ var StylizerVerify = {
           break;
         }
         case 'scrollability': {
-          var v4 = StylizerVerify.checkScrollability(result.correctedHtml);
+          var v4 = StylizerVerify.checkScrollability(result.correctedHtml, StylizerCore);
           if (v4.length) {
             result.passed = false;
             result.violations = result.violations.concat(v4);
@@ -1087,7 +1166,7 @@ var StylizerVerify = {
           break;
         }
         case 'overlay': {
-          var v5 = StylizerVerify.checkControlledOverlay(result.correctedHtml);
+          var v5 = StylizerVerify.checkControlledOverlay(result.correctedHtml, StylizerCore);
           if (v5.length) {
             result.passed = false;
             result.violations = result.violations.concat(v5);
@@ -1095,7 +1174,7 @@ var StylizerVerify = {
           break;
         }
         case 'textvisibility': {
-          var v6 = StylizerVerify.verifyTextVisibility(result.correctedHtml);
+          var v6 = StylizerVerify.verifyTextVisibility(result.correctedHtml, StylizerCore);
           if (v6.length) {
             result.passed = false;
             result.violations = result.violations.concat(v6);
@@ -1103,7 +1182,7 @@ var StylizerVerify = {
           break;
         }
         case 'buttonvisibility': {
-          var v7 = StylizerVerify.verifyButtonVisibility(result.correctedHtml);
+          var v7 = StylizerVerify.verifyButtonVisibility(result.correctedHtml, StylizerCore);
           if (v7.length) {
             result.passed = false;
             result.violations = result.violations.concat(v7);
@@ -1111,7 +1190,7 @@ var StylizerVerify = {
           break;
         }
         case 'harmony': {
-          var res = StylizerVerify.verifyHarmony(result.correctedHtml, { autoCorrect: true });
+          var res = StylizerVerify.verifyHarmony(result.correctedHtml, { autoCorrect: true }, StylizerCore);
           result.correctedHtml = res.html;
           if (res.violations.length) {
             result.passed = false;
@@ -1125,6 +1204,21 @@ var StylizerVerify = {
     return result;
   }
 };
+
+// Attach verbosity convenience to StylizerRewrite and StylizerVerify too
+StylizerRewrite.verbosity = StylizerCore.verbosity;
+StylizerRewrite.log = StylizerCore.log;
+StylizerRewrite.warn = StylizerCore.warn;
+StylizerRewrite.error = StylizerCore.error;
+StylizerRewrite.debug = StylizerCore.debug;
+StylizerRewrite.info = StylizerCore.info;
+
+StylizerVerify.verbosity = StylizerCore.verbosity;
+StylizerVerify.log = StylizerCore.log;
+StylizerVerify.warn = StylizerCore.warn;
+StylizerVerify.error = StylizerCore.error;
+StylizerVerify.debug = StylizerCore.debug;
+StylizerVerify.info = StylizerCore.info;
 
 export {
   StylizerCore,
