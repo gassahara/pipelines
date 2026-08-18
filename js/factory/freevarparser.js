@@ -19,10 +19,6 @@ function contains(arr, item) {
   return false;
 }
 
-// ---------------------------------------------------------------------------
-// ES5 character predicates
-// ---------------------------------------------------------------------------
-
 function isWhitespace(ch) {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\v' || ch === '\f' || ch === '\uFEFF';
 }
@@ -42,10 +38,6 @@ function isIdentifierStart(ch) {
 function isIdentifierPart(ch) {
   return isIdentifierStart(ch) || isDigit(ch);
 }
-
-// ---------------------------------------------------------------------------
-// Reserved words and built-ins as object maps
-// ---------------------------------------------------------------------------
 
 var RESERVED = (function() {
   var words = [
@@ -76,10 +68,6 @@ var BUILTINS = (function() {
 function isReserved(word) { return has(RESERVED, word); }
 function isBuiltin(word) { return has(BUILTINS, word); }
 
-// ---------------------------------------------------------------------------
-// Punctuator table — longest first
-// ---------------------------------------------------------------------------
-
 var PUNCTUATORS = [
   ['===','binary'], ['!==','binary'], ['>>>','binary'], ['**=','assignment'],
   ['==','binary'], ['!=','binary'], ['<=','binary'], ['>=','binary'],
@@ -90,7 +78,9 @@ var PUNCTUATORS = [
   ['<<=','assignment'], ['>>=','assignment'], ['>>>=','assignment'],
   ['<<','binary'], ['>>','binary'], ['**','binary'], ['=>','arrow'], ['...','spread'],
   ['{','open'], ['}','close'], ['(','open'], [')','close'], ['[','open'], [']','close'],
-  ['.','dot'], [';','separator'], [',','separator'], [':','colon'], ['?','conditional'],
+  ['.','dot'], [';','separator'], [',','separator'], [':','colon'],
+  ['?.','optionalAccess'],
+  ['?','conditional'],
   ['+','binaryOrPrefix'], ['-','binaryOrPrefix'], ['*','binary'], ['%','binary'],
   ['&','binary'], ['|','binary'], ['^','binary'], ['~','prefix'], ['!','prefix'],
   ['<','binary'], ['>','binary'], ['=','assignment']
@@ -109,10 +99,6 @@ function matchPunctuator(source, i) {
   }
   return null;
 }
-
-// ---------------------------------------------------------------------------
-// Token scanners
-// ---------------------------------------------------------------------------
 
 function scanRegExp(source, start) {
   if (source.charAt(start) !== '/') return null;
@@ -240,10 +226,6 @@ function scanNumber(source, start) {
   return { value: value, end: i };
 }
 
-// ---------------------------------------------------------------------------
-// Tokenizer
-// ---------------------------------------------------------------------------
-
 function makeToken(type, value, kind, extra) {
   var token = { type: type, value: value };
   if (kind !== undefined) token.kind = kind;
@@ -272,7 +254,7 @@ function tokenize(source) {
           kind === 'colon' || kind === 'arrow' ||
           kind === 'spread' || kind === 'prefixOrPostfix') {
         exprAllowed = true;
-      } else if (kind === 'close' || kind === 'dot') {
+      } else if (kind === 'close' || kind === 'dot' || kind === 'optionalAccess') {
         exprAllowed = false;
       } else {
         exprAllowed = false;
@@ -289,13 +271,11 @@ function tokenize(source) {
 
     if (isWhitespace(ch) || isLineTerminator(ch)) { i += 1; continue; }
 
-    // line comment
     if (ch === '/' && source.charAt(i + 1) === '/') {
       i += 2;
       while (i < source.length && source.charAt(i) !== '\n') i += 1;
       continue;
     }
-    // block comment
     if (ch === '/' && source.charAt(i + 1) === '*') {
       i += 2;
       while (i < source.length && !(source.charAt(i) === '*' && source.charAt(i + 1) === '/')) i += 1;
@@ -303,7 +283,6 @@ function tokenize(source) {
       continue;
     }
 
-    // regex or division
     if (ch === '/') {
       var regex = exprAllowed ? scanRegExp(source, i) : null;
       if (regex) {
@@ -316,7 +295,6 @@ function tokenize(source) {
       continue;
     }
 
-    // strings
     if (ch === '"' || ch === "'") {
       var str = scanString(source, i, ch);
       if (str) {
@@ -327,7 +305,6 @@ function tokenize(source) {
       throw new Error('[freevarparser] Unterminated string literal at ' + i);
     }
 
-    // template
     if (ch === '`') {
       var tpl = scanTemplate(source, i);
       if (tpl) {
@@ -338,7 +315,6 @@ function tokenize(source) {
       throw new Error('[freevarparser] Unterminated template literal at ' + i);
     }
 
-    // number
     if (isDigit(ch) || (ch === '.' && isDigit(source.charAt(i + 1)))) {
       var num = scanNumber(source, i);
       if (num) {
@@ -348,7 +324,6 @@ function tokenize(source) {
       }
     }
 
-    // identifier/keyword
     if (isIdentifierStart(ch)) {
       var start = i;
       i += 1;
@@ -362,7 +337,6 @@ function tokenize(source) {
       continue;
     }
 
-    // punctuator
     var punct = matchPunctuator(source, i);
     if (punct) {
       pushToken(makeToken('Punctuator', punct.value, punct.kind));
@@ -370,16 +344,12 @@ function tokenize(source) {
       continue;
     }
 
-    i += 1; // unknown char skip
+    i += 1;
   }
 
   tokens.push(makeToken('EOF', null));
   return tokens;
 }
-
-// ---------------------------------------------------------------------------
-// Functional parser state
-// ---------------------------------------------------------------------------
 
 function createState(tokens) {
   return {
@@ -388,7 +358,8 @@ function createState(tokens) {
     scopes: [{}],
     freeVars: {},
     contextStack: ['program'],
-    expectExpression: true
+    expectExpression: true,
+    tentativeStack: []
   };
 }
 
@@ -400,9 +371,7 @@ function advance(state) {
   return next;
 }
 
-function cloneFreeVars(freeVars) {
-  return cloneObj(freeVars);
-}
+function cloneFreeVars(freeVars) { return cloneObj(freeVars); }
 
 function addFreeVar(state, id) {
   if (isDeclared(state.scopes, id) || isBuiltin(id) || isReserved(id)) return state;
@@ -465,9 +434,561 @@ function setExpectExpression(state, value) {
   return next;
 }
 
+function openTentative(state, kindKey, startIndex) {
+  var t = {
+    kindKey: kindKey,
+    startIndex: startIndex,
+    tokens: [],
+    scopeDepth: state.scopes.length,
+    contextAtOpen: state.contextStack[state.contextStack.length - 1],
+    status: 'open',
+    decision: null
+  };
+  var next = cloneObj(state);
+  next.tentativeStack = state.tentativeStack.concat([t]);
+  return next;
+}
+
+function topTentative(state) {
+  var ts = state.tentativeStack;
+  return ts.length > 0 ? ts[ts.length - 1] : null;
+}
+
+function appendTentative(state, token) {
+  var ts = state.tentativeStack;
+  if (ts.length === 0) return state;
+  var top = ts[ts.length - 1];
+  var nextTop = cloneObj(top);
+  nextTop.tokens = top.tokens.concat([token]);
+  var nextTs = ts.slice(0, -1).concat([nextTop]);
+  var next = cloneObj(state);
+  next.tentativeStack = nextTs;
+  return next;
+}
+
+function popTentative(state) {
+  if (state.tentativeStack.length === 0) return state;
+  var next = cloneObj(state);
+  next.tentativeStack = state.tentativeStack.slice(0, -1);
+  return next;
+}
+
+function findKind(kindKey) {
+  for (var i = 0; i < KINDS.length; i++) {
+    if (KINDS[i].name === kindKey) return KINDS[i];
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
-// Parser
+// Buffer parsers — all pure, used by KINDS commit/reject
 // ---------------------------------------------------------------------------
+
+function parsePrimaryFromBuffer(state, tokens) {
+  // Re-parse buffered tokens starting at state.index using primary parser.
+  // This is a safe fallback: advance through the buffered tokens, recording free identifiers.
+  var next = state;
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseBlockFromBuffer(state, tokens) {
+  var next = pushScope(state);
+  for (var i = 1; i < tokens.length - 1; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      // In block parsing, identifiers are usually statements; this fallback records free vars.
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = popScope(next);
+  next = advance(next);
+  return next;
+}
+
+function parseObjectLiteralFromBuffer(state, tokens) {
+  var next = state;
+  for (var i = 1; i < tokens.length - 1; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      var ahead = tokens[i + 1];
+      if (ahead && ahead.type === 'Punctuator' && ahead.value === ':') {
+        i += 2; // skip key and colon
+        continue;
+      }
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseArrayLiteralFromBuffer(state, tokens) {
+  var next = state;
+  for (var i = 1; i < tokens.length - 1; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseJsonFromBuffer(state, tokens) {
+  // JSON-like structures treat string keys as not free, but any identifier-valued entries are free.
+  var next = state;
+  for (var i = 1; i < tokens.length - 1; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseArrowFunctionFromBuffer(state, tokens) {
+  var next = pushScope(state);
+  var arrowIndex = -1;
+  for (var i = 0; i < tokens.length; i++) {
+    if (tokens[i].type === 'Punctuator' && tokens[i].value === '=>') {
+      arrowIndex = i;
+      break;
+    }
+  }
+  for (var j = 0; j < arrowIndex; j++) {
+    var t = tokens[j];
+    if (t.type === 'Identifier') {
+      next = declare(next, t.value);
+    }
+  }
+  for (var k = arrowIndex + 1; k < tokens.length; k++) {
+    var b = tokens[k];
+    if (b.type === 'Identifier') {
+      next = addFreeVar(next, b.value);
+    }
+  }
+  next = popScope(next);
+  next = advance(next);
+  return next;
+}
+
+function parseOptionalAccessFromBuffer(state, tokens) {
+  var next = state;
+  for (var i = 1; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      // property names are not free; only computed expressions would be parsed separately.
+      continue;
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseArgumentsFromBuffer(state, tokens) {
+  var next = state;
+  for (var i = 1; i < tokens.length - 1; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseForHeaderFromBuffer(state, tokens) {
+  var next = state;
+  var hasInOf = false;
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t.type === 'Keyword' && (t.value === 'in' || t.value === 'of')) {
+      hasInOf = true;
+    }
+    if (t.type === 'Identifier') {
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseTemplateFromBuffer(state, tokens) {
+  var next = state;
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t.type === 'TemplateLiteral' && t.extra && t.extra.expressions) {
+      for (var j = 0; j < t.extra.expressions.length; j++) {
+        var subTokens = tokenize(t.extra.expressions[j].raw);
+        var subState = createState(subTokens);
+        subState.scopes = next.scopes;
+        subState.freeVars = next.freeVars;
+        subState = parseExpression(subState, [';', ',', ')', ']', '}']);
+        next = cloneObj(next);
+        next.freeVars = subState.freeVars;
+      }
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseConditionalFromBuffer(state, tokens) {
+  var next = state;
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+function parseMapConstructFromBuffer(state, tokens) {
+  var next = state;
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t.type === 'Identifier') {
+      next = addFreeVar(next, t.value);
+    }
+  }
+  next = advance(next);
+  return next;
+}
+
+// ---------------------------------------------------------------------------
+// KINDS declarative registry
+// ---------------------------------------------------------------------------
+
+var KINDS = [
+  {
+    name: 'regex',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '/' && state.expectExpression === true;
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === '/' && tentative.tokens.length > 1) return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return advance(state);
+    },
+    reject: function(state, tentative) {
+      var next = cloneObj(state);
+      next.index = tentative.startIndex;
+      return next;
+    }
+  },
+  {
+    name: 'objectLiteral',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '{' && state.expectExpression === true;
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === '}') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseObjectLiteralFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return parseBlockFromBuffer(state, tentative.tokens);
+    }
+  },
+  {
+    name: 'block',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '{' && state.expectExpression !== true;
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === '}') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseBlockFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'arrayLiteral',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '[' && state.expectExpression === true;
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === ']') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseArrayLiteralFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'json',
+    start: function(state, token) {
+      return (token.type === 'Punctuator' && token.value === '{') ||
+             (token.type === 'Punctuator' && token.value === '[');
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && (token.value === '}' || token.value === ']')) return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseJsonFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'arrowFunction',
+    start: function(state, token) {
+      return isArrowFunctionStart(state);
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === '=>') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseArrowFunctionFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return parsePrimaryFromBuffer(state, tentative.tokens);
+    }
+  },
+  {
+    name: 'memberAccess',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '.';
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Identifier' || token.type === 'Keyword') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return advance(state);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'optionalAccess',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '?.';
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Identifier' || token.type === 'Keyword' ||
+          (token.type === 'Punctuator' && token.value === '(')) return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseOptionalAccessFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'call',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '(';
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === ')') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseArgumentsFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'forHeader',
+    start: function(state, token) {
+      return token.type === 'Keyword' && token.value === 'for';
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Keyword' && (token.value === 'in' || token.value === 'of')) return 'ACCEPT';
+      if (token.type === 'Punctuator' && token.value === ';') return 'ACCEPT';
+      if (token.type === 'Punctuator' && token.value === ')') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseForHeaderFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'templateSubstitution',
+    start: function(state, token) {
+      return token.type === 'TemplateLiteral' && token.extra && token.extra.expressions.length > 0;
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      return 'ACCEPT';
+    },
+    commit: function(state, tentative) {
+      return parseTemplateFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'conditional',
+    start: function(state, token) {
+      return token.type === 'Punctuator' && token.value === '?';
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === ':') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseConditionalFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  },
+  {
+    name: 'mapConstruct',
+    start: function(state, token) {
+      return token.type === 'Keyword' && token.value === 'new' && state.expectExpression === true;
+    },
+    append: function(tentative, token) {
+      var next = cloneObj(tentative);
+      next.tokens = tentative.tokens.concat([token]);
+      return next;
+    },
+    decide: function(tentative, token) {
+      if (token.type === 'Punctuator' && token.value === ')') return 'ACCEPT';
+      if (token.type === 'EOF') return 'REJECT';
+      return 'HOLD';
+    },
+    commit: function(state, tentative) {
+      return parseMapConstructFromBuffer(state, tentative.tokens);
+    },
+    reject: function(state, tentative) {
+      return state;
+    }
+  }
+];
+
+function isArrowFunctionStart(state) {
+  var idx = state.index;
+  var tokens = state.tokens;
+
+  if (tokens[idx].type === 'Identifier') {
+    return tokens[idx + 1] && tokens[idx + 1].type === 'Punctuator' && tokens[idx + 1].value === '=>';
+  }
+
+  if (tokens[idx].type === 'Punctuator' && tokens[idx].value === '(') {
+    var depth = 0;
+    for (var i = idx; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (t.type === 'Punctuator') {
+        if (t.value === '(') depth += 1;
+        else if (t.value === ')') {
+          depth -= 1;
+          if (depth === 0) {
+            return tokens[i + 1] && tokens[i + 1].type === 'Punctuator' && tokens[i + 1].value === '=>';
+          }
+        }
+      }
+      if (t.type === 'EOF') break;
+    }
+  }
+
+  return false;
+}
 
 function parseProgram(state) {
   while (peek(state).type !== 'EOF') {
@@ -530,7 +1051,6 @@ function parseStatement(state) {
     }
   }
 
-  // expression statement
   state = parseExpression(state, [';']);
   return consumeSemicolon(state);
 }
@@ -547,8 +1067,7 @@ function parseBlock(state) {
 }
 
 function parseVariableDeclaration(state) {
-  state = advance(state); // var/let/const
-
+  state = advance(state);
   while (true) {
     var t = peek(state);
     if (t.type === 'Identifier') {
@@ -571,7 +1090,6 @@ function parseVariableDeclaration(state) {
     }
     break;
   }
-
   return consumeSemicolon(state);
 }
 
@@ -598,7 +1116,7 @@ function parseBindingPattern(state) {
 }
 
 function parseFunctionDeclaration(state) {
-  state = advance(state); // function
+  state = advance(state);
   var name = peek(state);
   if (name.type === 'Identifier') {
     state = declare(state, name.value);
@@ -622,9 +1140,7 @@ function parseFunctionBody(state) {
       } else {
         state = advance(state);
       }
-      if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
-        state = advance(state);
-      }
+      if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
     }
     state = expectPunctuator(state, ')');
   }
@@ -638,77 +1154,8 @@ function parseFunctionBody(state) {
   return popScope(state);
 }
 
-function isArrowFunctionStart(state) {
-  var idx = state.index;
-  var tokens = state.tokens;
-
-  // identifier => ...
-  if (tokens[idx].type === 'Identifier') {
-    return tokens[idx + 1] && tokens[idx + 1].type === 'Punctuator' && tokens[idx + 1].value === '=>';
-  }
-
-  // ( params ) => ...
-  if (tokens[idx].type === 'Punctuator' && tokens[idx].value === '(') {
-    var depth = 0;
-    for (var i = idx; i < tokens.length; i++) {
-      var t = tokens[i];
-      if (t.type === 'Punctuator') {
-        if (t.value === '(') depth += 1;
-        else if (t.value === ')') {
-          depth -= 1;
-          if (depth === 0) {
-            return tokens[i + 1] && tokens[i + 1].type === 'Punctuator' && tokens[i + 1].value === '=>';
-          }
-        }
-      }
-      if (t.type === 'EOF') break;
-    }
-  }
-
-  return false;
-}
-
-function parseArrowFunction(state) {
-  state = pushScope(state);
-
-  var t = peek(state);
-
-  if (t.type === 'Identifier') {
-    state = declare(state, t.value);
-    state = advance(state);
-  } else if (t.type === 'Punctuator' && t.value === '(') {
-    state = advance(state);
-    while (!(peek(state).type === 'Punctuator' && peek(state).value === ')') &&
-           peek(state).type !== 'EOF') {
-      var p = peek(state);
-      if (p.type === 'Identifier') {
-        state = declare(state, p.value);
-        state = advance(state);
-      } else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) {
-        state = parseBindingPattern(state);
-      } else {
-        state = advance(state);
-      }
-      if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
-        state = advance(state);
-      }
-    }
-    state = expectPunctuator(state, ')');
-  }
-
-  state = expectPunctuator(state, '=>');
-
-  if (peek(state).type === 'Punctuator' && peek(state).value === '{') {
-    state = parseBlock(state);
-  } else {
-    state = parseExpression(state, [';', ',', ')', ']', '}']);
-  }
-
-  return popScope(state);
-}
-
 function parseIfStatement(state) {
-  state = advance(state); // if
+  state = advance(state);
   if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
     state = advance(state);
     state = parseExpression(state, [')']);
@@ -723,23 +1170,16 @@ function parseIfStatement(state) {
 }
 
 function parseForStatement(state) {
-  state = advance(state); // for
+  state = advance(state);
   state = pushScope(state);
 
-  // Optional await for for-await-of
-  if (peek(state).type === 'Keyword' && peek(state).value === 'await') {
-    state = advance(state);
-  }
-
+  if (peek(state).type === 'Keyword' && peek(state).value === 'await') state = advance(state);
   if (peek(state).type === 'Punctuator' && peek(state).value === '(') state = advance(state);
 
-  // Initializer or declaration
   if (peek(state).type === 'Keyword' && contains(['var','let','const'], peek(state).value)) {
     state = parseVariableDeclaration(state);
   } else {
-    if (!(peek(state).type === 'Punctuator' && peek(state).value === ';')) {
-      state = parseExpression(state, [';']);
-    }
+    if (!(peek(state).type === 'Punctuator' && peek(state).value === ';')) state = parseExpression(state, [';']);
     if (peek(state).type === 'Keyword' && (peek(state).value === 'in' || peek(state).value === 'of')) {
       state = advance(state);
       state = parseExpression(state, [')']);
@@ -750,7 +1190,6 @@ function parseForStatement(state) {
     state = expectPunctuator(state, ';');
   }
 
-  // Detect for-in / for-of after declaration
   if (peek(state).type === 'Keyword' && (peek(state).value === 'in' || peek(state).value === 'of')) {
     state = advance(state);
     state = parseExpression(state, [')']);
@@ -759,16 +1198,10 @@ function parseForStatement(state) {
     return popScope(state);
   }
 
-  // Classic for condition
-  if (!(peek(state).type === 'Punctuator' && peek(state).value === ';')) {
-    state = parseExpression(state, [';']);
-  }
+  if (!(peek(state).type === 'Punctuator' && peek(state).value === ';')) state = parseExpression(state, [';']);
   state = expectPunctuator(state, ';');
 
-  // Classic for update
-  if (!(peek(state).type === 'Punctuator' && peek(state).value === ')')) {
-    state = parseExpression(state, [')']);
-  }
+  if (!(peek(state).type === 'Punctuator' && peek(state).value === ')')) state = parseExpression(state, [')']);
   if (peek(state).type === 'Punctuator' && peek(state).value === ')') state = advance(state);
 
   state = parseStatement(state);
@@ -776,7 +1209,7 @@ function parseForStatement(state) {
 }
 
 function parseWhileStatement(state) {
-  state = advance(state); // while
+  state = advance(state);
   if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
     state = advance(state);
     state = parseExpression(state, [')']);
@@ -786,7 +1219,7 @@ function parseWhileStatement(state) {
 }
 
 function parseDoStatement(state) {
-  state = advance(state); // do
+  state = advance(state);
   state = parseStatement(state);
   state = expectKeyword(state, 'while');
   if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
@@ -798,7 +1231,7 @@ function parseDoStatement(state) {
 }
 
 function parseTryStatement(state) {
-  state = advance(state); // try
+  state = advance(state);
   if (peek(state).type === 'Punctuator' && peek(state).value === '{') state = parseBlock(state);
 
   if (peek(state).type === 'Keyword' && peek(state).value === 'catch') {
@@ -807,12 +1240,8 @@ function parseTryStatement(state) {
     if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
       state = advance(state);
       var p = peek(state);
-      if (p.type === 'Identifier') {
-        state = declare(state, p.value);
-        state = advance(state);
-      } else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) {
-        state = parseBindingPattern(state);
-      }
+      if (p.type === 'Identifier') { state = declare(state, p.value); state = advance(state); }
+      else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) state = parseBindingPattern(state);
       state = expectPunctuator(state, ')');
     }
     if (peek(state).type === 'Punctuator' && peek(state).value === '{') state = parseBlock(state);
@@ -827,7 +1256,7 @@ function parseTryStatement(state) {
 }
 
 function parseSwitchStatement(state) {
-  state = advance(state); // switch
+  state = advance(state);
   if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
     state = advance(state);
     state = parseExpression(state, [')']);
@@ -835,8 +1264,7 @@ function parseSwitchStatement(state) {
   }
   if (peek(state).type === 'Punctuator' && peek(state).value === '{') {
     state = advance(state);
-    while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') &&
-           peek(state).type !== 'EOF') {
+    while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') && peek(state).type !== 'EOF') {
       var t = peek(state);
       if (t.type === 'Keyword' && t.value === 'case') {
         state = advance(state);
@@ -855,12 +1283,9 @@ function parseSwitchStatement(state) {
 }
 
 function parseClassDeclaration(state) {
-  state = advance(state); // class
+  state = advance(state);
   var name = peek(state);
-  if (name.type === 'Identifier') {
-    state = declare(state, name.value);
-    state = advance(state);
-  }
+  if (name.type === 'Identifier') { state = declare(state, name.value); state = advance(state); }
   if (peek(state).type === 'Keyword' && peek(state).value === 'extends') {
     state = advance(state);
     state = parseExpression(state, ['{']);
@@ -868,29 +1293,20 @@ function parseClassDeclaration(state) {
   if (peek(state).type === 'Punctuator' && peek(state).value === '{') {
     state = pushScope(state);
     state = advance(state);
-    while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') &&
-           peek(state).type !== 'EOF') {
-      if (peek(state).type === 'Identifier' || peek(state).type === 'Keyword') {
-        state = advance(state); // method name
-      }
+    while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') && peek(state).type !== 'EOF') {
+      if (peek(state).type === 'Identifier' || peek(state).type === 'Keyword') state = advance(state);
       if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
         state = pushScope(state);
         state = advance(state);
         while (!(peek(state).type === 'Punctuator' && peek(state).value === ')')) {
           var p = peek(state);
-          if (p.type === 'Identifier') {
-            state = declare(state, p.value);
-            state = advance(state);
-          } else {
-            state = advance(state);
-          }
+          if (p.type === 'Identifier') { state = declare(state, p.value); state = advance(state); }
+          else state = advance(state);
         }
         state = expectPunctuator(state, ')');
         if (peek(state).type === 'Punctuator' && peek(state).value === '{') state = parseBlock(state);
         state = popScope(state);
-      } else {
-        state = advance(state);
-      }
+      } else state = advance(state);
     }
     state = expectPunctuator(state, '}');
     state = popScope(state);
@@ -899,9 +1315,7 @@ function parseClassDeclaration(state) {
 }
 
 function consumeSemicolon(state) {
-  if (peek(state).type === 'Punctuator' && peek(state).value === ';') {
-    return advance(state);
-  }
+  if (peek(state).type === 'Punctuator' && peek(state).value === ';') return advance(state);
   return state;
 }
 
@@ -921,10 +1335,6 @@ function expectKeyword(state, value) {
   return advance(state);
 }
 
-// ---------------------------------------------------------------------------
-// Expression grammar
-// ---------------------------------------------------------------------------
-
 function parseExpression(state, stopTokens) {
   state = pushContext(state, 'expression');
   state = parseAssignmentExpression(state, stopTokens);
@@ -933,22 +1343,16 @@ function parseExpression(state, stopTokens) {
 
 function parseAssignmentExpression(state, stopTokens) {
   state = parseConditionalExpression(state, stopTokens);
-
   var t = peek(state);
-  if (t.type === 'Punctuator' && (t.value === '=' || t.value === '+=' || t.value === '-=' ||
-      t.value === '*=' || t.value === '/=' || t.value === '%=' || t.value === '**=' ||
-      t.value === '<<=' || t.value === '>>=' || t.value === '>>>=' ||
-      t.value === '&=' || t.value === '|=' || t.value === '^=')) {
+  if (t.type === 'Punctuator' && contains(['=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=', '|=', '^='], t.value)) {
     state = advance(state);
     state = parseAssignmentExpression(state, stopTokens);
   }
-
   return state;
 }
 
 function parseConditionalExpression(state, stopTokens) {
   state = parseBinaryExpression(state, stopTokens);
-
   var t = peek(state);
   if (t.type === 'Punctuator' && t.value === '?') {
     state = advance(state);
@@ -956,19 +1360,16 @@ function parseConditionalExpression(state, stopTokens) {
     state = expectPunctuator(state, ':');
     state = parseExpression(state, stopTokens);
   }
-
   return state;
 }
 
 function parseBinaryExpression(state, stopTokens) {
   state = parseUnaryExpression(state);
-
   while (true) {
     var t = peek(state);
     if (t.type === 'EOF') break;
     if (t.type === 'Punctuator') {
       if (contains(stopTokens, t.value)) break;
-      // Only consume recognized binary operators; commas/other stop tokens handled above.
       if (t.kind === 'binary' || t.kind === 'assignment' || t.kind === 'conditional' ||
           t.kind === 'colon' || t.kind === 'binaryOrPrefix') {
         state = advance(state);
@@ -979,53 +1380,44 @@ function parseBinaryExpression(state, stopTokens) {
     }
     break;
   }
-
   return state;
 }
 
 function parseUnaryExpression(state) {
   var t = peek(state);
-
   if (t.type === 'Punctuator' && contains(['!', '~', '+', '-', '++', '--'], t.value)) {
     state = advance(state);
-    state = parseUnaryExpression(state);
-    return state;
+    return parseUnaryExpression(state);
   }
-
   if (t.type === 'Keyword' && contains(['typeof', 'void', 'delete', 'await', 'yield'], t.value)) {
     state = advance(state);
-    state = parseUnaryExpression(state);
-    return state;
+    return parseUnaryExpression(state);
   }
-
   return parsePostfixExpression(state);
 }
 
 function parsePostfixExpression(state) {
   state = parsePrimaryAndMemberAndCall(state);
-
   var t = peek(state);
-  if (t.type === 'Punctuator' && (t.value === '++' || t.value === '--')) {
-    state = advance(state);
-  }
-
+  if (t.type === 'Punctuator' && (t.value === '++' || t.value === '--')) state = advance(state);
   return state;
 }
 
 function parsePrimaryAndMemberAndCall(state) {
   var t = peek(state);
 
-  if (t.type === 'Identifier') {
+  if (t.type === 'Keyword' && t.value === 'async') {
+    if (isAsyncArrowStart(state)) return parseArrowFunctionFromTokens(state);
+    state = advance(state);
+  } else if (t.type === 'Identifier') {
+    if (isArrowFunctionStart(state)) return parseArrowFunctionFromTokens(state);
     state = addFreeVar(state, t.value);
     state = advance(state);
   } else if (t.type === 'StringLiteral' || t.type === 'NumericLiteral' || t.type === 'RegExpLiteral') {
     state = advance(state);
   } else if (t.type === 'TemplateLiteral') {
-    state = advance(state);
-    var expressions = t.extra ? t.extra.expressions : [];
-    for (var i = 0; i < expressions.length; i++) {
-      state = parseExpressionFromSource(state, expressions[i].raw);
-    }
+    state = parseTemplateToken(state);
+    return state;
   } else if (t.type === 'Keyword' && t.value === 'function') {
     state = advance(state);
     state = parseFunctionBody(state);
@@ -1034,13 +1426,8 @@ function parsePrimaryAndMemberAndCall(state) {
     state = parsePrimaryAndMemberAndCall(state);
   } else if (t.type === 'Keyword' && t.value === 'this') {
     state = advance(state);
-  } else if (t.type === 'Keyword' && t.value === 'class') {
-    state = parseClassDeclaration(state);
   } else if (t.type === 'Punctuator' && t.value === '(') {
-    if (isArrowFunctionStart(state)) {
-      state = parseArrowFunction(state);
-      return state;
-    }
+    if (isArrowFunctionStart(state)) return parseArrowFunctionFromTokens(state);
     state = advance(state);
     state = parseExpression(state, [')']);
     state = expectPunctuator(state, ')');
@@ -1049,49 +1436,118 @@ function parsePrimaryAndMemberAndCall(state) {
   } else if (t.type === 'Punctuator' && t.value === '{') {
     state = parseObjectLiteral(state);
   } else {
-    state = advance(state); // safe fallback
+    state = advance(state);
   }
 
-  // Member access and calls chained after primary expression.
   while (true) {
     var ct = peek(state);
-    if (ct.type === 'Punctuator' && ct.value === '.') {
+    if (ct.type === 'Punctuator' && (ct.value === '.' || ct.value === '?.')) {
       state = advance(state);
       var prop = peek(state);
-      if (prop.type === 'Identifier' || prop.type === 'Keyword') {
-        state = advance(state); // property name, not free
-      } else {
+      if (prop.type === 'Identifier' || prop.type === 'Keyword') state = advance(state);
+      else if (prop.type === 'Punctuator' && prop.value === '(') {
         state = advance(state);
-      }
+        state = parseArguments(state);
+      } else state = advance(state);
       continue;
     }
-
     if (ct.type === 'Punctuator' && ct.value === '[') {
       state = advance(state);
       state = parseExpression(state, [']']);
       state = expectPunctuator(state, ']');
       continue;
     }
-
     if (ct.type === 'Punctuator' && ct.value === '(') {
       state = advance(state);
       state = parseArguments(state);
       continue;
     }
-
     break;
   }
 
   return state;
 }
 
+function isAsyncArrowStart(state) {
+  var tokens = state.tokens;
+  var idx = state.index;
+  if (tokens[idx].type !== 'Keyword' || tokens[idx].value !== 'async') return false;
+  var nxt = tokens[idx + 1];
+  if (!nxt) return false;
+  if (nxt.type === 'Identifier') {
+    return tokens[idx + 2] && tokens[idx + 2].type === 'Punctuator' && tokens[idx + 2].value === '=>';
+  }
+  if (nxt.type === 'Punctuator' && nxt.value === '(') {
+    var depth = 0;
+    for (var i = idx + 1; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (t.type === 'Punctuator') {
+        if (t.value === '(') depth += 1;
+        else if (t.value === ')') {
+          depth -= 1;
+          if (depth === 0) return tokens[i + 1] && tokens[i + 1].type === 'Punctuator' && tokens[i + 1].value === '=>';
+        }
+      }
+      if (t.type === 'EOF') break;
+    }
+  }
+  return false;
+}
+
+function parseArrowFunctionFromTokens(state) {
+  state = pushScope(state);
+  var t = peek(state);
+  if (t.type === 'Keyword' && t.value === 'async') state = advance(state);
+
+  t = peek(state);
+  if (t.type === 'Identifier') {
+    state = declare(state, t.value);
+    state = advance(state);
+  } else if (t.type === 'Punctuator' && t.value === '(') {
+    state = advance(state);
+    while (!(peek(state).type === 'Punctuator' && peek(state).value === ')') && peek(state).type !== 'EOF') {
+      var p = peek(state);
+      if (p.type === 'Identifier') { state = declare(state, p.value); state = advance(state); }
+      else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) state = parseBindingPattern(state);
+      else state = advance(state);
+      if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
+    }
+    state = expectPunctuator(state, ')');
+  }
+
+  state = expectPunctuator(state, '=>');
+
+  if (peek(state).type === 'Punctuator' && peek(state).value === '{') {
+    state = parseBlock(state);
+  } else {
+    state = parseExpression(state, [';', ',', ')', ']', '}']);
+  }
+
+  return popScope(state);
+}
+
+function parseTemplateToken(state) {
+  var token = peek(state);
+  state = advance(state);
+  if (token.extra && token.extra.expressions) {
+    for (var i = 0; i < token.extra.expressions.length; i++) {
+      var subTokens = tokenize(token.extra.expressions[i].raw);
+      var subState = createState(subTokens);
+      subState.scopes = state.scopes;
+      subState.freeVars = state.freeVars;
+      subState = parseExpression(subState, [';', ',', ')', ']', '}']);
+      var next = cloneObj(state);
+      next.freeVars = subState.freeVars;
+      state = next;
+    }
+  }
+  return state;
+}
+
 function parseObjectLiteral(state) {
   state = expectPunctuator(state, '{');
-
-  while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') &&
-         peek(state).type !== 'EOF') {
+  while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') && peek(state).type !== 'EOF') {
     var t = peek(state);
-
     if (t.type === 'Identifier' || t.type === 'StringLiteral' || t.type === 'NumericLiteral') {
       var lookahead = state.tokens[state.index + 1];
       if (lookahead && lookahead.type === 'Punctuator' && lookahead.value === ':') {
@@ -1112,69 +1568,31 @@ function parseObjectLiteral(state) {
     } else if (t.type === 'Punctuator' && t.value === ',') {
       state = advance(state);
     } else {
-      state = advance(state); // method name token
-    }
-
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
       state = advance(state);
     }
+    if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
   }
-
   return expectPunctuator(state, '}');
 }
 
 function parseArrayLiteral(state) {
   state = expectPunctuator(state, '[');
-
-  while (!(peek(state).type === 'Punctuator' && peek(state).value === ']') &&
-         peek(state).type !== 'EOF') {
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
-      state = advance(state);
-      continue;
-    }
-
+  while (!(peek(state).type === 'Punctuator' && peek(state).value === ']') && peek(state).type !== 'EOF') {
+    if (peek(state).type === 'Punctuator' && peek(state).value === ',') { state = advance(state); continue; }
     state = parseExpression(state, [',', ']']);
-
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
-      state = advance(state);
-    }
+    if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
   }
-
   return expectPunctuator(state, ']');
 }
 
 function parseArguments(state) {
-  while (!(peek(state).type === 'Punctuator' && peek(state).value === ')') &&
-         peek(state).type !== 'EOF') {
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
-      state = advance(state);
-      continue;
-    }
-
+  while (!(peek(state).type === 'Punctuator' && peek(state).value === ')') && peek(state).type !== 'EOF') {
+    if (peek(state).type === 'Punctuator' && peek(state).value === ',') { state = advance(state); continue; }
     state = parseExpression(state, [',', ')']);
-
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
-      state = advance(state);
-    }
+    if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
   }
-
   return expectPunctuator(state, ')');
 }
-
-function parseExpressionFromSource(state, source) {
-  var subTokens = tokenize(source);
-  var subState = createState(subTokens);
-  subState.scopes = state.scopes;
-  subState.freeVars = state.freeVars;
-  subState = parseExpression(subState, [';', ',', ')', ']', '}']);
-  var next = cloneObj(state);
-  next.freeVars = subState.freeVars;
-  return next;
-}
-
-// ---------------------------------------------------------------------------
-// Exported entry point
-// ---------------------------------------------------------------------------
 
 function detectFreeIdentifiers(source) {
   var tokens = tokenize(source);
