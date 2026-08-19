@@ -96,6 +96,24 @@ function buildproperties(merged, inherited) {
   }, cloneObject(inherited));
 }
 
+function buildBlockProperties(merged, inherited, sig, env) {
+  if (inherited === undefined) inherited = {};
+  if (sig === undefined) sig = { inputs: [], outputs: {} };
+  if (env === undefined) env = {};
+
+  var properties = buildproperties(merged, inherited);
+  var inputsObj = {};
+
+  (sig.inputs || []).forEach(function(name) {
+    inputsObj[name] = compilepathaccessor(name)(env);
+  });
+
+  properties.inputs = inputsObj;
+  properties.outputs = sig.outputs || {};
+
+  return properties;
+}
+
 function sanitizeEnv(env, maxBytes) {
   if (maxBytes === undefined) maxBytes = 128 * 1024;
   return Object.keys(env || {}).reduce(function(out, key) {
@@ -368,8 +386,9 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS) {
     var blockfn = async function(env) {
       var fn = merged.fn;
       if (!fn) throw new Error('fn block must have a function: ' + id);
-      var properties = buildproperties(merged, inheritedProperties);
-      var fnargs = [properties].concat((sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); }));
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
+      var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
+      var fnargs = [properties].concat(inputargs);
       var result = await callwithstack(
         EVALSTACK, 'fn:' + (merged.ref || id), 'async-await',
         async function() { return (await fn.apply(null, fnargs)) || {}; },
@@ -390,7 +409,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS) {
     var blockfn = async function(env) {
       var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
-      var properties = buildproperties(merged, inheritedProperties);
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       var result = await fn(properties, inputargs);
       if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) {
