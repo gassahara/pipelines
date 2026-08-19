@@ -5,7 +5,7 @@ import {
   createDnaSerializerConstants,
   validaterevivablefunctionblock,
   validaterevivableobject,
-  prepareDnaForSerialization
+  serializeSelfContainedClosure
 } from './dnaserializer.js';
 import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
 import {
@@ -27,6 +27,18 @@ import {
   enqueueExecutionGetTaskStatus, enqueueExecutionCancelTask, enqueueExecutionStopTask,
   enqueueExecutionSpawnPipeline, enqueueExecutionRegisterPipeline
 } from '../actors/executionactor.js';
+import {
+  enqueueHypervisorRegisterPipeline,
+  enqueueHypervisorUnregisterPipeline,
+  enqueueHypervisorSetEnv,
+  enqueueHypervisorGetEnv,
+  enqueueHypervisorSetRoute,
+  enqueueHypervisorGetRoute,
+  enqueueHypervisorGetActivePipelines,
+  enqueueHypervisorSetProgram,
+  enqueueHypervisorGetProgram
+} from '../actors/hypervisoractor.js';
+import { consolidateClosures } from './closureconsolidator.js';
 
 function createBlockCompilerConstants() {
   return Object.freeze({
@@ -115,6 +127,16 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
         return compiledElement(execEnv);
       };
 
+      var inputargs = (elementDef && elementDef.signature && elementDef.signature.inputs
+        ? elementDef.signature.inputs
+        : []
+      ).map(function(inp) { return compilepathaccessor(inp)(env); });
+
+      var closureSerialized = null;
+      if (typeof compiledElement === 'function') {
+        closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, env);
+      }
+
       return enqueueExecutionSubmit({
         pipelineid: pipelineId,
         path: path,
@@ -125,7 +147,11 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
           outputs: elementDef && elementDef.signature && elementDef.signature.outputs ? elementDef.signature.outputs : {}
         },
         executor: executor,
-        properties: elementDef || {}
+        properties: elementDef || {},
+        serialized: closureSerialized,
+        origin: compiledElement.origin || null,
+        programRef: null,
+        elementId: elementId
       }).then(function(submitted) {
         return enqueueExecutionAwaitTask(submitted.taskid);
       });
@@ -295,7 +321,12 @@ function compileHttpBlock(merged, id, sig, isTextual) {
     var inputdata = {};
     (sig.inputs || []).forEach(function(inp, idx) { inputdata[inp] = inputaccessors[idx](env); });
 
-    var endpoint = env[merged.endpoint] || merged.endpoint;
+    var endpoint = merged.endpoint;
+    if (typeof merged.endpoint === 'string' && /[\.\[\]]/.test(merged.endpoint)) {
+      endpoint = compilepathaccessor(merged.endpoint)(env);
+    }
+    if (endpoint === undefined) endpoint = merged.endpoint;
+
     var payload = buildPayload(merged.mapping && merged.mapping.payload ? merged.mapping.payload : {}, inputdata);
     Object.keys(sig.outputs || {}).forEach(function(field) {
       if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
@@ -511,7 +542,9 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS) {
   };
 
   compilers[BLOCKTYPES.STOREQUERY] = function(merged, id, sig) {
-    var blockfn = async function() {};
+    var blockfn = async function() {
+      throw new Error('[STOREQUERY] Block "' + id + '" is not implemented; cannot execute storequery.');
+    };
     blockfn.id = id;
     return blockfn;
   };
@@ -528,7 +561,8 @@ function compileblock(block, inheritedBriefcase, constants) {
     var check = analyzer(block);
     if (!check.valid) throw new Error('[compileblock] Analysis failed: ' + check.errors.join(', '));
   }
-  return compiler(block, block.id, block.signature || { inputs: [], outputs: {} }, inheritedBriefcase);
+  var blockfn = compiler(block, block.id, block.signature || { inputs: [], outputs: {} }, inheritedBriefcase);
+  return blockfn;
 }
 
 function compileElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
@@ -616,7 +650,7 @@ function defaultRunner(id, children, startIndex, pipelineId, stagePath) {
   return async function(env) {
     var stageExecutor = async function(execEnv) {
       await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
-      var result = await executeChildren(children.slice(startIndex), execEnv, id);
+      var result = await executeChildren(children.slice(startIndex), execEnv, id, pipelineId, stagePath);
       return result.env || execEnv;
     };
     var submitted = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: stageExecutor, env: env });
@@ -635,7 +669,7 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath) {
       function runLoop(iteration, currentEnv) {
         if (!currentEnv.rngactive) return Promise.resolve(currentEnv);
         var childSlice = iteration === 0 ? children.slice(startIndex) : children;
-        return executeChildren(childSlice, currentEnv, id).then(function(result) {
+        return executeChildren(childSlice, currentEnv, id, pipelineId, stagePath).then(function(result) {
           var newEnv = result.env || currentEnv;
           var fnargs = [controlprops].concat(inputaccessors.map(function(fn) { return fn(newEnv); }));
           return control.fn.apply(null, fnargs).then(function(shouldContinue) {
@@ -663,7 +697,7 @@ function triggerRunner(id, control, children, stage, pipelineId, startIndex, res
 
     var runTrigger = async function(execEnv, slice) {
       await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
-      var result = await executeChildren(slice, execEnv, id);
+      var result = await executeChildren(slice, execEnv, id, pipelineId, stagePath);
       return result.env || execEnv;
     };
 
@@ -693,7 +727,7 @@ function deepcloneevent(e) {
   return c;
 }
 
-function executeChildren(children, env, stageid) {
+function executeChildren(children, env, stageid, pipelineId, stagePath) {
   function collect(index, outputs) {
     if (index >= children.length) {
       if (env.stack && env.stack.agentspawned === stageid) {
@@ -702,6 +736,17 @@ function executeChildren(children, env, stageid) {
       return spawnAll(outputs, env, stageid);
     }
     var child = children[index];
+    if (child && !child.origin) {
+      child.origin = {
+        pipelineId: pipelineId || null,
+        stageId: stageid,
+        stagePath: stagePath || [],
+        elementId: child.id || null,
+        childIndex: index,
+        loopIteration: env._loopIteration || 0,
+        triggerIndex: index
+      };
+    }
     return child(env).then(function(result) {
       var nextOutputs = outputs;
       if (child.blockmeta && child.blockmeta.type === 'spawn' && result && result.dna) {
@@ -849,8 +894,13 @@ function createpipeline(stages, sinks, onprogress, options) {
     var env = agent.env;
     if (!env || typeof env !== 'object') throw new Error('[PIPELINE] agent.env is required');
     env.agentid = agent.id;
+    env.pipelineid = pipelineId;
     env._rerunStages = function() { return runTrampoline(env, stages, pipelineId); };
-    return runTrampoline(env, stages, pipelineId);
+    enqueueHypervisorSetEnv(env).catch(function(err) { console.warn('[BLOCKCOMPILER] hypervisor env save failed:', err); });
+    return runTrampoline(env, stages, pipelineId).then(function(finalEnv) {
+      enqueueHypervisorUnregisterPipeline(pipelineId).catch(function(err) { console.warn('[BLOCKCOMPILER] hypervisor unregister failed:', err); });
+      return finalEnv;
+    });
   };
 }
 
@@ -898,9 +948,8 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   var logger = createBlockCompilerLogger();
 
   await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(function(err) { console.warn('[compilepipeline] pipeline loaded failed:', err); });
-
-  var preparedDna = prepareDnaForSerialization(pipeline, {}, pipelineBriefcase);
-  await enqueueExecutionRegisterPipeline(pipelineId, preparedDna, {}).catch(function(err) { console.warn('[compilepipeline] register pipeline failed:', err); });
+  await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { console.warn('[compilepipeline] hypervisor register failed:', err); });
+  await enqueueExecutionRegisterPipeline(pipelineId, null, {}).catch(function(err) { console.warn('[compilepipeline] register pipeline failed:', err); });
 
   var spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
   var compiled = compileElements(pipeline.elements, pipelineId, null, [], pipelineBriefcase, compilerConstants, dnaConstants, triggerRegistry);
@@ -909,9 +958,32 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap };
 }
 
+function restorePipelineState(pipelineDefinition, pipelineId) {
+  return enqueueHypervisorGetEnv().then(function(savedEnv) {
+    var env = savedEnv && savedEnv.pipelineId === pipelineId ? savedEnv : {};
+    if (!env || Object.keys(env).length === 0) {
+      env = { pipelineid: pipelineId };
+    }
+    enqueueHypervisorGetActivePipelines().then(function(active) {
+      if (active.indexOf(pipelineId) === -1) {
+        enqueueHypervisorRegisterPipeline(pipelineId).catch(function() {});
+      }
+    });
+    return compilepipeline(pipelineDefinition, null, [], pipelineId, { inheritedBriefcase: env.briefcase || {} }).then(function(compiled) {
+      return compiled.pipeline({ id: pipelineId, env: env });
+    });
+  });
+}
+
+function attachPipelineListeners(pipelineId, triggerRegistry) {
+  console.log('[BLOCKCOMPILER] listeners attached for pipeline:', pipelineId, Object.keys(triggerRegistry || {}));
+}
+
 export {
   compilepipeline,
   createBlockCompilerConstants,
   createBlockAnalyzers,
-  createBlockCompilers
+  createBlockCompilers,
+  restorePipelineState,
+  attachPipelineListeners
 };

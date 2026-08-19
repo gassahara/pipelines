@@ -226,6 +226,96 @@ function scanNumber(source, start) {
   return { value: value, end: i };
 }
 
+function containsIdentifier(src, target) {
+  var i = 0;
+  var len = src.length;
+  while (i < len) {
+    if (isIdentifierStart(src[i])) {
+      var start = i;
+      i++;
+      while (i < len && isIdentifierPart(src[i])) i++;
+      var word = src.slice(start, i);
+      if (word === target) return true;
+    } else {
+      i++;
+    }
+  }
+  return false;
+}
+
+function findMatchingParen(src, openIndex) {
+  var depth = 0;
+  var i = openIndex;
+  while (i < src.length) {
+    var ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      var quote = ch;
+      i++;
+      while (i < src.length) {
+        if (src[i] === '\\') { i += 2; continue; }
+        if (src[i] === quote) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+    i++;
+  }
+  return -1;
+}
+
+function findBodyBrace(src, startIndex) {
+  var i = startIndex;
+  var depthParen = 0;
+  var depthBrace = 0;
+  var depthBracket = 0;
+  while (i < src.length) {
+    var ch = src[i];
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      var quote = ch;
+      i++;
+      while (i < src.length) {
+        if (src[i] === '\\') { i += 2; continue; }
+        if (src[i] === quote) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === '/' && i + 1 < src.length && src[i + 1] === '/') {
+      i += 2;
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (ch === '/' && i + 1 < src.length && src[i + 1] === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+
+    if (ch === '(') depthParen++;
+    else if (ch === ')') depthParen--;
+    else if (ch === '[') depthBracket++;
+    else if (ch === ']') depthBracket--;
+    else if (ch === '{') {
+      if (depthParen === 0 && depthBracket === 0) return i;
+      depthBrace++;
+    }
+    else if (ch === '}') {
+      if (depthBrace > 0) depthBrace--;
+    }
+
+    i++;
+  }
+  return -1;
+}
+
 function makeToken(type, value, kind, extra) {
   var token = { type: type, value: value };
   if (kind !== undefined) token.kind = kind;
@@ -480,13 +570,7 @@ function findKind(kindKey) {
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Buffer parsers — all pure, used by KINDS commit/reject
-// ---------------------------------------------------------------------------
-
 function parsePrimaryFromBuffer(state, tokens) {
-  // Re-parse buffered tokens starting at state.index using primary parser.
-  // This is a safe fallback: advance through the buffered tokens, recording free identifiers.
   var next = state;
   for (var i = 0; i < tokens.length; i++) {
     var t = tokens[i];
@@ -503,7 +587,6 @@ function parseBlockFromBuffer(state, tokens) {
   for (var i = 1; i < tokens.length - 1; i++) {
     var t = tokens[i];
     if (t.type === 'Identifier') {
-      // In block parsing, identifiers are usually statements; this fallback records free vars.
       next = addFreeVar(next, t.value);
     }
   }
@@ -519,7 +602,7 @@ function parseObjectLiteralFromBuffer(state, tokens) {
     if (t.type === 'Identifier') {
       var ahead = tokens[i + 1];
       if (ahead && ahead.type === 'Punctuator' && ahead.value === ':') {
-        i += 2; // skip key and colon
+        i += 2;
         continue;
       }
       next = addFreeVar(next, t.value);
@@ -542,7 +625,6 @@ function parseArrayLiteralFromBuffer(state, tokens) {
 }
 
 function parseJsonFromBuffer(state, tokens) {
-  // JSON-like structures treat string keys as not free, but any identifier-valued entries are free.
   var next = state;
   for (var i = 1; i < tokens.length - 1; i++) {
     var t = tokens[i];
@@ -585,7 +667,6 @@ function parseOptionalAccessFromBuffer(state, tokens) {
   for (var i = 1; i < tokens.length; i++) {
     var t = tokens[i];
     if (t.type === 'Identifier') {
-      // property names are not free; only computed expressions would be parsed separately.
       continue;
     }
   }
@@ -664,10 +745,6 @@ function parseMapConstructFromBuffer(state, tokens) {
   next = advance(next);
   return next;
 }
-
-// ---------------------------------------------------------------------------
-// KINDS declarative registry
-// ---------------------------------------------------------------------------
 
 var KINDS = [
   {
@@ -1601,5 +1678,10 @@ function detectFreeIdentifiers(source) {
 }
 
 export {
-  detectFreeIdentifiers
+  detectFreeIdentifiers,
+  isIdentifierStart,
+  isIdentifierPart,
+  containsIdentifier,
+  findMatchingParen,
+  findBodyBrace
 };

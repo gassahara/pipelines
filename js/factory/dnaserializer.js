@@ -1,107 +1,16 @@
-import { detectFreeIdentifiers } from './freevarparser.js';
+import {
+  detectFreeIdentifiers,
+  isIdentifierStart,
+  isIdentifierPart,
+  containsIdentifier,
+  findMatchingParen,
+  findBodyBrace
+} from './freevarparser.js';
 
 function createDnaSerializerConstants() {
   return Object.freeze({
     DEFAULT_FN_KEYS: Object.freeze(['length', 'name', 'prototype'])
   });
-}
-
-function isIdentifierStart(ch) {
-  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_' || ch === '$';
-}
-
-function isIdentifierPart(ch) {
-  return isIdentifierStart(ch) || (ch >= '0' && ch <= '9');
-}
-
-function containsIdentifier(src, target) {
-  var i = 0;
-  var len = src.length;
-  while (i < len) {
-    if (isIdentifierStart(src[i])) {
-      var start = i;
-      i++;
-      while (i < len && isIdentifierPart(src[i])) i++;
-      var word = src.slice(start, i);
-      if (word === target) return true;
-    } else {
-      i++;
-    }
-  }
-  return false;
-}
-
-function findMatchingParen(src, openIndex) {
-  var depth = 0;
-  var i = openIndex;
-  while (i < src.length) {
-    var ch = src[i];
-    if (ch === '"' || ch === "'" || ch === '`') {
-      var quote = ch;
-      i++;
-      while (i < src.length) {
-        if (src[i] === '\\') { i += 2; continue; }
-        if (src[i] === quote) { i++; break; }
-        i++;
-      }
-      continue;
-    }
-    if (ch === '(') depth++;
-    else if (ch === ')') {
-      depth--;
-      if (depth === 0) return i;
-    }
-    i++;
-  }
-  return -1;
-}
-
-function findBodyBrace(src, startIndex) {
-  var i = startIndex;
-  var depthParen = 0;
-  var depthBrace = 0;
-  var depthBracket = 0;
-  while (i < src.length) {
-    var ch = src[i];
-
-    if (ch === '"' || ch === "'" || ch === '`') {
-      var quote = ch;
-      i++;
-      while (i < src.length) {
-        if (src[i] === '\\') { i += 2; continue; }
-        if (src[i] === quote) { i++; break; }
-        i++;
-      }
-      continue;
-    }
-
-    if (ch === '/' && i + 1 < src.length && src[i + 1] === '/') {
-      i += 2;
-      while (i < src.length && src[i] !== '\n') i++;
-      continue;
-    }
-    if (ch === '/' && i + 1 < src.length && src[i + 1] === '*') {
-      i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
-      i += 2;
-      continue;
-    }
-
-    if (ch === '(') depthParen++;
-    else if (ch === ')') depthParen--;
-    else if (ch === '[') depthBracket++;
-    else if (ch === ']') depthBracket--;
-    else if (ch === '{') {
-      if (depthParen === 0 && depthBracket === 0) return i;
-      depthBrace++;
-    }
-    else if (ch === '}') {
-      if (depthBrace > 0) depthBrace--;
-    }
-
-    i++;
-  }
-  return -1;
 }
 
 function rewriteFunctionSource(source, destructure) {
@@ -147,27 +56,31 @@ function rewriteFunctionSource(source, destructure) {
   }
 
   if (source[i] === '(') {
-    var openParen = i;
-    var closeParen = findMatchingParen(source, openParen);
-    if (closeParen === -1) throw new Error('[dnaserializer] unmatched paren');
-    var params = source.slice(openParen + 1, closeParen).trim();
-    var newParams = params.length === 0 ? '__deps' : params + ', __deps';
-    var newSource = source.slice(0, openParen + 1) + newParams + source.slice(closeParen);
+    var openParen2 = i;
+    var closeParen2 = findMatchingParen(source, openParen2);
+    if (closeParen2 === -1) throw new Error('[dnaserializer] unmatched paren');
+    var params2 = source.slice(openParen2 + 1, closeParen2).trim();
+    var newParams2 = params2.length === 0 ? '__deps' : params2 + ', __deps';
+    var newSource2 = source.slice(0, openParen2 + 1) + newParams2 + source.slice(closeParen2);
 
-    var newCloseParen = findMatchingParen(newSource, openParen);
-    if (newCloseParen === -1) throw new Error('[dnaserializer] unmatched paren after injection');
+    var newCloseParen2 = findMatchingParen(newSource2, openParen2);
+    if (newCloseParen2 === -1) throw new Error('[dnaserializer] unmatched paren after injection');
 
-    var arrowIndex = newSource.indexOf('=>', newCloseParen + 1);
+    var arrowIndex = newSource2.indexOf('=>', newCloseParen2 + 1);
     if (arrowIndex === -1) throw new Error('[dnaserializer] arrow not found');
 
     var afterArrow = arrowIndex + 2;
-    while (afterArrow < newSource.length && newSource[afterArrow] === ' ') afterArrow++;
-    if (newSource[afterArrow] !== '{') {
+    while (afterArrow < newSource2.length && newSource2[afterArrow] === ' ') afterArrow++;
+    if (newSource2[afterArrow] !== '{') {
+      if (destructure) {
+        var exprBody = newSource2.slice(afterArrow);
+        return newSource2.slice(0, afterArrow) + '{' + destructure + '\n    return ' + exprBody + ';\n  }';
+      }
       return source;
     }
 
-    var bodyBrace = afterArrow;
-    return newSource.slice(0, bodyBrace + 1) + destructure + newSource.slice(bodyBrace + 1);
+    var bodyBrace2 = afterArrow;
+    return newSource2.slice(0, bodyBrace2 + 1) + destructure + newSource2.slice(bodyBrace2 + 1);
   }
 
   if (isIdentifierStart(source[i])) {
@@ -177,20 +90,26 @@ function rewriteFunctionSource(source, destructure) {
     while (i < len && source[i] === ' ') i++;
     if (source.slice(i, i + 2) !== '=>') return source;
 
-    var newParams = '(' + ident + ', __deps) =>';
-    var beforeArrow = source.slice(0, identStart);
-    var afterIdent = source.slice(i);
-    var newSource = beforeArrow + newParams + afterIdent;
+    var newParams3 = '(' + ident + ', __deps) =>';
+    var beforeArrow3 = source.slice(0, identStart);
+    var afterIdent3 = source.slice(i);
+    var newSource3 = beforeArrow3 + newParams3 + afterIdent3;
 
-    var arrowPos = newSource.indexOf('=>');
-    if (arrowPos === -1) return source;
+    var arrowPos3 = newSource3.indexOf('=>');
+    if (arrowPos3 === -1) return source;
 
-    var afterArrow = arrowPos + 2;
-    while (afterArrow < newSource.length && newSource[afterArrow] === ' ') afterArrow++;
-    if (newSource[afterArrow] !== '{') return source;
+    var afterArrow3 = arrowPos3 + 2;
+    while (afterArrow3 < newSource3.length && newSource3[afterArrow3] === ' ') afterArrow3++;
+    if (newSource3[afterArrow3] !== '{') {
+      if (destructure) {
+        var exprBody3 = newSource3.slice(afterArrow3);
+        return newSource3.slice(0, afterArrow3) + '{' + destructure + '\n    return ' + exprBody3 + ';\n  }';
+      }
+      return source;
+    }
 
-    var bodyBrace = afterArrow;
-    return newSource.slice(0, bodyBrace + 1) + destructure + newSource.slice(bodyBrace + 1);
+    var bodyBrace3 = afterArrow3;
+    return newSource3.slice(0, bodyBrace3 + 1) + destructure + newSource3.slice(bodyBrace3 + 1);
   }
 
   return source;
@@ -296,6 +215,73 @@ function prepareFunctionForSerialization(fn, env, briefcase) {
   return { __fn__: true, source: rewritten, deps: deps };
 }
 
+function safeLiteral(value) {
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'function') return 'null';
+  try {
+    var json = JSON.stringify(value);
+    return json === undefined ? 'undefined' : json;
+  } catch (e) {
+    return 'null';
+  }
+}
+
+function serializeSelfContainedClosure(fn, actualArgs, capturedEnv) {
+  if (typeof fn !== 'function') return null;
+
+  var src = fn.toString();
+  if (src.indexOf('[native code]') !== -1) {
+    throw new Error('[serializeSelfContainedClosure] native function not serializable');
+  }
+
+  var freeIds = detectFreeIdentifiers(src);
+  var bindings = {};
+  var order = [];
+
+  freeIds.forEach(function(id) {
+    if (capturedEnv && capturedEnv[id] !== undefined) {
+      bindings[id] = capturedEnv[id];
+      order.push(id);
+    }
+  });
+
+  if (actualArgs) {
+    actualArgs.forEach(function(arg, i) {
+      var name = '__arg' + i;
+      bindings[name] = arg;
+      order.push(name);
+    });
+  }
+
+  var bindingLines = order.map(function(name) {
+    return '  const ' + name + ' = ' + safeLiteral(bindings[name]) + ';';
+  }).join('\n');
+
+  var openParen = src.indexOf('(');
+  var closeParen = openParen === -1 ? -1 : findMatchingParen(src, openParen);
+  if (openParen === -1 || closeParen === -1) {
+    return { __fn__: true, source: '(' + src + ')' };
+  }
+
+  var bodyBrace = findBodyBrace(src, closeParen + 1);
+  if (bodyBrace === -1) {
+    var afterArrowMaybe = closeParen + 1;
+    var arrowIdx = src.indexOf('=>', afterArrowMaybe);
+    if (arrowIdx === -1) return { __fn__: true, source: '(' + src + ')' };
+    var afterArrow = arrowIdx + 2;
+    while (afterArrow < src.length && src[afterArrow] === ' ') afterArrow++;
+    var expr = src.slice(afterArrow);
+    var zeroArgSource = '(function() {\n' + bindingLines + '\n  return (' + expr + ');\n})';
+    return { __fn__: true, source: zeroArgSource };
+  }
+
+  var bodyStart = bodyBrace + 1;
+  var bodyEnd = src.lastIndexOf('}');
+  var innerBody = src.slice(bodyStart, bodyEnd);
+  var zeroArgSource = 'function() {\n' + (bindingLines ? bindingLines + '\n' : '') + innerBody + '\n}';
+  return { __fn__: true, source: zeroArgSource };
+}
+
 function prepareDnaForSerialization(node, env, briefcase) {
   if (typeof node === 'function') {
     return prepareFunctionForSerialization(node, env, briefcase);
@@ -319,5 +305,5 @@ export {
   validaterevivableobject,
   resolveFromBriefcase,
   prepareFunctionForSerialization,
-  prepareDnaForSerialization
+  serializeSelfContainedClosure
 };

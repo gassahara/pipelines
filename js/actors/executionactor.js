@@ -41,7 +41,7 @@ MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PIPELINE_LOADED] = { pipelineid: 'string
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STAGE_STATE] = { pipelineid: 'string', stageid: 'string', state: 'object', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.ENV_UPDATED] = { pipelineid: 'string', env: 'object', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_STATUS] = { pipelineid: 'string?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?', programRef: 'string?', elementId: 'string?', origin: 'object?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_STAGE] = { pipelineid: 'string', path: 'array', stageid: 'string', stageExecutor: 'function', env: 'object', parentTaskid: 'string?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.AWAIT_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?', resolve: 'function?', reject: 'function?' };
@@ -99,7 +99,8 @@ function createInitialExecutionWorldmap() {
     pipelines: {},
     tasks: {},
     stageStatuses: {},
-    htmlSnapshot: null
+    htmlSnapshot: null,
+    taskCounter: 0
   };
 }
 
@@ -110,7 +111,7 @@ function persistExecutionWorldmap(state) {
 }
 
 function nextTaskId(state) {
-  state.taskCounter += 1;
+  state.taskCounter = (state.taskCounter || 0) + 1;
   return 'task_' + Date.now() + '_' + state.taskCounter + '_' + Math.random().toString(36).slice(2, 8);
 }
 
@@ -127,7 +128,10 @@ function makeTask(state, descriptor) {
     status: 'WAITING',
     resolveTask: null,
     rejectTask: null,
-    promise: null
+    promise: null,
+    serialized: descriptor.serialized || null,
+    programRef: descriptor.programRef || null,
+    origin: descriptor.origin || null
   };
   task.promise = new Promise(function(resolve, reject) {
     task.resolveTask = resolve;
@@ -154,13 +158,11 @@ function stopTask(state, taskid) {
 function ensurePipeline(state, pipelineid) {
   if (!state.pipelines[pipelineid]) {
     state.pipelines[pipelineid] = {
-      status: 'running', env: {}, dna: null, stageStatuses: {}
+      status: 'running', env: {}, dna: null, stageStatuses: {}, usesElementSnapshots: false
     };
   }
   return state.pipelines[pipelineid];
 }
-
-// ==================== ACTOR BEHAVIOR ====================
 
 var executionbehavior = function(state, message) {
   var readOnly = [
@@ -172,7 +174,7 @@ var executionbehavior = function(state, message) {
   ];
 
   if (readOnly.indexOf(message.type) === -1) {
-    persistExecutionWorldmap(state); // PERSIST BEFORE action
+    persistExecutionWorldmap(state);
   }
 
   var nextState = state;
@@ -254,7 +256,10 @@ var executionbehavior = function(state, message) {
         kind: 'element',
         pipelineid: message.pipelineid,
         stageid: message.path && message.path.length > 1 ? message.path[message.path.length - 2] : null,
-        elementid: message.elementid
+        elementid: message.elementid,
+        serialized: message.serialized || null,
+        programRef: message.programRef || null,
+        origin: message.origin || null
       });
       runElementTask(task.taskid, message);
       resolveMessage(message, { taskid: task.taskid });
@@ -289,14 +294,14 @@ var executionbehavior = function(state, message) {
         if (message.stageid && t.stageid !== message.stageid) return;
         if (message.elementid && t.elementid !== message.elementid) return;
         if (message.kind && t.kind !== message.kind) return;
-        result.push({ taskid: t.taskid, kind: t.kind, pipelineid: t.pipelineid, stageid: t.stageid, elementid: t.elementid, parentTaskid: t.parentTaskid, status: t.status });
+        result.push({ taskid: t.taskid, kind: t.kind, pipelineid: t.pipelineid, stageid: t.stageid, elementid: t.elementid, parentTaskid: t.parentTaskid, status: t.status, origin: t.origin, programRef: t.programRef, serialized: t.serialized });
       });
       resolveMessage(message, result);
       break;
     }
     case EXECUTIONMESSAGETYPES.GET_TASK_STATUS: {
       var t2 = nextState.tasks[message.taskid];
-      resolveMessage(message, t2 ? { taskid: t2.taskid, kind: t2.kind, pipelineid: t2.pipelineid, stageid: t2.stageid, elementid: t2.elementid, parentTaskid: t2.parentTaskid, status: t2.status } : null);
+      resolveMessage(message, t2 ? { taskid: t2.taskid, kind: t2.kind, pipelineid: t2.pipelineid, stageid: t2.stageid, elementid: t2.elementid, parentTaskid: t2.parentTaskid, status: t2.status, origin: t2.origin, programRef: t2.programRef, serialized: t2.serialized } : null);
       break;
     }
     case EXECUTIONMESSAGETYPES.CANCEL_TASK: {
@@ -318,7 +323,6 @@ var executionbehavior = function(state, message) {
     case EXECUTIONMESSAGETYPES.CCC_ABORT:
     case EXECUTIONMESSAGETYPES.CCC_CONTINUE:
     case EXECUTIONMESSAGETYPES.CCC_RETRY: {
-      // CCC behavior consolidated in prior analysis; minimal here.
       resolveMessage(message, true);
       break;
     }
@@ -364,7 +368,7 @@ var executionbehavior = function(state, message) {
     }
     case EXECUTIONMESSAGETYPES.REGISTER_PIPELINE: {
       var p10 = ensurePipeline(nextState, message.pipelineid);
-      if (message.dna) p10.dna = message.dna;
+      p10.usesElementSnapshots = true;
       if (message.env) p10.env = sanitizeForState(message.env);
       resolveMessage(message, true);
       break;
@@ -376,13 +380,11 @@ var executionbehavior = function(state, message) {
   }
 
   if (readOnly.indexOf(message.type) === -1) {
-    persistExecutionWorldmap(nextState); // PERSIST AFTER action
+    persistExecutionWorldmap(nextState);
   }
 
   return nextState;
 };
-
-// ==================== ACTOR CREATION ====================
 
 async function loadInitialState() {
   try {
@@ -423,19 +425,52 @@ async function runElementTask(taskid, descriptor) {
       outputs: descriptor.signature && descriptor.signature.outputs ? descriptor.signature.outputs : {},
       properties: descriptor.properties || {}
     };
-    var result = await descriptor.executor(executionContext);
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: result || {} }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+
+    var result;
+    if (descriptor.programRef && descriptor.programSource) {
+      try {
+        var program = new Function('return ' + descriptor.programSource)();
+        if (program && typeof program[descriptor.elementid] === 'function') {
+          result = await program[descriptor.elementid]();
+        } else {
+          result = await descriptor.executor(executionContext);
+        }
+      } catch (err) {
+        console.warn('[EXECUTIONACTOR] program restoration failed:', err);
+        result = await descriptor.executor(executionContext);
+      }
+    } else {
+      result = await descriptor.executor(executionContext);
+    }
+
+    try {
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: result || {} });
+    } catch (err) {
+      console.warn('[EXECUTIONACTOR] task settled send failed:', err);
+    }
   } catch (err) {
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+    try {
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err });
+    } catch (sendErr) {
+      console.warn('[EXECUTIONACTOR] task settled send failed:', sendErr);
+    }
   }
 }
 
 async function runStageTask(taskid, descriptor) {
   try {
     await descriptor.stageExecutor(descriptor.env);
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+    try {
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true });
+    } catch (err) {
+      console.warn('[EXECUTIONACTOR] task settled send failed:', err);
+    }
   } catch (err) {
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+    try {
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err });
+    } catch (sendErr) {
+      console.warn('[EXECUTIONACTOR] task settled send failed:', sendErr);
+    }
   }
 }
 
@@ -445,9 +480,17 @@ async function runSpawnTask(taskid, descriptor) {
       id: descriptor.childPipelineId,
       env: descriptor.childEnv || {}
     });
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+    try {
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true });
+    } catch (err) {
+      console.warn('[EXECUTIONACTOR] task settled send failed:', err);
+    }
   } catch (err) {
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err }).catch(function(e) { console.warn('[EXECUTIONACTOR] task settled send failed:', e); });
+    try {
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err });
+    } catch (sendErr) {
+      console.warn('[EXECUTIONACTOR] task settled send failed:', sendErr);
+    }
   }
 }
 
