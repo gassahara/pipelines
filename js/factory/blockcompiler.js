@@ -14,7 +14,7 @@ import {
   enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout,
   enqueusetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
   DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport,
-  enqueuegetscreen, enqueuematchmedia
+  enqueuegetscreen, enqueuematchmedia, enqueueRenderRestoreBodyHtml
 } from '../actors/renderactor.js';
 import { createTriggerRegistry, registerTrigger, revalidateAll } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
@@ -36,7 +36,9 @@ import {
   enqueueHypervisorGetRoute,
   enqueueHypervisorGetActivePipelines,
   enqueueHypervisorSetProgram,
-  enqueueHypervisorGetProgram
+  enqueueHypervisorGetProgram,
+  enqueueHypervisorGetRenderHtml,
+  enqueueHypervisorSetRenderHtml
 } from '../actors/hypervisoractor.js';
 import { consolidateClosures } from './closureconsolidator.js';
 
@@ -896,12 +898,64 @@ function createpipeline(stages, sinks, onprogress, options) {
     env.agentid = agent.id;
     env.pipelineid = pipelineId;
     env._rerunStages = function() { return runTrampoline(env, stages, pipelineId); };
-    enqueueHypervisorSetEnv(env).catch(function(err) { console.warn('[BLOCKCOMPILER] hypervisor env save failed:', err); });
+    enqueueHypervisorSetEnv(pipelineId, env).catch(function(err) { console.warn('[BLOCKCOMPILER] hypervisor env save failed:', err); });
     return runTrampoline(env, stages, pipelineId).then(function(finalEnv) {
       enqueueHypervisorUnregisterPipeline(pipelineId).catch(function(err) { console.warn('[BLOCKCOMPILER] hypervisor unregister failed:', err); });
       return finalEnv;
     });
   };
+}
+
+function buildResumeFromRoute(route) {
+  if (!route) return null;
+  return {
+    path: Array.isArray(route.path) ? route.path : (route.stagePath || []),
+    elementId: route.elementId || null,
+    childIndex: typeof route.childIndex === 'number' ? route.childIndex : 0,
+    loopIteration: typeof route.loopIteration === 'number' ? route.loopIteration : 0,
+    triggerIndex: typeof route.triggerIndex === 'number' ? route.triggerIndex : 0
+  };
+}
+
+async function restorePipelineState(pipelineDefinition, pipelineId) {
+  var active = await enqueueHypervisorGetActivePipelines().catch(function() { return []; });
+  if (active.indexOf(pipelineId) === -1) {
+    var freshCompiled = await compilepipeline(pipelineDefinition, null, [], pipelineId);
+    return freshCompiled.pipeline({ id: pipelineId, env: { pipelineid: pipelineId } });
+  }
+
+  var env = await enqueueHypervisorGetEnv(pipelineId).catch(function() { return null; });
+  if (!env || typeof env !== 'object') env = { pipelineid: pipelineId };
+
+  var renderHtml = await enqueueHypervisorGetRenderHtml().catch(function() { return ''; });
+  if (renderHtml) {
+    await enqueueRenderRestoreBodyHtml(renderHtml).catch(function(err) {
+      console.warn('[BLOCKCOMPILER] render restore failed:', err);
+    });
+  }
+
+  await enqueueExecutionRecover().catch(function(err) {
+    console.warn('[BLOCKCOMPILER] execution recover failed:', err);
+  });
+
+  var route = await enqueueHypervisorGetRoute('pipeline:' + pipelineId).catch(function() { return null; });
+  var resumeFrom = buildResumeFromRoute(route);
+
+  var compiled = await compilepipeline(
+    pipelineDefinition,
+    null,
+    [],
+    pipelineId,
+    { inheritedBriefcase: env.briefcase || {}, resumeFrom: resumeFrom }
+  );
+
+  attachPipelineListeners(pipelineId, compiled.triggerRegistry || null);
+
+  return compiled.pipeline({ id: pipelineId, env: env, resumeFrom: resumeFrom });
+}
+
+function attachPipelineListeners(pipelineId, triggerRegistry) {
+  console.log('[BLOCKCOMPILER] listeners attached for pipeline:', pipelineId, Object.keys(triggerRegistry || {}));
 }
 
 async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, options) {
@@ -952,31 +1006,11 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   await enqueueExecutionRegisterPipeline(pipelineId, null, {}).catch(function(err) { console.warn('[compilepipeline] register pipeline failed:', err); });
 
   var spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
-  var compiled = compileElements(pipeline.elements, pipelineId, null, [], pipelineBriefcase, compilerConstants, dnaConstants, triggerRegistry);
+  var resumeFrom = options.resumeFrom || null;
+  var compiled = compileElements(pipeline.elements, pipelineId, resumeFrom, [], pipelineBriefcase, compilerConstants, dnaConstants, triggerRegistry);
   var compiledpipeline = createpipeline(compiled, sinks, undefined, { pipelineId: pipelineId });
 
-  return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap };
-}
-
-function restorePipelineState(pipelineDefinition, pipelineId) {
-  return enqueueHypervisorGetEnv().then(function(savedEnv) {
-    var env = savedEnv && savedEnv.pipelineId === pipelineId ? savedEnv : {};
-    if (!env || Object.keys(env).length === 0) {
-      env = { pipelineid: pipelineId };
-    }
-    enqueueHypervisorGetActivePipelines().then(function(active) {
-      if (active.indexOf(pipelineId) === -1) {
-        enqueueHypervisorRegisterPipeline(pipelineId).catch(function() {});
-      }
-    });
-    return compilepipeline(pipelineDefinition, null, [], pipelineId, { inheritedBriefcase: env.briefcase || {} }).then(function(compiled) {
-      return compiled.pipeline({ id: pipelineId, env: env });
-    });
-  });
-}
-
-function attachPipelineListeners(pipelineId, triggerRegistry) {
-  console.log('[BLOCKCOMPILER] listeners attached for pipeline:', pipelineId, Object.keys(triggerRegistry || {}));
+  return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap, triggerRegistry: triggerRegistry };
 }
 
 export {
