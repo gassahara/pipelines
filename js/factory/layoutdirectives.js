@@ -33,26 +33,16 @@ var LayoutDirectiveCore = {
     });
   },
 
-  // No self-reference; no change.
   parseDirectives: function(str) {
     if (!str) return [];
 
-    return str.split(';').map(function(s) { return s.trim(); }).filter(Boolean).map(function(part) {
-      var breakpoint = null;
+    var parts = str.split(';').map(function(s) { return s.trim(); }).filter(Boolean);
 
-      if (part.indexOf('@') === 0) {
-        var colonIdx = part.indexOf(':');
-        if (colonIdx > 1) {
-          breakpoint = part.substring(1, colonIdx);
-          part = part.substring(colonIdx + 1).trim();
-        }
-      }
-
-      var colonIdx2 = part.indexOf(':');
-      var type = colonIdx2 > -1 ? part.substring(0, colonIdx2).trim() : part.trim();
-      var rest = colonIdx2 > -1 ? part.substring(colonIdx2 + 1).trim() : '';
+    function parsePart(part, breakpoint) {
+      var colonIdx = part.indexOf(':');
+      var type = colonIdx > -1 ? part.substring(0, colonIdx).trim() : part.trim();
+      var rest = colonIdx > -1 ? part.substring(colonIdx + 1).trim() : '';
       var params = rest ? rest.split(',').map(function(p) { return p.trim(); }) : [];
-
       var directive = { type: type };
       if (breakpoint) directive.breakpoint = breakpoint;
 
@@ -66,6 +56,10 @@ var LayoutDirectiveCore = {
           if (params[2]) directive.unit = params[2];
           break;
         case 'between': {
+          if (!params[0] || params[0].indexOf('and') === -1) {
+            directive.invalid = true;
+            break;
+          }
           var targets = params[0].split('and').map(function(s) { return s.trim(); });
           directive.target1 = targets[0];
           directive.target2 = targets[1];
@@ -110,13 +104,29 @@ var LayoutDirectiveCore = {
       }
 
       return directive;
-    });
+    }
+
+    function parseParts(index, acc) {
+      if (index >= parts.length) return acc.filter(function(d) { return !d.invalid; });
+      var part = parts[index];
+      var breakpoint = null;
+
+      if (part.indexOf('@') === 0) {
+        var colonIdx = part.indexOf(':');
+        if (colonIdx > 1) {
+          breakpoint = part.substring(1, colonIdx);
+          part = part.substring(colonIdx + 1).trim();
+        }
+      }
+
+      return parseParts(index + 1, acc.concat([parsePart(part, breakpoint)]));
+    }
+
+    return parseParts(0, []);
   },
 
-  // UPDATED: added LayoutDirectiveCore as parameter because it calls LayoutDirectiveCore.has and LayoutDirectiveCore.createLayoutConstants
   generateCSSFromDirectives: function(elementId, directives, breakpointMap, LayoutDirectiveCore) {
     if (breakpointMap === undefined) breakpointMap = {};
-
     var constants = LayoutDirectiveCore.createLayoutConstants();
     var POSITION_MAP = constants.POSITION_MAP;
     var CORNER_MAP = constants.CORNER_MAP;
@@ -155,11 +165,11 @@ var LayoutDirectiveCore = {
             break;
           case 'position':
             if (POSITION_MAP[d.value]) {
-              for (var k in POSITION_MAP[d.value]) {
+              Object.keys(POSITION_MAP[d.value]).forEach(function(k) {
                 if (LayoutDirectiveCore.has(POSITION_MAP[d.value], k)) {
                   acc[k] = POSITION_MAP[d.value][k];
                 }
-              }
+              });
             }
             break;
           case 'anchor':
@@ -194,11 +204,11 @@ var LayoutDirectiveCore = {
             break;
           case 'screen-corner':
             if (CORNER_MAP[d.corner]) {
-              for (var k2 in CORNER_MAP[d.corner]) {
+              Object.keys(CORNER_MAP[d.corner]).forEach(function(k2) {
                 if (LayoutDirectiveCore.has(CORNER_MAP[d.corner], k2)) {
                   acc[k2] = CORNER_MAP[d.corner][k2];
                 }
-              }
+              });
             }
             break;
           default:
@@ -212,7 +222,6 @@ var LayoutDirectiveCore = {
     return { inline: inlineStyles };
   },
 
-  // UPDATED: added LayoutDirectiveCore as parameter because it calls LayoutDirectiveCore.parseDirectives and LayoutDirectiveCore.generateCSSFromDirectives
   applyDirectiveToSelector: function(html, selector, directiveString, LayoutDirectiveCore) {
     var parser = new DOMParser();
     var doc = parser.parseFromString(html, 'text/html');
@@ -223,11 +232,11 @@ var LayoutDirectiveCore = {
       var id = el.id || '_gen_id_' + idx;
       var result = LayoutDirectiveCore.generateCSSFromDirectives(id, directives, undefined, LayoutDirectiveCore);
 
-      for (var prop in result.inline) {
+      Object.keys(result.inline).forEach(function(prop) {
         if (LayoutDirectiveCore.has(result.inline, prop)) {
           el.style[prop] = result.inline[prop];
         }
-      }
+      });
     });
 
     return doc.body.innerHTML;
@@ -237,7 +246,6 @@ var LayoutDirectiveCore = {
 function extractElementId(descriptor) {
   var hash = descriptor.indexOf('#');
   if (hash === -1) return null;
-
   return descriptor.slice(hash + 1);
 }
 
@@ -246,7 +254,6 @@ var LayoutCorrection = {
     return Object.prototype.hasOwnProperty.call(obj, key);
   },
 
-  // UPDATED: added StylizerCore and LayoutCorrection as parameters because they call StylizerCore.applyStep, etc.
   getCandidateElements: function(doc, StylizerCore) {
     return StylizerCore.applyStep([doc.body], { axis: 'descendant' }, null, StylizerCore).filter(function(el) {
       var tag = el.tagName.toLowerCase();
@@ -256,7 +263,6 @@ var LayoutCorrection = {
     });
   },
 
-  // UPDATED: removed createLogger; uses StylizerCore.log directly
   checkOverflowDoc: function(doc, viewportWidth, containerWidths, StylizerCore, LayoutCorrection) {
     function isInsideScrollWrapper(el) {
       var parent = el.parentElement;
@@ -288,7 +294,6 @@ var LayoutCorrection = {
       });
   },
 
-  // No self or StylizerCore calls – no change.
   correctOverflowDoc: function(doc, overflowElements) {
     function isInsideScrollWrapper(el) {
       var parent = el.parentElement;
@@ -316,7 +321,6 @@ var LayoutCorrection = {
     });
   },
 
-  // UPDATED: added StylizerCore as parameter because it calls StylizerCore.getAllDescendants
   checkSpacingDoc: function(doc, minGap, StylizerCore) {
     if (minGap === undefined) minGap = 12;
 
@@ -343,7 +347,6 @@ var LayoutCorrection = {
     }, []);
   },
 
-  // UPDATED: added StylizerCore and LayoutCorrection as parameters because it calls LayoutCorrection.checkSpacingDoc
   correctSpacingDoc: function(doc, minGap, StylizerCore, LayoutCorrection) {
     if (minGap === undefined) minGap = 12;
 
@@ -364,7 +367,6 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
-  // No sibling calls – no change.
   checkOverlapDoc: function(doc) {
     var positioned = Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       return el.style && (el.style.position === 'absolute' || el.style.position === 'fixed');
@@ -394,7 +396,6 @@ var LayoutCorrection = {
     return violations;
   },
 
-  // UPDATED: added LayoutCorrection as parameter because it calls LayoutCorrection.checkOverlapDoc
   correctOverlapDoc: function(doc, LayoutCorrection) {
     return LayoutCorrection.checkOverlapDoc(doc).map(function(violation) {
       var id = extractElementId(violation.elementB);
@@ -413,7 +414,6 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
-  // No sibling calls – no change.
   checkScrollabilityDoc: function(doc) {
     return Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       var s = el.style;
@@ -423,7 +423,6 @@ var LayoutCorrection = {
     });
   },
 
-  // UPDATED: added LayoutCorrection as parameter because it calls LayoutCorrection.checkScrollabilityDoc
   correctScrollabilityDoc: function(doc, LayoutCorrection) {
     return LayoutCorrection.checkScrollabilityDoc(doc).map(function(violation) {
       var id = extractElementId(violation.element);
@@ -442,7 +441,6 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
-  // No sibling calls – no change.
   checkControlledOverlayDoc: function(doc) {
     return Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       var s = el.style;
@@ -452,7 +450,6 @@ var LayoutCorrection = {
     });
   },
 
-  // UPDATED: added LayoutCorrection as parameter because it calls LayoutCorrection.checkControlledOverlayDoc
   correctControlledOverlayDoc: function(doc, LayoutCorrection) {
     return LayoutCorrection.checkControlledOverlayDoc(doc).map(function(violation) {
       var id = extractElementId(violation.element);
@@ -471,7 +468,6 @@ var LayoutCorrection = {
     }).filter(Boolean);
   },
 
-  // UPDATED: added StylizerCore, LayoutDirectiveCore, LayoutCorrection as parameters; no createLogger
   optimizeLayoutHTML: function(html, goals, maxIterations, options, StylizerCore, LayoutDirectiveCore, LayoutCorrection) {
     if (maxIterations === undefined) maxIterations = 5;
     if (options === undefined) options = {};
