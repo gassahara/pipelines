@@ -2,6 +2,13 @@ import { getRenderActor } from '../actors/actorregistry.js';
 
 var RAWMAP = [];
 
+var domrefidcounter = 0;
+
+function generateDomRefId() {
+  domrefidcounter += 1;
+  return 'domref_' + Date.now() + '_' + domrefidcounter;
+}
+
 function setRawElement(ref, element) {
   RAWMAP.push({ ref: ref, element: element });
 }
@@ -32,7 +39,7 @@ function CREATEDOMREF(rawelement, actorRegistry) {
       var actor = getRenderActor(actorRegistry);
       actor.send({
         type: 'render',
-        id: null,
+        id: generateDomRefId(),
         renderer: renderer,
         data: data,
         env: env || {}
@@ -42,7 +49,7 @@ function CREATEDOMREF(rawelement, actorRegistry) {
       var actor = getRenderActor(actorRegistry);
       actor.send({
         type: 'render',
-        id: null,
+        id: generateDomRefId(),
         renderer: function() {
           var parent = GETRAWELEMENT(ref);
           var child = GETRAWELEMENT(childref);
@@ -55,7 +62,7 @@ function CREATEDOMREF(rawelement, actorRegistry) {
       var actor = getRenderActor(actorRegistry);
       actor.send({
         type: 'render',
-        id: null,
+        id: generateDomRefId(),
         renderer: function() {
           var el = GETRAWELEMENT(ref);
           if (el && el.parentNode) el.parentNode.removeChild(el);

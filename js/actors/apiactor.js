@@ -1,6 +1,6 @@
 import { createactor } from './actorkernel.js';
 import { createApiConstants } from '../utils.js';
-import { enqueueDbStore } from './dbactor.js';
+import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 
 var MESSAGETYPES = Object.freeze({
   API: 'api',
@@ -31,7 +31,6 @@ function persistApiWorldmap(state) {
 
 var apibehavior = function(state, message) {
   if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
-    // PERSIST BEFORE action
     persistApiWorldmap(state);
 
     state.worldmap.lastRequest = {
@@ -44,21 +43,24 @@ var apibehavior = function(state, message) {
     };
     state.worldmap.requestCount = (state.worldmap.requestCount || 0) + 1;
 
-    // PERSIST AFTER action
     persistApiWorldmap(state);
 
     var apiConstants = createApiConstants();
     var url = apiConstants.APIBASE + '/' + message.endpoint;
     var isTextual = message.type === MESSAGETYPES.FETCH;
+    var method = String(message.method || 'GET').toUpperCase();
+    var headers = {
+      'Authorization': 'Bearer ' + (message.token || '')
+    };
+    if (method === 'POST') {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (isTextual) {
+      headers['Accept'] = 'text/plain, */*';
+    }
+    var body = method === 'POST' ? JSON.stringify(message.payload || {}) : undefined;
 
-    fetch(url, {
-      method: message.method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + (message.token || '')
-      },
-      body: JSON.stringify(message.payload || {})
-    }).then(function(response) {
+    fetch(url, { method: method, headers: headers, body: body }).then(function(response) {
       var status = response.status;
       if (!isTextual) {
         return response.json().then(function(data) {
@@ -82,7 +84,18 @@ var apibehavior = function(state, message) {
   return state;
 };
 
-var APIACTOR = createactor(apibehavior, { worldmap: createInitialApiWorldmap() }, MESSAGEINTERFACES);
+var apiMailboxStore = {
+  store: enqueueDbStore,
+  restore: enqueueDbRestore,
+  delete: enqueueDbDelete
+};
+
+var APIACTOR = createactor(
+  apibehavior,
+  { worldmap: createInitialApiWorldmap() },
+  MESSAGEINTERFACES,
+  { actorName: 'apiactor', mailboxType: 'db', mailboxStore: apiMailboxStore }
+);
 
 function enqueueapi(endpoint, method, payload, options) {
   return new Promise(function(resolve, reject) {

@@ -68,7 +68,12 @@ function dnaReviver(key, value) {
   if (value && typeof value === 'object' && value[FN_TAG] === true) {
     try {
       if (value.deps) {
-        return new Function('__deps', 'return (' + value.source + ')')(value.deps);
+        var deps = value.deps;
+        var revived = new Function('return (' + value.source + ')')();
+        return function() {
+          var args = Array.prototype.slice.call(arguments);
+          return revived.apply(null, args.concat([deps]));
+        };
       }
       return new Function('return (' + value.source + ')')();
     } catch (err) {
@@ -347,7 +352,12 @@ var dbbehavior = function(state, message) {
   return { store: store };
 };
 
-var DBACTOR = createactor(dbbehavior, loadInitialState(), MESSAGEINTERFACES);
+var DBACTOR = createactor(
+  dbbehavior,
+  loadInitialState(),
+  MESSAGEINTERFACES,
+  { actorName: 'dbactor', mailboxType: 'memory' }
+);
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {

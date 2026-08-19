@@ -2,7 +2,7 @@ import { createactor } from './actorkernel.js';
 import { frames } from '../evalstack.js';
 import { formatdebugtrace } from '../debugformatter.js';
 import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
-import { enqueueDbStore, enqueueDbRestore } from './dbactor.js';
+import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 import {
   enqueueExecutionCccRetry,
   enqueueExecutionCccContinue,
@@ -98,7 +98,7 @@ var debugbehavior = function(state, message) {
   }
 
   if (message.type === DEBUG_MESSAGETYPES.INIT_OVERLAY) {
-    persistDebugWorldmap(state); // PERSIST BEFORE
+    persistDebugWorldmap(state);
     ensureOverlay(state);
 
     if (!state.globalListenersInstalled) {
@@ -130,25 +130,25 @@ var debugbehavior = function(state, message) {
     }
 
     state.worldmap.overlayVisible = false;
-    persistDebugWorldmap(state); // PERSIST AFTER
+    persistDebugWorldmap(state);
     return state;
   }
 
   if (message.type === DEBUG_MESSAGETYPES.HIDE) {
-    persistDebugWorldmap(state); // PERSIST BEFORE
+    persistDebugWorldmap(state);
     if (state.overlay) {
       state.overlay.style.display = 'none';
       state.overlay.innerHTML = '';
     }
     state.worldmap.overlayVisible = false;
     state.worldmap.cccState.currentContinuation = null;
-    persistDebugWorldmap(state); // PERSIST AFTER
+    persistDebugWorldmap(state);
     if (typeof message.resolve === 'function') message.resolve(state);
     return state;
   }
 
   if (message.type === DEBUG_MESSAGETYPES.SHOW) {
-    persistDebugWorldmap(state); // PERSIST BEFORE
+    persistDebugWorldmap(state);
     var logger = createDebugLogger();
     var overlay = ensureOverlay(state);
 
@@ -199,7 +199,7 @@ var debugbehavior = function(state, message) {
 
     state.worldmap.overlayVisible = true;
     state.worldmap.cccState.currentContinuation = message.continuation || null;
-    persistDebugWorldmap(state); // PERSIST AFTER
+    persistDebugWorldmap(state);
 
     if (typeof message.resolve === 'function') message.resolve(state);
     return state;
@@ -235,12 +235,23 @@ var debugbehavior = function(state, message) {
   return state;
 };
 
+var debugMailboxStore = {
+  store: enqueueDbStore,
+  restore: enqueueDbRestore,
+  delete: enqueueDbDelete
+};
+
 function createDebugActor() {
-  var actor = createactor(debugbehavior, {
-    overlay: null,
-    currentContinuation: null,
-    worldmap: createInitialDebugWorldmap()
-  }, MESSAGEINTERFACES);
+  var actor = createactor(
+    debugbehavior,
+    {
+      overlay: null,
+      currentContinuation: null,
+      worldmap: createInitialDebugWorldmap()
+    },
+    MESSAGEINTERFACES,
+    { actorName: 'debugactor', mailboxType: 'db', mailboxStore: debugMailboxStore }
+  );
   DEBUGACTOR_INSTANCE = actor;
   return actor;
 }

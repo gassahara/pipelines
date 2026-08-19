@@ -2,7 +2,7 @@ import { createactor } from './actorkernel.js';
 import { createActorRegistry, setRenderActor } from './actorregistry.js';
 import { createTriggerRegistry, revalidateAll } from './trigerregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
-import { enqueueDbStore, enqueueDbRestore } from './dbactor.js';
+import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 
 var MESSAGETYPES = Object.freeze({
   RENDER: 'render',
@@ -389,13 +389,28 @@ var renderbehavior = function(state, message) {
   return state;
 };
 
+var renderMailboxStore = {
+  store: enqueueDbStore,
+  restore: enqueueDbRestore,
+  delete: enqueueDbDelete
+};
+
 var initialState = {
   triggerRegistry: createTriggerRegistry(),
   actorRegistry: createActorRegistry(),
   worldmap: createInitialRenderWorldmap()
 };
 
-var RENDERACTOR = createactor(renderbehavior, initialState, MESSAGEINTERFACES);
+var RENDERACTOR = createactor(
+  renderbehavior,
+  initialState,
+  MESSAGEINTERFACES,
+  {
+    actorName: 'renderactor',
+    mailboxType: 'db',
+    mailboxStore: renderMailboxStore
+  }
+);
 
 initialState.actorRegistry = setRenderActor(initialState.actorRegistry, RENDERACTOR);
 

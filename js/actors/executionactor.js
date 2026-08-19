@@ -2,6 +2,7 @@ import { createactor } from './actorkernel.js';
 import {
   enqueueDbStore,
   enqueueDbRestore,
+  enqueueDbDelete,
   serializeDna,
   deserializeDna,
   consolidateGraph,
@@ -450,7 +451,7 @@ async function runElementTask(taskid, descriptor) {
     }
   } catch (err) {
     try {
-      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err });
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err, result: false });
     } catch (sendErr) {
       console.warn('[EXECUTIONACTOR] task settled send failed:', sendErr);
     }
@@ -467,7 +468,7 @@ async function runStageTask(taskid, descriptor) {
     }
   } catch (err) {
     try {
-      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err });
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err, result: false });
     } catch (sendErr) {
       console.warn('[EXECUTIONACTOR] task settled send failed:', sendErr);
     }
@@ -487,15 +488,26 @@ async function runSpawnTask(taskid, descriptor) {
     }
   } catch (err) {
     try {
-      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err });
+      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err, result: false });
     } catch (sendErr) {
       console.warn('[EXECUTIONACTOR] task settled send failed:', sendErr);
     }
   }
 }
 
+var executionMailboxStore = {
+  store: enqueueDbStore,
+  restore: enqueueDbRestore,
+  delete: enqueueDbDelete
+};
+
 var initialState = await loadInitialState();
-var EXECUTIONACTOR = createactor(executionbehavior, initialState, MESSAGEINTERFACES);
+var EXECUTIONACTOR = createactor(
+  executionbehavior,
+  initialState,
+  MESSAGEINTERFACES,
+  { actorName: 'executionactor', mailboxType: 'db', mailboxStore: executionMailboxStore }
+);
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {

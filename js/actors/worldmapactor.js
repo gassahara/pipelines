@@ -1,4 +1,5 @@
 import { createactor } from './actorkernel.js';
+import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 
 var UPDATE = 'update';
 var OBSERVE = 'observe';
@@ -44,7 +45,22 @@ var worldmapbehavior = function(state, message) {
   return state;
 };
 
-var WORLDMAPACTOR = createactor(worldmapbehavior, { worldmap: {}, observers: [] }, MESSAGEINTERFACES);
+var worldmapMailboxStore = {
+  store: enqueueDbStore,
+  restore: enqueueDbRestore,
+  delete: enqueueDbDelete
+};
+
+var WORLDMAPACTOR = createactor(
+  worldmapbehavior,
+  { worldmap: {}, observers: [] },
+  MESSAGEINTERFACES,
+  {
+    actorName: 'worldmapactor',
+    mailboxType: 'db',
+    mailboxStore: worldmapMailboxStore
+  }
+);
 
 var updateworldmap = function(patch) {
   return WORLDMAPACTOR.send({ type: UPDATE, patch: patch });

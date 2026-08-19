@@ -44,28 +44,92 @@ function createMessageValidator(interfaceMap) {
   };
 }
 
-function createactor(behavior, initialstate, messageInterface) {
+function createMemoryMailbox() {
+  var queue = [];
+  return {
+    append: function(message) { queue.push(message); },
+    peek: function() { return queue.length ? queue[0] : null; },
+    remove: function() { queue.shift(); },
+    clear: function() { queue.length = 0; },
+    isEmpty: function() { return queue.length === 0; }
+  };
+}
+
+function createDbMailbox(actorName, dbStore) {
+  var key = 'actor:mailbox:' + actorName;
+
+  function load() {
+    return dbStore.restore(key).then(function(data) {
+      if (!data || typeof data !== 'object') return { items: [] };
+      if (!Array.isArray(data.items)) return { items: [] };
+      return data;
+    });
+  }
+
+  function save(value) {
+    return dbStore.store(key, value);
+  }
+
+  return {
+    append: async function(message) {
+      var data = await load();
+      data.items.push(message);
+      await save(data);
+    },
+    peek: async function() {
+      var data = await load();
+      return data.items.length ? data.items[0] : null;
+    },
+    remove: async function() {
+      var data = await load();
+      data.items.shift();
+      await save(data);
+    },
+    clear: async function() {
+      await dbStore.delete(key);
+    },
+    isEmpty: async function() {
+      var data = await load();
+      return data.items.length === 0;
+    }
+  };
+}
+
+var actorRegistry = {};
+
+function createactor(behavior, initialstate, messageInterface, options) {
+  if (options === undefined) options = {};
+  var actorName = options.actorName;
+  if (actorName && actorRegistry[actorName]) {
+    return actorRegistry[actorName];
+  }
+
   var currentstate = initialstate;
-  var mailbox = [];
-  var scheduled = false;
+  var validator = messageInterface ? createMessageValidator(messageInterface) : null;
+  var mailboxType = options.mailboxType || 'memory';
+
+  var mailbox = null;
+  var running = false;
   var drainpromise = null;
   var drainresolve = null;
-  var validator = messageInterface ? createMessageValidator(messageInterface) : null;
+  var polltimer = null;
 
-  var drain = function() {
-    if (mailbox.length === 0) {
-      scheduled = false;
-      if (drainresolve) {
-        var res = drainresolve;
-        drainresolve = null;
-        drainpromise = null;
-        res(currentstate);
-      }
-      return;
+  if (mailboxType === 'db' && options.mailboxStore) {
+    mailbox = createDbMailbox(actorName, options.mailboxStore);
+  } else {
+    mailbox = createMemoryMailbox();
+  }
+
+  function resolveWaiters() {
+    if (drainresolve) {
+      var res = drainresolve;
+      drainresolve = null;
+      drainpromise = null;
+      res(currentstate);
     }
+  }
 
-    var message = mailbox.shift();
-
+  function processMessage(message) {
     if (validator) {
       var check = validator(message);
       if (!check.valid) {
@@ -74,28 +138,80 @@ function createactor(behavior, initialstate, messageInterface) {
         } else {
           console.error('[ACTOR:INVALID] ' + check.error);
         }
-        queueMicrotask(drain);
-        return;
+        return true;
       }
     }
 
-    currentstate = behavior(currentstate, message);
-    queueMicrotask(drain);
-  };
+    try {
+      currentstate = behavior(currentstate, message);
+    } catch (err) {
+      console.error('[ACTOR] behavior error:', err);
+      if (typeof message.reject === 'function') {
+        message.reject(err);
+      } else if (typeof message.resolve === 'function') {
+        message.resolve(undefined);
+      }
+    }
+    return true;
+  }
+
+  async function drainMemory() {
+    if (!running) return;
+    if (mailbox.isEmpty()) {
+      running = false;
+      resolveWaiters();
+      return;
+    }
+    var message = mailbox.peek();
+    mailbox.remove();
+    processMessage(message);
+    queueMicrotask(drainMemory);
+  }
+
+  async function drainDb() {
+    if (!running) return;
+    var message = await mailbox.peek();
+    if (message === null) {
+      running = false;
+      resolveWaiters();
+      polltimer = setTimeout(drainDb, 25);
+      return;
+    }
+    await mailbox.remove();
+    processMessage(message);
+    await mailbox.clearIfEmpty ? mailbox.clearIfEmpty() : null;
+    polltimer = setTimeout(drainDb, 0);
+  }
+
+  function ensureLoop() {
+    if (!running) {
+      running = true;
+      if (mailboxType === 'db') {
+        drainDb();
+      } else {
+        queueMicrotask(drainMemory);
+      }
+    }
+  }
 
   var send = function(message) {
     if (!message || typeof message !== 'object') {
       message = { type: message };
     }
-    mailbox.push(message);
-    if (!scheduled) {
-      scheduled = true;
-      queueMicrotask(drain);
+    if (mailboxType === 'db') {
+      mailbox.append(message).then(function() {
+        ensureLoop();
+      });
+    } else {
+      mailbox.append(message);
+      ensureLoop();
     }
   };
 
   var waitforemptymailbox = function() {
-    if (!scheduled && mailbox.length === 0) return Promise.resolve(currentstate);
+    if (!running && (mailboxType === 'memory' ? mailbox.isEmpty() : false)) {
+      return Promise.resolve(currentstate);
+    }
     if (!drainpromise) {
       drainpromise = new Promise(function(resolve) { drainresolve = resolve; });
     }
@@ -104,14 +220,17 @@ function createactor(behavior, initialstate, messageInterface) {
 
   var getstate = function() { return currentstate; };
 
-  return Object.freeze({
+  var actor = Object.freeze({
     send: send,
     getstate: getstate,
     waitforemptymailbox: waitforemptymailbox
   });
+
+  if (actorName) {
+    actorRegistry[actorName] = actor;
+  }
+
+  return actor;
 }
 
-export {
-  createactor,
-  createMessageValidator
-};
+export { createactor, createMessageValidator };

@@ -1,5 +1,5 @@
 import { createactor } from './actorkernel.js';
-import { enqueueDbStore, enqueueDbRestore } from './dbactor.js';
+import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 
 var HYPERVISORMESSAGETYPES = Object.freeze({
   LOAD: 'load',
@@ -19,6 +19,25 @@ var HYPERVISORMESSAGETYPES = Object.freeze({
   GET_PROGRAM: 'get_program',
   MARK_BOOT: 'mark_boot'
 });
+
+var MESSAGEINTERFACES = {};
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.LOAD] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SAVE] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_ENV] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_ENV] = { env: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_RENDER_HTML] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_RENDER_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_EXECUTION_STACK] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_EXECUTION_STACK] = { stack: 'array', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_ROUTE] = { key: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_ROUTE] = { key: 'string', route: 'object?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_ACTIVE_PIPELINES] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.REGISTER_PIPELINE] = { pipelineId: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.UNREGISTER_PIPELINE] = { pipelineId: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_PROGRAM] = { programKey: 'string', programSource: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_PROGRAM] = { programKey: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.MARK_BOOT] = { boot: 'boolean', resolve: 'function?', reject: 'function?' };
+Object.freeze(MESSAGEINTERFACES);
 
 function createInitialHypervisorState() {
   return {
@@ -167,8 +186,19 @@ async function loadInitialHypervisorState() {
   return initialState;
 }
 
+var hypervisorMailboxStore = {
+  store: enqueueDbStore,
+  restore: enqueueDbRestore,
+  delete: enqueueDbDelete
+};
+
 var initialState = await loadInitialHypervisorState();
-var HYPERVISOR = createactor(hypervisorbehavior, initialState);
+var HYPERVISOR = createactor(
+  hypervisorbehavior,
+  initialState,
+  MESSAGEINTERFACES,
+  { actorName: 'hypervisoractor', mailboxType: 'db', mailboxStore: hypervisorMailboxStore }
+);
 
 function enqueue(type, payload) {
   return new Promise(function(resolve, reject) {
