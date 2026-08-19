@@ -708,6 +708,10 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath) {
 }
 
 function triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath, triggerRegistry) {
+  if (!triggerRegistry) {
+    throw new Error('[triggerRunner] triggerRegistry is null for stage: ' + id);
+  }
+
   return async function(env) {
     var rs = env.registersubscription;
     if (!control.sourceid || !control.event || !rs) {

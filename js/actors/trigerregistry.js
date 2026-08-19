@@ -16,6 +16,10 @@ function cloneRegistryMap(map) {
 }
 
 function registerTrigger(registry, id, event, handler) {
+  if (!registry || !registry.map) {
+    throw new Error('[registerTrigger] registry is null or missing map');
+  }
+
   var newMap = cloneRegistryMap(registry.map);
   var events = newMap[id] || {};
   var newEvents = {};
