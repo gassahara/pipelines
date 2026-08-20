@@ -14,9 +14,8 @@ import {
   enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout,
   enqueusetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
   DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport,
-  enqueuegetscreen, enqueuematchmedia, enqueueRenderRestoreBodyHtml
+  enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTrigger
 } from '../actors/renderactor.js';
-import { createTriggerRegistry, registerTrigger, revalidateAll } from '../actors/trigerregistry.js';
 import { validatestageflow } from '../typesystem.js';
 import {
   enqueueExecutionPipelineLoaded, enqueueExecutionStageState,
@@ -610,6 +609,42 @@ function mapOrderedChildren(children) {
   });
 }
 
+function createTriggerStage(stage, children, pipelineId, stagePath) {
+  var control = stage.control;
+  var id = stage.id;
+
+  var registration = {
+    pipelineId: pipelineId,
+    stageId: id,
+    stagePath: stagePath,
+    sourceid: control.sourceid,
+    event: control.event,
+    control: control,
+    children: children
+  };
+
+  var stageFn = async function(env) {
+    return env;
+  };
+
+  stageFn.id = id;
+  stageFn.kind = 'stage';
+  stageFn.triggerRegistration = registration;
+  stageFn.stagemeta = {
+    async: stage.async === true,
+    stageid: id,
+    reads: [],
+    writes: [],
+    snapshotKey: 'stage:' + id,
+    recoverable: true,
+    notifyOnDone: stage.notifyOnDone === true,
+    controlCommand: control.command,
+    path: stagePath
+  };
+
+  return stageFn;
+}
+
 function compileStageElement(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
   var stageBriefcase = cloneObject(inheritedBriefcase);
@@ -629,9 +664,15 @@ function compileStageElement(stage, pipelineId, resumeFrom, parentPath, inherite
 
   var isResumeStage = resumeFrom && resumeFrom.path && resumeFrom.path[0] === stage.id;
   var startIndex = isResumeStage ? Math.max(0, findIndex(stage.elements || [], function(el) { return el.id === resumeFrom.path[resumeFrom.path.length - 1]; })) : 0;
-  var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, triggerRegistry);
-  fn.id = stage.id;
-  fn.kind = 'stage';
+
+  var fn;
+  if (stage.control && stage.control.command === 'TRIGGER') {
+    fn = createTriggerStage(stage, children, pipelineId, stagePath);
+  } else {
+    fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, triggerRegistry);
+    fn.id = stage.id;
+    fn.kind = 'stage';
+  }
 
   var reads = [], writes = [];
   (stage.elements || []).filter(function(e) { return e.element === 'BLOCK'; }).forEach(function(e) {
@@ -650,6 +691,7 @@ function compileStageElement(stage, pipelineId, resumeFrom, parentPath, inherite
     controlCommand: stage.control && stage.control.command ? stage.control.command : null,
     path: stagePath
   };
+
   return fn;
 }
 
@@ -662,7 +704,6 @@ function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stage
   var control = stage.control;
   var id = stage.id;
   if (!control || !control.command) return defaultRunner(id, children, startIndex, pipelineId, stagePath);
-  if (control.command === 'TRIGGER') return triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath, triggerRegistry);
   if (control.command === 'LOOP') return loopRunner(id, control, children, startIndex, pipelineId, stagePath);
   throw new Error('unknown stage command: ' + control.command);
 }
@@ -704,44 +745,6 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath) {
     };
     var submitted = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: stageExecutor, env: env });
     await enqueueExecutionAwaitTask(submitted.taskid);
-  };
-}
-
-function triggerRunner(id, control, children, stage, pipelineId, startIndex, resumeStage, stagePath, triggerRegistry) {
-  if (!triggerRegistry) {
-    throw new Error('[triggerRunner] triggerRegistry is null for stage: ' + id);
-  }
-
-  return async function(env) {
-    var rs = env.registersubscription;
-    if (!control.sourceid || !control.event || !rs) {
-      var logger = createBlockCompilerLogger();
-      logger.warn('[control:TRIGGER] missing source/event/registersubscription for stage:', id);
-      return {};
-    }
-
-    var runTrigger = async function(execEnv, slice) {
-      await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
-      var result = await executeChildren(slice, execEnv, id, pipelineId, stagePath);
-      return result.env || execEnv;
-    };
-
-    var handler = async function(e) {
-      env.eventtarget = e.target;
-      if (stage.output != null) env[stage.output] = deepcloneevent(e);
-      var submitted = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: function(execEnv) { return runTrigger(execEnv, children); }, env: env });
-      await enqueueExecutionAwaitTask(submitted.taskid);
-      if (control.rerunfrom !== undefined && typeof env._rerunStages === 'function') await env._rerunStages(control.rerunfrom);
-    };
-
-    rs(control.sourceid, control.event, handler);
-    triggerRegistry = registerTrigger(triggerRegistry, control.sourceid, control.event, handler);
-
-    if (resumeStage) {
-      var submitted2 = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: function(execEnv) { return runTrigger(execEnv, startIndex > 0 ? children.slice(startIndex) : children); }, env: env });
-      await enqueueExecutionAwaitTask(submitted2.taskid);
-    }
-    return {};
   };
 }
 
@@ -858,8 +861,13 @@ function runTrampoline(env, stages, pipelineId) {
     }
     var stage = stages[stageIndex];
 
+    if (stage.triggerRegistration) {
+      logger.debug('[PIPELINE] Skipping trigger stage in normal flow:', nextStageId);
+      return step(stack.slice(1), currentEnv);
+    }
+
     function continueWithStage() {
-      return executeStage(stage, nextStageId, stack, currentEnv, pipelineId);
+      return executeStageStep(stage, nextStageId, stack, currentEnv, pipelineId);
     }
 
     if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP' && stage.control.fn) {
@@ -874,7 +882,7 @@ function runTrampoline(env, stages, pipelineId) {
     return continueWithStage();
   }
 
-  function executeStage(stage, nextStageId, stack, currentEnv, pipelineId) {
+  function executeStageStep(stage, nextStageId, stack, currentEnv, pipelineId) {
     logger.debug('[PIPELINE] Executing stage:', nextStageId);
     return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'running' }).catch(function() {}).then(function() {
       return stage(currentEnv);
@@ -909,6 +917,28 @@ function runTrampoline(env, stages, pipelineId) {
     logger.debug('[RESTORE] pipeline-completed', { pipelineId: pipelineId });
     return finalEnv;
   });
+}
+
+async function executeStage(descriptor, env, activation, eventPayload) {
+  if (!descriptor) throw new Error('[executeStage] missing stage descriptor');
+  if (!env || typeof env !== 'object') env = {};
+
+  if (activation === 'trigger' && eventPayload) {
+    env.eventtarget = eventPayload.target;
+    if (descriptor.output != null) {
+      env[descriptor.output] = deepcloneevent(eventPayload);
+    }
+  }
+
+  var result = await executeChildren(
+    descriptor.children,
+    env,
+    descriptor.stageId,
+    descriptor.pipelineId,
+    descriptor.stagePath
+  );
+
+  return { env: result.env || env };
 }
 
 function createpipeline(stages, sinks, onprogress, options) {
@@ -972,13 +1002,13 @@ async function restorePipelineState(pipelineDefinition, pipelineId) {
     { inheritedBriefcase: env.briefcase || {}, resumeFrom: resumeFrom }
   );
 
-  attachPipelineListeners(pipelineId, compiled.triggerRegistry || null);
+  attachPipelineListeners(pipelineId, compiled.triggerRegistrations || []);
 
   return compiled.pipeline({ id: pipelineId, env: env, resumeFrom: resumeFrom });
 }
 
-function attachPipelineListeners(pipelineId, triggerRegistry) {
-  console.log('[BLOCKCOMPILER] listeners attached for pipeline:', pipelineId, Object.keys(triggerRegistry || {}));
+function attachPipelineListeners(pipelineId, triggerRegistrations) {
+  console.log('[BLOCKCOMPILER] listeners attached for pipeline:', pipelineId, triggerRegistrations.length || 0);
 }
 
 async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, options) {
@@ -998,7 +1028,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     ANALYZERS: ANALYZERS,
     COMPILERS: COMPILERS
   };
-  var triggerRegistry = createTriggerRegistry();
+  var triggerRegistry = null;
 
   var pipelineId = pipelineIdOverride || pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline';
 
@@ -1031,9 +1061,18 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   var spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
   var resumeFrom = options.resumeFrom || null;
   var compiled = compileElements(pipeline.elements, pipelineId, resumeFrom, [], pipelineBriefcase, compilerConstants, dnaConstants, triggerRegistry);
+
+  var triggerRegistrations = compiled.filter(function(fn) { return fn.triggerRegistration; }).map(function(fn) { return fn.triggerRegistration; });
+
+  for (var i = 0; i < triggerRegistrations.length; i++) {
+    await enqueueRenderRegisterTrigger(triggerRegistrations[i]).catch(function(err) {
+      console.warn('[compilepipeline] trigger registration failed:', err);
+    });
+  }
+
   var compiledpipeline = createpipeline(compiled, sinks, undefined, { pipelineId: pipelineId });
 
-  return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap, triggerRegistry: triggerRegistry };
+  return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap, triggerRegistrations: triggerRegistrations };
 }
 
 export {
@@ -1041,6 +1080,7 @@ export {
   createBlockCompilerConstants,
   createBlockAnalyzers,
   createBlockCompilers,
+  executeStage,
   restorePipelineState,
   attachPipelineListeners
 };

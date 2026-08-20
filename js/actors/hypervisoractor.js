@@ -1,5 +1,6 @@
 import { createactor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
+import { executeStage } from '../factory/blockcompiler.js';
 
 var HYPERVISORMESSAGETYPES = Object.freeze({
   LOAD: 'load',
@@ -17,7 +18,9 @@ var HYPERVISORMESSAGETYPES = Object.freeze({
   UNREGISTER_PIPELINE: 'unregister_pipeline',
   SET_PROGRAM: 'set_program',
   GET_PROGRAM: 'get_program',
-  MARK_BOOT: 'mark_boot'
+  MARK_BOOT: 'mark_boot',
+  SET_STAGE_DESCRIPTOR: 'set_stage_descriptor',
+  TRIGGER_EVENT: 'trigger_event'
 });
 
 var MESSAGEINTERFACES = {};
@@ -37,6 +40,8 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.UNREGISTER_PIPELINE] = { pipelineId: 's
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_PROGRAM] = { programKey: 'string', programSource: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_PROGRAM] = { programKey: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.MARK_BOOT] = { boot: 'boolean', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR] = { pipelineId: 'string', stageId: 'string', descriptor: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.TRIGGER_EVENT] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 function createInitialHypervisorState() {
@@ -48,6 +53,7 @@ function createInitialHypervisorState() {
     routes: {},
     activePipelines: [],
     programs: {},
+    stageDescriptors: {},
     savedAt: Date.now()
   };
 }
@@ -61,6 +67,10 @@ function persistHypervisorState(state) {
 
 function resolveMessage(message, value) {
   if (typeof message.resolve === 'function') message.resolve(value);
+}
+
+function rejectMessage(message, error) {
+  if (typeof message.reject === 'function') message.reject(error);
 }
 
 var hypervisorbehavior = function(state, message) {
@@ -155,10 +165,54 @@ var hypervisorbehavior = function(state, message) {
       resolveMessage(message, true);
       break;
 
-    default:
-      if (typeof message.reject === 'function') {
-        message.reject(new Error('[HYPERVISOR] unknown message type: ' + message.type));
+    case HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR: {
+      if (!state.stageDescriptors) state.stageDescriptors = {};
+      var key = message.pipelineId + ':' + message.stageId;
+      state.stageDescriptors[key] = message.descriptor;
+      persistHypervisorState(state);
+      resolveMessage(message, true);
+      break;
+    }
+
+    case HYPERVISORMESSAGETYPES.TRIGGER_EVENT: {
+      var pipelineId = message.pipelineId;
+      var stageId = message.stageId;
+      var stagePath = message.stagePath || [stageId];
+
+      var env = state.envByPipeline && state.envByPipeline[pipelineId]
+        ? state.envByPipeline[pipelineId]
+        : { pipelineid: pipelineId };
+
+      var descriptorKey = pipelineId + ':' + stageId;
+      var descriptor = state.stageDescriptors && state.stageDescriptors[descriptorKey];
+
+      if (!descriptor) {
+        rejectMessage(message, new Error('[HYPERVISOR] missing trigger stage descriptor: ' + descriptorKey));
+        return state;
       }
+
+      state.routes['pipeline:' + pipelineId] = {
+        stageId: stageId,
+        stagePath: stagePath
+      };
+      persistHypervisorState(state);
+
+      executeStage(descriptor, env, 'trigger', message.eventPayload)
+        .then(function(result) {
+          var updatedEnv = result && result.env ? result.env : env;
+          state.envByPipeline[pipelineId] = updatedEnv;
+          persistHypervisorState(state);
+          resolveMessage(message, updatedEnv);
+        })
+        .catch(function(err) {
+          rejectMessage(message, err);
+        });
+
+      return state;
+    }
+
+    default:
+      rejectMessage(message, new Error('[HYPERVISOR] unknown message type: ' + message.type));
   }
 
   return state;
@@ -175,6 +229,7 @@ async function loadInitialHypervisorState() {
       saved.routes = saved.routes || {};
       saved.activePipelines = saved.activePipelines || [];
       saved.programs = saved.programs || {};
+      saved.stageDescriptors = saved.stageDescriptors || {};
       saved.savedAt = Date.now();
       return saved;
     }
@@ -232,6 +287,8 @@ var enqueueHypervisorUnregisterPipeline = function(pipelineId) { return enqueue(
 var enqueueHypervisorSetProgram = function(programKey, programSource) { return enqueue(HYPERVISORMESSAGETYPES.SET_PROGRAM, { programKey: programKey, programSource: programSource }); };
 var enqueueHypervisorGetProgram = function(programKey) { return enqueue(HYPERVISORMESSAGETYPES.GET_PROGRAM, { programKey: programKey }); };
 var enqueueHypervisorMarkBoot = function(boot) { return enqueue(HYPERVISORMESSAGETYPES.MARK_BOOT, { boot: boot }); };
+var enqueueHypervisorSetStageDescriptor = function(pipelineId, stageId, descriptor) { return enqueue(HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR, { pipelineId: pipelineId, stageId: stageId, descriptor: descriptor }); };
+var enqueueHypervisorTrigger = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.TRIGGER_EVENT, payload); };
 
 export {
   HYPERVISORMESSAGETYPES,
@@ -251,5 +308,7 @@ export {
   enqueueHypervisorUnregisterPipeline,
   enqueueHypervisorSetProgram,
   enqueueHypervisorGetProgram,
-  enqueueHypervisorMarkBoot
+  enqueueHypervisorMarkBoot,
+  enqueueHypervisorSetStageDescriptor,
+  enqueueHypervisorTrigger
 };

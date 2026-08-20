@@ -1,6 +1,5 @@
 import { createactor } from './actorkernel.js';
 import { createActorRegistry, setRenderActor } from './actorregistry.js';
-import { createTriggerRegistry, revalidateAll } from './trigerregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 
@@ -34,7 +33,9 @@ var MESSAGETYPES = Object.freeze({
   MATCHMEDIA: 'matchmedia',
   GET_BODY_HTML: 'get_body_html',
   RESTORE_BODY_HTML: 'restore_body_html',
-  RECOVER: 'recover'
+  RECOVER: 'recover',
+  REGISTER_TRIGGER: 'register_trigger',
+  REVALIDATE_TRIGGERS: 'revalidate_triggers'
 });
 
 var MESSAGEINTERFACES = {};
@@ -68,6 +69,8 @@ MESSAGEINTERFACES[MESSAGETYPES.MATCHMEDIA] = { query: 'string', resolve: 'functi
 MESSAGEINTERFACES[MESSAGETYPES.GET_BODY_HTML] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.REGISTER_TRIGGER] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.REVALIDATE_TRIGGERS] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 function createInitialRenderWorldmap() {
@@ -114,7 +117,6 @@ HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
   persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     el.innerHTML = '';
-    revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
@@ -124,7 +126,7 @@ HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
   persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
-    else { el.innerHTML = msg.markup; revalidateAll(state.triggerRegistry); }
+    else { el.innerHTML = msg.markup; }
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
@@ -134,7 +136,6 @@ HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
   persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     el.remove();
-    revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
@@ -279,7 +280,6 @@ HANDLERS[MESSAGETYPES.SETHTML] = function(state, msg) {
   persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     el.innerHTML = msg.value;
-    revalidateAll(state.triggerRegistry);
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
@@ -349,7 +349,6 @@ HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
   persistRenderWorldmap(state);
   if (document.body) {
     document.body.innerHTML = msg.html;
-    revalidateAll(state.triggerRegistry);
   }
   persistRenderWorldmap(state);
   resolveMsg(msg, true);
@@ -361,7 +360,6 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
       state.worldmap = saved;
       if (document.body) {
         document.body.innerHTML = saved.html;
-        revalidateAll(state.triggerRegistry);
       }
     } else {
       state.worldmap = createInitialRenderWorldmap();
@@ -374,6 +372,70 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
     persistRenderWorldmap(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   });
+};
+
+HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
+  if (!state.triggerListeners) state.triggerListeners = {};
+
+  var el = document.getElementById(msg.sourceid);
+  if (!el) {
+    if (typeof msg.reject === 'function') {
+      msg.reject(new Error('[RENDERACTOR] trigger source not found: ' + msg.sourceid));
+    }
+    return;
+  }
+
+  var key = msg.sourceid + ':' + msg.event;
+
+  if (state.triggerListeners[key]) {
+    var oldEntry = state.triggerListeners[key];
+    el.removeEventListener(oldEntry.event, oldEntry.handler);
+  }
+
+  var entry = {
+    sourceid: msg.sourceid,
+    event: msg.event,
+    pipelineId: msg.pipelineId,
+    stageId: msg.stageId,
+    stagePath: msg.stagePath,
+    handler: null
+  };
+
+  entry.handler = function(e) {
+    import('./hypervisoractor.js').then(function(mod) {
+      mod.enqueueHypervisorTrigger({
+        pipelineId: entry.pipelineId,
+        stageId: entry.stageId,
+        stagePath: entry.stagePath,
+        eventPayload: {
+          target: e.target,
+          type: e.type
+        }
+      }).catch(function(err) {
+        console.warn('[RENDERACTOR] trigger forward failed:', err);
+      });
+    });
+  };
+
+  state.triggerListeners[key] = entry;
+  el.addEventListener(entry.event, entry.handler);
+
+  if (typeof msg.resolve === 'function') msg.resolve(true);
+};
+
+HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
+  if (!state.triggerListeners) state.triggerListeners = {};
+
+  Object.keys(state.triggerListeners).forEach(function(key) {
+    var entry = state.triggerListeners[key];
+    var el = document.getElementById(entry.sourceid);
+    if (!el) return;
+
+    el.removeEventListener(entry.event, entry.handler);
+    el.addEventListener(entry.event, entry.handler);
+  });
+
+  if (typeof msg.resolve === 'function') msg.resolve(true);
 };
 
 var refcounter = 0;
@@ -396,8 +458,8 @@ var renderMailboxStore = {
 };
 
 var initialState = {
-  triggerRegistry: createTriggerRegistry(),
   actorRegistry: createActorRegistry(),
+  triggerListeners: {},
   worldmap: createInitialRenderWorldmap()
 };
 
@@ -464,6 +526,48 @@ var enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
 var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
 var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
 
+var enqueueRenderRegisterTrigger = function(registration) {
+  return new Promise(function(resolve, reject) {
+    var message = {
+      type: MESSAGETYPES.REGISTER_TRIGGER,
+      pipelineId: registration.pipelineId,
+      stageId: registration.stageId,
+      stagePath: registration.stagePath,
+      sourceid: registration.sourceid,
+      event: registration.event,
+      control: registration.control,
+      children: registration.children,
+      resolve: resolve,
+      reject: reject
+    };
+    RENDERACTOR.send(message);
+  });
+};
+
+var enqueueRenderRevalidateTriggers = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.REVALIDATE_TRIGGERS, resolve: resolve, reject: reject });
+  });
+};
+
+var enqueueRenderGetBodyHtml = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.GET_BODY_HTML, resolve: resolve, reject: reject });
+  });
+};
+
+var enqueueRenderRestoreBodyHtml = function(html) {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.RESTORE_BODY_HTML, html: html, resolve: resolve, reject: reject });
+  });
+};
+
+var enqueueRenderRecover = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.RECOVER, resolve: resolve, reject: reject });
+  });
+};
+
 var DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
 var DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
 var DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
@@ -501,24 +605,6 @@ var handlefilereaderrequest = function(payload) {
   });
 };
 
-var enqueueRenderGetBodyHtml = function() {
-  return new Promise(function(resolve, reject) {
-    RENDERACTOR.send({ type: MESSAGETYPES.GET_BODY_HTML, resolve: resolve, reject: reject });
-  });
-};
-
-var enqueueRenderRestoreBodyHtml = function(html) {
-  return new Promise(function(resolve, reject) {
-    RENDERACTOR.send({ type: MESSAGETYPES.RESTORE_BODY_HTML, html: html, resolve: resolve, reject: reject });
-  });
-};
-
-var enqueueRenderRecover = function() {
-  return new Promise(function(resolve, reject) {
-    RENDERACTOR.send({ type: MESSAGETYPES.RECOVER, resolve: resolve, reject: reject });
-  });
-};
-
 export {
   RENDERACTOR,
   MESSAGETYPES,
@@ -546,12 +632,14 @@ export {
   enqueuegetviewport,
   enqueuegetscreen,
   enqueuematchmedia,
+  enqueueRenderRegisterTrigger,
+  enqueueRenderRevalidateTriggers,
+  enqueueRenderGetBodyHtml,
+  enqueueRenderRestoreBodyHtml,
+  enqueueRenderRecover,
   DOMQUERYGETTERS,
   DOMQUERYSETTERS,
   DOMQUERYMESSAGES,
   expectelement,
-  handlefilereaderrequest,
-  enqueueRenderGetBodyHtml,
-  enqueueRenderRestoreBodyHtml,
-  enqueueRenderRecover
+  handlefilereaderrequest
 };
