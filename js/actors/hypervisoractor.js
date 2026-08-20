@@ -20,6 +20,7 @@ var HYPERVISORMESSAGETYPES = Object.freeze({
   GET_PROGRAM: 'get_program',
   MARK_BOOT: 'mark_boot',
   SET_STAGE_DESCRIPTOR: 'set_stage_descriptor',
+  GET_TRIGGER_RECIPIENT_STATUS: 'get_trigger_recipient_status',
   TRIGGER_EVENT: 'trigger_event'
 });
 
@@ -41,6 +42,7 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_PROGRAM] = { programKey: 'string', 
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_PROGRAM] = { programKey: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.MARK_BOOT] = { boot: 'boolean', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR] = { pipelineId: 'string', stageId: 'string', descriptor: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS] = { pipelineId: 'string', stageId: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.TRIGGER_EVENT] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
@@ -54,6 +56,7 @@ function createInitialHypervisorState() {
     activePipelines: [],
     programs: {},
     stageDescriptors: {},
+    triggerRecipients: {},
     savedAt: Date.now()
   };
 }
@@ -144,6 +147,11 @@ var hypervisorbehavior = function(state, message) {
     case HYPERVISORMESSAGETYPES.UNREGISTER_PIPELINE:
       if (!state.activePipelines) state.activePipelines = [];
       state.activePipelines = state.activePipelines.filter(function(id) { return id !== message.pipelineId; });
+      if (state.triggerRecipients) {
+        Object.keys(state.triggerRecipients).forEach(function(key) {
+          if (key.indexOf(message.pipelineId + ':') === 0) delete state.triggerRecipients[key];
+        });
+      }
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
@@ -167,10 +175,23 @@ var hypervisorbehavior = function(state, message) {
 
     case HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR: {
       if (!state.stageDescriptors) state.stageDescriptors = {};
+      if (!state.triggerRecipients) state.triggerRecipients = {};
+
       var key = message.pipelineId + ':' + message.stageId;
       state.stageDescriptors[key] = message.descriptor;
+      state.triggerRecipients[key] = true;
+
       persistHypervisorState(state);
       resolveMessage(message, true);
+      break;
+    }
+
+    case HYPERVISORMESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS: {
+      var recipientKey = message.pipelineId + ':' + message.stageId;
+      var isLive = Boolean(
+        state.triggerRecipients && state.triggerRecipients[recipientKey]
+      );
+      resolveMessage(message, isLive);
       break;
     }
 
@@ -230,6 +251,7 @@ async function loadInitialHypervisorState() {
       saved.activePipelines = saved.activePipelines || [];
       saved.programs = saved.programs || {};
       saved.stageDescriptors = saved.stageDescriptors || {};
+      saved.triggerRecipients = saved.triggerRecipients || {};
       saved.savedAt = Date.now();
       return saved;
     }
@@ -288,6 +310,7 @@ var enqueueHypervisorSetProgram = function(programKey, programSource) { return e
 var enqueueHypervisorGetProgram = function(programKey) { return enqueue(HYPERVISORMESSAGETYPES.GET_PROGRAM, { programKey: programKey }); };
 var enqueueHypervisorMarkBoot = function(boot) { return enqueue(HYPERVISORMESSAGETYPES.MARK_BOOT, { boot: boot }); };
 var enqueueHypervisorSetStageDescriptor = function(pipelineId, stageId, descriptor) { return enqueue(HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR, { pipelineId: pipelineId, stageId: stageId, descriptor: descriptor }); };
+var enqueueHypervisorGetTriggerRecipientStatus = function(pipelineId, stageId) { return enqueue(HYPERVISORMESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS, { pipelineId: pipelineId, stageId: stageId }); };
 var enqueueHypervisorTrigger = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.TRIGGER_EVENT, payload); };
 
 export {
@@ -310,5 +333,6 @@ export {
   enqueueHypervisorGetProgram,
   enqueueHypervisorMarkBoot,
   enqueueHypervisorSetStageDescriptor,
+  enqueueHypervisorGetTriggerRecipientStatus,
   enqueueHypervisorTrigger
 };

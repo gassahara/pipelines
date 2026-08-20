@@ -132,7 +132,10 @@ function makeTask(state, descriptor) {
     promise: null,
     serialized: descriptor.serialized || null,
     programRef: descriptor.programRef || null,
-    origin: descriptor.origin || null
+    origin: descriptor.origin || null,
+    consumers: [],
+    result: null,
+    error: null
   };
   task.promise = new Promise(function(resolve, reject) {
     task.resolveTask = resolve;
@@ -148,6 +151,10 @@ function cancelTask(state, taskid) {
   task.status = 'CANCELLED';
   (task.childTaskIds || []).forEach(function(childId) { cancelTask(state, childId); });
   if (task.rejectTask) task.rejectTask(new Error('Task cancelled: ' + taskid));
+  (task.consumers || []).forEach(function(consumer) {
+    if (consumer.reject) consumer.reject(new Error('Task cancelled: ' + taskid));
+  });
+  task.consumers = [];
 }
 
 function stopTask(state, taskid) {
@@ -159,7 +166,11 @@ function stopTask(state, taskid) {
 function ensurePipeline(state, pipelineid) {
   if (!state.pipelines[pipelineid]) {
     state.pipelines[pipelineid] = {
-      status: 'running', env: {}, dna: null, stageStatuses: {}, usesElementSnapshots: false
+      status: 'running',
+      env: {},
+      dna: null,
+      stageStatuses: {},
+      usesElementSnapshots: false
     };
   }
   return state.pipelines[pipelineid];
@@ -283,8 +294,24 @@ var executionbehavior = function(state, message) {
     }
     case EXECUTIONMESSAGETYPES.AWAIT_TASK: {
       var awaitTask = nextState.tasks[message.taskid];
-      if (!awaitTask) rejectMessage(message, new Error('[EXECUTIONACTOR] unknown task: ' + message.taskid));
-      else resolveMessage(message, awaitTask.promise);
+      if (!awaitTask) {
+        rejectMessage(message, new Error('[EXECUTIONACTOR] unknown task: ' + message.taskid));
+        break;
+      }
+
+      if (awaitTask.status === 'EXECUTED') {
+        resolveMessage(message, awaitTask.result || {});
+      } else if (awaitTask.status === 'FAILED') {
+        rejectMessage(message, awaitTask.error || new Error('task failed'));
+      } else if (awaitTask.status === 'CANCELLED') {
+        rejectMessage(message, awaitTask.error || new Error('task cancelled'));
+      } else {
+        if (!awaitTask.consumers) awaitTask.consumers = [];
+        awaitTask.consumers.push({
+          resolve: message.resolve,
+          reject: message.reject
+        });
+      }
       break;
     }
     case EXECUTIONMESSAGETYPES.GET_TASKS: {
@@ -295,14 +322,38 @@ var executionbehavior = function(state, message) {
         if (message.stageid && t.stageid !== message.stageid) return;
         if (message.elementid && t.elementid !== message.elementid) return;
         if (message.kind && t.kind !== message.kind) return;
-        result.push({ taskid: t.taskid, kind: t.kind, pipelineid: t.pipelineid, stageid: t.stageid, elementid: t.elementid, parentTaskid: t.parentTaskid, status: t.status, origin: t.origin, programRef: t.programRef, serialized: t.serialized });
+        result.push({
+          taskid: t.taskid,
+          kind: t.kind,
+          pipelineid: t.pipelineid,
+          stageid: t.stageid,
+          elementid: t.elementid,
+          parentTaskid: t.parentTaskid,
+          status: t.status,
+          origin: t.origin,
+          programRef: t.programRef,
+          serialized: t.serialized,
+          consumerCount: (t.consumers || []).length
+        });
       });
       resolveMessage(message, result);
       break;
     }
     case EXECUTIONMESSAGETYPES.GET_TASK_STATUS: {
       var t2 = nextState.tasks[message.taskid];
-      resolveMessage(message, t2 ? { taskid: t2.taskid, kind: t2.kind, pipelineid: t2.pipelineid, stageid: t2.stageid, elementid: t2.elementid, parentTaskid: t2.parentTaskid, status: t2.status, origin: t2.origin, programRef: t2.programRef, serialized: t2.serialized } : null);
+      resolveMessage(message, t2 ? {
+        taskid: t2.taskid,
+        kind: t2.kind,
+        pipelineid: t2.pipelineid,
+        stageid: t2.stageid,
+        elementid: t2.elementid,
+        parentTaskid: t2.parentTaskid,
+        status: t2.status,
+        origin: t2.origin,
+        programRef: t2.programRef,
+        serialized: t2.serialized,
+        consumerCount: (t2.consumers || []).length
+      } : null);
       break;
     }
     case EXECUTIONMESSAGETYPES.CANCEL_TASK: {
@@ -331,8 +382,23 @@ var executionbehavior = function(state, message) {
       var task4 = nextState.tasks[message.taskid];
       if (task4) {
         task4.status = message.status;
-        if (message.status === 'EXECUTED') task4.resolveTask(message.result || {});
-        else if (message.status === 'FAILED') task4.rejectTask(message.error || new Error('task failed'));
+        task4.result = message.result || null;
+        task4.error = message.error || null;
+
+        var consumers = task4.consumers || [];
+        if (message.status === 'EXECUTED') {
+          if (task4.resolveTask) task4.resolveTask(message.result || {});
+          consumers.forEach(function(consumer) {
+            if (consumer.resolve) consumer.resolve(message.result || {});
+          });
+        } else if (message.status === 'FAILED') {
+          var err = message.error || new Error('task failed');
+          if (task4.rejectTask) task4.rejectTask(err);
+          consumers.forEach(function(consumer) {
+            if (consumer.reject) consumer.reject(err);
+          });
+        }
+        task4.consumers = [];
       }
       resolveMessage(message, true);
       break;

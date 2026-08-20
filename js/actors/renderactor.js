@@ -2,6 +2,10 @@ import { createactor } from './actorkernel.js';
 import { createActorRegistry, setRenderActor } from './actorregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
+import {
+  createProducerConsumerRegistry,
+  registerProducerConsumer
+} from './liveness.js';
 
 var MESSAGETYPES = Object.freeze({
   RENDER: 'render',
@@ -103,6 +107,92 @@ function withElement(id, reject, fn) {
 function resolveMsg(msg, val) { if (typeof msg.resolve === 'function') msg.resolve(val); }
 function rejectMsg(msg, err) { if (typeof msg.reject === 'function') msg.reject(err); }
 
+function isTriggerRecipientLive(consumer) {
+  return import('./hypervisoractor.js').then(function(mod) {
+    return mod.enqueueHypervisorGetTriggerRecipientStatus(
+      consumer.pipelineId,
+      consumer.stageId
+    );
+  }).catch(function() {
+    return false;
+  });
+}
+
+async function runDomGcViewer(state) {
+  var registry = state.triggerPairs;
+  if (!registry) return;
+
+  var pendingKeys = Object.keys(registry.pending);
+  for (var i = 0; i < pendingKeys.length; i++) {
+    var key = pendingKeys[i];
+    var pendingEntry = registry.pending[key];
+
+    var producerEl = document.getElementById(pendingEntry.producer.id);
+    if (!producerEl) continue;
+
+    var recipientLive = await isTriggerRecipientLive(pendingEntry.consumer);
+    if (!recipientLive) continue;
+
+    var handler = function(e) {
+      import('./hypervisoractor.js').then(function(mod) {
+        mod.enqueueHypervisorTrigger({
+          pipelineId: pendingEntry.consumer.pipelineId,
+          stageId: pendingEntry.consumer.stageId,
+          stagePath: pendingEntry.metadata.stagePath || [],
+          eventPayload: {
+            target: e.target,
+            type: e.type
+          }
+        }).catch(function(err) {
+          console.warn('[RENDERACTOR] trigger forward failed:', err);
+        });
+      });
+    };
+
+    pendingEntry.handler = handler;
+    producerEl.addEventListener(pendingEntry.producer.event, handler);
+
+    registry.active[key] = pendingEntry;
+    delete registry.pending[key];
+  }
+
+  var activeKeys = Object.keys(registry.active);
+  for (var j = 0; j < activeKeys.length; j++) {
+    var activeKey = activeKeys[j];
+    var activeEntry = registry.active[activeKey];
+
+    var activeEl = document.getElementById(activeEntry.producer.id);
+    var activeRecipientLive = await isTriggerRecipientLive(activeEntry.consumer);
+
+    if (!activeEl || !activeRecipientLive) {
+      if (activeEl && activeEntry.handler) {
+        activeEl.removeEventListener(activeEntry.producer.event, activeEntry.handler);
+      }
+      delete registry.active[activeKey];
+    }
+  }
+}
+
+function createTriggerProducerConsumer(msg) {
+  return {
+    producer: {
+      type: 'dom-event',
+      id: msg.sourceid,
+      event: msg.event
+    },
+    consumer: {
+      type: 'trigger-recipient',
+      pipelineId: msg.pipelineId,
+      stageId: msg.stageId
+    },
+    metadata: {
+      stagePath: msg.stagePath || [],
+      control: msg.control,
+      children: msg.children
+    }
+  };
+}
+
 var HANDLERS = {};
 
 HANDLERS[MESSAGETYPES.RENDER] = function(state, msg) {
@@ -120,6 +210,7 @@ HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
+  runDomGcViewer(state);
 };
 
 HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
@@ -130,6 +221,7 @@ HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
+  runDomGcViewer(state);
 };
 
 HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
@@ -139,6 +231,7 @@ HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
+  runDomGcViewer(state);
 };
 
 HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
@@ -283,6 +376,7 @@ HANDLERS[MESSAGETYPES.SETHTML] = function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
+  runDomGcViewer(state);
 };
 
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
@@ -351,6 +445,7 @@ HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
     document.body.innerHTML = msg.html;
   }
   persistRenderWorldmap(state);
+  runDomGcViewer(state);
   resolveMsg(msg, true);
 };
 
@@ -365,77 +460,38 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
       state.worldmap = createInitialRenderWorldmap();
       persistRenderWorldmap(state);
     }
+    runDomGcViewer(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   }).catch(function(e) {
     console.warn('[RENDERACTOR] state restore failed:', e);
     state.worldmap = createInitialRenderWorldmap();
     persistRenderWorldmap(state);
+    runDomGcViewer(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   });
 };
 
 HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
-  if (!state.triggerListeners) state.triggerListeners = {};
-
-  var el = document.getElementById(msg.sourceid);
-  if (!el) {
-    if (typeof msg.reject === 'function') {
-      msg.reject(new Error('[RENDERACTOR] trigger source not found: ' + msg.sourceid));
-    }
-    return;
+  if (!state.triggerPairs) {
+    state.triggerPairs = createProducerConsumerRegistry();
   }
 
-  var key = msg.sourceid + ':' + msg.event;
+  registerProducerConsumer(
+    state.triggerPairs,
+    createTriggerProducerConsumer(msg).producer,
+    createTriggerProducerConsumer(msg).consumer,
+    createTriggerProducerConsumer(msg).metadata
+  );
 
-  if (state.triggerListeners[key]) {
-    var oldEntry = state.triggerListeners[key];
-    el.removeEventListener(oldEntry.event, oldEntry.handler);
-  }
-
-  var entry = {
-    sourceid: msg.sourceid,
-    event: msg.event,
-    pipelineId: msg.pipelineId,
-    stageId: msg.stageId,
-    stagePath: msg.stagePath,
-    handler: null
-  };
-
-  entry.handler = function(e) {
-    import('./hypervisoractor.js').then(function(mod) {
-      mod.enqueueHypervisorTrigger({
-        pipelineId: entry.pipelineId,
-        stageId: entry.stageId,
-        stagePath: entry.stagePath,
-        eventPayload: {
-          target: e.target,
-          type: e.type
-        }
-      }).catch(function(err) {
-        console.warn('[RENDERACTOR] trigger forward failed:', err);
-      });
-    });
-  };
-
-  state.triggerListeners[key] = entry;
-  el.addEventListener(entry.event, entry.handler);
+  runDomGcViewer(state);
 
   if (typeof msg.resolve === 'function') msg.resolve(true);
 };
 
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
-  if (!state.triggerListeners) state.triggerListeners = {};
-
-  Object.keys(state.triggerListeners).forEach(function(key) {
-    var entry = state.triggerListeners[key];
-    var el = document.getElementById(entry.sourceid);
-    if (!el) return;
-
-    el.removeEventListener(entry.event, entry.handler);
-    el.addEventListener(entry.event, entry.handler);
+  runDomGcViewer(state).then(function() {
+    if (typeof msg.resolve === 'function') msg.resolve(true);
   });
-
-  if (typeof msg.resolve === 'function') msg.resolve(true);
 };
 
 var refcounter = 0;
@@ -459,7 +515,7 @@ var renderMailboxStore = {
 
 var initialState = {
   actorRegistry: createActorRegistry(),
-  triggerListeners: {},
+  triggerPairs: createProducerConsumerRegistry(),
   worldmap: createInitialRenderWorldmap()
 };
 
@@ -475,6 +531,10 @@ var RENDERACTOR = createactor(
 );
 
 initialState.actorRegistry = setRenderActor(initialState.actorRegistry, RENDERACTOR);
+
+setInterval(function() {
+  runDomGcViewer(initialState);
+}, 500);
 
 function createEnqueuer(type, idRequired, extraPayloadFn) {
   return function() {

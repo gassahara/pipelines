@@ -14,7 +14,8 @@ import {
   enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout,
   enqueusetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
   DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport,
-  enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTrigger
+  enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTrigger,
+  enqueueRenderRevalidateTriggers
 } from '../actors/renderactor.js';
 import { validatestageflow } from '../typesystem.js';
 import {
@@ -37,7 +38,8 @@ import {
   enqueueHypervisorSetProgram,
   enqueueHypervisorGetProgram,
   enqueueHypervisorGetRenderHtml,
-  enqueueHypervisorSetRenderHtml
+  enqueueHypervisorSetRenderHtml,
+  enqueueHypervisorSetStageDescriptor
 } from '../actors/hypervisoractor.js';
 import { consolidateClosures } from './closureconsolidator.js';
 
@@ -620,7 +622,8 @@ function createTriggerStage(stage, children, pipelineId, stagePath) {
     sourceid: control.sourceid,
     event: control.event,
     control: control,
-    children: children
+    children: children,
+    output: stage.output || null
   };
 
   var stageFn = async function(env) {
@@ -1002,8 +1005,6 @@ async function restorePipelineState(pipelineDefinition, pipelineId) {
     { inheritedBriefcase: env.briefcase || {}, resumeFrom: resumeFrom }
   );
 
-  attachPipelineListeners(pipelineId, compiled.triggerRegistrations || []);
-
   return compiled.pipeline({ id: pipelineId, env: env, resumeFrom: resumeFrom });
 }
 
@@ -1065,14 +1066,36 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   var triggerRegistrations = compiled.filter(function(fn) { return fn.triggerRegistration; }).map(function(fn) { return fn.triggerRegistration; });
 
   for (var i = 0; i < triggerRegistrations.length; i++) {
-    await enqueueRenderRegisterTrigger(triggerRegistrations[i]).catch(function(err) {
+    var reg = triggerRegistrations[i];
+
+    await enqueueRenderRegisterTrigger(reg).catch(function(err) {
       console.warn('[compilepipeline] trigger registration failed:', err);
+    });
+
+    await enqueueHypervisorSetStageDescriptor(
+      reg.pipelineId,
+      reg.stageId,
+      {
+        stageId: reg.stageId,
+        stagePath: reg.stagePath,
+        pipelineId: reg.pipelineId,
+        children: reg.children,
+        control: reg.control,
+        output: reg.output || null
+      }
+    ).catch(function(err) {
+      console.warn('[compilepipeline] hypervisor stage descriptor failed:', err);
     });
   }
 
   var compiledpipeline = createpipeline(compiled, sinks, undefined, { pipelineId: pipelineId });
 
-  return { pipeline: compiledpipeline, pipelineId: pipelineId, spawnBootstrapMap: spawnBootstrapMap, triggerRegistrations: triggerRegistrations };
+  return {
+    pipeline: compiledpipeline,
+    pipelineId: pipelineId,
+    spawnBootstrapMap: spawnBootstrapMap,
+    triggerRegistrations: triggerRegistrations
+  };
 }
 
 export {
