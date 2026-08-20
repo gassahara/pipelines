@@ -135,67 +135,107 @@ function isTriggerRecipientLive(consumer) {
 }
 
 function runDomGcViewer(state) {
-  if (state._runDomGcViewerPromise) return state._runDomGcViewerPromise;
+  if (state._runDomGcViewerPromise) {
+    return state._runDomGcViewerPromise;
+  }
 
-  state._runDomGcViewerPromise = (async function() {
-    var registry = state.triggerPairs;
-    if (!registry) return;
+  state._runDomGcViewerPromise = runDomGcViewerInternal(state).then(
+    function() {
+      state._runDomGcViewerPromise = null;
+    },
+    function(err) {
+      state._runDomGcViewerPromise = null;
+      throw err;
+    }
+  );
 
+  return state._runDomGcViewerPromise;
+}
+
+function runDomGcViewerInternal(state) {
+  var registry = state.triggerPairs;
+  if (!registry) {
+    return Promise.resolve();
+  }
+
+  function processPending(index) {
     var pendingKeys = Object.keys(registry.pending);
-    for (var i = 0; i < pendingKeys.length; i++) {
-      var key = pendingKeys[i];
-      var pendingEntry = registry.pending[key];
-
-      var producerEl = document.getElementById(pendingEntry.producer.id);
-      if (!producerEl) continue;
-
-      var recipientLive = await isTriggerRecipientLive(pendingEntry.consumer);
-      if (!recipientLive) continue;
-
-      var handler = function(e) {
-        import('./hypervisoractor.js').then(function(mod) {
-          mod.enqueueHypervisorTrigger({
-            pipelineId: pendingEntry.consumer.pipelineId,
-            stageId: pendingEntry.consumer.stageId,
-            stagePath: pendingEntry.metadata.stagePath || [],
-            eventPayload: {
-              target: e.target,
-              type: e.type
-            }
-          }).catch(function(err) {
-            console.warn('[RENDERACTOR] trigger forward failed:', err);
-          });
-        });
-      };
-
-      pendingEntry.handler = handler;
-      producerEl.addEventListener(pendingEntry.producer.event, handler);
-
-      registry.active[key] = pendingEntry;
-      delete registry.pending[key];
+    if (index >= pendingKeys.length) {
+      return Promise.resolve();
     }
 
+    var key = pendingKeys[index];
+    var entry = registry.pending[key];
+
+    return Promise.resolve().then(function() {
+      var producerEl = document.getElementById(entry.producer.id);
+      if (!producerEl) {
+        return null;
+      }
+
+      return isTriggerRecipientLive(entry.consumer).then(function(recipientLive) {
+        if (!recipientLive) {
+          return null;
+        }
+
+        var handler = function(e) {
+          import('./hypervisoractor.js').then(function(mod) {
+            mod.enqueueHypervisorTrigger({
+              pipelineId: entry.consumer.pipelineId,
+              stageId: entry.consumer.stageId,
+              stagePath: entry.metadata.stagePath || [],
+              eventPayload: {
+                target: e.target,
+                type: e.type
+              }
+            }).catch(function(err) {
+              console.warn('[RENDERACTOR] trigger forward failed:', err);
+            });
+          });
+        };
+
+        entry.handler = handler;
+        producerEl.addEventListener(entry.producer.event, handler);
+
+        registry.active[key] = entry;
+        delete registry.pending[key];
+
+        return null;
+      });
+    }).then(function() {
+      return processPending(index + 1);
+    });
+  }
+
+  function processActive(index) {
     var activeKeys = Object.keys(registry.active);
-    for (var j = 0; j < activeKeys.length; j++) {
-      var activeKey = activeKeys[j];
-      var activeEntry = registry.active[activeKey];
+    if (index >= activeKeys.length) {
+      return Promise.resolve();
+    }
 
-      if (!activeEntry) continue;
+    var activeKey = activeKeys[index];
+    var activeEntry = registry.active[activeKey];
 
-      var activeEl = document.getElementById(activeEntry.producer.id);
-      var activeRecipientLive = await isTriggerRecipientLive(activeEntry.consumer);
+    if (!activeEntry) {
+      return processActive(index + 1);
+    }
 
+    var activeEl = document.getElementById(activeEntry.producer.id);
+
+    return isTriggerRecipientLive(activeEntry.consumer).then(function(activeRecipientLive) {
       if (!activeEl || !activeRecipientLive) {
         if (activeEl && activeEntry.handler) {
           activeEl.removeEventListener(activeEntry.producer.event, activeEntry.handler);
         }
         delete registry.active[activeKey];
       }
-    }
-  })();
 
-  return state._runDomGcViewerPromise.finally(function() {
-    state._runDomGcViewerPromise = null;
+      return processActive(index + 1);
+    });
+  }
+
+  return processPending(0).then(function() {
+    return processActive(0);
   });
 }
 

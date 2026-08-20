@@ -322,49 +322,103 @@ var LayoutCorrection = {
   },
 
   checkSpacingDoc: function(doc, minGap, StylizerCore) {
-    if (minGap === undefined) minGap = 12;
+    if (minGap === undefined) {
+      minGap = 12;
+    }
 
-    var children = StylizerCore.getAllDescendants(doc.body, StylizerCore).filter(function(el) {
-      var d = el.style.display || 'inline';
-      return d === 'block' || d === 'flex' || d === 'grid' ||
-        ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li']
-          .indexOf(el.tagName.toLowerCase()) !== -1;
-    });
+    var BLOCK_TAGS = [
+      'div', 'section', 'article', 'header', 'footer', 'nav',
+      'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li'
+    ];
 
-    return children.slice(0, -1).reduce(function(violations, a, i) {
-      var b = children[i + 1];
+    function contains(arr, item) {
+      for (var i = 0; i < arr.length; i++) {
+        if (arr[i] === item) return true;
+      }
+      return false;
+    }
+
+    function isEligibleContainer(el) {
+      var style = el.style || {};
+      var display = style.display || '';
+      return display !== 'flex' && display !== 'grid';
+    }
+
+    function isEligibleChild(el) {
+      if (!el || el.nodeType !== 1) return false;
+      var style = el.style || {};
+      if (style.display === 'none' || style.position === 'absolute' || style.position === 'fixed') return false;
+      if (contains(BLOCK_TAGS, el.tagName.toLowerCase())) return true;
+      var display = style.display || '';
+      return display === 'block' || display === 'flex' || display === 'grid';
+    }
+
+    function filterEligibleChildren(children, index, acc) {
+      if (index >= children.length) return acc;
+      var child = children[index];
+      if (isEligibleChild(child)) acc.push(child);
+      return filterEligibleChildren(children, index + 1, acc);
+    }
+
+    function compareChildren(children, index, violations) {
+      if (index >= children.length - 1) return violations;
+
+      var a = children[index];
+      var b = children[index + 1];
       var gap = (parseFloat(a.style.marginBottom) || 0) + (parseFloat(b.style.marginTop) || 0);
 
       if (gap < minGap) {
-        violations.push({
-          elementA: a.tagName + (a.id ? '#' + a.id : ''),
-          elementB: b.tagName + (b.id ? '#' + b.id : ''),
-          gap: gap
-        });
+        violations.push({ elementA: a, elementB: b, gap: gap });
       }
 
-      return violations;
-    }, []);
+      return compareChildren(children, index + 1, violations);
+    }
+
+    function walkParentChildren(parent, childIndex, violations) {
+      var rawChildren = Array.prototype.slice.call(parent.children);
+      if (childIndex >= rawChildren.length) return violations;
+
+      var child = rawChildren[childIndex];
+      walk(child, violations);
+      return walkParentChildren(parent, childIndex + 1, violations);
+    }
+
+    function walk(node, violations) {
+      if (!node || node.nodeType !== 1) return violations;
+      if (!isEligibleContainer(node)) return violations;
+
+      var rawChildren = Array.prototype.slice.call(node.children);
+      var eligible = filterEligibleChildren(rawChildren, 0, []);
+      violations = compareChildren(eligible, 0, violations);
+
+      return walkParentChildren(node, 0, violations);
+    }
+
+    return walk(doc.body, []);
   },
 
   correctSpacingDoc: function(doc, minGap, StylizerCore, LayoutCorrection) {
     if (minGap === undefined) minGap = 12;
 
-    return LayoutCorrection.checkSpacingDoc(doc, minGap, StylizerCore).map(function(violation) {
-      var id = extractElementId(violation.elementA);
-      var el = id !== null ? doc.getElementById(id) : null;
-      if (!el) el = doc.querySelector(violation.elementA);
+    var violations = LayoutCorrection.checkSpacingDoc(doc, minGap, StylizerCore);
 
-      if (el) {
-        el.style.marginBottom = minGap + 'px';
-        return {
-          selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() },
-          styles: { marginBottom: minGap + 'px' }
-        };
-      }
+    function buildRules(index, acc) {
+      if (index >= violations.length) return acc;
 
-      return null;
-    }).filter(Boolean);
+      var violation = violations[index];
+      var el = violation.elementA;
+      if (!el) return buildRules(index + 1, acc);
+
+      el.style.marginBottom = minGap + 'px';
+      acc.push({
+        selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() },
+        styles: { marginBottom: minGap + 'px' }
+      });
+
+      return buildRules(index + 1, acc);
+    }
+
+    return buildRules(0, []);
   },
 
   checkOverlapDoc: function(doc) {

@@ -544,7 +544,7 @@ var StylizerCore = {
       curr = curr.parentNode;
     }
 
-    return '#ffffff';
+    return '';
   }
 };
 
@@ -612,6 +612,32 @@ var StylizerRewrite = {
           Object.keys(rule.style || {}).forEach(function(prop) {
             el.style[prop] = rule.style[prop];
           });
+        } else if (rule.path && Array.isArray(rule.path)) {
+          var currentNodes = [el];
+          var matched = true;
+
+          for (var p = 0; p < rule.path.length; p++) {
+            var step = rule.path[p];
+            var nextNodes = [];
+
+            currentNodes.forEach(function(node) {
+              var matches = StylizerCore.applyStep([node], step, null, StylizerCore);
+              matches.forEach(function(m) { if (nextNodes.indexOf(m) === -1) nextNodes.push(m); });
+            });
+
+            if (!nextNodes.length) {
+              matched = false;
+              break;
+            }
+
+            currentNodes = nextNodes;
+          }
+
+          if (matched && currentNodes.indexOf(el) !== -1) {
+            Object.keys(rule.style || {}).forEach(function(prop) {
+              el.style[prop] = rule.style[prop];
+            });
+          }
         }
       });
 
@@ -774,6 +800,8 @@ var StylizerRewrite = {
           els.forEach(function(el) {
             if (el.textContent.trim() && el.style.color) {
               var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+              if (!bg) return;
+
               var fgHex = getRgbHex(el.style.color);
               var bgHex = getRgbHex(bg);
 
@@ -799,6 +827,8 @@ var StylizerRewrite = {
           els.forEach(function(el) {
             if (el.textContent.trim() && el.style.color) {
               var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+              if (!bg) return;
+
               var fg = getRgbHex(el.style.color);
               var bgHex = getRgbHex(bg);
 
@@ -827,12 +857,13 @@ var StylizerRewrite = {
           els.forEach(function(el) {
             if (el.textContent.trim()) {
               var tag = el.tagName.toLowerCase();
-              var minSize = parseFloat(
+              var minSize = StylizerCore.parseLength(
                 themeStyles[tag] && themeStyles[tag].fontSize ||
                 themeStyles['p'] && themeStyles['p'].fontSize ||
-                '12px'
+                '12px',
+                16
               );
-              var curSize = parseFloat(el.style.fontSize) || 0;
+              var curSize = StylizerCore.parseLength(el.style.fontSize, 16) || 0;
               var curLh = parseFloat(el.style.lineHeight) || 0;
               var styles = {};
 
@@ -901,8 +932,11 @@ var StylizerVerify = {
 
     function walk(el) {
       if (el.nodeType === 1 && el.textContent.trim() && el.style.color) {
+        var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+        if (!bg) return;
+
         var fgHex = getRgbHex(el.style.color);
-        var bgHex = getRgbHex(StylizerCore.getEffectiveBackground(el, StylizerCore));
+        var bgHex = getRgbHex(bg);
 
         if (StylizerCore.color.contrast.contrastRatio(fgHex, bgHex, StylizerCore.color.core) < minRatio) {
           el.style.color = StylizerCore.color.contrast.getOptimalForeground(
@@ -929,7 +963,7 @@ var StylizerVerify = {
 
     function walk(el) {
       if (el.nodeType === 1 && el.textContent.trim()) {
-        var fSize = parseFloat(el.style.fontSize) || 0;
+        var fSize = StylizerCore.parseLength(el.style.fontSize, 16) || 0;
         var lh = parseFloat(el.style.lineHeight) || 0;
         var col = el.style.color;
         var id = el.tagName + (el.id ? '#' + el.id : '');
@@ -981,9 +1015,12 @@ var StylizerVerify = {
     Array.prototype.slice.call(doc.getElementsByTagName('*')).forEach(function(el) {
       if (!el.textContent.trim() || !el.style.color) return;
 
+      var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+      if (!bg) return;
+
       var fg = getRgbHex(el.style.color);
-      var bg = getRgbHex(StylizerCore.getEffectiveBackground(el, StylizerCore));
-      var score = StylizerCore.color.harmony.colorHarmonyScore(fg, bg, StylizerCore.color.core);
+      var bgHex = getRgbHex(bg);
+      var score = StylizerCore.color.harmony.colorHarmonyScore(fg, bgHex, StylizerCore.color.core);
 
       if (score < 0.5) {
         violations.push({
@@ -995,7 +1032,7 @@ var StylizerVerify = {
 
         if (options.autoCorrect) {
           var pal = StylizerCore.color.harmony.getHarmoniousPalette(
-            bg,
+            bgHex,
             3,
             { scheme: 'analogous' },
             StylizerCore.color.harmony,
@@ -1225,20 +1262,6 @@ var StylizerVerify = {
     return result;
   }
 };
-
-StylizerRewrite.verbosity = StylizerCore.verbosity;
-StylizerRewrite.log = StylizerCore.log;
-StylizerRewrite.warn = StylizerCore.warn;
-StylizerRewrite.error = StylizerCore.error;
-StylizerRewrite.debug = StylizerCore.debug;
-StylizerRewrite.info = StylizerCore.info;
-
-StylizerVerify.verbosity = StylizerCore.verbosity;
-StylizerVerify.log = StylizerCore.log;
-StylizerVerify.warn = StylizerCore.warn;
-StylizerVerify.error = StylizerCore.error;
-StylizerVerify.debug = StylizerCore.debug;
-StylizerVerify.info = StylizerCore.info;
 
 export {
   StylizerCore,
