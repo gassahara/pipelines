@@ -158,14 +158,17 @@ function runDomGcViewerInternal(state) {
     return Promise.resolve();
   }
 
-  function processPending(index) {
-    var pendingKeys = Object.keys(registry.pending);
-    if (index >= pendingKeys.length) {
+  function processPendingKeys(keys, index) {
+    if (index >= keys.length) {
       return Promise.resolve();
     }
 
-    var key = pendingKeys[index];
+    var key = keys[index];
     var entry = registry.pending[key];
+
+    if (!entry) {
+      return processPendingKeys(keys, index + 1);
+    }
 
     return Promise.resolve().then(function() {
       var producerEl = document.getElementById(entry.producer.id);
@@ -203,39 +206,41 @@ function runDomGcViewerInternal(state) {
         return null;
       });
     }).then(function() {
-      return processPending(index + 1);
+      return processPendingKeys(keys, index + 1);
     });
   }
 
-  function processActive(index) {
-    var activeKeys = Object.keys(registry.active);
-    if (index >= activeKeys.length) {
+  function processActiveKeys(keys, index) {
+    if (index >= keys.length) {
       return Promise.resolve();
     }
 
-    var activeKey = activeKeys[index];
-    var activeEntry = registry.active[activeKey];
+    var key = keys[index];
+    var entry = registry.active[key];
 
-    if (!activeEntry) {
-      return processActive(index + 1);
+    if (!entry) {
+      return processActiveKeys(keys, index + 1);
     }
 
-    var activeEl = document.getElementById(activeEntry.producer.id);
+    var activeEl = document.getElementById(entry.producer.id);
 
-    return isTriggerRecipientLive(activeEntry.consumer).then(function(activeRecipientLive) {
+    return isTriggerRecipientLive(entry.consumer).then(function(activeRecipientLive) {
       if (!activeEl || !activeRecipientLive) {
-        if (activeEl && activeEntry.handler) {
-          activeEl.removeEventListener(activeEntry.producer.event, activeEntry.handler);
+        if (activeEl && entry.handler) {
+          activeEl.removeEventListener(entry.producer.event, entry.handler);
         }
-        delete registry.active[activeKey];
+        delete registry.active[key];
       }
 
-      return processActive(index + 1);
+      return processActiveKeys(keys, index + 1);
     });
   }
 
-  return processPending(0).then(function() {
-    return processActive(0);
+  var pendingKeys = Object.keys(registry.pending);
+  var activeKeys = Object.keys(registry.active);
+
+  return processPendingKeys(pendingKeys, 0).then(function() {
+    return processActiveKeys(activeKeys, 0);
   });
 }
 
