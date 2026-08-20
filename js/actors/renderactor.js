@@ -107,6 +107,22 @@ function withElement(id, reject, fn) {
 function resolveMsg(msg, val) { if (typeof msg.resolve === 'function') msg.resolve(val); }
 function rejectMsg(msg, err) { if (typeof msg.reject === 'function') msg.reject(err); }
 
+function waitForDomReady() {
+  if (document.readyState === 'loading') {
+    return new Promise(function(resolve) {
+      document.addEventListener('DOMContentLoaded', resolve, { once: true });
+    });
+  }
+
+  if (document.readyState !== 'complete') {
+    return new Promise(function(resolve) {
+      window.addEventListener('load', resolve, { once: true });
+    });
+  }
+
+  return Promise.resolve();
+}
+
 function isTriggerRecipientLive(consumer) {
   return import('./hypervisoractor.js').then(function(mod) {
     return mod.enqueueHypervisorGetTriggerRecipientStatus(
@@ -213,7 +229,8 @@ HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
   runDomGcViewer(state);
 };
 
-HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.HTML] = async function(state, msg) {
+  await waitForDomReady();
   persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
@@ -369,7 +386,8 @@ HANDLERS[MESSAGETYPES.GETLAYOUT] = function(state, msg) {
   });
 };
 
-HANDLERS[MESSAGETYPES.SETHTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.SETHTML] = async function(state, msg) {
+  await waitForDomReady();
   persistRenderWorldmap(state);
   withElement(msg.id, msg.reject, function(el) {
     el.innerHTML = msg.value;
@@ -439,7 +457,8 @@ HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(state, msg) {
   resolveMsg(msg, document.body ? document.body.innerHTML : '');
 };
 
-HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = async function(state, msg) {
+  await waitForDomReady();
   persistRenderWorldmap(state);
   if (document.body) {
     document.body.innerHTML = msg.html;
@@ -449,7 +468,9 @@ HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
   resolveMsg(msg, true);
 };
 
-HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
+HANDLERS[MESSAGETYPES.RECOVER] = async function(state, msg) {
+  await waitForDomReady();
+
   enqueueDbRestore('actor:state:render').then(function(saved) {
     if (saved) {
       state.worldmap = saved;

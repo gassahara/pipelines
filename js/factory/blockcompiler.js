@@ -851,17 +851,46 @@ function buildSpawnBootstrapMap(pipeline) {
   }, {});
 }
 
+function waitForBootReady() {
+  return new Promise(function(resolve) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function onDomReady() {
+        document.removeEventListener('DOMContentLoaded', onDomReady);
+        resolve();
+      }, { once: true });
+      return;
+    }
+
+    if (document.readyState !== 'complete') {
+      window.addEventListener('load', function onLoad() {
+        window.removeEventListener('load', onLoad);
+        resolve();
+      }, { once: true });
+      return;
+    }
+
+    resolve();
+  });
+}
+
 function runTrampoline(env, stages, pipelineId) {
   var logger = createBlockCompilerLogger();
 
-  function step(stack, currentEnv) {
-    if (stack.length === 0) return Promise.resolve(currentEnv);
+  async function step(stack, currentEnv) {
+    await waitForBootReady();
+
+    if (stack.length === 0) return currentEnv;
+
     var nextStageId = stack[0];
-    var stageIndex = findIndex(stages, function(s, idx) { return (s.id || s.stagemeta.stageid || ('stage_' + idx)) === nextStageId; });
+    var stageIndex = findIndex(stages, function(s, idx) {
+      return (s.id || s.stagemeta.stageid || ('stage_' + idx)) === nextStageId;
+    });
+
     if (stageIndex === -1) {
       logger.debug('[PIPELINE] Stage not found, skipping:', nextStageId);
       return step(stack.slice(1), currentEnv);
     }
+
     var stage = stages[stageIndex];
 
     if (stage.triggerRegistration) {
@@ -882,37 +911,58 @@ function runTrampoline(env, stages, pipelineId) {
         return continueWithStage();
       });
     }
+
     return continueWithStage();
   }
 
-  function executeStageStep(stage, nextStageId, stack, currentEnv, pipelineId) {
+  async function executeStageStep(stage, nextStageId, stack, currentEnv, pipelineId) {
+    await waitForBootReady();
+
     logger.debug('[PIPELINE] Executing stage:', nextStageId);
-    return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'running' }).catch(function() {}).then(function() {
-      return stage(currentEnv);
-    }).then(function(patch) {
-      var newEnv = currentEnv;
-      if (patch && typeof patch === 'object') {
-        if (newEnv.updateworldmap) newEnv.updateworldmap(patch);
-        else newEnv = extendObject(cloneObject(newEnv), patch);
-      }
-      return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'completed' }).catch(function() {}).then(function() {
-        return enqueueExecutionEnvUpdated(pipelineId, newEnv).catch(function() {});
-      }).then(function() {
-        return step(stack.slice(1), newEnv);
+
+    return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'running' })
+      .catch(function() {})
+      .then(function() {
+        return stage(currentEnv);
+      })
+      .then(function(patch) {
+        var newEnv = currentEnv;
+        if (patch && typeof patch === 'object') {
+          if (newEnv.updateworldmap) newEnv.updateworldmap(patch);
+          else newEnv = extendObject(cloneObject(newEnv), patch);
+        }
+
+        return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'completed' })
+          .catch(function() {})
+          .then(function() {
+            return enqueueExecutionEnvUpdated(pipelineId, newEnv).catch(function() {});
+          })
+          .then(function() {
+            return step(stack.slice(1), newEnv);
+          });
+      })
+      .catch(function(err) {
+        logger.info('[PIPELINE] Error at stage:', nextStageId);
+
+        return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'failed' })
+          .catch(function() {})
+          .then(function() {
+            return enqueueExecutionEnvUpdated(pipelineId, currentEnv).catch(function() {});
+          })
+          .then(function() {
+            err.diagnostic = err.diagnostic || {};
+            err.diagnostic.pipelinestage = nextStageId;
+            throw err;
+          });
       });
-    }).catch(function(err) {
-      logger.info('[PIPELINE] Error at stage:', nextStageId);
-      return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'failed' }).catch(function() {}).then(function() {
-        return enqueueExecutionEnvUpdated(pipelineId, currentEnv).catch(function() {});
-      }).then(function() {
-        err.diagnostic = err.diagnostic || {};
-        err.diagnostic.pipelinestage = nextStageId;
-        throw err;
-      });
-    });
   }
 
-  var initialStack = env.executionStack ? env.executionStack.slice(0) : stages.map(function(s, idx) { return s.id || s.stagemeta.stageid || ('stage_' + idx); });
+  var initialStack = env.executionStack
+    ? env.executionStack.slice(0)
+    : stages.map(function(s, idx) {
+        return s.id || s.stagemeta.stageid || ('stage_' + idx);
+      });
+
   if (!env.executionStack) logger.debug('[RESTORE] pipeline-booting-fresh', { pipelineId: pipelineId });
   else logger.debug('[RESTORE] pipeline-resuming', { pipelineId: pipelineId, remainingStages: initialStack.length });
 
@@ -951,12 +1001,21 @@ function createpipeline(stages, sinks, onprogress, options) {
   return async function(agent) {
     var env = agent.env;
     if (!env || typeof env !== 'object') throw new Error('[PIPELINE] agent.env is required');
+
     env.agentid = agent.id;
     env.pipelineid = pipelineId;
-    env._rerunStages = function() { return runTrampoline(env, stages, pipelineId); };
-    enqueueHypervisorSetEnv(pipelineId, env).catch(function(err) { console.warn('[BLOCKCOMPILER] hypervisor env save failed:', err); });
+    env._rerunStages = function() {
+      return runTrampoline(env, stages, pipelineId);
+    };
+
+    enqueueHypervisorSetEnv(pipelineId, env).catch(function(err) {
+      console.warn('[BLOCKCOMPILER] hypervisor env save failed:', err);
+    });
+
     return runTrampoline(env, stages, pipelineId).then(function(finalEnv) {
-      enqueueHypervisorUnregisterPipeline(pipelineId).catch(function(err) { console.warn('[BLOCKCOMPILER] hypervisor unregister failed:', err); });
+      enqueueHypervisorUnregisterPipeline(pipelineId).catch(function(err) {
+        console.warn('[BLOCKCOMPILER] hypervisor unregister failed:', err);
+      });
       return finalEnv;
     });
   };
@@ -1063,7 +1122,9 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   var resumeFrom = options.resumeFrom || null;
   var compiled = compileElements(pipeline.elements, pipelineId, resumeFrom, [], pipelineBriefcase, compilerConstants, dnaConstants, triggerRegistry);
 
-  var triggerRegistrations = compiled.filter(function(fn) { return fn.triggerRegistration; }).map(function(fn) { return fn.triggerRegistration; });
+  var triggerRegistrations = compiled
+    .filter(function(fn) { return fn.triggerRegistration; })
+    .map(function(fn) { return fn.triggerRegistration; });
 
   for (var i = 0; i < triggerRegistrations.length; i++) {
     var reg = triggerRegistrations[i];

@@ -561,18 +561,12 @@ async function runSpawnTask(taskid, descriptor) {
   }
 }
 
-var executionMailboxStore = {
-  store: enqueueDbStore,
-  restore: enqueueDbRestore,
-  delete: enqueueDbDelete
-};
-
 var initialState = await loadInitialState();
 var EXECUTIONACTOR = createactor(
   executionbehavior,
   initialState,
   MESSAGEINTERFACES,
-  { actorName: 'executionactor', mailboxType: 'db', mailboxStore: executionMailboxStore }
+  { actorName: 'executionactor', mailboxType: 'memory' }
 );
 
 var enqueue = function(type, payload) {
