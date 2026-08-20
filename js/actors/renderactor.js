@@ -134,59 +134,69 @@ function isTriggerRecipientLive(consumer) {
   });
 }
 
-async function runDomGcViewer(state) {
-  var registry = state.triggerPairs;
-  if (!registry) return;
+function runDomGcViewer(state) {
+  if (state._runDomGcViewerPromise) return state._runDomGcViewerPromise;
 
-  var pendingKeys = Object.keys(registry.pending);
-  for (var i = 0; i < pendingKeys.length; i++) {
-    var key = pendingKeys[i];
-    var pendingEntry = registry.pending[key];
+  state._runDomGcViewerPromise = (async function() {
+    var registry = state.triggerPairs;
+    if (!registry) return;
 
-    var producerEl = document.getElementById(pendingEntry.producer.id);
-    if (!producerEl) continue;
+    var pendingKeys = Object.keys(registry.pending);
+    for (var i = 0; i < pendingKeys.length; i++) {
+      var key = pendingKeys[i];
+      var pendingEntry = registry.pending[key];
 
-    var recipientLive = await isTriggerRecipientLive(pendingEntry.consumer);
-    if (!recipientLive) continue;
+      var producerEl = document.getElementById(pendingEntry.producer.id);
+      if (!producerEl) continue;
 
-    var handler = function(e) {
-      import('./hypervisoractor.js').then(function(mod) {
-        mod.enqueueHypervisorTrigger({
-          pipelineId: pendingEntry.consumer.pipelineId,
-          stageId: pendingEntry.consumer.stageId,
-          stagePath: pendingEntry.metadata.stagePath || [],
-          eventPayload: {
-            target: e.target,
-            type: e.type
-          }
-        }).catch(function(err) {
-          console.warn('[RENDERACTOR] trigger forward failed:', err);
+      var recipientLive = await isTriggerRecipientLive(pendingEntry.consumer);
+      if (!recipientLive) continue;
+
+      var handler = function(e) {
+        import('./hypervisoractor.js').then(function(mod) {
+          mod.enqueueHypervisorTrigger({
+            pipelineId: pendingEntry.consumer.pipelineId,
+            stageId: pendingEntry.consumer.stageId,
+            stagePath: pendingEntry.metadata.stagePath || [],
+            eventPayload: {
+              target: e.target,
+              type: e.type
+            }
+          }).catch(function(err) {
+            console.warn('[RENDERACTOR] trigger forward failed:', err);
+          });
         });
-      });
-    };
+      };
 
-    pendingEntry.handler = handler;
-    producerEl.addEventListener(pendingEntry.producer.event, handler);
+      pendingEntry.handler = handler;
+      producerEl.addEventListener(pendingEntry.producer.event, handler);
 
-    registry.active[key] = pendingEntry;
-    delete registry.pending[key];
-  }
-
-  var activeKeys = Object.keys(registry.active);
-  for (var j = 0; j < activeKeys.length; j++) {
-    var activeKey = activeKeys[j];
-    var activeEntry = registry.active[activeKey];
-
-    var activeEl = document.getElementById(activeEntry.producer.id);
-    var activeRecipientLive = await isTriggerRecipientLive(activeEntry.consumer);
-
-    if (!activeEl || !activeRecipientLive) {
-      if (activeEl && activeEntry.handler) {
-        activeEl.removeEventListener(activeEntry.producer.event, activeEntry.handler);
-      }
-      delete registry.active[activeKey];
+      registry.active[key] = pendingEntry;
+      delete registry.pending[key];
     }
-  }
+
+    var activeKeys = Object.keys(registry.active);
+    for (var j = 0; j < activeKeys.length; j++) {
+      var activeKey = activeKeys[j];
+      var activeEntry = registry.active[activeKey];
+
+      if (!activeEntry) continue;
+
+      var activeEl = document.getElementById(activeEntry.producer.id);
+      var activeRecipientLive = await isTriggerRecipientLive(activeEntry.consumer);
+
+      if (!activeEl || !activeRecipientLive) {
+        if (activeEl && activeEntry.handler) {
+          activeEl.removeEventListener(activeEntry.producer.event, activeEntry.handler);
+        }
+        delete registry.active[activeKey];
+      }
+    }
+  })();
+
+  return state._runDomGcViewerPromise.finally(function() {
+    state._runDomGcViewerPromise = null;
+  });
 }
 
 function createTriggerProducerConsumer(msg) {

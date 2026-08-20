@@ -737,7 +737,7 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath) {
         return executeChildren(childSlice, currentEnv, id, pipelineId, stagePath).then(function(result) {
           var newEnv = result.env || currentEnv;
           var fnargs = [controlprops].concat(inputaccessors.map(function(fn) { return fn(newEnv); }));
-          return control.fn.apply(null, fnargs).then(function(shouldContinue) {
+          return Promise.resolve(control.fn.apply(null, fnargs)).then(function(shouldContinue) {
             if (!shouldContinue) return newEnv;
             return runLoop(iteration + 1, newEnv);
           });
@@ -903,7 +903,7 @@ function runTrampoline(env, stages, pipelineId) {
     }
 
     if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP' && stage.control.fn) {
-      return stage.control.fn(currentEnv).then(function(condition) {
+      return Promise.resolve(stage.control.fn(currentEnv)).then(function(condition) {
         if (!condition) {
           logger.debug('[PIPELINE] Skipping stage:', nextStageId, 'control condition false');
           return step(stack.slice(1), currentEnv);
