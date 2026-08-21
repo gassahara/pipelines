@@ -6,6 +6,34 @@ import {
   createProducerConsumerRegistry,
   registerProducerConsumer
 } from './liveness.js';
+import { callwithstack } from '../factory/callwithstack.js';
+import { EVALSTACK } from '../evalstack.js';
+import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+
+var renderVerbosityConstants = createVerbosityConstants();
+var renderVerbosityFunctions = createVerbosityFunctions(renderVerbosityConstants);
+var renderVerbosityState = Object.freeze({ level: renderVerbosityConstants.DEBUG });
+
+var renderLogger = {
+  debug: function() {
+    renderVerbosityFunctions.logdebug.apply(null, [renderVerbosityState].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function() {
+    renderVerbosityFunctions.logwarn.apply(null, [renderVerbosityState].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function() {
+    renderVerbosityFunctions.loginfo.apply(null, [renderVerbosityState].concat(Array.prototype.slice.call(arguments)));
+  }
+};
+
+function createRenderErrorContext(label) {
+  return function(err) {
+    if (!err) err = new Error('unknown render error');
+    if (!err.diagnostic) err.diagnostic = {};
+    err.diagnostic.renderstage = label;
+    throw err;
+  };
+}
 
 var MESSAGETYPES = Object.freeze({
   RENDER: 'render',
@@ -87,7 +115,7 @@ function createInitialRenderWorldmap() {
 function persistRenderWorldmap(state) {
   state.worldmap.html = document.body ? document.body.innerHTML : '';
   enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
-    console.warn('[RENDERACTOR] state persist failed:', e);
+    renderLogger.warn('[RENDERACTOR] state persist failed:', e);
   });
 }
 
@@ -135,16 +163,30 @@ function isTriggerRecipientLive(consumer) {
 }
 
 function runDomGcViewer(state) {
+  renderLogger.debug('[trigger-gc] start');
+
   if (state._runDomGcViewerPromise) {
+    renderLogger.debug('[trigger-gc] in-flight, returning existing promise');
     return state._runDomGcViewerPromise;
   }
 
-  state._runDomGcViewerPromise = runDomGcViewerInternal(state).then(
+  state._runDomGcViewerPromise = callwithstack(
+    EVALSTACK,
+    'render-gc',
+    'async-await',
+    function() {
+      return runDomGcViewerInternal(state);
+    },
+    [],
+    { context: { env: {} }, capturecontinuation: true, errk: createRenderErrorContext('gc') }
+  ).then(
     function() {
       state._runDomGcViewerPromise = null;
+      renderLogger.debug('[trigger-gc] finish');
     },
     function(err) {
       state._runDomGcViewerPromise = null;
+      renderLogger.warn('[trigger-gc] failed', err);
       throw err;
     }
   );
@@ -160,6 +202,7 @@ function runDomGcViewerInternal(state) {
 
   function processPendingKeys(keys, index) {
     if (index >= keys.length) {
+      renderLogger.debug('[trigger-gc] pending done');
       return Promise.resolve();
     }
 
@@ -170,30 +213,50 @@ function runDomGcViewerInternal(state) {
       return processPendingKeys(keys, index + 1);
     }
 
+    renderLogger.debug('[trigger-gc] pending entry', key);
+
     return Promise.resolve().then(function() {
       var producerEl = document.getElementById(entry.producer.id);
       if (!producerEl) {
+        renderLogger.debug('[trigger-gc] producer missing', key, entry.producer.id);
         return null;
       }
 
       return isTriggerRecipientLive(entry.consumer).then(function(recipientLive) {
+        renderLogger.debug('[trigger-gc] recipient live?', key, recipientLive);
+
         if (!recipientLive) {
           return null;
         }
 
         var handler = function(e) {
-          import('./hypervisoractor.js').then(function(mod) {
-            mod.enqueueHypervisorTrigger({
-              pipelineId: entry.consumer.pipelineId,
-              stageId: entry.consumer.stageId,
-              stagePath: entry.metadata.stagePath || [],
-              eventPayload: {
-                target: e.target,
-                type: e.type
-              }
-            }).catch(function(err) {
-              console.warn('[RENDERACTOR] trigger forward failed:', err);
-            });
+          renderLogger.debug('[trigger] forwarding', entry.consumer.pipelineId, entry.consumer.stageId);
+
+          return callwithstack(
+            EVALSTACK,
+            'trigger:' + entry.consumer.pipelineId + ':' + entry.consumer.stageId,
+            'async-await',
+            function() {
+              return import('./hypervisoractor.js').then(function(mod) {
+                return mod.enqueueHypervisorTrigger({
+                  pipelineId: entry.consumer.pipelineId,
+                  stageId: entry.consumer.stageId,
+                  stagePath: entry.metadata.stagePath || [],
+                  eventPayload: {
+                    target: e.target,
+                    type: e.type
+                  }
+                });
+              });
+            },
+            [],
+            {
+              context: { env: entry.metadata.env || {} },
+              capturecontinuation: true,
+              errk: createRenderErrorContext('triggerforward')
+            }
+          ).catch(function(err) {
+            renderLogger.warn('[RENDERACTOR] trigger forward failed:', err);
           });
         };
 
@@ -202,6 +265,8 @@ function runDomGcViewerInternal(state) {
 
         registry.active[key] = entry;
         delete registry.pending[key];
+
+        renderLogger.debug('[trigger-gc] moved pending->active', key);
 
         return null;
       });
@@ -212,6 +277,7 @@ function runDomGcViewerInternal(state) {
 
   function processActiveKeys(keys, index) {
     if (index >= keys.length) {
+      renderLogger.debug('[trigger-gc] active done');
       return Promise.resolve();
     }
 
@@ -222,14 +288,19 @@ function runDomGcViewerInternal(state) {
       return processActiveKeys(keys, index + 1);
     }
 
+    renderLogger.debug('[trigger-gc] active entry', key);
+
     var activeEl = document.getElementById(entry.producer.id);
 
     return isTriggerRecipientLive(entry.consumer).then(function(activeRecipientLive) {
+      renderLogger.debug('[trigger-gc] active recipient live?', key, activeRecipientLive);
+
       if (!activeEl || !activeRecipientLive) {
         if (activeEl && entry.handler) {
           activeEl.removeEventListener(entry.producer.event, entry.handler);
         }
         delete registry.active[key];
+        renderLogger.debug('[trigger-gc] removed active entry', key);
       }
 
       return processActiveKeys(keys, index + 1);
@@ -238,6 +309,8 @@ function runDomGcViewerInternal(state) {
 
   var pendingKeys = Object.keys(registry.pending);
   var activeKeys = Object.keys(registry.active);
+
+  renderLogger.debug('[trigger-gc] counts', { pending: pendingKeys.length, active: activeKeys.length });
 
   return processPendingKeys(pendingKeys, 0).then(function() {
     return processActiveKeys(activeKeys, 0);
@@ -539,7 +612,7 @@ HANDLERS[MESSAGETYPES.RECOVER] = async function(state, msg) {
     runDomGcViewer(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   }).catch(function(e) {
-    console.warn('[RENDERACTOR] state restore failed:', e);
+    renderLogger.warn('[RENDERACTOR] state restore failed:', e);
     state.worldmap = createInitialRenderWorldmap();
     persistRenderWorldmap(state);
     runDomGcViewer(state);
@@ -548,6 +621,8 @@ HANDLERS[MESSAGETYPES.RECOVER] = async function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
+  renderLogger.debug('[trigger-register] registering', msg.pipelineId, msg.stageId, msg.sourceid, msg.event);
+
   if (!state.triggerPairs) {
     state.triggerPairs = createProducerConsumerRegistry();
   }
@@ -559,13 +634,16 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
     createTriggerProducerConsumer(msg).metadata
   );
 
-  runDomGcViewer(state);
-
-  if (typeof msg.resolve === 'function') msg.resolve(true);
+  runDomGcViewer(state).then(function() {
+    renderLogger.debug('[trigger-register] registration processed', msg.stageId);
+    if (typeof msg.resolve === 'function') msg.resolve(true);
+  });
 };
 
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
+  renderLogger.debug('[trigger-revalidate] start');
   runDomGcViewer(state).then(function() {
+    renderLogger.debug('[trigger-revalidate] complete');
     if (typeof msg.resolve === 'function') msg.resolve(true);
   });
 };

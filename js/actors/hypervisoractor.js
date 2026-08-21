@@ -1,6 +1,38 @@
 import { createactor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 import { executeStage } from '../factory/blockcompiler.js';
+import { callwithstack } from '../factory/callwithstack.js';
+import { EVALSTACK } from '../evalstack.js';
+import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+
+var hypervisorVerbosityConstants = createVerbosityConstants();
+var hypervisorVerbosityFunctions = createVerbosityFunctions(hypervisorVerbosityConstants);
+var hypervisorVerbosityState = Object.freeze({ level: hypervisorVerbosityConstants.DEBUG });
+
+var hypervisorLogger = {
+  debug: function() {
+    hypervisorVerbosityFunctions.logdebug.apply(null, [hypervisorVerbosityState].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function() {
+    hypervisorVerbosityFunctions.logwarn.apply(null, [hypervisorVerbosityState].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function() {
+    hypervisorVerbosityFunctions.loginfo.apply(null, [hypervisorVerbosityState].concat(Array.prototype.slice.call(arguments)));
+  }
+};
+
+function createHypervisorErrorContext(label) {
+  return function(err) {
+    if (!err) {
+      err = new Error('unknown hypervisor error');
+    }
+    if (!err.diagnostic) {
+      err.diagnostic = {};
+    }
+    err.diagnostic.hypervisorstage = label;
+    throw err;
+  };
+}
 
 var HYPERVISORMESSAGETYPES = Object.freeze({
   LOAD: 'load',
@@ -64,7 +96,7 @@ function createInitialHypervisorState() {
 function persistHypervisorState(state) {
   state.savedAt = Date.now();
   enqueueDbStore('actor:state:hypervisor', state).catch(function(err) {
-    console.warn('[HYPERVISOR] state persist failed:', err);
+    hypervisorLogger.warn('[HYPERVISOR] state persist failed:', err);
   });
 }
 
@@ -181,6 +213,8 @@ var hypervisorbehavior = function(state, message) {
       state.stageDescriptors[key] = message.descriptor;
       state.triggerRecipients[key] = true;
 
+      hypervisorLogger.debug('[hypervisor] stage descriptor stored', key);
+
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
@@ -191,6 +225,7 @@ var hypervisorbehavior = function(state, message) {
       var isLive = Boolean(
         state.triggerRecipients && state.triggerRecipients[recipientKey]
       );
+      hypervisorLogger.debug('[hypervisor] recipient status', recipientKey, isLive);
       resolveMessage(message, isLive);
       break;
     }
@@ -208,6 +243,7 @@ var hypervisorbehavior = function(state, message) {
       var descriptor = state.stageDescriptors && state.stageDescriptors[descriptorKey];
 
       if (!descriptor) {
+        hypervisorLogger.warn('[hypervisor] missing trigger stage descriptor:', descriptorKey);
         rejectMessage(message, new Error('[HYPERVISOR] missing trigger stage descriptor: ' + descriptorKey));
         return state;
       }
@@ -218,16 +254,31 @@ var hypervisorbehavior = function(state, message) {
       };
       persistHypervisorState(state);
 
-      executeStage(descriptor, env, 'trigger', message.eventPayload)
-        .then(function(result) {
-          var updatedEnv = result && result.env ? result.env : env;
-          state.envByPipeline[pipelineId] = updatedEnv;
-          persistHypervisorState(state);
-          resolveMessage(message, updatedEnv);
-        })
-        .catch(function(err) {
-          rejectMessage(message, err);
-        });
+      hypervisorLogger.debug('[hypervisor] trigger event', pipelineId, stageId);
+
+      callwithstack(
+        EVALSTACK,
+        'hypervisor-trigger:' + pipelineId + ':' + stageId,
+        'async-await',
+        function() {
+          return executeStage(descriptor, env, 'trigger', message.eventPayload);
+        },
+        [env],
+        {
+          context: { env: env },
+          capturecontinuation: true,
+          errk: createHypervisorErrorContext('trigger')
+        }
+      ).then(function(result) {
+        var updatedEnv = result && result.env ? result.env : env;
+        state.envByPipeline[pipelineId] = updatedEnv;
+        persistHypervisorState(state);
+        hypervisorLogger.debug('[hypervisor] trigger completed', pipelineId, stageId);
+        resolveMessage(message, updatedEnv);
+      }).catch(function(err) {
+        hypervisorLogger.warn('[hypervisor] trigger failed', err);
+        rejectMessage(message, err);
+      });
 
       return state;
     }
@@ -256,12 +307,12 @@ async function loadInitialHypervisorState() {
       return saved;
     }
   } catch (err) {
-    console.warn('[HYPERVISOR] state restore failed:', err);
+    hypervisorLogger.warn('[HYPERVISOR] state restore failed:', err);
   }
 
   var initialState = createInitialHypervisorState();
   enqueueDbStore('actor:state:hypervisor', initialState).catch(function(err) {
-    console.warn('[HYPERVISOR] default state persist failed:', err);
+    hypervisorLogger.warn('[HYPERVISOR] default state persist failed:', err);
   });
   return initialState;
 }

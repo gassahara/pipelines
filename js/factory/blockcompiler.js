@@ -1125,9 +1125,9 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
 
   var logger = createBlockCompilerLogger();
 
-  await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(function(err) { console.warn('[compilepipeline] pipeline loaded failed:', err); });
-  await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { console.warn('[compilepipeline] hypervisor register failed:', err); });
-  await enqueueExecutionRegisterPipeline(pipelineId, null, {}).catch(function(err) { console.warn('[compilepipeline] register pipeline failed:', err); });
+  await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(function(err) { logger.warn('[compilepipeline] pipeline loaded failed:', err); });
+  await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { logger.warn('[compilepipeline] hypervisor register failed:', err); });
+  await enqueueExecutionRegisterPipeline(pipelineId, null, {}).catch(function(err) { logger.warn('[compilepipeline] register pipeline failed:', err); });
 
   var spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
   var resumeFrom = options.resumeFrom || null;
@@ -1149,23 +1149,43 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   for (var i = 0; i < triggerRegistrations.length; i++) {
     var reg = triggerRegistrations[i];
 
-    await enqueueRenderRegisterTrigger(reg).catch(function(err) {
-      console.warn('[compilepipeline] trigger registration failed:', err);
+    logger.debug('[compilepipeline] registering trigger', reg.stageId, reg.sourceid, reg.event);
+
+    await callwithstack(
+      EVALSTACK,
+      'hypervisor-descriptor:' + reg.stageId,
+      'async-await',
+      function() {
+        return enqueueHypervisorSetStageDescriptor(
+          reg.pipelineId,
+          reg.stageId,
+          {
+            stageId: reg.stageId,
+            stagePath: reg.stagePath,
+            pipelineId: reg.pipelineId,
+            children: reg.children,
+            control: reg.control,
+            output: reg.output || null
+          }
+        );
+      },
+      [],
+      { context: { env: {} }, capturecontinuation: true, errk: createerrorcontext('hypervisorDescriptor', 'trigger') }
+    ).catch(function(err) {
+      logger.warn('[compilepipeline] hypervisor stage descriptor failed:', err);
     });
 
-    await enqueueHypervisorSetStageDescriptor(
-      reg.pipelineId,
-      reg.stageId,
-      {
-        stageId: reg.stageId,
-        stagePath: reg.stagePath,
-        pipelineId: reg.pipelineId,
-        children: reg.children,
-        control: reg.control,
-        output: reg.output || null
-      }
+    await callwithstack(
+      EVALSTACK,
+      'render-register:' + reg.stageId,
+      'async-await',
+      function() {
+        return enqueueRenderRegisterTrigger(reg);
+      },
+      [],
+      { context: { env: {} }, capturecontinuation: true, errk: createerrorcontext('renderRegister', 'trigger') }
     ).catch(function(err) {
-      console.warn('[compilepipeline] hypervisor stage descriptor failed:', err);
+      logger.warn('[compilepipeline] trigger registration failed:', err);
     });
   }
 
