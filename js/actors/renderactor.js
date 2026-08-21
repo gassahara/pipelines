@@ -66,6 +66,7 @@ var MESSAGETYPES = Object.freeze({
   GET_BODY_HTML: 'get_body_html',
   RESTORE_BODY_HTML: 'restore_body_html',
   RECOVER: 'recover',
+  PING: 'ping',
   REGISTER_TRIGGER: 'register_trigger',
   REGISTER_TRIGGER_EXPECTATION: 'register_trigger_expectation',
   REVALIDATE_TRIGGERS: 'revalidate_triggers'
@@ -102,6 +103,7 @@ MESSAGEINTERFACES[MESSAGETYPES.MATCHMEDIA] = { query: 'string', resolve: 'functi
 MESSAGEINTERFACES[MESSAGETYPES.GET_BODY_HTML] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.REGISTER_TRIGGER] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', output: 'string?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.REVALIDATE_TRIGGERS] = { resolve: 'function?', reject: 'function?' };
@@ -671,6 +673,11 @@ HANDLERS[MESSAGETYPES.RECOVER] = async function(state, msg) {
   });
 };
 
+HANDLERS[MESSAGETYPES.PING] = function(state, msg) {
+  resolveMsg(msg, true);
+  return state;
+};
+
 HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
   return HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION](state, msg);
 };
@@ -838,6 +845,12 @@ var enqueueRenderRevalidateTriggers = function() {
   });
 };
 
+var enqueueRenderPing = function() {
+  return new Promise(function(resolve, reject) {
+    RENDERACTOR.send({ type: MESSAGETYPES.PING, resolve: resolve, reject: reject });
+  });
+};
+
 var enqueueRenderGetBodyHtml = function() {
   return new Promise(function(resolve, reject) {
     RENDERACTOR.send({ type: MESSAGETYPES.GET_BODY_HTML, resolve: resolve, reject: reject });
@@ -854,6 +867,10 @@ var enqueueRenderRecover = function() {
   return new Promise(function(resolve, reject) {
     RENDERACTOR.send({ type: MESSAGETYPES.RECOVER, resolve: resolve, reject: reject });
   });
+};
+
+var startRenderActor = function() {
+  return RENDERACTOR;
 };
 
 var DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
@@ -923,9 +940,11 @@ export {
   enqueueRenderRegisterTrigger,
   enqueueRenderRegisterTriggerExpectation,
   enqueueRenderRevalidateTriggers,
+  enqueueRenderPing,
   enqueueRenderGetBodyHtml,
   enqueueRenderRestoreBodyHtml,
   enqueueRenderRecover,
+  startRenderActor,
   DOMQUERYGETTERS,
   DOMQUERYSETTERS,
   DOMQUERYMESSAGES,

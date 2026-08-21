@@ -13,7 +13,8 @@ var DEBUG_MESSAGETYPES = Object.freeze({
   INIT_OVERLAY: 'init_overlay',
   SHOW: 'show',
   HIDE: 'hide',
-  RECOVER: 'recover'
+  RECOVER: 'recover',
+  PING: 'ping'
 });
 
 var MESSAGEINTERFACES = {};
@@ -21,6 +22,7 @@ MESSAGEINTERFACES[DEBUG_MESSAGETYPES.INIT_OVERLAY] = { resolve: 'function?', rej
 MESSAGEINTERFACES[DEBUG_MESSAGETYPES.SHOW] = { error: 'object', continuation: 'object?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[DEBUG_MESSAGETYPES.HIDE] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[DEBUG_MESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[DEBUG_MESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 var DEBUGACTOR_INSTANCE = null;
@@ -95,6 +97,11 @@ function ensureOverlay(state) {
 var debugbehavior = function(state, message) {
   if (!state.worldmap) {
     state.worldmap = createInitialDebugWorldmap();
+  }
+
+  if (message.type === DEBUG_MESSAGETYPES.PING) {
+    if (typeof message.resolve === 'function') message.resolve(true);
+    return state;
   }
 
   if (message.type === DEBUG_MESSAGETYPES.INIT_OVERLAY) {
@@ -242,6 +249,10 @@ var debugMailboxStore = {
 };
 
 function createDebugActor() {
+  if (DEBUGACTOR_INSTANCE) {
+    return DEBUGACTOR_INSTANCE;
+  }
+
   var actor = createactor(
     debugbehavior,
     {
@@ -256,7 +267,31 @@ function createDebugActor() {
   return actor;
 }
 
+function startDebugActor() {
+  return createDebugActor();
+}
+
+var enqueueDebugPing = function() {
+  return new Promise(function(resolve, reject) {
+    if (!DEBUGACTOR_INSTANCE) {
+      reject(new Error('[DEBUGACTOR] not started'));
+      return;
+    }
+    DEBUGACTOR_INSTANCE.send({ type: DEBUG_MESSAGETYPES.PING, resolve: resolve, reject: reject });
+  });
+};
+
+var enqueueDebugRecover = function() {
+  return new Promise(function(resolve, reject) {
+    var actor = startDebugActor();
+    actor.send({ type: DEBUG_MESSAGETYPES.RECOVER, resolve: resolve, reject: reject });
+  });
+};
+
 export {
   DEBUG_MESSAGETYPES,
-  createDebugActor
+  createDebugActor,
+  startDebugActor,
+  enqueueDebugPing,
+  enqueueDebugRecover
 };

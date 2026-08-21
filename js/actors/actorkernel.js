@@ -233,4 +233,20 @@ function createactor(behavior, initialstate, messageInterface, options) {
   return actor;
 }
 
-export { createactor, createMessageValidator };
+function pingActor(enqueuePing, timeout) {
+  if (timeout === undefined) timeout = 1000;
+  return new Promise(function(resolve) {
+    var timer = setTimeout(function() {
+      resolve(false);
+    }, timeout);
+    Promise.resolve().then(enqueuePing).then(function() {
+      clearTimeout(timer);
+      resolve(true);
+    }).catch(function() {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+export { createactor, createMessageValidator, pingActor };

@@ -53,7 +53,10 @@ var HYPERVISORMESSAGETYPES = Object.freeze({
   MARK_BOOT: 'mark_boot',
   SET_STAGE_DESCRIPTOR: 'set_stage_descriptor',
   GET_TRIGGER_RECIPIENT_STATUS: 'get_trigger_recipient_status',
-  TRIGGER_EVENT: 'trigger_event'
+  TRIGGER_EVENT: 'trigger_event',
+  PING: 'ping',
+  RECOVER: 'recover',
+  ACTIVATE_ACTORS: 'activate_actors'
 });
 
 var MESSAGEINTERFACES = {};
@@ -76,6 +79,9 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.MARK_BOOT] = { boot: 'boolean', resolve
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR] = { pipelineId: 'string', stageId: 'string', descriptor: 'object', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS] = { pipelineId: 'string', stageId: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.TRIGGER_EVENT] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 function createInitialHypervisorState() {
@@ -106,6 +112,92 @@ function resolveMessage(message, value) {
 
 function rejectMessage(message, error) {
   if (typeof message.reject === 'function') message.reject(error);
+}
+
+function recoverHypervisorState() {
+  return enqueueDbRestore('actor:state:hypervisor').then(function(saved) {
+    if (saved && typeof saved === 'object') {
+      return saved;
+    }
+    var initial = createInitialHypervisorState();
+    return enqueueDbStore('actor:state:hypervisor', initial).then(function() {
+      return initial;
+    });
+  });
+}
+
+var renderModulePromise = null;
+function getRenderModule() {
+  if (!renderModulePromise) {
+    renderModulePromise = import('./renderactor.js');
+  }
+  return renderModulePromise;
+}
+
+var executionModulePromise = null;
+function getExecutionModule() {
+  if (!executionModulePromise) {
+    executionModulePromise = import('./executionactor.js');
+  }
+  return executionModulePromise;
+}
+
+var debugModulePromise = null;
+function getDebugModule() {
+  if (!debugModulePromise) {
+    debugModulePromise = import('./debugactor.js');
+  }
+  return debugModulePromise;
+}
+
+function ensureActorAlive(name, pingFn, startFn, retries) {
+  if (retries === undefined) retries = 3;
+
+  return Promise.resolve().then(pingFn).then(function(alive) {
+    if (alive) {
+      return true;
+    }
+
+    if (retries <= 0) {
+      throw new Error('[activateManagedActors] ' + name + ' actor not reachable');
+    }
+
+    return Promise.resolve().then(startFn).then(function() {
+      return ensureActorAlive(name, pingFn, startFn, retries - 1);
+    });
+  });
+}
+
+async function activateManagedActors() {
+  var renderMod = await getRenderModule();
+  await ensureActorAlive(
+    'renderactor',
+    function() { return renderMod.enqueueRenderPing(); },
+    function() { return renderMod.startRenderActor(); }
+  );
+  await renderMod.enqueueRenderRecover().catch(function(err) {
+    hypervisorLogger.warn('[HYPERVISOR] render recover failed:', err);
+  });
+
+  var execMod = await getExecutionModule();
+  await ensureActorAlive(
+    'executionactor',
+    function() { return execMod.enqueueExecutionPing(); },
+    function() { return execMod.startExecutionActor(); }
+  );
+  await execMod.enqueueExecutionRecover().catch(function(err) {
+    hypervisorLogger.warn('[HYPERVISOR] execution recover failed:', err);
+  });
+
+  var debugMod = await getDebugModule();
+  await ensureActorAlive(
+    'debugactor',
+    function() { return debugMod.enqueueDebugPing(); },
+    function() { return debugMod.startDebugActor(); }
+  );
+  await debugMod.enqueueDebugRecover().catch(function(err) {
+    hypervisorLogger.warn('[HYPERVISOR] debug recover failed:', err);
+  });
 }
 
 var hypervisorbehavior = function(state, message) {
@@ -283,6 +375,39 @@ var hypervisorbehavior = function(state, message) {
       return state;
     }
 
+    case HYPERVISORMESSAGETYPES.PING:
+      resolveMessage(message, true);
+      break;
+
+    case HYPERVISORMESSAGETYPES.RECOVER:
+      recoverHypervisorState().then(function(saved) {
+        if (saved && saved.envByPipeline) state.envByPipeline = saved.envByPipeline;
+        if (saved && saved.renderHtml) state.renderHtml = saved.renderHtml;
+        if (saved && saved.executionStack) state.executionStack = saved.executionStack;
+        if (saved && saved.routes) state.routes = saved.routes;
+        if (saved && saved.activePipelines) state.activePipelines = saved.activePipelines;
+        if (saved && saved.programs) state.programs = saved.programs;
+        if (saved && saved.stageDescriptors) state.stageDescriptors = saved.stageDescriptors;
+        if (saved && saved.triggerRecipients) state.triggerRecipients = saved.triggerRecipients;
+        state.boot = saved.boot !== undefined ? saved.boot : true;
+        state.savedAt = Date.now();
+        persistHypervisorState(state);
+        resolveMessage(message, state);
+      }).catch(function(err) {
+        hypervisorLogger.warn('[HYPERVISOR] recover failed:', err);
+        rejectMessage(message, err);
+      });
+      return state;
+
+    case HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS:
+      activateManagedActors().then(function() {
+        resolveMessage(message, true);
+      }).catch(function(err) {
+        hypervisorLogger.warn('[HYPERVISOR] managed actor activation failed:', err);
+        rejectMessage(message, err);
+      });
+      return state;
+
     default:
       rejectMessage(message, new Error('[HYPERVISOR] unknown message type: ' + message.type));
   }
@@ -290,57 +415,50 @@ var hypervisorbehavior = function(state, message) {
   return state;
 };
 
-async function loadInitialHypervisorState() {
-  try {
-    var saved = await enqueueDbRestore('actor:state:hypervisor');
-    if (saved) {
-      saved.boot = false;
-      saved.envByPipeline = saved.envByPipeline || {};
-      saved.renderHtml = saved.renderHtml || '';
-      saved.executionStack = saved.executionStack || [];
-      saved.routes = saved.routes || {};
-      saved.activePipelines = saved.activePipelines || [];
-      saved.programs = saved.programs || {};
-      saved.stageDescriptors = saved.stageDescriptors || {};
-      saved.triggerRecipients = saved.triggerRecipients || {};
-      saved.savedAt = Date.now();
-      return saved;
-    }
-  } catch (err) {
-    hypervisorLogger.warn('[HYPERVISOR] state restore failed:', err);
-  }
-
-  var initialState = createInitialHypervisorState();
-  enqueueDbStore('actor:state:hypervisor', initialState).catch(function(err) {
-    hypervisorLogger.warn('[HYPERVISOR] default state persist failed:', err);
-  });
-  return initialState;
-}
-
 var hypervisorMailboxStore = {
   store: enqueueDbStore,
   restore: enqueueDbRestore,
   delete: enqueueDbDelete
 };
 
-var initialState = await loadInitialHypervisorState();
-var HYPERVISOR = createactor(
-  hypervisorbehavior,
-  initialState,
-  MESSAGEINTERFACES,
-  { actorName: 'hypervisoractor', mailboxType: 'db', mailboxStore: hypervisorMailboxStore }
-);
+var HYPERVISOR = null;
+var hypervisorStartPromise = null;
+
+function startHypervisorActor() {
+  if (HYPERVISOR) {
+    return Promise.resolve(HYPERVISOR);
+  }
+
+  if (!hypervisorStartPromise) {
+    hypervisorStartPromise = recoverHypervisorState().then(function(initial) {
+      if (HYPERVISOR) {
+        return HYPERVISOR;
+      }
+      HYPERVISOR = createactor(
+        hypervisorbehavior,
+        initial,
+        MESSAGEINTERFACES,
+        { actorName: 'hypervisoractor', mailboxType: 'db', mailboxStore: hypervisorMailboxStore }
+      );
+      return HYPERVISOR;
+    });
+  }
+
+  return hypervisorStartPromise;
+}
 
 function enqueue(type, payload) {
-  return new Promise(function(resolve, reject) {
-    var message = {};
-    if (payload) {
-      Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
-    }
-    message.type = type;
-    message.resolve = resolve;
-    message.reject = reject;
-    HYPERVISOR.send(message);
+  return startHypervisorActor().then(function() {
+    return new Promise(function(resolve, reject) {
+      var message = {};
+      if (payload) {
+        Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
+      }
+      message.type = type;
+      message.resolve = resolve;
+      message.reject = reject;
+      HYPERVISOR.send(message);
+    });
   });
 }
 
@@ -363,10 +481,15 @@ var enqueueHypervisorMarkBoot = function(boot) { return enqueue(HYPERVISORMESSAG
 var enqueueHypervisorSetStageDescriptor = function(pipelineId, stageId, descriptor) { return enqueue(HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR, { pipelineId: pipelineId, stageId: stageId, descriptor: descriptor }); };
 var enqueueHypervisorGetTriggerRecipientStatus = function(pipelineId, stageId) { return enqueue(HYPERVISORMESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS, { pipelineId: pipelineId, stageId: stageId }); };
 var enqueueHypervisorTrigger = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.TRIGGER_EVENT, payload); };
+var enqueueHypervisorPing = function() { return enqueue(HYPERVISORMESSAGETYPES.PING); };
+var enqueueHypervisorActivateActors = function() { return enqueue(HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS); };
 
 export {
   HYPERVISORMESSAGETYPES,
   HYPERVISOR,
+  startHypervisorActor,
+  activateManagedActors,
+  recoverHypervisorState,
   enqueueHypervisorLoad,
   enqueueHypervisorSave,
   enqueueHypervisorGetEnv,
@@ -385,5 +508,7 @@ export {
   enqueueHypervisorMarkBoot,
   enqueueHypervisorSetStageDescriptor,
   enqueueHypervisorGetTriggerRecipientStatus,
-  enqueueHypervisorTrigger
+  enqueueHypervisorTrigger,
+  enqueueHypervisorPing,
+  enqueueHypervisorActivateActors
 };

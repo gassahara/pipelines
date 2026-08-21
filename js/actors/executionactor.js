@@ -34,7 +34,8 @@ var EXECUTIONMESSAGETYPES = Object.freeze({
   CCC_RETRY: 'ccc_retry',
   TASK_SETTLED: 'task_settled',
   RECOVER: 'recover',
-  REGISTER_PIPELINE: 'register_pipeline'
+  REGISTER_PIPELINE: 'register_pipeline',
+  PING: 'ping'
 });
 
 var MESSAGEINTERFACES = {};
@@ -61,6 +62,7 @@ MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_RETRY] = { pipelineid: 'string', pat
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.TASK_SETTLED] = { taskid: 'string', status: 'string', result: 'any', error: 'object?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 function resolveMessage(message, value) {
@@ -182,7 +184,8 @@ var executionbehavior = function(state, message) {
     EXECUTIONMESSAGETYPES.RECOVER,
     EXECUTIONMESSAGETYPES.AWAIT_TASK,
     EXECUTIONMESSAGETYPES.GET_TASKS,
-    EXECUTIONMESSAGETYPES.GET_TASK_STATUS
+    EXECUTIONMESSAGETYPES.GET_TASK_STATUS,
+    EXECUTIONMESSAGETYPES.PING
   ];
 
   if (readOnly.indexOf(message.type) === -1) {
@@ -410,11 +413,13 @@ var executionbehavior = function(state, message) {
           nextState.pipelines = saved.pipelines || {};
           nextState.tasks = saved.tasks || {};
           nextState.htmlSnapshot = saved.htmlSnapshot || null;
+          nextState.taskCounter = saved.taskCounter || 0;
         } else {
           nextState.worldmap = createInitialExecutionWorldmap();
           nextState.pipelines = nextState.worldmap.pipelines || {};
           nextState.tasks = nextState.worldmap.tasks || {};
           nextState.htmlSnapshot = nextState.worldmap.htmlSnapshot || null;
+          nextState.taskCounter = nextState.worldmap.taskCounter || 0;
           enqueueDbStore('actor:state:execution', nextState.worldmap).catch(function(e) {
             console.warn('[EXECUTIONACTOR] default state persist failed:', e);
           });
@@ -426,6 +431,7 @@ var executionbehavior = function(state, message) {
         nextState.pipelines = {};
         nextState.tasks = {};
         nextState.htmlSnapshot = null;
+        nextState.taskCounter = 0;
         enqueueDbStore('actor:state:execution', nextState.worldmap).catch(function(e2) {
           console.warn('[EXECUTIONACTOR] default state persist failed:', e2);
         });
@@ -437,6 +443,10 @@ var executionbehavior = function(state, message) {
       var p10 = ensurePipeline(nextState, message.pipelineid);
       p10.usesElementSnapshots = true;
       if (message.env) p10.env = sanitizeForState(message.env);
+      resolveMessage(message, true);
+      break;
+    }
+    case EXECUTIONMESSAGETYPES.PING: {
       resolveMessage(message, true);
       break;
     }
@@ -602,6 +612,11 @@ var enqueueExecutionCccRetry = function(pipelineid, path, elementid, continuatio
 var enqueueExecutionSpawnPipeline = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.SPAWN_PIPELINE, descriptor); };
 var enqueueExecutionRegisterPipeline = function(pipelineid, dna, env) { return enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }); };
 var enqueueExecutionRecover = function() { return enqueue(EXECUTIONMESSAGETYPES.RECOVER, {}); };
+var enqueueExecutionPing = function() { return enqueue(EXECUTIONMESSAGETYPES.PING); };
+
+function startExecutionActor() {
+  return EXECUTIONACTOR;
+}
 
 export {
   EXECUTIONMESSAGETYPES,
@@ -627,5 +642,7 @@ export {
   enqueueExecutionCccRetry,
   enqueueExecutionSpawnPipeline,
   enqueueExecutionRegisterPipeline,
-  enqueueExecutionRecover
+  enqueueExecutionRecover,
+  enqueueExecutionPing,
+  startExecutionActor
 };
