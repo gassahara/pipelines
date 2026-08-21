@@ -587,20 +587,6 @@ function compileblock(block, inheritedBriefcase, constants) {
   return blockfn;
 }
 
-function compileElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
-  if (inheritedBriefcase === undefined) inheritedBriefcase = {};
-  if (el.element === 'BLOCK') {
-    var fn = compileblock(el, inheritedBriefcase, constants);
-    fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace };
-    fn.kind = 'element';
-    return fn;
-  }
-  if (el.element === 'STAGE') {
-    return compileNormalStageElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
-  }
-  throw new Error('unknown element type: ' + el.element);
-}
-
 function mapOrderedChildren(children) {
   return children.map(function(ch) {
     return {
@@ -629,33 +615,86 @@ function createTriggerRegistration(stage, children, pipelineId, stagePath) {
   };
 }
 
-function compileStageChild(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry) {
-  if (el.element === 'BLOCK') {
-    return createPersistentElementWrapper(compileElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry), el, stagePath, pipelineId);
+function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+  if (node.element === 'BLOCK') {
+    return processElement(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
   }
-  if (el.element === 'STAGE') {
-    if (el.control && el.control.command === 'TRIGGER') {
-      return compileTriggerStageElement(el, pipelineId, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry);
-    }
-    return compileNormalStageElement(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry);
+  if (node.element === 'STAGE') {
+    return processStage(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
   }
-  throw new Error('unknown element type: ' + el.element);
+  throw new Error('unknown element type: ' + node.element);
 }
 
-function compileNormalStageElement(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
-  if (inheritedBriefcase === undefined) inheritedBriefcase = {};
+function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+  var fn = compileblock(el, inheritedBriefcase, constants);
+  fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
+  fn.kind = 'element';
+  return createPersistentElementWrapper(fn, el, stagePath, pipelineId);
+}
+
+function processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants) {
   var stageBriefcase = cloneObject(inheritedBriefcase);
   Object.keys(stage.briefcase || {}).forEach(function(key) { stageBriefcase[key] = stage.briefcase[key]; });
 
   var briefcaseErrors = validaterevivableobject(stageBriefcase, 'stage.' + stage.id + '.briefcase', dnaConstants);
   if (briefcaseErrors.length > 0) {
-    throw new Error('[compileNormalStageElement] briefcase revivability failed: ' + briefcaseErrors.join(', '));
+    throw new Error('[processStageHeader] briefcase revivability failed: ' + briefcaseErrors.join(', '));
   }
 
   var stagePath = parentPath.concat([stage.id]);
-  var children = (stage.elements || []).map(function(el) {
-    return compileStageChild(el, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry);
+  var reads = [], writes = [];
+  (stage.elements || []).filter(function(e) { return e.element === 'BLOCK'; }).forEach(function(e) {
+    (e.reads || []).forEach(function(k) { if (reads.indexOf(k) === -1) reads.push(k); });
+    (e.writes || []).forEach(function(k) { if (writes.indexOf(k) === -1) writes.push(k); });
   });
+
+  var controlCommand = stage.control && stage.control.command ? stage.control.command : null;
+  var sync = stage.async === true ? 'async' : 'awaited';
+
+  return {
+    stagePath: stagePath,
+    stageBriefcase: stageBriefcase,
+    controlCommand: controlCommand,
+    sync: sync,
+    meta: {
+      async: stage.async === true,
+      stageid: stage.id,
+      reads: reads,
+      writes: writes,
+      snapshotKey: 'stage:' + stage.id,
+      recoverable: true,
+      notifyOnDone: stage.notifyOnDone === true,
+      controlCommand: controlCommand,
+      path: stagePath,
+      sync: sync
+    }
+  };
+}
+
+function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+  var header = processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants);
+  var stagePath = header.stagePath;
+  var stageBriefcase = header.stageBriefcase;
+
+  var children = (stage.elements || []).map(function(child) {
+    return processNode(child, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry);
+  });
+
+  if (header.controlCommand === 'TRIGGER') {
+    var triggerFn = async function(env) {
+      return env;
+    };
+    triggerFn.id = stage.id;
+    triggerFn.kind = 'stage';
+    triggerFn.stagemeta = header.meta;
+    triggerFn.controlCommand = 'TRIGGER';
+    triggerFn.isTrigger = true;
+    triggerFn.triggerChildren = children;
+    triggerFn.rawControl = stage.control;
+    triggerFn.pipelineId = pipelineId;
+    triggerFn.stagePath = stagePath;
+    return triggerFn;
+  }
 
   var isResumeStage = resumeFrom && resumeFrom.path && resumeFrom.path[0] === stage.id;
   var startIndex = isResumeStage ? Math.max(0, findIndex(stage.elements || [], function(el) { return el.id === resumeFrom.path[resumeFrom.path.length - 1]; })) : 0;
@@ -663,39 +702,46 @@ function compileNormalStageElement(stage, pipelineId, resumeFrom, parentPath, in
   var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, triggerRegistry);
   fn.id = stage.id;
   fn.kind = 'stage';
-
-  var reads = [], writes = [];
-  (stage.elements || []).filter(function(e) { return e.element === 'BLOCK'; }).forEach(function(e) {
-    (e.reads || []).forEach(function(k) { if (reads.indexOf(k) === -1) reads.push(k); });
-    (e.writes || []).forEach(function(k) { if (writes.indexOf(k) === -1) writes.push(k); });
-  });
-
-  fn.stagemeta = {
-    async: stage.async === true,
-    stageid: stage.id,
-    reads: reads,
-    writes: writes,
-    snapshotKey: 'stage:' + stage.id,
-    recoverable: true,
-    notifyOnDone: stage.notifyOnDone === true,
-    controlCommand: stage.control && stage.control.command ? stage.control.command : null,
-    path: stagePath
-  };
+  fn.stagemeta = header.meta;
+  fn.controlCommand = header.controlCommand;
+  fn.isTrigger = false;
 
   return fn;
 }
 
-function compileTriggerStageElement(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+function processPipeline(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
-  var stageBriefcase = cloneObject(inheritedBriefcase);
-  Object.keys(stage.briefcase || {}).forEach(function(key) { stageBriefcase[key] = stage.briefcase[key]; });
 
-  var stagePath = parentPath.concat([stage.id]);
-  var children = (stage.elements || []).map(function(el) {
-    return compileStageChild(el, pipelineId, null, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry);
-  });
+  function loop(index, stages) {
+    if (index >= elements.length) {
+      return stages;
+    }
 
-  return createTriggerRegistration(stage, children, pipelineId, stagePath);
+    var el = elements[index];
+    if (el.element !== 'STAGE') {
+      throw new Error('[processPipeline] top-level pipeline element must be STAGE, got ' + el.element);
+    }
+
+    var compiledStage = processStage(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
+    stages.push(compiledStage);
+
+    return loop(index + 1, stages);
+  }
+
+  return loop(0, []);
+}
+
+function createTriggerRegistrationFromStage(compiledTriggerStage) {
+  return {
+    pipelineId: compiledTriggerStage.pipelineId,
+    stageId: compiledTriggerStage.id,
+    stagePath: compiledTriggerStage.stagePath,
+    sourceid: compiledTriggerStage.rawControl.sourceid,
+    event: compiledTriggerStage.rawControl.event,
+    control: compiledTriggerStage.rawControl,
+    children: compiledTriggerStage.triggerChildren,
+    output: compiledTriggerStage.stagemeta.output || null
+  };
 }
 
 function findIndex(arr, predicate) {
@@ -833,27 +879,6 @@ function executeChildren(children, env, stageid, pipelineId, stagePath) {
   return collect(0, []);
 }
 
-function compilePipelineElements(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
-  if (inheritedBriefcase === undefined) inheritedBriefcase = {};
-
-  function loop(index, normalStages, triggerRegistrations) {
-    if (index >= elements.length) {
-      return { normalStages: normalStages, triggerRegistrations: triggerRegistrations };
-    }
-
-    var el = elements[index];
-    if (el.element === 'STAGE' && el.control && el.control.command === 'TRIGGER') {
-      triggerRegistrations.push(compileTriggerStageElement(el, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry));
-    } else {
-      normalStages.push(compileElement(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry));
-    }
-
-    return loop(index + 1, normalStages, triggerRegistrations);
-  }
-
-  return loop(0, [], []);
-}
-
 function buildSpawnBootstrapMap(pipeline) {
   return (pipeline.elements || []).reduce(function(map, stage) {
     if (stage.element !== 'STAGE') return map;
@@ -909,6 +934,15 @@ function runTrampoline(env, stages, pipelineId) {
 
     var stage = stages[stageIndex];
 
+    if (stage.isTrigger) {
+      logger.debug('[PIPELINE] Trigger stage skipped:', nextStageId);
+      return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'completed' })
+        .catch(function() {})
+        .then(function() {
+          return step(stack.slice(1), currentEnv);
+        });
+    }
+
     function continueWithStage() {
       return executeStageStep(stage, nextStageId, stack, currentEnv, pipelineId);
     }
@@ -947,6 +981,11 @@ function runTrampoline(env, stages, pipelineId) {
           .catch(function() {})
           .then(function() {
             return enqueueExecutionEnvUpdated(pipelineId, newEnv).catch(function() {});
+          })
+          .then(function() {
+            return enqueueHypervisorSetEnv(pipelineId, newEnv).catch(function(err) {
+              logger.warn('[PIPELINE] hypervisor env update failed:', err);
+            });
           })
           .then(function() {
             return step(stack.slice(1), newEnv);
@@ -1132,7 +1171,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   var spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
   var resumeFrom = options.resumeFrom || null;
 
-  var split = compilePipelineElements(
+  var stages = processPipeline(
     pipeline.elements,
     pipelineId,
     resumeFrom,
@@ -1143,11 +1182,11 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     triggerRegistry
   );
 
-  var normalStages = split.normalStages;
-  var triggerRegistrations = split.triggerRegistrations;
+  var triggerRegistrations = stages.filter(function(s) { return s.isTrigger; });
 
   for (var i = 0; i < triggerRegistrations.length; i++) {
-    var reg = triggerRegistrations[i];
+    var compiledTrigger = triggerRegistrations[i];
+    var reg = createTriggerRegistrationFromStage(compiledTrigger);
 
     logger.debug('[compilepipeline] registering trigger', reg.stageId, reg.sourceid, reg.event);
 
@@ -1189,7 +1228,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     });
   }
 
-  var compiledpipeline = createpipeline(normalStages, sinks, undefined, { pipelineId: pipelineId });
+  var compiledpipeline = createpipeline(stages, sinks, undefined, { pipelineId: pipelineId });
 
   return {
     pipeline: compiledpipeline,

@@ -107,6 +107,14 @@ MESSAGEINTERFACES[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = { pipelineId: 'st
 MESSAGEINTERFACES[MESSAGETYPES.REVALIDATE_TRIGGERS] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
+var hypervisorModulePromise = null;
+function getHypervisorModule() {
+  if (!hypervisorModulePromise) {
+    hypervisorModulePromise = import('./hypervisoractor.js');
+  }
+  return hypervisorModulePromise;
+}
+
 function createInitialRenderWorldmap() {
   return {
     html: '',
@@ -154,7 +162,7 @@ function waitForDomReady() {
 }
 
 function isTriggerRecipientLive(consumer) {
-  return import('./hypervisoractor.js').then(function(mod) {
+  return getHypervisorModule().then(function(mod) {
     return mod.enqueueHypervisorGetTriggerRecipientStatus(
       consumer.pipelineId,
       consumer.stageId
@@ -271,7 +279,7 @@ function runDomGcViewerInternal(state) {
             'trigger:' + entry.consumer.pipelineId + ':' + entry.consumer.stageId,
             'async-await',
             function() {
-              return import('./hypervisoractor.js').then(function(mod) {
+              return getHypervisorModule().then(function(mod) {
                 return mod.enqueueHypervisorTrigger({
                   pipelineId: entry.consumer.pipelineId,
                   stageId: entry.consumer.stageId,
