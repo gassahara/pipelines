@@ -14,7 +14,7 @@ import {
   enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout,
   enqueusetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
   DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport,
-  enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTrigger,
+  enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTriggerExpectation,
   enqueueRenderRevalidateTriggers
 } from '../actors/renderactor.js';
 import { validatestageflow } from '../typesystem.js';
@@ -1180,7 +1180,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
       'render-register:' + reg.stageId,
       'async-await',
       function() {
-        return enqueueRenderRegisterTrigger(reg);
+        return enqueueRenderRegisterTriggerExpectation(reg);
       },
       [],
       { context: { env: {} }, capturecontinuation: true, errk: createerrorcontext('renderRegister', 'trigger') }

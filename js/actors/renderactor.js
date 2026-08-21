@@ -67,6 +67,7 @@ var MESSAGETYPES = Object.freeze({
   RESTORE_BODY_HTML: 'restore_body_html',
   RECOVER: 'recover',
   REGISTER_TRIGGER: 'register_trigger',
+  REGISTER_TRIGGER_EXPECTATION: 'register_trigger_expectation',
   REVALIDATE_TRIGGERS: 'revalidate_triggers'
 });
 
@@ -102,6 +103,7 @@ MESSAGEINTERFACES[MESSAGETYPES.GET_BODY_HTML] = { resolve: 'function?', reject: 
 MESSAGEINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.REGISTER_TRIGGER] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', output: 'string?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.REVALIDATE_TRIGGERS] = { resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
@@ -162,8 +164,38 @@ function isTriggerRecipientLive(consumer) {
   });
 }
 
+function ensureTriggerObserver(state) {
+  if (state._triggerObserver) return;
+
+  if (typeof MutationObserver === 'undefined') {
+    state._triggerObserver = setInterval(function() {
+      runDomGcViewer(state);
+    }, 1000);
+    return;
+  }
+
+  if (!document.body) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() {
+        ensureTriggerObserver(state);
+      }, { once: true });
+    } else {
+      window.addEventListener('load', function() {
+        ensureTriggerObserver(state);
+      }, { once: true });
+    }
+    return;
+  }
+
+  var observer = new MutationObserver(function(mutations) {
+    runDomGcViewer(state);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  state._triggerObserver = observer;
+}
+
 function runDomGcViewer(state) {
-  renderLogger.debug('[trigger-gc] start');
+  ensureTriggerObserver(state);
 
   if (state._runDomGcViewerPromise) {
     renderLogger.debug('[trigger-gc] in-flight, returning existing promise');
@@ -218,7 +250,7 @@ function runDomGcViewerInternal(state) {
     return Promise.resolve().then(function() {
       var producerEl = document.getElementById(entry.producer.id);
       if (!producerEl) {
-        renderLogger.debug('[trigger-gc] producer missing', key, entry.producer.id);
+        renderLogger.debug('[trigger-gc] pending entry element not found', key, entry.producer.id);
         return null;
       }
 
@@ -226,6 +258,8 @@ function runDomGcViewerInternal(state) {
         renderLogger.debug('[trigger-gc] recipient live?', key, recipientLive);
 
         if (!recipientLive) {
+          delete registry.pending[key];
+          renderLogger.debug('[trigger-gc] removed pending dead recipient', key);
           return null;
         }
 
@@ -295,12 +329,21 @@ function runDomGcViewerInternal(state) {
     return isTriggerRecipientLive(entry.consumer).then(function(activeRecipientLive) {
       renderLogger.debug('[trigger-gc] active recipient live?', key, activeRecipientLive);
 
-      if (!activeEl || !activeRecipientLive) {
+      if (!activeRecipientLive) {
         if (activeEl && entry.handler) {
           activeEl.removeEventListener(entry.producer.event, entry.handler);
         }
         delete registry.active[key];
-        renderLogger.debug('[trigger-gc] removed active entry', key);
+        renderLogger.debug('[trigger-gc] removed active dead recipient', key);
+      } else if (!activeEl) {
+        if (entry.handler) {
+          delete entry.handler;
+        }
+        delete registry.active[key];
+        registry.pending[key] = entry;
+        renderLogger.debug('[trigger-gc] active element missing, re-arming pending', key);
+      } else {
+        renderLogger.debug('[trigger-gc] active entry healthy', key);
       }
 
       return processActiveKeys(keys, index + 1);
@@ -621,7 +664,11 @@ HANDLERS[MESSAGETYPES.RECOVER] = async function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
-  renderLogger.debug('[trigger-register] registering', msg.pipelineId, msg.stageId, msg.sourceid, msg.event);
+  return HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION](state, msg);
+};
+
+HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
+  renderLogger.debug('[trigger-expectation] registering', msg.pipelineId, msg.stageId, msg.sourceid, msg.event);
 
   if (!state.triggerPairs) {
     state.triggerPairs = createProducerConsumerRegistry();
@@ -634,14 +681,16 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
     createTriggerProducerConsumer(msg).metadata
   );
 
+  ensureTriggerObserver(state);
+
   runDomGcViewer(state).then(function() {
-    renderLogger.debug('[trigger-register] registration processed', msg.stageId);
+    renderLogger.debug('[trigger-expectation] processed', msg.stageId);
     if (typeof msg.resolve === 'function') msg.resolve(true);
   });
 };
 
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
-  renderLogger.debug('[trigger-revalidate] start');
+  renderLogger.debug('[trigger-revalidate] manual');
   runDomGcViewer(state).then(function() {
     renderLogger.debug('[trigger-revalidate] complete');
     if (typeof msg.resolve === 'function') msg.resolve(true);
@@ -686,9 +735,7 @@ var RENDERACTOR = createactor(
 
 initialState.actorRegistry = setRenderActor(initialState.actorRegistry, RENDERACTOR);
 
-setInterval(function() {
-  runDomGcViewer(initialState);
-}, 500);
+ensureTriggerObserver(initialState);
 
 function createEnqueuer(type, idRequired, extraPayloadFn) {
   return function() {
@@ -751,6 +798,25 @@ var enqueueRenderRegisterTrigger = function(registration) {
       event: registration.event,
       control: registration.control,
       children: registration.children,
+      resolve: resolve,
+      reject: reject
+    };
+    RENDERACTOR.send(message);
+  });
+};
+
+var enqueueRenderRegisterTriggerExpectation = function(registration) {
+  return new Promise(function(resolve, reject) {
+    var message = {
+      type: MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION,
+      pipelineId: registration.pipelineId,
+      stageId: registration.stageId,
+      stagePath: registration.stagePath,
+      sourceid: registration.sourceid,
+      event: registration.event,
+      control: registration.control,
+      children: registration.children,
+      output: registration.output || null,
       resolve: resolve,
       reject: reject
     };
@@ -847,6 +913,7 @@ export {
   enqueuegetscreen,
   enqueuematchmedia,
   enqueueRenderRegisterTrigger,
+  enqueueRenderRegisterTriggerExpectation,
   enqueueRenderRevalidateTriggers,
   enqueueRenderGetBodyHtml,
   enqueueRenderRestoreBodyHtml,
