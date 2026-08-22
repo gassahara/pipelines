@@ -2,13 +2,18 @@ import { createactor } from './actorkernel.js';
 import { createActorRegistry, setRenderActor } from './actorregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
-import {
-  createProducerConsumerRegistry,
-  registerProducerConsumer
-} from './liveness.js';
 import { callwithstack } from '../factory/callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createGarbageCollector,
+  registerObject,
+  updateStatus,
+  incrementSent,
+  incrementReceived,
+  collectEnded,
+  listObjects
+} from './actorgc.js';
 
 var renderVerbosityConstants = createVerbosityConstants();
 var renderVerbosityFunctions = createVerbosityFunctions(renderVerbosityConstants);
@@ -179,113 +184,88 @@ function ensureTriggerObserver(state) {
 
   if (typeof MutationObserver === 'undefined') {
     state._triggerObserver = setInterval(function() {
-      runDomGcViewer(state);
+      scheduleGcCycle(state);
     }, 1000);
     return;
   }
 
-  if (!document.body) {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function() {
-        ensureTriggerObserver(state);
-      }, { once: true });
-    } else {
-      window.addEventListener('load', function() {
-        ensureTriggerObserver(state);
-      }, { once: true });
-    }
+  if (document.readyState !== 'complete') {
+    window.addEventListener('load', function() {
+      ensureTriggerObserver(state);
+    }, { once: true });
     return;
   }
 
   var observer = new MutationObserver(function(mutations) {
-    runDomGcViewer(state);
+    scheduleGcCycle(state);
   });
   observer.observe(document.body, { childList: true, subtree: true });
   state._triggerObserver = observer;
 }
 
-function runDomGcViewer(state) {
-  ensureTriggerObserver(state);
-
-  if (state._runDomGcViewerPromise) {
-    renderLogger.debug('[trigger-gc] in-flight, returning existing promise');
-    return state._runDomGcViewerPromise;
+function scheduleGcCycle(state) {
+  if (state._triggerGcScheduled) {
+    return;
   }
-
-  state._runDomGcViewerPromise = callwithstack(
-    EVALSTACK,
-    'render-gc',
-    'async-await',
-    function() {
-      return runDomGcViewerInternal(state);
-    },
-    [],
-    { context: { env: {} }, capturecontinuation: true, errk: createRenderErrorContext('gc') }
-  ).then(
-    function() {
-      state._runDomGcViewerPromise = null;
-      renderLogger.debug('[trigger-gc] finish');
-    },
-    function(err) {
-      state._runDomGcViewerPromise = null;
-      renderLogger.warn('[trigger-gc] failed', err);
-      throw err;
-    }
-  );
-
-  return state._runDomGcViewerPromise;
+  state._triggerGcScheduled = true;
+  setTimeout(function() {
+    state._triggerGcScheduled = false;
+    triggerGcCycle(state);
+  }, 0);
 }
 
-function runDomGcViewerInternal(state) {
-  var registry = state.triggerPairs;
-  if (!registry) {
-    return Promise.resolve();
+function triggerGcCycle(state) {
+  if (document.readyState !== 'complete') {
+    return waitForDomReady().then(function() {
+      return triggerGcCycle(state);
+    });
   }
 
-  function processPendingKeys(keys, index) {
-    if (index >= keys.length) {
-      renderLogger.debug('[trigger-gc] pending done');
-      return Promise.resolve();
-    }
+  var objects = listObjects(state._gc);
 
-    var key = keys[index];
-    var entry = registry.pending[key];
+  function processOne(obj) {
+    if (!obj) return Promise.resolve();
 
-    if (!entry) {
-      return processPendingKeys(keys, index + 1);
-    }
+    var sourceEl = document.getElementById(obj.producer.id);
 
-    renderLogger.debug('[trigger-gc] pending entry', key);
-
-    return Promise.resolve().then(function() {
-      var producerEl = document.getElementById(entry.producer.id);
-      if (!producerEl) {
-        renderLogger.debug('[trigger-gc] pending entry element not found', key, entry.producer.id);
-        return null;
+    if (obj.status === 'EXPECTING') {
+      if (!sourceEl) {
+        return Promise.resolve();
       }
 
-      return isTriggerRecipientLive(entry.consumer).then(function(recipientLive) {
-        renderLogger.debug('[trigger-gc] recipient live?', key, recipientLive);
+      incrementSent(state._gc, obj.id, 1);
 
-        if (!recipientLive) {
-          delete registry.pending[key];
-          renderLogger.debug('[trigger-gc] removed pending dead recipient', key);
-          return null;
+      return isTriggerRecipientLive(obj.consumer).then(function(live) {
+        incrementReceived(state._gc, obj.id, 1);
+
+        if (!live) {
+          updateStatus(state._gc, obj.id, 'ENDED');
+        } else {
+          updateStatus(state._gc, obj.id, 'EXECUTING');
         }
+      });
+    }
 
+    if (obj.status === 'EXECUTING') {
+      if (!sourceEl) {
+        updateStatus(state._gc, obj.id, 'ENDED');
+        return Promise.resolve();
+      }
+
+      if (!obj.handler) {
         var handler = function(e) {
-          renderLogger.debug('[trigger] forwarding', entry.consumer.pipelineId, entry.consumer.stageId);
+          renderLogger.debug('[trigger] forwarding', obj.consumer.pipelineId, obj.consumer.stageId);
 
           return callwithstack(
             EVALSTACK,
-            'trigger:' + entry.consumer.pipelineId + ':' + entry.consumer.stageId,
+            'trigger:' + obj.consumer.pipelineId + ':' + obj.consumer.stageId,
             'async-await',
             function() {
               return getHypervisorModule().then(function(mod) {
                 return mod.enqueueHypervisorTrigger({
-                  pipelineId: entry.consumer.pipelineId,
-                  stageId: entry.consumer.stageId,
-                  stagePath: entry.metadata.stagePath || [],
+                  pipelineId: obj.consumer.pipelineId,
+                  stageId: obj.consumer.stageId,
+                  stagePath: obj.metadata.stagePath || [],
                   eventPayload: {
                     target: e.target,
                     type: e.type
@@ -295,7 +275,7 @@ function runDomGcViewerInternal(state) {
             },
             [],
             {
-              context: { env: entry.metadata.env || {} },
+              context: { env: obj.metadata.env || {} },
               capturecontinuation: true,
               errk: createRenderErrorContext('triggerforward')
             }
@@ -304,70 +284,57 @@ function runDomGcViewerInternal(state) {
           });
         };
 
-        entry.handler = handler;
-        producerEl.addEventListener(entry.producer.event, handler);
+        obj.handler = handler;
+        sourceEl.addEventListener(obj.producer.event, handler);
+      }
 
-        registry.active[key] = entry;
-        delete registry.pending[key];
-
-        renderLogger.debug('[trigger-gc] moved pending->active', key);
-
-        return null;
-      });
-    }).then(function() {
-      return processPendingKeys(keys, index + 1);
-    });
-  }
-
-  function processActiveKeys(keys, index) {
-    if (index >= keys.length) {
-      renderLogger.debug('[trigger-gc] active done');
+      updateStatus(state._gc, obj.id, 'EXECUTED');
       return Promise.resolve();
     }
 
-    var key = keys[index];
-    var entry = registry.active[key];
-
-    if (!entry) {
-      return processActiveKeys(keys, index + 1);
-    }
-
-    renderLogger.debug('[trigger-gc] active entry', key);
-
-    var activeEl = document.getElementById(entry.producer.id);
-
-    return isTriggerRecipientLive(entry.consumer).then(function(activeRecipientLive) {
-      renderLogger.debug('[trigger-gc] active recipient live?', key, activeRecipientLive);
-
-      if (!activeRecipientLive) {
-        if (activeEl && entry.handler) {
-          activeEl.removeEventListener(entry.producer.event, entry.handler);
+    if (obj.status === 'EXECUTED') {
+      if (!sourceEl) {
+        if (obj.handler && obj.previousEl) {
+          obj.previousEl.removeEventListener(obj.producer.event, obj.handler);
         }
-        delete registry.active[key];
-        renderLogger.debug('[trigger-gc] removed active dead recipient', key);
-      } else if (!activeEl) {
-        if (entry.handler) {
-          delete entry.handler;
-        }
-        delete registry.active[key];
-        registry.pending[key] = entry;
-        renderLogger.debug('[trigger-gc] active element missing, re-arming pending', key);
-      } else {
-        renderLogger.debug('[trigger-gc] active entry healthy', key);
+        obj.handler = null;
+        obj.previousEl = null;
+        updateStatus(state._gc, obj.id, 'ENDED');
+        return Promise.resolve();
       }
 
-      return processActiveKeys(keys, index + 1);
+      incrementSent(state._gc, obj.id, 1);
+
+      return isTriggerRecipientLive(obj.consumer).then(function(live) {
+        incrementReceived(state._gc, obj.id, 1);
+
+        if (!live) {
+          if (obj.handler && sourceEl) {
+            sourceEl.removeEventListener(obj.producer.event, obj.handler);
+          }
+          obj.handler = null;
+          obj.previousEl = null;
+          updateStatus(state._gc, obj.id, 'ENDED');
+        } else {
+          obj.previousEl = sourceEl;
+        }
+      });
+    }
+
+    return Promise.resolve();
+  }
+
+  function processList(index) {
+    if (index >= objects.length) {
+      collectEnded(state._gc);
+      return Promise.resolve();
+    }
+    return processOne(objects[index]).then(function() {
+      return processList(index + 1);
     });
   }
 
-  var pendingKeys = Object.keys(registry.pending);
-  var activeKeys = Object.keys(registry.active);
-
-  renderLogger.debug('[trigger-gc] counts', { pending: pendingKeys.length, active: activeKeys.length });
-
-  return processPendingKeys(pendingKeys, 0).then(function() {
-    return processActiveKeys(activeKeys, 0);
-  });
+  return processList(0);
 }
 
 function createTriggerProducerConsumer(msg) {
@@ -385,7 +352,8 @@ function createTriggerProducerConsumer(msg) {
     metadata: {
       stagePath: msg.stagePath || [],
       control: msg.control,
-      children: msg.children
+      children: msg.children,
+      env: msg.env || {}
     }
   };
 }
@@ -407,7 +375,7 @@ HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
-  runDomGcViewer(state);
+  scheduleGcCycle(state);
 };
 
 HANDLERS[MESSAGETYPES.HTML] = async function(state, msg) {
@@ -419,7 +387,7 @@ HANDLERS[MESSAGETYPES.HTML] = async function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
-  runDomGcViewer(state);
+  scheduleGcCycle(state);
 };
 
 HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
@@ -429,7 +397,7 @@ HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
-  runDomGcViewer(state);
+  scheduleGcCycle(state);
 };
 
 HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
@@ -575,7 +543,7 @@ HANDLERS[MESSAGETYPES.SETHTML] = async function(state, msg) {
     resolveMsg(msg);
   });
   persistRenderWorldmap(state);
-  runDomGcViewer(state);
+  scheduleGcCycle(state);
 };
 
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
@@ -645,7 +613,7 @@ HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = async function(state, msg) {
     document.body.innerHTML = msg.html;
   }
   persistRenderWorldmap(state);
-  runDomGcViewer(state);
+  scheduleGcCycle(state);
   resolveMsg(msg, true);
 };
 
@@ -662,13 +630,13 @@ HANDLERS[MESSAGETYPES.RECOVER] = async function(state, msg) {
       state.worldmap = createInitialRenderWorldmap();
       persistRenderWorldmap(state);
     }
-    runDomGcViewer(state);
+    scheduleGcCycle(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   }).catch(function(e) {
     renderLogger.warn('[RENDERACTOR] state restore failed:', e);
     state.worldmap = createInitialRenderWorldmap();
     persistRenderWorldmap(state);
-    runDomGcViewer(state);
+    scheduleGcCycle(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   });
 };
@@ -685,31 +653,30 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
 HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
   renderLogger.debug('[trigger-expectation] registering', msg.pipelineId, msg.stageId, msg.sourceid, msg.event);
 
-  if (!state.triggerPairs) {
-    state.triggerPairs = createProducerConsumerRegistry();
-  }
+  var gcObject = {
+    producer: createTriggerProducerConsumer(msg).producer,
+    consumer: createTriggerProducerConsumer(msg).consumer,
+    metadata: createTriggerProducerConsumer(msg).metadata,
+    status: 'EXPECTING',
+    sentCount: 0,
+    receivedCount: 0
+  };
 
-  registerProducerConsumer(
-    state.triggerPairs,
-    createTriggerProducerConsumer(msg).producer,
-    createTriggerProducerConsumer(msg).consumer,
-    createTriggerProducerConsumer(msg).metadata
-  );
+  registerObject(state._gc, gcObject);
+  incrementReceived(state._gc, gcObject.id, 1);
 
   ensureTriggerObserver(state);
+  scheduleGcCycle(state);
 
-  runDomGcViewer(state).then(function() {
-    renderLogger.debug('[trigger-expectation] processed', msg.stageId);
-    if (typeof msg.resolve === 'function') msg.resolve(true);
-  });
+  if (typeof msg.resolve === 'function') msg.resolve(true);
+  return state;
 };
 
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
   renderLogger.debug('[trigger-revalidate] manual');
-  runDomGcViewer(state).then(function() {
-    renderLogger.debug('[trigger-revalidate] complete');
-    if (typeof msg.resolve === 'function') msg.resolve(true);
-  });
+  scheduleGcCycle(state);
+  if (typeof msg.resolve === 'function') msg.resolve(true);
+  return state;
 };
 
 var refcounter = 0;
@@ -733,8 +700,9 @@ var renderMailboxStore = {
 
 var initialState = {
   actorRegistry: createActorRegistry(),
-  triggerPairs: createProducerConsumerRegistry(),
-  worldmap: createInitialRenderWorldmap()
+  worldmap: createInitialRenderWorldmap(),
+  _gc: createGarbageCollector(),
+  _triggerGcScheduled: false
 };
 
 var RENDERACTOR = createactor(
@@ -832,6 +800,7 @@ var enqueueRenderRegisterTriggerExpectation = function(registration) {
       control: registration.control,
       children: registration.children,
       output: registration.output || null,
+      env: registration.env || null,
       resolve: resolve,
       reject: reject
     };

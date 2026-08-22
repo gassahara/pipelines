@@ -1,3 +1,5 @@
+import { createGarbageCollector } from './actorgc.js';
+
 function createMessageValidator(interfaceMap) {
   return function(message) {
     if (!message || typeof message !== 'object') {
@@ -105,6 +107,11 @@ function createactor(behavior, initialstate, messageInterface, options) {
   }
 
   var currentstate = initialstate;
+
+  if (!currentstate._gc) {
+    currentstate._gc = createGarbageCollector();
+  }
+
   var validator = messageInterface ? createMessageValidator(messageInterface) : null;
   var mailboxType = options.mailboxType || 'memory';
 
