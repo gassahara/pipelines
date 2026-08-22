@@ -419,6 +419,11 @@ var hypervisorbehavior = function(state, message) {
       return state;
 
     case HYPERVISORMESSAGETYPES.BOOT_PIPELINE:
+      var bootOptions = message.options || {};
+      if (bootOptions.autorun === undefined) {
+        bootOptions.autorun = true;
+      }
+
       activateManagedActors().then(function() {
         return import('../factory/blockcompiler.js').then(function(mod) {
           return mod.compilepipeline(
@@ -426,7 +431,7 @@ var hypervisorbehavior = function(state, message) {
             message.accessors,
             message.sinks,
             message.pipelineId,
-            message.options || {}
+            bootOptions
           );
         });
       }).then(function(result) {
