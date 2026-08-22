@@ -97,20 +97,20 @@ function buildproperties(merged, inherited) {
   }, cloneObject(inherited));
 }
 
-function buildBlockProperties(merged, inherited, sig, env) {
+function buildBlockProperties(merged, inherited, io, env) {
   if (inherited === undefined) inherited = {};
-  if (sig === undefined) sig = { inputs: [], outputs: {} };
+  if (io === undefined) io = { inputs: [], outputs: {} };
   if (env === undefined) env = {};
 
   var properties = buildproperties(merged, inherited);
   var inputsObj = {};
 
-  (sig.inputs || []).forEach(function(name) {
+  (io.inputs || []).forEach(function(name) {
     inputsObj[name] = compilepathaccessor(name)(env);
   });
 
   properties.inputs = inputsObj;
-  properties.outputs = sig.outputs || {};
+  properties.outputs = io.outputs || {};
 
   return properties;
 }
@@ -148,10 +148,9 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
         return compiledElement(execEnv);
       };
 
-      var inputargs = (elementDef && elementDef.signature && elementDef.signature.inputs
-        ? elementDef.signature.inputs
-        : []
-      ).map(function(inp) { return compilepathaccessor(inp)(env); });
+      var blockInputs = elementDef && elementDef.inputs ? elementDef.inputs : [];
+      var blockOutputs = elementDef && elementDef.outputs ? elementDef.outputs : {};
+      var inputargs = blockInputs.map(function(inp) { return compilepathaccessor(inp)(env); });
 
       var closureSerialized = null;
       if (typeof compiledElement === 'function') {
@@ -164,8 +163,8 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
         elementid: elementId,
         env: env,
         signature: {
-          inputs: elementDef && elementDef.signature && elementDef.signature.inputs ? elementDef.signature.inputs : [],
-          outputs: elementDef && elementDef.signature && elementDef.signature.outputs ? elementDef.signature.outputs : {}
+          inputs: blockInputs,
+          outputs: blockOutputs
         },
         executor: executor,
         properties: elementDef || {},
@@ -239,7 +238,7 @@ function createBlockAnalyzer(rules) {
       errors: errors,
       warnings: [],
       dependencies: [],
-      outputs: block.signature && block.signature.outputs ? block.signature.outputs : {},
+      outputs: block.outputs ? block.outputs : {},
       contracts: []
     };
   };
@@ -279,7 +278,7 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
       }
       errors = errors.concat(validaterevivablefunctionblock(block, BLOCKTYPES, dnaConstants));
     }
-    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.signature && block.signature.outputs ? block.signature.outputs : {}, contracts: [] };
+    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
   };
 
   analyzers[BLOCKTYPES.API] = createBlockAnalyzer([
@@ -300,7 +299,7 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
     if (typeof block.fn === 'function' || typeof block.ref === 'function') {
       errors = errors.concat(validaterevivablefunctionblock(block, BLOCKTYPES, dnaConstants));
     }
-    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.signature && block.signature.outputs ? block.signature.outputs : {}, contracts: [] };
+    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
   };
 
   analyzers[BLOCKTYPES.SPAWN] = createBlockAnalyzer([
@@ -313,11 +312,11 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
 
   analyzers[BLOCKTYPES.DOMQUERY] = function(block) {
     var valid = Boolean(block.command && block.command.COMMAND);
-    return { valid: valid, errors: valid ? [] : ['domquery block requires command.COMMAND'], warnings: [], dependencies: [], outputs: block.signature && block.signature.outputs ? block.signature.outputs : {}, contracts: [] };
+    return { valid: valid, errors: valid ? [] : ['domquery block requires command.COMMAND'], warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
   };
 
   analyzers[BLOCKTYPES.CRYPTO] = createBlockAnalyzer([
-    { field: 'outputs', required: true, message: 'crypto block must have signature.outputs', custom: function(v, b) { return Object.keys(b.signature && b.signature.outputs ? b.signature.outputs : {}).length > 0; } }
+    { field: 'outputs', required: true, message: 'crypto block must have outputs', custom: function(v, b) { return Object.keys(b.outputs ? b.outputs : {}).length > 0; } }
   ]);
 
   analyzers[BLOCKTYPES.WAIT] = createBlockAnalyzer([
@@ -600,7 +599,11 @@ function compileblock(block, inheritedBriefcase, constants) {
     var check = analyzer(block);
     if (!check.valid) throw new Error('[compileblock] Analysis failed: ' + check.errors.join(', '));
   }
-  var blockfn = compiler(block, block.id, block.signature || { inputs: [], outputs: {} }, inheritedBriefcase);
+  var blockIo = {
+    inputs: block.inputs || [],
+    outputs: block.outputs || {}
+  };
+  var blockfn = compiler(block, block.id, blockIo, inheritedBriefcase);
   return blockfn;
 }
 
