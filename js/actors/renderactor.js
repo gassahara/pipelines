@@ -84,7 +84,7 @@ MESSAGEINTERFACES[MESSAGETYPES.HTML] = { id: 'string', markup: 'string', append:
 MESSAGEINTERFACES[MESSAGETYPES.REMOVE] = { id: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.SETSTYLES] = { id: 'string', styles: 'object', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.SETATTR] = { id: 'string', name: 'string', value: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[MESSAGETYPES.TOGGLECLASS] = { id: 'string', classname: 'string', force: 'boolean', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[MESSAGETYPES.TOGGLECLASS] = { id: 'string', classname: 'string', force: 'boolean?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.CRYPTO] = { bytes: 'number', resolve: 'function', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.GEOLOCATION] = { enablehighaccuracy: 'boolean', timeout: 'number', resolve: 'function', reject: 'function?' };
 MESSAGEINTERFACES[MESSAGETYPES.PERSISTENCE] = { action: 'string', key: 'string?', value: 'string?', resolve: 'function', reject: 'function?' };
@@ -653,10 +653,35 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
 HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
   renderLogger.debug('[trigger-expectation] registering', msg.pipelineId, msg.stageId, msg.sourceid, msg.event);
 
+  var pc = createTriggerProducerConsumer(msg);
+  var existing = null;
+  var objects = listObjects(state._gc);
+  for (var oi = 0; oi < objects.length; oi++) {
+    var obj = objects[oi];
+    if (obj.producer && obj.consumer &&
+        obj.producer.id === pc.producer.id &&
+        obj.producer.event === pc.producer.event &&
+        obj.consumer.pipelineId === pc.consumer.pipelineId &&
+        obj.consumer.stageId === pc.consumer.stageId) {
+      existing = obj;
+      break;
+    }
+  }
+
+  if (existing) {
+    existing.metadata = pc.metadata;
+    existing.status = 'EXPECTING';
+    existing.sentCount = 0;
+    existing.receivedCount = 1;
+    if (typeof msg.resolve === 'function') msg.resolve(true);
+    scheduleGcCycle(state);
+    return state;
+  }
+
   var gcObject = {
-    producer: createTriggerProducerConsumer(msg).producer,
-    consumer: createTriggerProducerConsumer(msg).consumer,
-    metadata: createTriggerProducerConsumer(msg).metadata,
+    producer: pc.producer,
+    consumer: pc.consumer,
+    metadata: pc.metadata,
     status: 'EXPECTING',
     sentCount: 0,
     receivedCount: 0

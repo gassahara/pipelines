@@ -515,7 +515,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS) {
         EVALSTACK, 'domquery:' + cmd, 'async-await',
         async function() {
           if (DOMQUERYSETTERS.indexOf(cmd) !== -1) {
-            if (cmd === 'toggleclass') return await handler(props.id, props.classname != null ? props.classname : props.value, props.force);
+            if (cmd === 'toggleclass') return await handler(props.id, props.classname != null ? props.classname : props.value, props.force !== undefined ? props.force : false);
             var val = sig.inputs && sig.inputs.length > 0 ? compilepathaccessor(props.value)(env) : props.value;
             return await handler(props.id, val);
           }
@@ -713,6 +713,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
     triggerFn.rawControl = stage.control;
     triggerFn.pipelineId = pipelineId;
     triggerFn.stagePath = stagePath;
+    if (triggerRegistry) triggerRegistry.push(triggerFn);
     return triggerFn;
   }
 
@@ -725,6 +726,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
   fn.stagemeta = header.meta;
   fn.controlCommand = header.controlCommand;
   fn.isTrigger = false;
+  if (triggerRegistry) triggerRegistry.push(fn);
 
   return fn;
 }
@@ -1111,7 +1113,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     ANALYZERS: ANALYZERS,
     COMPILERS: COMPILERS
   };
-  var triggerRegistry = null;
+  var triggerRegistry = [];
 
   var pipelineId = pipelineIdOverride || pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline';
 
@@ -1132,7 +1134,20 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     throw new Error('[compilepipeline] briefcase revivability failed: ' + briefcaseErrors.join(', '));
   }
 
-  var rawStages = (pipeline.elements || []).filter(function(el) { return el.element === 'STAGE'; }).map(function(el) {
+  function collectStages(elements, acc) {
+    var out = acc || [];
+    for (var ci = 0; ci < elements.length; ci++) {
+      var el = elements[ci];
+      if (el.element === 'STAGE') {
+        out.push(el);
+        if (el.elements) out = collectStages(el.elements, out);
+      }
+    }
+    return out;
+  }
+
+  var allStages = collectStages(pipeline.elements || [], []);
+  var rawStages = allStages.map(function(el) {
     return { id: el.id, control: el.control || null, blocks: (el.elements || []).filter(function(e) { return e.element === 'BLOCK'; }) };
   });
 
@@ -1162,7 +1177,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     triggerRegistry
   );
 
-  var triggerRegistrations = stages.filter(function(s) { return s.isTrigger; });
+  var triggerRegistrations = triggerRegistry.filter(function(s) { return s.isTrigger; });
 
   for (var i = 0; i < triggerRegistrations.length; i++) {
     var compiledTrigger = triggerRegistrations[i];
