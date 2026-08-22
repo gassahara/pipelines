@@ -56,7 +56,8 @@ var HYPERVISORMESSAGETYPES = Object.freeze({
   TRIGGER_EVENT: 'trigger_event',
   PING: 'ping',
   RECOVER: 'recover',
-  ACTIVATE_ACTORS: 'activate_actors'
+  ACTIVATE_ACTORS: 'activate_actors',
+  BOOT_PIPELINE: 'boot_pipeline'
 });
 
 var MESSAGEINTERFACES = {};
@@ -82,6 +83,7 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.TRIGGER_EVENT] = { pipelineId: 'string'
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.BOOT_PIPELINE] = { pipeline: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 function createInitialHypervisorState() {
@@ -153,7 +155,15 @@ function getDebugModule() {
 function ensureActorAlive(name, pingFn, startFn, retries) {
   if (retries === undefined) retries = 3;
 
-  return Promise.resolve().then(pingFn).then(function(alive) {
+  function safePing() {
+    return Promise.resolve().then(pingFn).then(function(alive) {
+      return alive === true;
+    }).catch(function() {
+      return false;
+    });
+  }
+
+  return safePing().then(function(alive) {
     if (alive) {
       return true;
     }
@@ -408,6 +418,25 @@ var hypervisorbehavior = function(state, message) {
       });
       return state;
 
+    case HYPERVISORMESSAGETYPES.BOOT_PIPELINE:
+      activateManagedActors().then(function() {
+        return import('../factory/blockcompiler.js').then(function(mod) {
+          return mod.compilepipeline(
+            message.pipeline,
+            message.accessors,
+            message.sinks,
+            message.pipelineId,
+            message.options || {}
+          );
+        });
+      }).then(function(result) {
+        resolveMessage(message, result);
+      }).catch(function(err) {
+        hypervisorLogger.warn('[HYPERVISOR] boot pipeline failed:', err);
+        rejectMessage(message, err);
+      });
+      return state;
+
     default:
       rejectMessage(message, new Error('[HYPERVISOR] unknown message type: ' + message.type));
   }
@@ -445,6 +474,23 @@ function startHypervisorActor() {
   }
 
   return hypervisorStartPromise;
+}
+
+function startHypervisorWithPipeline(pipeline, accessors, sinks, pipelineId, options) {
+  return startHypervisorActor().then(function(actor) {
+    return new Promise(function(resolve, reject) {
+      actor.send({
+        type: HYPERVISORMESSAGETYPES.BOOT_PIPELINE,
+        pipeline: pipeline,
+        accessors: accessors,
+        sinks: sinks,
+        pipelineId: pipelineId,
+        options: options,
+        resolve: resolve,
+        reject: reject
+      });
+    });
+  });
 }
 
 function enqueue(type, payload) {
@@ -488,6 +534,7 @@ export {
   HYPERVISORMESSAGETYPES,
   HYPERVISOR,
   startHypervisorActor,
+  startHypervisorWithPipeline,
   activateManagedActors,
   recoverHypervisorState,
   enqueueHypervisorLoad,

@@ -165,7 +165,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
     var message = mailbox.peek();
     mailbox.remove();
     processMessage(message);
-    queueMicrotask(drainMemory);
+    setTimeout(drainMemory, 0);
   }
 
   async function drainDb() {
@@ -189,7 +189,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
       if (mailboxType === 'db') {
         drainDb();
       } else {
-        queueMicrotask(drainMemory);
+        setTimeout(drainMemory, 0);
       }
     }
   }

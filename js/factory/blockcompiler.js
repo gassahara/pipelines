@@ -39,12 +39,8 @@ import {
   enqueueHypervisorGetProgram,
   enqueueHypervisorGetRenderHtml,
   enqueueHypervisorSetRenderHtml,
-  enqueueHypervisorSetStageDescriptor,
-  enqueueHypervisorPing,
-  enqueueHypervisorActivateActors,
-  startHypervisorActor
+  enqueueHypervisorSetStageDescriptor
 } from '../actors/hypervisoractor.js';
-import { pingActor } from '../actors/actorkernel.js';
 import { consolidateClosures } from './closureconsolidator.js';
 
 function createBlockCompilerConstants() {
@@ -1125,31 +1121,10 @@ function attachPipelineListeners(pipelineId, triggerRegistrations) {
   console.log('[BLOCKCOMPILER] listeners attached for pipeline:', pipelineId, triggerRegistrations.length || 0);
 }
 
-function ensureHypervisorAlive(retries) {
-  if (retries === undefined) retries = 3;
-
-  return pingActor(enqueueHypervisorPing, 1000).then(function(alive) {
-    if (alive) return true;
-    if (retries <= 0) throw new Error('[ensureHypervisorAlive] hypervisor actor not reachable');
-    return Promise.resolve().then(startHypervisorActor).then(function() {
-      return ensureHypervisorAlive(retries - 1);
-    });
-  });
-}
-
-async function activateActors() {
-  await ensureHypervisorAlive();
-  await enqueueHypervisorActivateActors();
-}
-
 async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, options) {
   if (pipelineIdOverride === undefined) pipelineIdOverride = null;
   if (options === undefined) options = {};
   if (!pipeline.elements) throw new Error('[compilepipeline] pipeline must have elements array');
-
-  if (options.autorun === true) {
-    await activateActors();
-  }
 
   var constants = createBlockCompilerConstants();
   var BLOCKTYPES = constants.BLOCKTYPES;
@@ -1288,7 +1263,5 @@ export {
   createBlockCompilers,
   executeStage,
   restorePipelineState,
-  attachPipelineListeners,
-  activateActors,
-  ensureHypervisorAlive
+  attachPipelineListeners
 };
