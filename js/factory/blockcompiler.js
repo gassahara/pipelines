@@ -25,7 +25,7 @@ import {
   enqueueExecutionStopStage, enqueueExecutionCancelStage, enqueueExecutionBreakStage,
   enqueueExecutionRestartStage, enqueueExecutionContinueStage, enqueueExecutionGetTasks,
   enqueueExecutionGetTaskStatus, enqueueExecutionCancelTask, enqueueExecutionStopTask,
-  enqueueExecutionSpawnPipeline, enqueueExecutionRegisterPipeline
+  enqueueExecutionRegisterPipeline
 } from '../actors/executionactor.js';
 import {
   enqueueHypervisorRegisterPipeline,
@@ -433,32 +433,49 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS) {
     if (inheritedProperties === undefined) inheritedProperties = {};
     var blockfn = async function(env) {
       if (!merged.container) throw new Error('[SPAWN] missing container');
-      return await callwithstack(
-        EVALSTACK, 'spawn:' + (merged.ref || id), 'async-await',
-        async function() {
-          var dna = merged.dna || null;
-          if (!dna && merged.dnaref && merged.dnaref.from === 'eventTarget') {
-            var el = merged.dnaref.query ? env.eventtarget && env.eventtarget.closest(merged.dnaref.query) : env.eventtarget;
-            var agentid = merged.dnaref.key || (el && el.getAttribute(merged.dnaref.attr));
-            var foundAgent = null;
-            if (env.agents) {
-              for (var i = 0; i < env.agents.length; i++) if (env.agents[i].id === agentid) { foundAgent = env.agents[i]; break; }
-            }
-            if (foundAgent && foundAgent.pipeline) dna = foundAgent.pipeline;
-            else if (env.rituals) {
-              for (var j = 0; j < env.rituals.length; j++) if (env.rituals[j].id === agentid && env.rituals[j].pipeline) { dna = env.rituals[j].pipeline; break; }
-            }
-          }
-          if (!dna) throw new Error('[spawn] no dna');
-          var inheritedenv = {};
-          if (merged.sharestack) {
-            INHERITEDKEYS.forEach(function(key) { if (env[key] !== undefined) inheritedenv[key] = env[key]; });
-          }
-          var inheritedbriefcase = merged.sharebriefcase ? inheritedProperties : {};
-          return { dna: dna, containerref: merged.container, inheritedenv: inheritedenv, inheritedbriefcase: inheritedbriefcase, outputkey: Object.keys(sig.outputs || {})[0] || null };
-        },
-        [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'spawn') }
-      );
+
+      var dna = merged.dna || null;
+      if (!dna && merged.dnaref && merged.dnaref.from === 'eventTarget') {
+        var el = merged.dnaref.query ? env.eventtarget && env.eventtarget.closest(merged.dnaref.query) : env.eventtarget;
+        var agentid = merged.dnaref.key || (el && el.getAttribute(merged.dnaref.attr));
+        var foundAgent = null;
+        if (env.agents) {
+          for (var i = 0; i < env.agents.length; i++) if (env.agents[i].id === agentid) { foundAgent = env.agents[i]; break; }
+        }
+        if (foundAgent && foundAgent.pipeline) dna = foundAgent.pipeline;
+        else if (env.rituals) {
+          for (var j = 0; j < env.rituals.length; j++) if (env.rituals[j].id === agentid && env.rituals[j].pipeline) { dna = env.rituals[j].pipeline; break; }
+        }
+      }
+      if (!dna) throw new Error('[spawn] no dna');
+
+      var inheritedenv = {};
+      if (merged.sharestack) {
+        INHERITEDKEYS.forEach(function(key) { if (env[key] !== undefined) inheritedenv[key] = env[key]; });
+      }
+      var inheritedbriefcase = merged.sharebriefcase ? inheritedProperties : {};
+      var childPipelineId = dna.identity && dna.identity.id ? dna.identity.id : (merged.container || 'child_pipeline');
+      var childEnv = cloneObject(inheritedenv);
+      childEnv.containerid = merged.container;
+      childEnv.rngactive = true;
+      childEnv.stack = {};
+      childEnv.pipelineid = childPipelineId;
+      childEnv.registersubscription = env.registersubscription;
+      childEnv.updateworldmap = env.updateworldmap;
+
+      var childBundle = await loadPipelineFromDefinition(dna.pipeline, childPipelineId, childEnv, {
+        inheritedBriefcase: inheritedbriefcase,
+        updateworldmap: env.updateworldmap,
+        sinks: [],
+        accessors: null
+      });
+
+      await childBundle.pipeline({ id: childPipelineId, env: childEnv });
+
+      var outputkey = Object.keys(sig.outputs || {})[0] || null;
+      if (outputkey) {
+        env[outputkey] = childEnv;
+      }
     };
     blockfn.id = id;
     return blockfn;
@@ -807,10 +824,7 @@ function deepcloneevent(e) {
 function executeChildren(children, env, stageid, pipelineId, stagePath) {
   function collect(index, outputs) {
     if (index >= children.length) {
-      if (env.stack && env.stack.agentspawned === stageid) {
-        return Promise.resolve({ env: env, spawnOutputs: outputs });
-      }
-      return spawnAll(outputs, env, stageid);
+      return Promise.resolve({ env: env, spawnOutputs: outputs });
     }
     var child = children[index];
     if (child && !child.origin) {
@@ -825,55 +839,11 @@ function executeChildren(children, env, stageid, pipelineId, stagePath) {
       };
     }
     return child(env).then(function(result) {
-      var nextOutputs = outputs;
-      if (child.blockmeta && child.blockmeta.type === 'spawn' && result && result.dna) {
-        nextOutputs = outputs.concat([{ dna: result.dna, containerref: result.containerref, inheritedenv: result.inheritedenv, inheritedbriefcase: result.inheritedbriefcase || {} }]);
-      }
-      return collect(index + 1, nextOutputs);
+      return collect(index + 1, outputs);
     }).catch(function(err) {
       err.message = 'child ' + (stageid || 'unnamed') + '/' + (child.id || 'unnamed') + ': ' + err.message;
       throw err;
     });
-  }
-
-  function spawnAll(outputs, currentEnv, stageId) {
-    function spawnNext(i, currentOutputs, currentEnv) {
-      if (i >= currentOutputs.length) {
-        var newEnv = currentEnv;
-        if (newEnv.stack) {
-          var newStack = cloneObject(newEnv.stack);
-          newStack.agentspawned = stageId;
-          newEnv = cloneObject(newEnv);
-          newEnv.stack = newStack;
-        }
-        return Promise.resolve({ env: newEnv, spawnOutputs: currentOutputs });
-      }
-      var so = currentOutputs[i];
-      var childPipelineId = so.dna && so.dna.identity && so.dna.identity.id ? so.dna.identity.id : (so.containerref || 'child_pipeline');
-      var childRunner = async function(agent) {
-        var childCompiled = await compilepipeline(so.dna.pipeline, null, [], childPipelineId, { inheritedBriefcase: so.inheritedbriefcase || {} });
-        await childCompiled.pipeline(agent);
-      };
-      var childEnv = cloneObject(so.inheritedenv || {});
-      childEnv.containerid = so.containerref;
-      childEnv.rngactive = true;
-      childEnv.stack = {};
-      childEnv.registersubscription = currentEnv.registersubscription;
-      childEnv.updateworldmap = currentEnv.updateworldmap;
-      childEnv.pipelineid = childPipelineId;
-      return enqueueExecutionSpawnPipeline({
-        parentPipelineId: currentEnv.pipelineid || currentEnv.agentid || 'unknown',
-        childPipelineId: childPipelineId,
-        childRunner: childRunner,
-        childEnv: childEnv,
-        containerref: so.containerref
-      }).then(function(submitted) {
-        return enqueueExecutionAwaitTask(submitted.taskid);
-      }).then(function() {
-        return spawnNext(i + 1, currentOutputs, currentEnv);
-      });
-    }
-    return spawnNext(0, outputs, currentEnv);
   }
 
   return collect(0, []);
@@ -1256,8 +1226,23 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   };
 }
 
+async function loadPipelineFromDefinition(pipeline, pipelineId, env, options) {
+  if (options === undefined) options = {};
+  var normalizedOptions = {
+    autorun: options.autorun !== false,
+    baseEnv: options.baseEnv || env || {},
+    updateworldmap: options.updateworldmap || (env && env.updateworldmap) || null,
+    inheritedBriefcase: options.inheritedBriefcase || {},
+    resumeFrom: options.resumeFrom || null,
+    sinks: options.sinks || [],
+    accessors: options.accessors || null
+  };
+  return compilepipeline(pipeline, normalizedOptions.accessors, normalizedOptions.sinks, pipelineId, normalizedOptions);
+}
+
 export {
   compilepipeline,
+  loadPipelineFromDefinition,
   createBlockCompilerConstants,
   createBlockAnalyzers,
   createBlockCompilers,

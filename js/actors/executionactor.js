@@ -23,7 +23,6 @@ var EXECUTIONMESSAGETYPES = Object.freeze({
   GET_TASK_STATUS: 'get_task_status',
   CANCEL_TASK: 'cancel_task',
   STOP_TASK: 'stop_task',
-  SPAWN_PIPELINE: 'spawn_pipeline',
   STOP_STAGE: 'stop_stage',
   CANCEL_STAGE: 'cancel_stage',
   BREAK_STAGE: 'break_stage',
@@ -50,7 +49,6 @@ MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', st
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASK_STATUS] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CANCEL_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STOP_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.SPAWN_PIPELINE] = { parentPipelineId: 'string', childPipelineId: 'string', childRunner: 'function', childEnv: 'object', containerref: 'string?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STOP_STAGE] = { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CANCEL_STAGE] = { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.BREAK_STAGE] = { pipelineid: 'string', stageid: 'string', resolve: 'function?', reject: 'function?' };
@@ -369,12 +367,6 @@ var executionbehavior = function(state, message) {
       resolveMessage(message, true);
       break;
     }
-    case EXECUTIONMESSAGETYPES.SPAWN_PIPELINE: {
-      var task3 = makeTask(nextState, { kind: 'spawn', pipelineid: message.childPipelineId, stageid: null, elementid: null });
-      runSpawnTask(task3.taskid, message);
-      resolveMessage(message, { taskid: task3.taskid });
-      break;
-    }
     case EXECUTIONMESSAGETYPES.CCC_ABORT:
     case EXECUTIONMESSAGETYPES.CCC_CONTINUE:
     case EXECUTIONMESSAGETYPES.CCC_RETRY: {
@@ -551,26 +543,6 @@ async function runStageTask(taskid, descriptor) {
   }
 }
 
-async function runSpawnTask(taskid, descriptor) {
-  try {
-    await descriptor.childRunner({
-      id: descriptor.childPipelineId,
-      env: descriptor.childEnv || {}
-    });
-    try {
-      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true });
-    } catch (err) {
-      console.warn('[EXECUTIONACTOR] task settled send failed:', err);
-    }
-  } catch (err) {
-    try {
-      EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err, result: false });
-    } catch (sendErr) {
-      console.warn('[EXECUTIONACTOR] task settled send failed:', sendErr);
-    }
-  }
-}
-
 var initialState = await loadInitialState();
 var EXECUTIONACTOR = createactor(
   executionbehavior,
@@ -609,7 +581,6 @@ var enqueueExecutionEnvUpdated = function(pipelineid, env) { return enqueue(EXEC
 var enqueueExecutionCccAbort = function(pipelineid, path, elementid, continuation) { return enqueue(EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }); };
 var enqueueExecutionCccContinue = function(pipelineid, path, elementid, continuation) { return enqueue(EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }); };
 var enqueueExecutionCccRetry = function(pipelineid, path, elementid, continuation) { return enqueue(EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }); };
-var enqueueExecutionSpawnPipeline = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.SPAWN_PIPELINE, descriptor); };
 var enqueueExecutionRegisterPipeline = function(pipelineid, dna, env) { return enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }); };
 var enqueueExecutionRecover = function() { return enqueue(EXECUTIONMESSAGETYPES.RECOVER, {}); };
 var enqueueExecutionPing = function() { return enqueue(EXECUTIONMESSAGETYPES.PING); };
@@ -640,7 +611,6 @@ export {
   enqueueExecutionCccAbort,
   enqueueExecutionCccContinue,
   enqueueExecutionCccRetry,
-  enqueueExecutionSpawnPipeline,
   enqueueExecutionRegisterPipeline,
   enqueueExecutionRecover,
   enqueueExecutionPing,
