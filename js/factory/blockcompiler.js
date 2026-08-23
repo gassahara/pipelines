@@ -720,7 +720,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
   var isResumeStage = resumeFrom && resumeFrom.path && resumeFrom.path[0] === stage.id;
   var startIndex = isResumeStage ? Math.max(0, findIndex(stage.elements || [], function(el) { return el.id === resumeFrom.path[resumeFrom.path.length - 1]; })) : 0;
 
-  var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, triggerRegistry);
+  var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, orderedStages);
   fn.id = stage.id;
   fn.kind = 'stage';
   fn.stagemeta = header.meta;
@@ -771,7 +771,7 @@ function findIndex(arr, predicate) {
   return -1;
 }
 
-function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stagePath, triggerRegistry) {
+function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stagePath, orderedStages) {
   var control = stage.control;
   var id = stage.id;
   if (!control || !control.command) return defaultRunner(id, children, startIndex, pipelineId, stagePath);
@@ -1168,13 +1168,13 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     return { id: el.id, control: el.control || null, blocks: (el.elements || []).filter(function(e) { return e.element === 'BLOCK'; }) };
   });
 
+  var logger = createBlockCompilerLogger();
+
   var contracts = validatestageflow(rawStages);
   var unresolved = contracts.filter(function(c) { return !c.resolved; });
   if (unresolved.length > 0) {
-    throw new Error('[compilepipeline] Unresolved stage dependencies: ' + unresolved.map(function(c) { return c.stageid + ': missing ' + c.missingkeys.join(', '); }).join('; '));
+    logger.warn('[compilepipeline] Stage dependencies not satisfied at compile time: ' + unresolved.map(function(c) { return c.stageid + ': missing ' + c.missingkeys.join(', '); }).join('; '));
   }
-
-  var logger = createBlockCompilerLogger();
 
   await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(function(err) { logger.warn('[compilepipeline] pipeline loaded failed:', err); });
   await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { logger.warn('[compilepipeline] hypervisor register failed:', err); });
