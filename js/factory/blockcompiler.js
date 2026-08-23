@@ -635,17 +635,17 @@ function createTriggerRegistration(stage, children, pipelineId, stagePath) {
   };
 }
 
-function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
   if (node.element === 'BLOCK') {
-    return processElement(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
+    return processElement(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages);
   }
   if (node.element === 'STAGE') {
-    return processStage(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
+    return processStage(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages);
   }
   throw new Error('unknown element type: ' + node.element);
 }
 
-function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
   var fn = compileblock(el, inheritedBriefcase, constants);
   fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
   fn.kind = 'element';
@@ -691,13 +691,13 @@ function processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, c
   };
 }
 
-function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
   var header = processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants);
   var stagePath = header.stagePath;
   var stageBriefcase = header.stageBriefcase;
 
   var children = (stage.elements || []).map(function(child) {
-    return processNode(child, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, triggerRegistry);
+    return processNode(child, pipelineId, resumeFrom, stagePath, stageBriefcase, constants, dnaConstants, orderedStages);
   });
 
   if (header.controlCommand === 'TRIGGER') {
@@ -713,7 +713,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
     triggerFn.rawControl = stage.control;
     triggerFn.pipelineId = pipelineId;
     triggerFn.stagePath = stagePath;
-    if (triggerRegistry) triggerRegistry.push(triggerFn);
+    if (orderedStages) orderedStages.push(triggerFn);
     return triggerFn;
   }
 
@@ -726,12 +726,12 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
   fn.stagemeta = header.meta;
   fn.controlCommand = header.controlCommand;
   fn.isTrigger = false;
-  if (triggerRegistry) triggerRegistry.push(fn);
+  if (orderedStages) orderedStages.push(fn);
 
   return fn;
 }
 
-function processPipeline(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry) {
+function processPipeline(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
 
   function loop(index, stages) {
@@ -744,7 +744,7 @@ function processPipeline(elements, pipelineId, resumeFrom, parentPath, inherited
       throw new Error('[processPipeline] top-level pipeline element must be STAGE, got ' + el.element);
     }
 
-    var compiledStage = processStage(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, triggerRegistry);
+    var compiledStage = processStage(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages);
     stages.push(compiledStage);
 
     return loop(index + 1, stages);
@@ -1057,6 +1057,18 @@ function buildResumeFromRoute(route) {
   };
 }
 
+function buildResumeStack(orderedStages, resumeFrom) {
+  if (!resumeFrom || !resumeFrom.path || !resumeFrom.path.length) return null;
+  var resumeStageId = resumeFrom.path[0];
+  var startIndex = findIndex(orderedStages, function(s) {
+    return (s.id || (s.stagemeta && s.stagemeta.stageid)) === resumeStageId;
+  });
+  if (startIndex === -1) return null;
+  return orderedStages.slice(startIndex).map(function(s) {
+    return s.id || (s.stagemeta && s.stagemeta.stageid);
+  });
+}
+
 async function restorePipelineState(pipelineDefinition, pipelineId) {
   var active = await enqueueHypervisorGetActivePipelines().catch(function() { return []; });
   if (active.indexOf(pipelineId) === -1) {
@@ -1089,6 +1101,11 @@ async function restorePipelineState(pipelineDefinition, pipelineId) {
     { inheritedBriefcase: env.briefcase || {}, resumeFrom: resumeFrom }
   );
 
+  var resumeStack = buildResumeStack(compiled.orderedStages, resumeFrom);
+  if (resumeStack) {
+    env.executionStack = resumeStack;
+  }
+
   return compiled.pipeline({ id: pipelineId, env: env, resumeFrom: resumeFrom });
 }
 
@@ -1113,7 +1130,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     ANALYZERS: ANALYZERS,
     COMPILERS: COMPILERS
   };
-  var triggerRegistry = [];
+  var orderedStages = [];
 
   var pipelineId = pipelineIdOverride || pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline';
 
@@ -1174,10 +1191,10 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     pipelineBriefcase,
     compilerConstants,
     dnaConstants,
-    triggerRegistry
+    orderedStages
   );
 
-  var triggerRegistrations = triggerRegistry.filter(function(s) { return s.isTrigger; });
+  var triggerRegistrations = orderedStages.filter(function(s) { return s.isTrigger; });
 
   for (var i = 0; i < triggerRegistrations.length; i++) {
     var compiledTrigger = triggerRegistrations[i];
@@ -1239,6 +1256,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   return {
     pipeline: compiledpipeline,
     pipelineId: pipelineId,
+    orderedStages: orderedStages,
     spawnBootstrapMap: spawnBootstrapMap,
     triggerRegistrations: triggerRegistrations
   };
