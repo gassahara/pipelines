@@ -39,6 +39,7 @@ var HYPERVISORMESSAGETYPES = Object.freeze({
   SAVE: 'save',
   GET_ENV: 'get_env',
   SET_ENV: 'set_env',
+  GET_LATEST_ENV: 'get_latest_env',
   GET_RENDER_HTML: 'get_render_html',
   SET_RENDER_HTML: 'set_render_html',
   GET_EXECUTION_STACK: 'get_execution_stack',
@@ -64,7 +65,8 @@ var MESSAGEINTERFACES = {};
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.LOAD] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SAVE] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_ENV] = { pipelineId: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_ENV] = { pipelineId: 'string', env: 'object', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_ENV] = { pipelineId: 'string', env: 'object', stageId: 'string?', elementId: 'string?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_LATEST_ENV] = { pipelineId: 'string', stageId: 'string', elementId: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_RENDER_HTML] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.SET_RENDER_HTML] = { html: 'string', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.GET_EXECUTION_STACK] = { resolve: 'function?', reject: 'function?' };
@@ -221,18 +223,51 @@ var hypervisorbehavior = function(state, message) {
       resolveMessage(message, true);
       break;
 
-    case HYPERVISORMESSAGETYPES.GET_ENV:
-      resolveMessage(message, state.envByPipeline && message.pipelineId
-        ? (state.envByPipeline[message.pipelineId] || null)
-        : null);
+    case HYPERVISORMESSAGETYPES.GET_ENV: {
+      var pipelineState = state.envByPipeline && state.envByPipeline[message.pipelineId];
+      var rootEntry = pipelineState && pipelineState.__root__ && pipelineState.__root__.__root__;
+      resolveMessage(message, rootEntry ? rootEntry.env : (pipelineState || null));
       break;
+    }
 
-    case HYPERVISORMESSAGETYPES.SET_ENV:
+    case HYPERVISORMESSAGETYPES.SET_ENV: {
       if (!state.envByPipeline) state.envByPipeline = {};
-      state.envByPipeline[message.pipelineId] = message.env || {};
+      if (!state.envByPipeline[message.pipelineId]) state.envByPipeline[message.pipelineId] = {};
+
+      var stageId = message.stageId || '__root__';
+      var elementId = message.elementId || '__root__';
+      if (!state.envByPipeline[message.pipelineId][stageId]) state.envByPipeline[message.pipelineId][stageId] = {};
+      state.envByPipeline[message.pipelineId][stageId][elementId] = {
+        env: message.env || {},
+        updatedAt: Date.now()
+      };
+
+      if (stageId !== '__root__' || elementId !== '__root__') {
+        state.envByPipeline[message.pipelineId].__root__ = {
+          __root__: {
+            env: message.env || {},
+            updatedAt: Date.now()
+          }
+        };
+      }
+
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
+    }
+
+    case HYPERVISORMESSAGETYPES.GET_LATEST_ENV: {
+      var pState = state.envByPipeline && state.envByPipeline[message.pipelineId];
+      var sState = pState && pState[message.stageId];
+      var eState = sState && sState[message.elementId];
+      if (eState) {
+        resolveMessage(message, eState.env);
+      } else {
+        var rootEntry = pState && pState.__root__ && pState.__root__.__root__;
+        resolveMessage(message, rootEntry ? rootEntry.env : null);
+      }
+      break;
+    }
 
     case HYPERVISORMESSAGETYPES.GET_RENDER_HTML:
       resolveMessage(message, state.renderHtml || '');
@@ -337,9 +372,8 @@ var hypervisorbehavior = function(state, message) {
       var stageId = message.stageId;
       var stagePath = message.stagePath || [stageId];
 
-      var env = state.envByPipeline && state.envByPipeline[pipelineId]
-        ? state.envByPipeline[pipelineId]
-        : { pipelineid: pipelineId };
+      var rootEntry = state.envByPipeline && state.envByPipeline[pipelineId] && state.envByPipeline[pipelineId].__root__ && state.envByPipeline[pipelineId].__root__.__root__;
+      var env = rootEntry ? rootEntry.env : { pipelineid: pipelineId };
 
       var descriptorKey = pipelineId + ':' + stageId;
       var descriptor = state.stageDescriptors && state.stageDescriptors[descriptorKey];
@@ -373,7 +407,13 @@ var hypervisorbehavior = function(state, message) {
         }
       ).then(function(result) {
         var updatedEnv = result && result.env ? result.env : env;
-        state.envByPipeline[pipelineId] = updatedEnv;
+        if (!state.envByPipeline[pipelineId]) state.envByPipeline[pipelineId] = {};
+        state.envByPipeline[pipelineId].__root__ = {
+          __root__: {
+            env: updatedEnv,
+            updatedAt: Date.now()
+          }
+        };
         persistHypervisorState(state);
         hypervisorLogger.debug('[hypervisor] trigger completed', pipelineId, stageId);
         resolveMessage(message, updatedEnv);
@@ -516,7 +556,8 @@ function enqueue(type, payload) {
 var enqueueHypervisorLoad = function() { return enqueue(HYPERVISORMESSAGETYPES.LOAD); };
 var enqueueHypervisorSave = function() { return enqueue(HYPERVISORMESSAGETYPES.SAVE); };
 var enqueueHypervisorGetEnv = function(pipelineId) { return enqueue(HYPERVISORMESSAGETYPES.GET_ENV, { pipelineId: pipelineId }); };
-var enqueueHypervisorSetEnv = function(pipelineId, env) { return enqueue(HYPERVISORMESSAGETYPES.SET_ENV, { pipelineId: pipelineId, env: env }); };
+var enqueueHypervisorSetEnv = function(pipelineId, env, stageId, elementId) { return enqueue(HYPERVISORMESSAGETYPES.SET_ENV, { pipelineId: pipelineId, env: env, stageId: stageId, elementId: elementId }); };
+var enqueueHypervisorGetLatestEnv = function(pipelineId, stageId, elementId) { return enqueue(HYPERVISORMESSAGETYPES.GET_LATEST_ENV, { pipelineId: pipelineId, stageId: stageId, elementId: elementId }); };
 var enqueueHypervisorGetRenderHtml = function() { return enqueue(HYPERVISORMESSAGETYPES.GET_RENDER_HTML); };
 var enqueueHypervisorSetRenderHtml = function(html) { return enqueue(HYPERVISORMESSAGETYPES.SET_RENDER_HTML, { html: html }); };
 var enqueueHypervisorGetExecutionStack = function() { return enqueue(HYPERVISORMESSAGETYPES.GET_EXECUTION_STACK); };
@@ -546,6 +587,7 @@ export {
   enqueueHypervisorSave,
   enqueueHypervisorGetEnv,
   enqueueHypervisorSetEnv,
+  enqueueHypervisorGetLatestEnv,
   enqueueHypervisorGetRenderHtml,
   enqueueHypervisorSetRenderHtml,
   enqueueHypervisorGetExecutionStack,

@@ -15,7 +15,7 @@ import {
   enqueusetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
   DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport,
   enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTriggerExpectation,
-  enqueueRenderRevalidateTriggers
+  enqueueRenderRevalidateTriggers, enqueueRenderRestoreBodyHtml
 } from '../actors/renderactor.js';
 import { validatestageflow } from '../typesystem.js';
 import {
@@ -32,6 +32,7 @@ import {
   enqueueHypervisorUnregisterPipeline,
   enqueueHypervisorSetEnv,
   enqueueHypervisorGetEnv,
+  enqueueHypervisorGetLatestEnv,
   enqueueHypervisorSetRoute,
   enqueueHypervisorGetRoute,
   enqueueHypervisorGetActivePipelines,
@@ -47,7 +48,7 @@ function createBlockCompilerConstants() {
   return Object.freeze({
     BLOCKTYPES: Object.freeze({
       FN: 'fn', API: 'api', FETCH: 'fetch', WRITER: 'writer',
-      SPAWN: 'spawn', IO: 'io', DOMQUERY: 'domquery', CRYPTO: 'crypto',
+      IO: 'io', DOMQUERY: 'domquery', CRYPTO: 'crypto',
       WAIT: 'wait', EXECUTIONQUERY: 'executionquery', STOREQUERY: 'storequery'
     }),
     INHERITEDKEYS: Object.freeze(['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents'])
@@ -76,16 +77,78 @@ function extendObject(target, source) {
   return target;
 }
 
+function stripQuotes(str) {
+  var out = '';
+  for (var i = 0; i < str.length; i++) {
+    var ch = str.charAt(i);
+    if (ch !== '"' && ch !== "'") out += ch;
+  }
+  return out;
+}
+
+function splitPathSegments(pathstr) {
+  var parts = [];
+  var current = '';
+  var i = 0;
+  while (i < pathstr.length) {
+    var ch = pathstr.charAt(i);
+    if (ch === '[' || ch === ']' || ch === '.') {
+      if (current) parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+    i++;
+  }
+  if (current) parts.push(current);
+  return parts;
+}
+
+function containsPathAccessorChars(str) {
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charAt(i);
+    if (c === '.' || c === '[' || c === ']') return true;
+  }
+  return false;
+}
+
+function containsStyleAccess(source) {
+  if (typeof source !== 'string') return false;
+  var i = 0;
+  while (i < source.length) {
+    var ch = source.charAt(i);
+    if (ch === 's' || ch === 'S') {
+      var j = i + 1;
+      var expected = 'tyle';
+      var k = 0;
+      while (k < expected.length && j < source.length && source.charAt(j).toLowerCase() === expected.charAt(k)) {
+        j++;
+        k++;
+      }
+      if (k === expected.length) {
+        while (j < source.length && (source.charAt(j) === ' ' || source.charAt(j) === '\t' || source.charAt(j) === '\n')) j++;
+        if (source.charAt(j) === '.') return true;
+      }
+    }
+    i++;
+  }
+  return false;
+}
+
 function compilepathaccessor(pathstr) {
   if (typeof pathstr !== 'string') {
     return function() { return pathstr; };
   }
-  var parts = pathstr.split('.').reduce(function(acc, p) {
-    var sub = p.split(/[\[\]]/).filter(Boolean).map(function(k) { return k.replace(/['"]/g, ''); });
-    return acc.concat(sub);
-  }, []);
+  var segments = [];
+  var dotParts = pathstr.split('.');
+  for (var di = 0; di < dotParts.length; di++) {
+    var sub = splitPathSegments(dotParts[di]);
+    for (var si = 0; si < sub.length; si++) {
+      segments.push(stripQuotes(sub[si]));
+    }
+  }
   return function(env) {
-    return parts.reduce(function(curr, key) { return (curr != null ? curr[key] : undefined); }, env);
+    return segments.reduce(function(curr, key) { return (curr != null ? curr[key] : undefined); }, env);
   };
 }
 
@@ -140,40 +203,46 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
 
   function wrapper(env) {
     var path = stagePath.concat([elementId]);
-    return enqueueExecutionEnvUpdated(pipelineId, sanitizeEnv(env)).catch(function(err) {
-      console.warn('[BLOCKCOMPILER] pre-env checkpoint failed:', err);
-    }).then(function() {
-      var executor = function(executionContext) {
-        var execEnv = executionContext.env || env;
-        return compiledElement(execEnv);
-      };
+    var latestEnvPromise = enqueueHypervisorGetLatestEnv(pipelineId, stagePath[stagePath.length - 1] || pipelineId, elementId).catch(function() {
+      return null;
+    });
+    return latestEnvPromise.then(function(latestEnv) {
+      var execEnv = latestEnv || env;
+      return enqueueExecutionEnvUpdated(pipelineId, sanitizeEnv(execEnv)).catch(function(err) {
+        console.warn('[BLOCKCOMPILER] pre-env checkpoint failed:', err);
+      }).then(function() {
+        var executor = function(executionContext) {
+          var effectiveEnv = executionContext.env || execEnv;
+          return compiledElement(effectiveEnv);
+        };
 
-      var blockInputs = elementDef && elementDef.inputs ? elementDef.inputs : [];
-      var blockOutputs = elementDef && elementDef.outputs ? elementDef.outputs : {};
-      var inputargs = blockInputs.map(function(inp) { return compilepathaccessor(inp)(env); });
+        var blockInputs = elementDef && elementDef.inputs ? elementDef.inputs : [];
+        var blockOutputs = elementDef && elementDef.outputs ? elementDef.outputs : {};
+        var inputargs = blockInputs.map(function(inp) { return compilepathaccessor(inp)(execEnv); });
 
-      var closureSerialized = null;
-      if (typeof compiledElement === 'function') {
-        closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, env);
-      }
+        var closureSerialized = null;
+        if (typeof compiledElement === 'function') {
+          closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, execEnv);
+        }
 
-      return enqueueExecutionSubmit({
-        pipelineid: pipelineId,
-        path: path,
-        elementid: elementId,
-        env: env,
-        signature: {
-          inputs: blockInputs,
-          outputs: blockOutputs
-        },
-        executor: executor,
-        properties: elementDef || {},
-        serialized: closureSerialized,
-        origin: compiledElement.origin || null,
-        programRef: null,
-        elementId: elementId
-      }).then(function(submitted) {
-        return enqueueExecutionAwaitTask(submitted.taskid);
+        return enqueueExecutionSubmit({
+          pipelineid: pipelineId,
+          path: path,
+          elementid: elementId,
+          env: execEnv,
+          signature: {
+            inputs: blockInputs,
+            outputs: blockOutputs
+          },
+          executor: executor,
+          properties: elementDef || {},
+          serialized: closureSerialized,
+          origin: compiledElement.origin || null,
+          programRef: null,
+          elementId: elementId
+        }).then(function(submitted) {
+          return enqueueExecutionAwaitTask(submitted.taskid);
+        });
       });
     });
   }
@@ -273,7 +342,7 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
     var errors = [];
     if (!block.fn) errors.push('fn block must have a function');
     if (typeof block.fn === 'function') {
-      if (block.fn.toString().indexOf('document.') !== -1 || /\bstyle\s*[.]/i.test(block.fn.toString())) {
+      if (block.fn.toString().indexOf('document.') !== -1 || containsStyleAccess(block.fn.toString())) {
         errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
       }
       errors = errors.concat(validaterevivablefunctionblock(block, BLOCKTYPES, dnaConstants));
@@ -301,10 +370,6 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
     }
     return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
   };
-
-  analyzers[BLOCKTYPES.SPAWN] = createBlockAnalyzer([
-    { field: 'dna', required: false, message: 'spawn block must have dna or dnaref', custom: function(v, b) { return v !== undefined || b.dnaref !== undefined; } }
-  ]);
 
   analyzers[BLOCKTYPES.IO] = createBlockAnalyzer([
     { field: 'ref', required: true, type: 'function', message: 'io block ref must be a function' }
@@ -342,7 +407,7 @@ function compileHttpBlock(merged, id, sig, isTextual) {
     (sig.inputs || []).forEach(function(inp, idx) { inputdata[inp] = inputaccessors[idx](env); });
 
     var endpoint = merged.endpoint;
-    if (typeof merged.endpoint === 'string' && /[\.\[\]]/.test(merged.endpoint)) {
+    if (typeof merged.endpoint === 'string' && containsPathAccessorChars(merged.endpoint)) {
       endpoint = compilepathaccessor(merged.endpoint)(env);
     }
     if (endpoint === undefined) endpoint = merged.endpoint;
@@ -422,58 +487,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS) {
         var domref = await expectelement(result.id, result.timeout || 5000);
         env[Object.keys(sig.outputs)[0]] = result;
         env[result.id] = domref;
-      }
-    };
-    blockfn.id = id;
-    return blockfn;
-  };
-
-  compilers[BLOCKTYPES.SPAWN] = function(merged, id, sig, inheritedProperties) {
-    if (inheritedProperties === undefined) inheritedProperties = {};
-    var blockfn = async function(env) {
-      if (!merged.container) throw new Error('[SPAWN] missing container');
-
-      var dna = merged.dna || null;
-      if (!dna && merged.dnaref && merged.dnaref.from === 'eventTarget') {
-        var el = merged.dnaref.query ? env.eventtarget && env.eventtarget.closest(merged.dnaref.query) : env.eventtarget;
-        var agentid = merged.dnaref.key || (el && el.getAttribute(merged.dnaref.attr));
-        var foundAgent = null;
-        if (env.agents) {
-          for (var i = 0; i < env.agents.length; i++) if (env.agents[i].id === agentid) { foundAgent = env.agents[i]; break; }
-        }
-        if (foundAgent && foundAgent.pipeline) dna = foundAgent.pipeline;
-        else if (env.rituals) {
-          for (var j = 0; j < env.rituals.length; j++) if (env.rituals[j].id === agentid && env.rituals[j].pipeline) { dna = env.rituals[j].pipeline; break; }
-        }
-      }
-      if (!dna) throw new Error('[spawn] no dna');
-
-      var inheritedenv = {};
-      if (merged.sharestack) {
-        INHERITEDKEYS.forEach(function(key) { if (env[key] !== undefined) inheritedenv[key] = env[key]; });
-      }
-      var inheritedbriefcase = merged.sharebriefcase ? inheritedProperties : {};
-      var childPipelineId = dna.identity && dna.identity.id ? dna.identity.id : (merged.container || 'child_pipeline');
-      var childEnv = cloneObject(inheritedenv);
-      childEnv.containerid = merged.container;
-      childEnv.rngactive = true;
-      childEnv.stack = {};
-      childEnv.pipelineid = childPipelineId;
-      childEnv.registersubscription = env.registersubscription;
-      childEnv.updateworldmap = env.updateworldmap;
-
-      var childBundle = await loadPipelineFromDefinition(dna.pipeline, childPipelineId, childEnv, {
-        inheritedBriefcase: inheritedbriefcase,
-        updateworldmap: env.updateworldmap,
-        sinks: [],
-        accessors: null
-      });
-
-      await childBundle.pipeline({ id: childPipelineId, env: childEnv });
-
-      var outputkey = Object.keys(sig.outputs || {})[0] || null;
-      if (outputkey) {
-        env[outputkey] = childEnv;
       }
     };
     blockfn.id = id;
@@ -642,6 +655,9 @@ function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase
   if (node.element === 'STAGE') {
     return processStage(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages);
   }
+  if (node.element === 'PIPELINE') {
+    return processPipelineElement(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages);
+  }
   throw new Error('unknown element type: ' + node.element);
 }
 
@@ -650,6 +666,51 @@ function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcas
   fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
   fn.kind = 'element';
   return createPersistentElementWrapper(fn, el, stagePath, pipelineId);
+}
+
+function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
+  var elementId = el.id || 'pipeline_unknown';
+  var blockfn = async function(env) {
+    var childEnv = cloneObject(env);
+    childEnv.containerid = el.container || null;
+    childEnv.pipelineid = pipelineId;
+
+    var inputkeys = el.inputs || [];
+    for (var i = 0; i < inputkeys.length; i++) {
+      childEnv[inputkeys[i]] = compilepathaccessor(inputkeys[i])(env);
+    }
+
+    var childPipelineId = el.pipelineIdOverride
+      || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id)
+      || (el.pipeline && el.pipeline.id)
+      || 'child_pipeline';
+
+    var stageExecutor = async function(execEnv) {
+      var childOptions = el.options || {};
+      if (childOptions.autorun === undefined) childOptions.autorun = true;
+      if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
+      if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = env.updateworldmap;
+
+      var childBundle = await loadPipelineFromDefinition(el.pipeline, childPipelineId, childEnv, childOptions);
+      return childBundle.pipeline({ id: childPipelineId, env: childEnv });
+    };
+
+    var submitted = await enqueueExecutionSubmitStage({
+      pipelineid: pipelineId,
+      path: stagePath.concat([elementId]),
+      stageid: elementId,
+      stageExecutor: stageExecutor,
+      env: env
+    });
+
+    var outputkey = Object.keys(el.outputs || {})[0] || null;
+    if (outputkey) {
+      env[outputkey] = submitted;
+    }
+  };
+  blockfn.id = elementId;
+  blockfn.kind = 'pipeline';
+  return blockfn;
 }
 
 function processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants) {
@@ -664,8 +725,8 @@ function processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, c
   var stagePath = parentPath.concat([stage.id]);
   var reads = [], writes = [];
   (stage.elements || []).filter(function(e) { return e.element === 'BLOCK'; }).forEach(function(e) {
-    (e.reads || []).forEach(function(k) { if (reads.indexOf(k) === -1) reads.push(k); });
-    (e.writes || []).forEach(function(k) { if (writes.indexOf(k) === -1) writes.push(k); });
+    (e.inputs || []).forEach(function(k) { if (reads.indexOf(k) === -1) reads.push(k); });
+    Object.keys(e.outputs || {}).forEach(function(k) { if (writes.indexOf(k) === -1) writes.push(k); });
   });
 
   var controlCommand = stage.control && stage.control.command ? stage.control.command : null;
@@ -852,19 +913,6 @@ function executeChildren(children, env, stageid, pipelineId, stagePath) {
   }
 
   return collect(0, []);
-}
-
-function buildSpawnBootstrapMap(pipeline) {
-  return (pipeline.elements || []).reduce(function(map, stage) {
-    if (stage.element !== 'STAGE') return map;
-    return (stage.elements || []).reduce(function(innerMap, el) {
-      if (el.element === 'BLOCK' && el.type === 'spawn' && el.dna) {
-        var childId = el.dna.identity && el.dna.identity.id ? el.dna.identity.id : (el.container || 'child_pipeline');
-        innerMap[childId] = { dna: el.dna, containerref: el.container, stageid: stage.id };
-      }
-      return innerMap;
-    }, map);
-  }, {});
 }
 
 function waitForBootReady() {
@@ -1180,7 +1228,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { logger.warn('[compilepipeline] hypervisor register failed:', err); });
   await enqueueExecutionRegisterPipeline(pipelineId, null, {}).catch(function(err) { logger.warn('[compilepipeline] register pipeline failed:', err); });
 
-  var spawnBootstrapMap = buildSpawnBootstrapMap(pipeline);
+  var spawnBootstrapMap = {};
   var resumeFrom = options.resumeFrom || null;
 
   var stages = processPipeline(
