@@ -17,7 +17,6 @@ import {
   enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTriggerExpectation,
   enqueueRenderRevalidateTriggers, enqueueRenderRestoreBodyHtml
 } from '../actors/renderactor.js';
-import { validatestageflow } from '../typesystem.js';
 import {
   enqueueExecutionPipelineLoaded, enqueueExecutionStageState,
   enqueueExecutionSubmit, enqueueExecutionSubmitStage, enqueueExecutionAwaitTask,
@@ -203,10 +202,9 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
 
   function wrapper(env) {
     var path = stagePath.concat([elementId]);
-    var latestEnvPromise = enqueueHypervisorGetLatestEnv(pipelineId, stagePath[stagePath.length - 1] || pipelineId, elementId).catch(function() {
+    return enqueueHypervisorGetLatestEnv(pipelineId, stagePath[stagePath.length - 1] || pipelineId, elementId).catch(function() {
       return null;
-    });
-    return latestEnvPromise.then(function(latestEnv) {
+    }).then(function(latestEnv) {
       var execEnv = latestEnv || env;
       return enqueueExecutionEnvUpdated(pipelineId, sanitizeEnv(execEnv)).catch(function(err) {
         console.warn('[BLOCKCOMPILER] pre-env checkpoint failed:', err);
@@ -671,25 +669,33 @@ function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcas
 function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
   var elementId = el.id || 'pipeline_unknown';
   var blockfn = async function(env) {
-    var childEnv = cloneObject(env);
+    var latestEnv = await enqueueHypervisorGetLatestEnv(pipelineId, stagePath[stagePath.length - 1] || pipelineId, elementId).catch(function() {
+      return null;
+    });
+    var parentEnv = latestEnv || env;
+    var childEnv = cloneObject(parentEnv);
     childEnv.containerid = el.container || null;
     childEnv.pipelineid = pipelineId;
 
     var inputkeys = el.inputs || [];
     for (var i = 0; i < inputkeys.length; i++) {
-      childEnv[inputkeys[i]] = compilepathaccessor(inputkeys[i])(env);
+      childEnv[inputkeys[i]] = compilepathaccessor(inputkeys[i])(parentEnv);
     }
 
     var childPipelineId = el.pipelineIdOverride
-      || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id)
       || (el.pipeline && el.pipeline.id)
+      || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id)
       || 'child_pipeline';
 
     var stageExecutor = async function(execEnv) {
       var childOptions = el.options || {};
       if (childOptions.autorun === undefined) childOptions.autorun = true;
       if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
-      if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = env.updateworldmap;
+      if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
+
+      if (!el.pipeline || !el.pipeline.elements) {
+        throw new Error('[PIPELINE] pipeline definition must have elements array');
+      }
 
       var childBundle = await loadPipelineFromDefinition(el.pipeline, childPipelineId, childEnv, childOptions);
       return childBundle.pipeline({ id: childPipelineId, env: childEnv });
@@ -1199,30 +1205,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     throw new Error('[compilepipeline] briefcase revivability failed: ' + briefcaseErrors.join(', '));
   }
 
-  function collectStages(elements, acc) {
-    var out = acc || [];
-    for (var ci = 0; ci < elements.length; ci++) {
-      var el = elements[ci];
-      if (el.element === 'STAGE') {
-        out.push(el);
-        if (el.elements) out = collectStages(el.elements, out);
-      }
-    }
-    return out;
-  }
-
-  var allStages = collectStages(pipeline.elements || [], []);
-  var rawStages = allStages.map(function(el) {
-    return { id: el.id, control: el.control || null, blocks: (el.elements || []).filter(function(e) { return e.element === 'BLOCK'; }) };
-  });
-
   var logger = createBlockCompilerLogger();
-
-  var contracts = validatestageflow(rawStages);
-  var unresolved = contracts.filter(function(c) { return !c.resolved; });
-  if (unresolved.length > 0) {
-    logger.warn('[compilepipeline] Stage dependencies not satisfied at compile time: ' + unresolved.map(function(c) { return c.stageid + ': missing ' + c.missingkeys.join(', '); }).join('; '));
-  }
 
   await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(function(err) { logger.warn('[compilepipeline] pipeline loaded failed:', err); });
   await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { logger.warn('[compilepipeline] hypervisor register failed:', err); });
