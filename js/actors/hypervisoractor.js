@@ -575,6 +575,7 @@ var enqueueHypervisorGetTriggerRecipientStatus = function(pipelineId, stageId) {
 var enqueueHypervisorTrigger = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.TRIGGER_EVENT, payload); };
 var enqueueHypervisorPing = function() { return enqueue(HYPERVISORMESSAGETYPES.PING); };
 var enqueueHypervisorActivateActors = function() { return enqueue(HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS); };
+var enqueueHypervisorBootPipeline = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.BOOT_PIPELINE, payload); };
 
 export {
   HYPERVISORMESSAGETYPES,
@@ -604,5 +605,6 @@ export {
   enqueueHypervisorGetTriggerRecipientStatus,
   enqueueHypervisorTrigger,
   enqueueHypervisorPing,
-  enqueueHypervisorActivateActors
+  enqueueHypervisorActivateActors,
+  enqueueHypervisorBootPipeline
 };

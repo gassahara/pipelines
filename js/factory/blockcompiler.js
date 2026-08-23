@@ -32,6 +32,7 @@ import {
   enqueueHypervisorSetEnv,
   enqueueHypervisorGetEnv,
   enqueueHypervisorGetLatestEnv,
+  enqueueHypervisorBootPipeline,
   enqueueHypervisorSetRoute,
   enqueueHypervisorGetRoute,
   enqueueHypervisorGetActivePipelines,
@@ -687,31 +688,27 @@ function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inherited
       || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id)
       || 'child_pipeline';
 
-    var stageExecutor = async function(execEnv) {
-      var childOptions = el.options || {};
-      if (childOptions.autorun === undefined) childOptions.autorun = true;
-      if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
-      if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
+    var childOptions = el.options || {};
+    if (childOptions.autorun === undefined) childOptions.autorun = true;
+    if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
+    if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
 
-      if (!el.pipeline || !el.pipeline.elements) {
-        throw new Error('[PIPELINE] pipeline definition must have elements array');
-      }
-
-      var childBundle = await loadPipelineFromDefinition(el.pipeline, childPipelineId, childEnv, childOptions);
-      return childBundle.pipeline({ id: childPipelineId, env: childEnv });
+    var bootMessage = {
+      pipeline: el.pipeline,
+      accessors: el.accessors || null,
+      sinks: el.sinks || [],
+      pipelineId: childPipelineId,
+      options: childOptions
     };
 
-    var submitted = await enqueueExecutionSubmitStage({
-      pipelineid: pipelineId,
-      path: stagePath.concat([elementId]),
-      stageid: elementId,
-      stageExecutor: stageExecutor,
-      env: env
-    });
-
+    var bootPromise = enqueueHypervisorBootPipeline(bootMessage);
     var outputkey = Object.keys(el.outputs || {})[0] || null;
     if (outputkey) {
-      env[outputkey] = submitted;
+      bootPromise.then(function(bootResult) {
+        env[outputkey] = bootResult;
+      }).catch(function(err) {
+        env[outputkey] = { status: 'failed', error: err && err.message ? err.message : String(err) };
+      });
     }
   };
   blockfn.id = elementId;
