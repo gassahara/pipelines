@@ -701,6 +701,9 @@ function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inherited
       options: childOptions
     };
 
+    var bootLogger = createBlockCompilerLogger();
+    bootLogger.debug('[BLOCKCOMPILER] PIPELINE element boot request:', childPipelineId);
+
     var bootPromise = enqueueHypervisorBootPipeline(bootMessage);
     var outputkey = Object.keys(el.outputs || {})[0] || null;
     if (outputkey) {

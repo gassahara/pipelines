@@ -464,6 +464,8 @@ var hypervisorbehavior = function(state, message) {
         bootOptions.autorun = true;
       }
 
+      hypervisorLogger.debug('[HYPERVISOR] child boot pipeline requested:', message.pipelineId);
+
       activateManagedActors().then(function() {
         return import('../factory/blockcompiler.js').then(function(mod) {
           return mod.compilepipeline(
