@@ -203,46 +203,38 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
 
   function wrapper(env) {
     var path = stagePath.concat([elementId]);
-    return enqueueHypervisorGetLatestEnv(pipelineId, stagePath[stagePath.length - 1] || pipelineId, elementId).catch(function() {
-      return null;
-    }).then(function(latestEnv) {
-      var execEnv = latestEnv || env;
-      return enqueueExecutionEnvUpdated(pipelineId, sanitizeEnv(execEnv)).catch(function(err) {
-        console.warn('[BLOCKCOMPILER] pre-env checkpoint failed:', err);
-      }).then(function() {
-        var executor = function(executionContext) {
-          var effectiveEnv = executionContext.env || execEnv;
-          return compiledElement(effectiveEnv);
-        };
+    var execEnv = env;
+    var executor = function(executionContext) {
+      var effectiveEnv = executionContext.env || execEnv;
+      return compiledElement(effectiveEnv);
+    };
 
-        var blockInputs = elementDef && elementDef.inputs ? elementDef.inputs : [];
-        var blockOutputs = elementDef && elementDef.outputs ? elementDef.outputs : {};
-        var inputargs = blockInputs.map(function(inp) { return compilepathaccessor(inp)(execEnv); });
+    var blockInputs = elementDef && elementDef.inputs ? elementDef.inputs : [];
+    var blockOutputs = elementDef && elementDef.outputs ? elementDef.outputs : {};
+    var inputargs = blockInputs.map(function(inp) { return compilepathaccessor(inp)(execEnv); });
 
-        var closureSerialized = null;
-        if (typeof compiledElement === 'function') {
-          closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, execEnv);
-        }
+    var closureSerialized = null;
+    if (typeof compiledElement === 'function') {
+      closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, execEnv);
+    }
 
-        return enqueueExecutionSubmit({
-          pipelineid: pipelineId,
-          path: path,
-          elementid: elementId,
-          env: execEnv,
-          signature: {
-            inputs: blockInputs,
-            outputs: blockOutputs
-          },
-          executor: executor,
-          properties: elementDef || {},
-          serialized: closureSerialized,
-          origin: compiledElement.origin || null,
-          programRef: null,
-          elementId: elementId
-        }).then(function(submitted) {
-          return enqueueExecutionAwaitTask(submitted.taskid);
-        });
-      });
+    return enqueueExecutionSubmit({
+      pipelineid: pipelineId,
+      path: path,
+      elementid: elementId,
+      env: execEnv,
+      signature: {
+        inputs: blockInputs,
+        outputs: blockOutputs
+      },
+      executor: executor,
+      properties: elementDef || {},
+      serialized: closureSerialized,
+      origin: compiledElement.origin || null,
+      programRef: null,
+      elementId: elementId
+    }).then(function(submitted) {
+      return enqueueExecutionAwaitTask(submitted.taskid);
     });
   }
 
@@ -431,7 +423,13 @@ function compileHttpBlock(merged, id, sig, isTextual) {
     );
 
     var result = rawresult.data;
-    if (merged.mapping && merged.mapping.response) result = buildResponse(merged.mapping.response, rawresult);
+    if (merged.mapping && merged.mapping.response) {
+      if (rawresult && typeof rawresult === 'object' && !Array.isArray(rawresult)) {
+        result = buildResponse(merged.mapping.response, rawresult);
+      } else {
+        result = rawresult.data || rawresult;
+      }
+    }
     var outputkeys = Object.keys(sig.outputs || {});
     if (outputkeys.length === 1) env[outputkeys[0]] = result;
     else if (typeof result === 'object' && result) {
@@ -670,9 +668,7 @@ function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcas
 function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
   var elementId = el.id || 'pipeline_unknown';
   var blockfn = async function(env) {
-    var latestEnv = await enqueueHypervisorGetLatestEnv(pipelineId, stagePath[stagePath.length - 1] || pipelineId, elementId).catch(function() {
-      return null;
-    });
+    var latestEnv = env;
     var parentEnv = latestEnv || env;
     var childEnv = cloneObject(parentEnv);
     childEnv.containerid = el.container || null;

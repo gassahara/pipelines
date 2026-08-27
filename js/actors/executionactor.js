@@ -589,6 +589,13 @@ function startExecutionActor() {
   return EXECUTIONACTOR;
 }
 
+// P12: optional readiness gate export for explicit use by hypervisor
+function ensureExecutionActorReady() {
+  // Since EXECUTIONACTOR is already created and draining at module init,
+  // this simply returns a resolved promise or pings to confirm.
+  return Promise.resolve(EXECUTIONACTOR);
+}
+
 export {
   EXECUTIONMESSAGETYPES,
   EXECUTIONACTOR,
@@ -614,5 +621,6 @@ export {
   enqueueExecutionRegisterPipeline,
   enqueueExecutionRecover,
   enqueueExecutionPing,
-  startExecutionActor
+  startExecutionActor,
+  ensureExecutionActorReady
 };

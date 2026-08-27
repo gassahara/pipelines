@@ -143,10 +143,38 @@ function withElement(id, reject, fn) {
   }
   var el = document.getElementById(id);
   if (!el) {
-    if (typeof reject === 'function') reject(new Error('[RENDERACTOR] element not found: ' + id));
+    if (typeof reject === 'function') {
+      reject(new Error('[RENDERACTOR] element not found: ' + id));
+    }
     return null;
   }
   return fn(el);
+}
+
+function withElementRetry(id, reject, fn, timeout) {
+  if (timeout === undefined) timeout = 5000;
+  var existing = document.getElementById(id);
+  if (existing) return fn(existing);
+  return new Promise(function(resolve, rejectPromise) {
+    var observer = null;
+    var timeoutId = setTimeout(function() {
+      if (observer) observer.disconnect();
+      rejectPromise(new Error('[RENDERACTOR] element not found after timeout: ' + id));
+    }, timeout);
+    observer = new MutationObserver(function() {
+      var el = document.getElementById(id);
+      if (el) {
+        clearTimeout(timeoutId);
+        observer.disconnect();
+        try {
+          resolve(fn(el));
+        } catch (err) {
+          rejectPromise(err);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
 }
 
 function resolveMsg(msg, val) { if (typeof msg.resolve === 'function') msg.resolve(val); }
@@ -158,13 +186,11 @@ function waitForDomReady() {
       document.addEventListener('DOMContentLoaded', resolve, { once: true });
     });
   }
-
   if (document.readyState !== 'complete') {
     return new Promise(function(resolve) {
       window.addEventListener('load', resolve, { once: true });
     });
   }
-
   return Promise.resolve();
 }
 
@@ -232,12 +258,9 @@ function triggerGcCycle(state) {
       if (!sourceEl) {
         return Promise.resolve();
       }
-
       incrementSent(state._gc, obj.id, 1);
-
       return isTriggerRecipientLive(obj.consumer).then(function(live) {
         incrementReceived(state._gc, obj.id, 1);
-
         if (!live) {
           updateStatus(state._gc, obj.id, 'ENDED');
         } else {
@@ -251,11 +274,9 @@ function triggerGcCycle(state) {
         updateStatus(state._gc, obj.id, 'ENDED');
         return Promise.resolve();
       }
-
       if (!obj.handler) {
         var handler = function(e) {
           renderLogger.debug('[trigger] forwarding', obj.consumer.pipelineId, obj.consumer.stageId);
-
           return callwithstack(
             EVALSTACK,
             'trigger:' + obj.consumer.pipelineId + ':' + obj.consumer.stageId,
@@ -283,11 +304,9 @@ function triggerGcCycle(state) {
             renderLogger.warn('[RENDERACTOR] trigger forward failed:', err);
           });
         };
-
         obj.handler = handler;
         sourceEl.addEventListener(obj.producer.event, handler);
       }
-
       updateStatus(state._gc, obj.id, 'EXECUTED');
       return Promise.resolve();
     }
@@ -302,12 +321,9 @@ function triggerGcCycle(state) {
         updateStatus(state._gc, obj.id, 'ENDED');
         return Promise.resolve();
       }
-
       incrementSent(state._gc, obj.id, 1);
-
       return isTriggerRecipientLive(obj.consumer).then(function(live) {
         incrementReceived(state._gc, obj.id, 1);
-
         if (!live) {
           if (obj.handler && sourceEl) {
             sourceEl.removeEventListener(obj.producer.event, obj.handler);
@@ -320,7 +336,6 @@ function triggerGcCycle(state) {
         }
       });
     }
-
     return Promise.resolve();
   }
 
@@ -333,7 +348,6 @@ function triggerGcCycle(state) {
       return processList(index + 1);
     });
   }
-
   return processList(0);
 }
 
@@ -381,7 +395,7 @@ HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
 HANDLERS[MESSAGETYPES.HTML] = async function(state, msg) {
   await waitForDomReady();
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
     else { el.innerHTML = msg.markup; }
     resolveMsg(msg);
@@ -402,7 +416,7 @@ HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
 
 HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     if (msg.styles && typeof msg.styles === 'object') {
       Object.keys(msg.styles).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
     }
@@ -413,7 +427,7 @@ HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
 
 HANDLERS[MESSAGETYPES.SETATTR] = function(state, msg) {
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     if (typeof msg.name === 'string') el.setAttribute(msg.name, msg.value);
     resolveMsg(msg);
   });
@@ -422,7 +436,7 @@ HANDLERS[MESSAGETYPES.SETATTR] = function(state, msg) {
 
 HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(state, msg) {
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     if (typeof msg.classname === 'string') el.classList.toggle(msg.classname, msg.force);
     resolveMsg(msg);
   });
@@ -538,7 +552,7 @@ HANDLERS[MESSAGETYPES.GETLAYOUT] = function(state, msg) {
 HANDLERS[MESSAGETYPES.SETHTML] = async function(state, msg) {
   await waitForDomReady();
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     el.innerHTML = msg.value;
     resolveMsg(msg);
   });
@@ -548,7 +562,7 @@ HANDLERS[MESSAGETYPES.SETHTML] = async function(state, msg) {
 
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     if (msg.value && typeof msg.value === 'object') {
       Object.keys(msg.value).forEach(function(prop) { el.style[prop] = msg.value[prop]; });
     }
@@ -559,7 +573,7 @@ HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
 
 HANDLERS[MESSAGETYPES.SETSTYLE] = function(state, msg) {
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     if (msg.value && typeof msg.value === 'object') {
       Object.keys(msg.value).forEach(function(prop) { el.style[prop] = msg.value[prop]; });
     }
@@ -570,7 +584,7 @@ HANDLERS[MESSAGETYPES.SETSTYLE] = function(state, msg) {
 
 HANDLERS[MESSAGETYPES.SETVALUE] = function(state, msg) {
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     el.value = msg.value;
     resolveMsg(msg);
   });
@@ -579,7 +593,7 @@ HANDLERS[MESSAGETYPES.SETVALUE] = function(state, msg) {
 
 HANDLERS[MESSAGETYPES.SETLAYOUT] = function(state, msg) {
   persistRenderWorldmap(state);
-  withElement(msg.id, msg.reject, function(el) {
+  withElementRetry(msg.id, msg.reject, function(el) {
     if (msg.value && typeof msg.value === 'object') {
       Object.keys(msg.value).forEach(function(prop) { el[prop] = msg.value[prop]; });
     }
@@ -758,7 +772,7 @@ function createEnqueuer(type, idRequired, extraPayloadFn) {
       rest = args;
     }
     return new Promise(function(resolve, reject) {
-      if (idRequired && (!id || typeof id !== 'string' || !document.getElementById(id))) {
+      if (idRequired && (!id || typeof id !== 'string')) {
         reject(new Error('[' + type + '] invalid or missing element id: ' + id));
         return;
       }

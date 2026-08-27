@@ -359,9 +359,7 @@ var hypervisorbehavior = function(state, message) {
 
     case HYPERVISORMESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS: {
       var recipientKey = message.pipelineId + ':' + message.stageId;
-      var isLive = Boolean(
-        state.triggerRecipients && state.triggerRecipients[recipientKey]
-      );
+      var isLive = state.triggerRecipients && state.triggerRecipients[recipientKey] === true;
       hypervisorLogger.debug('[hypervisor] recipient status', recipientKey, isLive);
       resolveMessage(message, isLive);
       break;
@@ -467,6 +465,11 @@ var hypervisorbehavior = function(state, message) {
       hypervisorLogger.debug('[HYPERVISOR] child boot pipeline requested:', message.pipelineId);
 
       activateManagedActors().then(function() {
+        // P12: Explicit readiness gate for execution actor before booting pipeline
+        return getExecutionModule().then(function(execMod) {
+          return execMod.enqueueExecutionPing();
+        });
+      }).then(function() {
         return import('../factory/blockcompiler.js').then(function(mod) {
           return mod.compilepipeline(
             message.pipeline,
