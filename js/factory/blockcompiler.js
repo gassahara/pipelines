@@ -1277,7 +1277,10 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
       console.warn('[BLOCKCOMPILER] hypervisor env save failed:', err);
     });
     var env = cloneObject(baseEnv);
-    await compiledpipeline({ id: pipelineId, env: env });
+    // P14-rev2: start pipeline execution asynchronously; do not block compilepipeline.
+    compiledpipeline({ id: pipelineId, env: env }).catch(function(err) {
+      console.error('[BLOCKCOMPILER] pipeline execution failed:', err);
+    });
   }
 
   return {

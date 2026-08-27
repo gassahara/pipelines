@@ -470,19 +470,21 @@ var hypervisorbehavior = function(state, message) {
           return execMod.enqueueExecutionPing();
         });
       }).then(function() {
-        return import('../factory/blockcompiler.js').then(function(mod) {
-          return mod.compilepipeline(
+        // P14-rev2: Start pipeline asynchronously; do not block hypervisor mailbox.
+        import('../factory/blockcompiler.js').then(function(mod) {
+          mod.compilepipeline(
             message.pipeline,
             message.accessors,
             message.sinks,
             message.pipelineId,
             bootOptions
-          );
+          ).catch(function(err) {
+            hypervisorLogger.warn('[HYPERVISOR] pipeline execution failed:', err);
+          });
         });
-      }).then(function(result) {
-        resolveMessage(message, result);
+        resolveMessage(message, { started: true, pipelineId: message.pipelineId });
       }).catch(function(err) {
-        hypervisorLogger.warn('[HYPERVISOR] boot pipeline failed:', err);
+        hypervisorLogger.warn('[HYPERVISOR] boot pipeline scheduling failed:', err);
         rejectMessage(message, err);
       });
       return state;
