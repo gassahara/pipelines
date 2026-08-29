@@ -1,9 +1,24 @@
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+// ============================================================
+// UPDATED FILE: js/factory/stylizerutilities.js
+// Change applied: no `this`, no closures; portable verbosity functions
+// ============================================================
+
+import {
+  createVerbosityConstants,
+  createVerbosityFunctions,
+  logdebug,
+  logwarn,
+  logerror,
+  loginfo,
+  logcritical
+} from '../verbosity.js';
 import {
   ColorCore,
   ColorHarmony,
   ColorContrast
 } from './colorutils.js';
+
+var defaultVerbosityState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
 var StylizerCore = {
   has: function(obj, key) {
@@ -547,26 +562,15 @@ var StylizerCore = {
     return '';
   },
 
-  // P10: log functions moved into object literal, defined before use
+  // P10-ter: log functions now call portable verbosity functions directly.
   log: function(level) {
     var args = Array.prototype.slice.call(arguments, 1);
-    if (StylizerCore.verbosity && StylizerCore.verbosity.functions) {
-      var fns = StylizerCore.verbosity.functions;
-      var state = StylizerCore.verbosity.state;
-      switch (level) {
-        case 'debug': fns.logdebug.apply(null, [state].concat(args)); break;
-        case 'warn': fns.logwarn.apply(null, [state].concat(args)); break;
-        case 'error': fns.logerror.apply(null, [state].concat(args)); break;
-        default: fns.loginfo.apply(null, [state].concat(args)); break;
-      }
-    } else {
-      // fallback to console if verbosity not attached
-      switch (level) {
-        case 'debug': console.log.apply(console, args); break;
-        case 'warn': console.warn.apply(console, args); break;
-        case 'error': console.error.apply(console, args); break;
-        default: console.log.apply(console, args); break;
-      }
+    switch (level) {
+      case 'debug': logdebug(defaultVerbosityState, null, ...args); break;
+      case 'warn': logwarn(defaultVerbosityState, null, ...args); break;
+      case 'error': logerror(defaultVerbosityState, null, ...args); break;
+      case 'info': loginfo(defaultVerbosityState, null, ...args); break;
+      default: loginfo(defaultVerbosityState, null, ...args); break;
     }
   },
   debug: function() {
@@ -590,19 +594,8 @@ StylizerCore.color = {
   contrast: ColorContrast
 };
 
-// ATTACH VERBOSITY UTILITIES TO StylizerCore
-var verbosityConstants = createVerbosityConstants();
-var verbosityFunctions = createVerbosityFunctions(verbosityConstants);
-var verbosityState = Object.freeze({ level: verbosityConstants.DEBUG });
-
-StylizerCore.verbosity = {
-  constants: verbosityConstants,
-  functions: verbosityFunctions,
-  state: verbosityState
-};
-
-// NOTE: log functions are already defined in the object literal and reference StylizerCore.verbosity dynamically.
-// No further assignments needed.
+// NOTE: No verbosity attachment with closures or `this`.
+// All logging uses portable functions from verbosity.js.
 
 var StylizerRewrite = {
   rewritestyleattrs: function(html, rules, StylizerCore) {
