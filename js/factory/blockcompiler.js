@@ -1,3 +1,8 @@
+// ============================================================
+// UPDATED FILE: js/factory/blockcompiler.js
+// Change applied: validatePipelineBriefcase now returns {valid, errors}
+// ============================================================
+
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
 import { callwithstack } from './callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
@@ -1427,7 +1432,8 @@ export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPip
 
 function validatePipelineBriefcase(briefcase) {
   var dnaConstants = createDnaSerializerConstants();
-  return validaterevivableobject(briefcase || {}, 'pipeline.briefcase', dnaConstants);
+  var errors = validaterevivableobject(briefcase || {}, 'pipeline.briefcase', dnaConstants);
+  return { valid: errors.length === 0, errors: errors };
 }
 
 export {

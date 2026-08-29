@@ -1,3 +1,8 @@
+// ============================================================
+// UPDATED FILE: js/actors/hypervisoractor.js
+// Change applied: defensive validation consumer for validatePipelineBriefcase
+// ============================================================
+
 import { createactor, pingActor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete, startDbActor } from './dbactor.js';
 import { executeStage, validatePipelineBriefcase, createTriggerRegistrationFromStage } from '../factory/blockcompiler.js';
@@ -588,9 +593,11 @@ var hypervisorbehavior = function(state, message) {
 
       var pipelineBriefcase = message.pipeline && message.pipeline.briefcase ? message.pipeline.briefcase : {};
       var briefcaseCheck = validatePipelineBriefcase(pipelineBriefcase);
-      if (!briefcaseCheck.valid) {
-        hypervisorLogger.error('BOOT_PIPELINE briefcase validation failed:', briefcaseCheck.errors);
-        rejectMessage(message, new Error('[HYPERVISOR] briefcase validation failed: ' + briefcaseCheck.errors.join(', ')));
+      var briefcaseErrors = Array.isArray(briefcaseCheck) ? briefcaseCheck : (briefcaseCheck.errors || []);
+      var briefcaseValid = Array.isArray(briefcaseCheck) ? briefcaseCheck.length === 0 : Boolean(briefcaseCheck.valid);
+      if (!briefcaseValid) {
+        hypervisorLogger.error('BOOT_PIPELINE briefcase validation failed:', briefcaseErrors);
+        rejectMessage(message, new Error('[HYPERVISOR] briefcase validation failed: ' + briefcaseErrors.join(', ')));
         return state;
       }
 
