@@ -9,6 +9,10 @@ import {
   enqueueExecutionCccAbort
 } from './executionactor.js';
 
+var debugVerbosityConstants = createVerbosityConstants();
+var debugVerbosityFunctions = createVerbosityFunctions(debugVerbosityConstants);
+var debugLogger = debugVerbosityFunctions.createLogger('[DEBUGACTOR]', debugVerbosityConstants.DEBUG);
+
 var DEBUG_MESSAGETYPES = Object.freeze({
   INIT_OVERLAY: 'init_overlay',
   SHOW: 'show',
@@ -37,23 +41,10 @@ function createInitialDebugWorldmap() {
 }
 
 function persistDebugWorldmap(state) {
+  debugLogger.debug('persistDebugWorldmap saving state to db');
   enqueueDbStore('actor:state:debug', state.worldmap).catch(function(e) {
-    console.warn('[DEBUGACTOR] state persist failed:', e);
+    debugLogger.warn('state persist failed:', e);
   });
-}
-
-function createDebugLogger() {
-  var constants = createVerbosityConstants();
-  var fns = createVerbosityFunctions(constants);
-  var state = Object.freeze({ level: constants.DEBUG });
-  return {
-    debug: function() {
-      fns.logdebug.apply(null, [state].concat(Array.prototype.slice.call(arguments)));
-    },
-    warn: function() {
-      fns.logwarn.apply(null, [state].concat(Array.prototype.slice.call(arguments)));
-    }
-  };
 }
 
 function getctx(error, cont) {
@@ -95,16 +86,23 @@ function ensureOverlay(state) {
 }
 
 var debugbehavior = function(state, message) {
+  var v = state && state.verbosity !== undefined ? state.verbosity : debugLogger.getLevel();
+  debugLogger.setLevel(v);
+
+  debugLogger.debug('behavior handling action:', message.type);
+
   if (!state.worldmap) {
     state.worldmap = createInitialDebugWorldmap();
   }
 
   if (message.type === DEBUG_MESSAGETYPES.PING) {
+    debugLogger.debug('action PING');
     if (typeof message.resolve === 'function') message.resolve(true);
     return state;
   }
 
   if (message.type === DEBUG_MESSAGETYPES.INIT_OVERLAY) {
+    debugLogger.debug('action INIT_OVERLAY');
     persistDebugWorldmap(state);
     ensureOverlay(state);
 
@@ -113,6 +111,7 @@ var debugbehavior = function(state, message) {
 
       window.addEventListener('error', function(e) {
         e.preventDefault();
+        debugLogger.warn('global window error captured:', e.error || e);
         if (DEBUGACTOR_INSTANCE) {
           DEBUGACTOR_INSTANCE.send({
             type: DEBUG_MESSAGETYPES.SHOW,
@@ -125,6 +124,7 @@ var debugbehavior = function(state, message) {
       window.addEventListener('unhandledrejection', function(e) {
         if (e.reason && e.reason.diagnostic) {
           e.preventDefault();
+          debugLogger.warn('global unhandled rejection captured:', e.reason);
           if (DEBUGACTOR_INSTANCE) {
             DEBUGACTOR_INSTANCE.send({
               type: DEBUG_MESSAGETYPES.SHOW,
@@ -142,6 +142,7 @@ var debugbehavior = function(state, message) {
   }
 
   if (message.type === DEBUG_MESSAGETYPES.HIDE) {
+    debugLogger.debug('action HIDE');
     persistDebugWorldmap(state);
     if (state.overlay) {
       state.overlay.style.display = 'none';
@@ -155,8 +156,9 @@ var debugbehavior = function(state, message) {
   }
 
   if (message.type === DEBUG_MESSAGETYPES.SHOW) {
+    debugLogger.info('action SHOW debug overlay');
+    debugLogger.debug('action SHOW error:', message.error, 'continuation:', message.continuation);
     persistDebugWorldmap(state);
-    var logger = createDebugLogger();
     var overlay = ensureOverlay(state);
 
     overlay.innerHTML = formatdebugtrace(
@@ -171,20 +173,20 @@ var debugbehavior = function(state, message) {
       var ctx = getctx(message.error, message.continuation);
 
       actions.appendChild(btn('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
-        logger.debug('[DebugActor] Retrying:', ctx);
+        debugLogger.debug('Retrying stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
         enqueueExecutionCccRetry(ctx.pipelineid, ctx.path, ctx.elementid, message.continuation).catch(function(e) {
-          console.warn('[DebugActor] RETRY failed:', e);
+          debugLogger.warn('RETRY failed:', e);
         });
       }));
 
       actions.appendChild(btn('CONTINUE', 'background:#4488ff;color:#fff;', function() {
-        logger.debug('[DebugActor] Continuing:', ctx);
+        debugLogger.debug('Continuing stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
         enqueueExecutionCccContinue(ctx.pipelineid, ctx.path, ctx.elementid, message.continuation).catch(function(e) {
-          console.warn('[DebugActor] CONTINUE failed:', e);
+          debugLogger.warn('CONTINUE failed:', e);
         });
       }));
     }
@@ -193,11 +195,11 @@ var debugbehavior = function(state, message) {
       var abortCtx = message.continuation
         ? getctx(null, message.continuation)
         : { pipelineid: 'unknown_pipeline', path: ['unknown_stage', 'unknown_element'], elementid: 'unknown_element' };
-      logger.debug('[DebugActor] Aborting:', abortCtx);
+      debugLogger.debug('Aborting stage:', abortCtx);
       overlay.style.display = 'none';
       overlay.innerHTML = '';
       enqueueExecutionCccAbort(abortCtx.pipelineid, abortCtx.path, abortCtx.elementid, message.continuation).catch(function(e) {
-        console.warn('[DebugActor] ABORT failed:', e);
+        debugLogger.warn('ABORT failed:', e);
       });
     }));
 
@@ -213,6 +215,7 @@ var debugbehavior = function(state, message) {
   }
 
   if (message.type === DEBUG_MESSAGETYPES.RECOVER) {
+    debugLogger.debug('action RECOVER debug state');
     enqueueDbRestore('actor:state:debug').then(function(saved) {
       if (saved) {
         state.worldmap = saved;
@@ -229,9 +232,10 @@ var debugbehavior = function(state, message) {
         state.worldmap = createInitialDebugWorldmap();
         persistDebugWorldmap(state);
       }
+      debugLogger.debug('debug recovery completed');
       if (typeof message.resolve === 'function') message.resolve(state);
     }).catch(function(e) {
-      console.warn('[DEBUGACTOR] state restore failed:', e);
+      debugLogger.warn('state restore failed:', e);
       state.worldmap = createInitialDebugWorldmap();
       persistDebugWorldmap(state);
       if (typeof message.resolve === 'function') message.resolve(state);
@@ -248,27 +252,40 @@ var debugMailboxStore = {
   delete: enqueueDbDelete
 };
 
-function createDebugActor() {
+function createDebugActor(options) {
   if (DEBUGACTOR_INSTANCE) {
+    if (options !== undefined) {
+      var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+      if (lvl !== undefined) debugLogger.setLevel(lvl);
+    }
     return DEBUGACTOR_INSTANCE;
   }
+
+  var verbosity = typeof options === 'number'
+    ? options
+    : (options && options.verbosity !== undefined
+      ? options.verbosity
+      : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : debugVerbosityConstants.DEBUG));
+
+  debugLogger.setLevel(verbosity);
 
   var actor = createactor(
     debugbehavior,
     {
       overlay: null,
       currentContinuation: null,
-      worldmap: createInitialDebugWorldmap()
+      worldmap: createInitialDebugWorldmap(),
+      verbosity: verbosity
     },
     MESSAGEINTERFACES,
-    { actorName: 'debugactor', mailboxType: 'db', mailboxStore: debugMailboxStore }
+    { actorName: 'debugactor', mailboxType: 'db', mailboxStore: debugMailboxStore, verbosity: verbosity }
   );
   DEBUGACTOR_INSTANCE = actor;
   return actor;
 }
 
-function startDebugActor() {
-  return createDebugActor();
+function startDebugActor(options) {
+  return createDebugActor(options);
 }
 
 var enqueueDebugPing = function() {

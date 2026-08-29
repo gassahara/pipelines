@@ -17,19 +17,7 @@ import {
 
 var renderVerbosityConstants = createVerbosityConstants();
 var renderVerbosityFunctions = createVerbosityFunctions(renderVerbosityConstants);
-var renderVerbosityState = Object.freeze({ level: renderVerbosityConstants.DEBUG });
-
-var renderLogger = {
-  debug: function() {
-    renderVerbosityFunctions.logdebug.apply(null, [renderVerbosityState].concat(Array.prototype.slice.call(arguments)));
-  },
-  warn: function() {
-    renderVerbosityFunctions.logwarn.apply(null, [renderVerbosityState].concat(Array.prototype.slice.call(arguments)));
-  },
-  info: function() {
-    renderVerbosityFunctions.loginfo.apply(null, [renderVerbosityState].concat(Array.prototype.slice.call(arguments)));
-  }
-};
+var renderLogger = renderVerbosityFunctions.createLogger('[RENDERACTOR]', renderVerbosityConstants.DEBUG);
 
 function createRenderErrorContext(label) {
   return function(err) {
@@ -130,7 +118,7 @@ function createInitialRenderWorldmap() {
 }
 
 function persistRenderWorldmap(state) {
-  state.worldmap.html = document.body ? document.body.innerHTML : '';
+  state.worldmap.html = (typeof document !== 'undefined' && document.body) ? document.body.innerHTML : '';
   enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
     renderLogger.warn('[RENDERACTOR] state persist failed:', e);
   });
@@ -181,6 +169,7 @@ function resolveMsg(msg, val) { if (typeof msg.resolve === 'function') msg.resol
 function rejectMsg(msg, err) { if (typeof msg.reject === 'function') msg.reject(err); }
 
 function waitForDomReady() {
+  if (typeof document === 'undefined') return Promise.resolve();
   if (document.readyState === 'loading') {
     return new Promise(function(resolve) {
       document.addEventListener('DOMContentLoaded', resolve, { once: true });
@@ -206,6 +195,7 @@ function isTriggerRecipientLive(consumer) {
 }
 
 function ensureTriggerObserver(state) {
+  if (typeof document === 'undefined') return;
   if (state._triggerObserver) return;
 
   if (typeof MutationObserver === 'undefined') {
@@ -216,16 +206,20 @@ function ensureTriggerObserver(state) {
   }
 
   if (document.readyState !== 'complete') {
-    window.addEventListener('load', function() {
-      ensureTriggerObserver(state);
-    }, { once: true });
+    if (typeof window !== 'undefined') {
+      window.addEventListener('load', function() {
+        ensureTriggerObserver(state);
+      }, { once: true });
+    }
     return;
   }
 
   var observer = new MutationObserver(function(mutations) {
     scheduleGcCycle(state);
   });
-  observer.observe(document.body, { childList: true, subtree: true });
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
   state._triggerObserver = observer;
 }
 
@@ -241,6 +235,7 @@ function scheduleGcCycle(state) {
 }
 
 function triggerGcCycle(state) {
+  if (typeof document === 'undefined') return Promise.resolve();
   if (document.readyState !== 'complete') {
     return waitForDomReady().then(function() {
       return triggerGcCycle(state);
@@ -721,6 +716,10 @@ HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
 var refcounter = 0;
 
 var renderbehavior = function(state, message) {
+  var v = state && state.verbosity !== undefined ? state.verbosity : renderLogger.getLevel();
+  renderLogger.setLevel(v);
+  renderLogger.debug('behavior handling action:', message.type, message.id || '');
+
   if (message.type === MESSAGETYPES.RENDER && (message.id === null || message.id === undefined)) {
     refcounter += 1;
     message.id = '__ref_render_' + Date.now() + '_' + refcounter;
@@ -741,7 +740,8 @@ var initialState = {
   actorRegistry: createActorRegistry(),
   worldmap: createInitialRenderWorldmap(),
   _gc: createGarbageCollector(),
-  _triggerGcScheduled: false
+  _triggerGcScheduled: false,
+  verbosity: renderVerbosityConstants.DEBUG
 };
 
 var RENDERACTOR = createactor(
@@ -751,7 +751,8 @@ var RENDERACTOR = createactor(
   {
     actorName: 'renderactor',
     mailboxType: 'db',
-    mailboxStore: renderMailboxStore
+    mailboxStore: renderMailboxStore,
+    verbosity: renderVerbosityConstants.DEBUG
   }
 );
 
@@ -877,7 +878,16 @@ var enqueueRenderRecover = function() {
   });
 };
 
-var startRenderActor = function() {
+var startRenderActor = function(options) {
+  if (options !== undefined) {
+    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    if (lvl !== undefined) {
+      renderLogger.setLevel(lvl);
+      if (RENDERACTOR && RENDERACTOR.getstate()) {
+        RENDERACTOR.getstate().verbosity = lvl;
+      }
+    }
+  }
   return RENDERACTOR;
 };
 

@@ -1,5 +1,10 @@
 import { createactor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
+import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+
+var worldmapVerbosityConstants = createVerbosityConstants();
+var worldmapVerbosityFunctions = createVerbosityFunctions(worldmapVerbosityConstants);
+var worldmapLogger = worldmapVerbosityFunctions.createLogger('[WORLDMAPACTOR]', worldmapVerbosityConstants.DEBUG);
 
 var UPDATE = 'update';
 var OBSERVE = 'observe';
@@ -31,16 +36,31 @@ function deepmerge(target, patch) {
 }
 
 var worldmapbehavior = function(state, message) {
+  var v = state && state.verbosity !== undefined ? state.verbosity : worldmapLogger.getLevel();
+  worldmapLogger.setLevel(v);
+
+  worldmapLogger.debug('behavior handling action:', message.type);
+
   if (message.type === UPDATE) {
+    worldmapLogger.debug('action UPDATE patch keys:', Object.keys(message.patch || {}).join(', '));
     var nextworldmap = deepmerge(state.worldmap, message.patch);
-    state.observers.forEach(function(observer) { observer(nextworldmap); });
-    return { worldmap: nextworldmap, observers: state.observers };
+    worldmapLogger.debug('notifying', state.observers.length, 'observers');
+    state.observers.forEach(function(observer) {
+      try {
+        observer(nextworldmap);
+      } catch (err) {
+        worldmapLogger.warn('observer notification failed:', err);
+      }
+    });
+    return { worldmap: nextworldmap, observers: state.observers, verbosity: v };
   }
   if (message.type === OBSERVE) {
-    return { worldmap: state.worldmap, observers: state.observers.concat([message.observer]) };
+    worldmapLogger.debug('action OBSERVE new observer attached, total:', state.observers.length + 1);
+    return { worldmap: state.worldmap, observers: state.observers.concat([message.observer]), verbosity: v };
   }
   if (message.type === UNOBSERVE) {
-    return { worldmap: state.worldmap, observers: state.observers.filter(function(obs) { return obs !== message.observer; }) };
+    worldmapLogger.debug('action UNOBSERVE observer detached');
+    return { worldmap: state.worldmap, observers: state.observers.filter(function(obs) { return obs !== message.observer; }), verbosity: v };
   }
   return state;
 };
@@ -53,14 +73,28 @@ var worldmapMailboxStore = {
 
 var WORLDMAPACTOR = createactor(
   worldmapbehavior,
-  { worldmap: {}, observers: [] },
+  { worldmap: {}, observers: [], verbosity: worldmapVerbosityConstants.DEBUG },
   MESSAGEINTERFACES,
   {
     actorName: 'worldmapactor',
     mailboxType: 'db',
-    mailboxStore: worldmapMailboxStore
+    mailboxStore: worldmapMailboxStore,
+    verbosity: worldmapVerbosityConstants.DEBUG
   }
 );
+
+function startWorldmapActor(options) {
+  if (options !== undefined) {
+    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    if (lvl !== undefined) {
+      worldmapLogger.setLevel(lvl);
+      if (WORLDMAPACTOR && WORLDMAPACTOR.getstate()) {
+        WORLDMAPACTOR.getstate().verbosity = lvl;
+      }
+    }
+  }
+  return WORLDMAPACTOR;
+}
 
 var updateworldmap = function(patch) {
   return WORLDMAPACTOR.send({ type: UPDATE, patch: patch });
@@ -82,5 +116,6 @@ export {
   updateworldmap,
   observeworldmap,
   unobserveworldmap,
-  getworldmap
+  getworldmap,
+  startWorldmapActor
 };

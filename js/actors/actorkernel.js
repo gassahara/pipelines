@@ -1,4 +1,8 @@
 import { createGarbageCollector } from './actorgc.js';
+import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+
+var kernelVerbosityConstants = createVerbosityConstants();
+var kernelVerbosityFunctions = createVerbosityFunctions(kernelVerbosityConstants);
 
 function createMessageValidator(interfaceMap) {
   return function(message) {
@@ -101,15 +105,26 @@ var actorRegistry = {};
 
 function createactor(behavior, initialstate, messageInterface, options) {
   if (options === undefined) options = {};
-  var actorName = options.actorName;
-  if (actorName && actorRegistry[actorName]) {
-    return actorRegistry[actorName];
+  var actorName = options.actorName || 'anonymous';
+  if (options.actorName && actorRegistry[options.actorName]) {
+    return actorRegistry[options.actorName];
   }
 
-  var currentstate = initialstate;
+  var currentstate = initialstate || {};
+
+  var initialVerbosity = options.verbosity !== undefined
+    ? options.verbosity
+    : (options.verbosityLevel !== undefined
+      ? options.verbosityLevel
+      : (currentstate.verbosity !== undefined ? currentstate.verbosity : (currentstate.level !== undefined ? currentstate.level : kernelVerbosityConstants.DEBUG)));
+
+  var logger = kernelVerbosityFunctions.createLogger('[ACTOR:' + actorName + ']', initialVerbosity);
 
   if (!currentstate._gc) {
     currentstate._gc = createGarbageCollector();
+  }
+  if (currentstate.verbosity === undefined) {
+    currentstate.verbosity = logger.getLevel();
   }
 
   var validator = messageInterface ? createMessageValidator(messageInterface) : null;
@@ -137,13 +152,15 @@ function createactor(behavior, initialstate, messageInterface, options) {
   }
 
   function processMessage(message) {
+    var msgType = message && message.type ? message.type : String(message);
+    logger.debug('processMessage start:', msgType);
+
     if (validator) {
       var check = validator(message);
       if (!check.valid) {
+        logger.error('[ACTOR:INVALID]', check.error);
         if (typeof message.reject === 'function') {
           message.reject(new Error('[ACTOR:INVALID] ' + check.error));
-        } else {
-          console.error('[ACTOR:INVALID] ' + check.error);
         }
         return true;
       }
@@ -151,8 +168,9 @@ function createactor(behavior, initialstate, messageInterface, options) {
 
     try {
       currentstate = behavior(currentstate, message);
+      logger.debug('processMessage done:', msgType);
     } catch (err) {
-      console.error('[ACTOR] behavior error:', err);
+      logger.error('behavior error:', err);
       if (typeof message.reject === 'function') {
         message.reject(err);
       } else if (typeof message.resolve === 'function') {
@@ -166,11 +184,13 @@ function createactor(behavior, initialstate, messageInterface, options) {
     if (!running) return;
     if (mailbox.isEmpty()) {
       running = false;
+      logger.debug('drainMemory mailbox empty, waiting resolved');
       resolveWaiters();
       return;
     }
     var message = mailbox.peek();
     mailbox.remove();
+    logger.debug('drainMemory processing message:', message && message.type);
     processMessage(message);
     setTimeout(drainMemory, 0);
   }
@@ -180,11 +200,13 @@ function createactor(behavior, initialstate, messageInterface, options) {
     var message = await mailbox.peek();
     if (message === null) {
       running = false;
+      logger.debug('drainDb mailbox empty, polling');
       resolveWaiters();
       polltimer = setTimeout(drainDb, 25);
       return;
     }
     await mailbox.remove();
+    logger.debug('drainDb processing message:', message && message.type);
     processMessage(message);
     await mailbox.clearIfEmpty ? mailbox.clearIfEmpty() : null;
     polltimer = setTimeout(drainDb, 0);
@@ -193,6 +215,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
   function ensureLoop() {
     if (!running) {
       running = true;
+      logger.debug('ensureLoop starting loop for mailboxType:', mailboxType);
       if (mailboxType === 'db') {
         drainDb();
       } else {
@@ -205,6 +228,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
     if (!message || typeof message !== 'object') {
       message = { type: message };
     }
+    logger.debug('send message:', message.type);
     if (mailboxType === 'db') {
       mailbox.append(message).then(function() {
         ensureLoop();
@@ -233,8 +257,8 @@ function createactor(behavior, initialstate, messageInterface, options) {
     waitforemptymailbox: waitforemptymailbox
   });
 
-  if (actorName) {
-    actorRegistry[actorName] = actor;
+  if (options.actorName) {
+    actorRegistry[options.actorName] = actor;
   }
 
   return actor;
@@ -256,4 +280,8 @@ function pingActor(enqueuePing, timeout) {
   });
 }
 
-export { createactor, createMessageValidator, pingActor };
+function getActorRegistry() {
+  return actorRegistry;
+}
+
+export { createactor, createMessageValidator, pingActor, getActorRegistry };
