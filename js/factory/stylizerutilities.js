@@ -5,7 +5,6 @@
 
 import {
   createVerbosityConstants,
-  createVerbosityFunctions,
   logdebug,
   logwarn,
   logerror,
@@ -401,7 +400,7 @@ var StylizerCore = {
 
     var props = StylizerCore.getPropsFromMap(propertyMap, node, StylizerCore);
     if (!props) {
-      StylizerCore.log('error', '[computeIntrinsicSize] Missing property map entry:', node.tagName);
+      logerror(defaultVerbosityState, '[STYLIZERCORE]', '[computeIntrinsicSize] Missing property map entry:', node.tagName);
       throw new Error('[computeIntrinsicSize] Missing property map entry: ' + node.tagName);
     }
 
@@ -414,7 +413,7 @@ var StylizerCore = {
       if (props.width !== null) {
         return { width: props.width, height: props.height || (props.width * 0.75) };
       }
-      StylizerCore.log('error', '[computeIntrinsicSize] Image without explicit width:', tag);
+      logerror(defaultVerbosityState, '[STYLIZERCORE]', '[computeIntrinsicSize] Image without explicit width:', tag);
       throw new Error('[computeIntrinsicSize] Image without explicit width');
     }
 
@@ -562,28 +561,18 @@ var StylizerCore = {
     return '';
   },
 
-  // P10-ter: log functions now call portable verbosity functions directly.
-  log: function(level) {
-    var args = Array.prototype.slice.call(arguments, 1);
-    switch (level) {
-      case 'debug': logdebug(defaultVerbosityState, null, ...args); break;
-      case 'warn': logwarn(defaultVerbosityState, null, ...args); break;
-      case 'error': logerror(defaultVerbosityState, null, ...args); break;
-      case 'info': loginfo(defaultVerbosityState, null, ...args); break;
-      default: loginfo(defaultVerbosityState, null, ...args); break;
-    }
-  },
+  // Portable logging: direct calls to logdebug/logwarn/logerror/loginfo
   debug: function() {
-    StylizerCore.log.apply(StylizerCore, ['debug'].concat(Array.prototype.slice.call(arguments)));
+    logdebug(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
   },
   warn: function() {
-    StylizerCore.log.apply(StylizerCore, ['warn'].concat(Array.prototype.slice.call(arguments)));
+    logwarn(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
   },
   error: function() {
-    StylizerCore.log.apply(StylizerCore, ['error'].concat(Array.prototype.slice.call(arguments)));
+    logerror(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
   },
   info: function() {
-    StylizerCore.log.apply(StylizerCore, ['info'].concat(Array.prototype.slice.call(arguments)));
+    loginfo(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
   }
 };
 

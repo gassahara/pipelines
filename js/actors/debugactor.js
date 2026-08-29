@@ -1,7 +1,19 @@
+// ============================================================
+// UPDATED FILE: js/actors/debugactor.js
+// Change applied: removed createLogger; direct portable logging functions
+// ============================================================
+
 import { createactor } from './actorkernel.js';
 import { frames } from '../evalstack.js';
 import { formatdebugtrace } from '../debugformatter.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createVerbosityConstants,
+  logdebug,
+  logwarn,
+  logerror,
+  loginfo,
+  logcritical
+} from '../verbosity.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 import {
   enqueueExecutionCccRetry,
@@ -10,8 +22,7 @@ import {
 } from './executionactor.js';
 
 var debugVerbosityConstants = createVerbosityConstants();
-var debugVerbosityFunctions = createVerbosityFunctions(debugVerbosityConstants);
-var debugLogger = debugVerbosityFunctions.createLogger('[DEBUGACTOR]', debugVerbosityConstants.DEBUG);
+var debugState = Object.freeze({ level: debugVerbosityConstants.DEBUG });
 
 var DEBUG_MESSAGETYPES = Object.freeze({
   INIT_OVERLAY: 'init_overlay',
@@ -41,9 +52,9 @@ function createInitialDebugWorldmap() {
 }
 
 function persistDebugWorldmap(state) {
-  debugLogger.debug('persistDebugWorldmap saving state to db');
+  logdebug(debugState, '[DEBUGACTOR]', 'persistDebugWorldmap saving state to db');
   enqueueDbStore('actor:state:debug', state.worldmap).catch(function(e) {
-    debugLogger.warn('state persist failed:', e);
+    logwarn(debugState, '[DEBUGACTOR]', 'state persist failed:', e);
   });
 }
 
@@ -86,23 +97,23 @@ function ensureOverlay(state) {
 }
 
 var debugbehavior = function(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : debugLogger.getLevel();
-  debugLogger.setLevel(v);
+  var v = state && state.verbosity !== undefined ? state.verbosity : debugVerbosityConstants.DEBUG;
+  debugState = Object.freeze({ level: v });
 
-  debugLogger.debug('behavior handling action:', message.type);
+  logdebug(debugState, '[DEBUGACTOR]', 'behavior handling action:', message.type);
 
   if (!state.worldmap) {
     state.worldmap = createInitialDebugWorldmap();
   }
 
   if (message.type === DEBUG_MESSAGETYPES.PING) {
-    debugLogger.debug('action PING');
+    logdebug(debugState, '[DEBUGACTOR]', 'action PING');
     if (typeof message.resolve === 'function') message.resolve(true);
     return state;
   }
 
   if (message.type === DEBUG_MESSAGETYPES.INIT_OVERLAY) {
-    debugLogger.debug('action INIT_OVERLAY');
+    logdebug(debugState, '[DEBUGACTOR]', 'action INIT_OVERLAY');
     persistDebugWorldmap(state);
     ensureOverlay(state);
 
@@ -111,7 +122,7 @@ var debugbehavior = function(state, message) {
 
       window.addEventListener('error', function(e) {
         e.preventDefault();
-        debugLogger.warn('global window error captured:', e.error || e);
+        logwarn(debugState, '[DEBUGACTOR]', 'global window error captured:', e.error || e);
         if (DEBUGACTOR_INSTANCE) {
           DEBUGACTOR_INSTANCE.send({
             type: DEBUG_MESSAGETYPES.SHOW,
@@ -124,7 +135,7 @@ var debugbehavior = function(state, message) {
       window.addEventListener('unhandledrejection', function(e) {
         if (e.reason && e.reason.diagnostic) {
           e.preventDefault();
-          debugLogger.warn('global unhandled rejection captured:', e.reason);
+          logwarn(debugState, '[DEBUGACTOR]', 'global unhandled rejection captured:', e.reason);
           if (DEBUGACTOR_INSTANCE) {
             DEBUGACTOR_INSTANCE.send({
               type: DEBUG_MESSAGETYPES.SHOW,
@@ -142,7 +153,7 @@ var debugbehavior = function(state, message) {
   }
 
   if (message.type === DEBUG_MESSAGETYPES.HIDE) {
-    debugLogger.debug('action HIDE');
+    logdebug(debugState, '[DEBUGACTOR]', 'action HIDE');
     persistDebugWorldmap(state);
     if (state.overlay) {
       state.overlay.style.display = 'none';
@@ -156,8 +167,8 @@ var debugbehavior = function(state, message) {
   }
 
   if (message.type === DEBUG_MESSAGETYPES.SHOW) {
-    debugLogger.info('action SHOW debug overlay');
-    debugLogger.debug('action SHOW error:', message.error, 'continuation:', message.continuation);
+    loginfo(debugState, '[DEBUGACTOR]', 'action SHOW debug overlay');
+    logdebug(debugState, '[DEBUGACTOR]', 'action SHOW error:', message.error, 'continuation:', message.continuation);
     persistDebugWorldmap(state);
     var overlay = ensureOverlay(state);
 
@@ -173,20 +184,20 @@ var debugbehavior = function(state, message) {
       var ctx = getctx(message.error, message.continuation);
 
       actions.appendChild(btn('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
-        debugLogger.debug('Retrying stage:', ctx);
+        logdebug(debugState, '[DEBUGACTOR]', 'Retrying stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
         enqueueExecutionCccRetry(ctx.pipelineid, ctx.path, ctx.elementid, message.continuation).catch(function(e) {
-          debugLogger.warn('RETRY failed:', e);
+          logwarn(debugState, '[DEBUGACTOR]', 'RETRY failed:', e);
         });
       }));
 
       actions.appendChild(btn('CONTINUE', 'background:#4488ff;color:#fff;', function() {
-        debugLogger.debug('Continuing stage:', ctx);
+        logdebug(debugState, '[DEBUGACTOR]', 'Continuing stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
         enqueueExecutionCccContinue(ctx.pipelineid, ctx.path, ctx.elementid, message.continuation).catch(function(e) {
-          debugLogger.warn('CONTINUE failed:', e);
+          logwarn(debugState, '[DEBUGACTOR]', 'CONTINUE failed:', e);
         });
       }));
     }
@@ -195,11 +206,11 @@ var debugbehavior = function(state, message) {
       var abortCtx = message.continuation
         ? getctx(null, message.continuation)
         : { pipelineid: 'unknown_pipeline', path: ['unknown_stage', 'unknown_element'], elementid: 'unknown_element' };
-      debugLogger.debug('Aborting stage:', abortCtx);
+      logdebug(debugState, '[DEBUGACTOR]', 'Aborting stage:', abortCtx);
       overlay.style.display = 'none';
       overlay.innerHTML = '';
       enqueueExecutionCccAbort(abortCtx.pipelineid, abortCtx.path, abortCtx.elementid, message.continuation).catch(function(e) {
-        debugLogger.warn('ABORT failed:', e);
+        logwarn(debugState, '[DEBUGACTOR]', 'ABORT failed:', e);
       });
     }));
 
@@ -215,7 +226,7 @@ var debugbehavior = function(state, message) {
   }
 
   if (message.type === DEBUG_MESSAGETYPES.RECOVER) {
-    debugLogger.debug('action RECOVER debug state');
+    logdebug(debugState, '[DEBUGACTOR]', 'action RECOVER debug state');
     enqueueDbRestore('actor:state:debug').then(function(saved) {
       if (saved) {
         state.worldmap = saved;
@@ -232,10 +243,10 @@ var debugbehavior = function(state, message) {
         state.worldmap = createInitialDebugWorldmap();
         persistDebugWorldmap(state);
       }
-      debugLogger.debug('debug recovery completed');
+      logdebug(debugState, '[DEBUGACTOR]', 'debug recovery completed');
       if (typeof message.resolve === 'function') message.resolve(state);
     }).catch(function(e) {
-      debugLogger.warn('state restore failed:', e);
+      logwarn(debugState, '[DEBUGACTOR]', 'state restore failed:', e);
       state.worldmap = createInitialDebugWorldmap();
       persistDebugWorldmap(state);
       if (typeof message.resolve === 'function') message.resolve(state);
@@ -256,7 +267,9 @@ function createDebugActor(options) {
   if (DEBUGACTOR_INSTANCE) {
     if (options !== undefined) {
       var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-      if (lvl !== undefined) debugLogger.setLevel(lvl);
+      if (lvl !== undefined) {
+        debugState = Object.freeze({ level: lvl });
+      }
     }
     return DEBUGACTOR_INSTANCE;
   }
@@ -267,7 +280,7 @@ function createDebugActor(options) {
       ? options.verbosity
       : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : debugVerbosityConstants.DEBUG));
 
-  debugLogger.setLevel(verbosity);
+  debugState = Object.freeze({ level: verbosity });
 
   var actor = createactor(
     debugbehavior,

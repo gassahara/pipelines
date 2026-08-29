@@ -1,10 +1,22 @@
+// ============================================================
+// UPDATED FILE: js/actors/renderactor.js
+// Change applied: removed createLogger; direct portable logging functions
+// ============================================================
+
 import { createactor } from './actorkernel.js';
 import { createActorRegistry, setRenderActor } from './actorregistry.js';
 import { CREATEDOMREF } from '../fundamental/domref.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 import { callwithstack } from '../factory/callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createVerbosityConstants,
+  logdebug,
+  logwarn,
+  logerror,
+  loginfo,
+  logcritical
+} from '../verbosity.js';
 import {
   createGarbageCollector,
   registerObject,
@@ -16,8 +28,7 @@ import {
 } from './actorgc.js';
 
 var renderVerbosityConstants = createVerbosityConstants();
-var renderVerbosityFunctions = createVerbosityFunctions(renderVerbosityConstants);
-var renderLogger = renderVerbosityFunctions.createLogger('[RENDERACTOR]', renderVerbosityConstants.DEBUG);
+var renderState = Object.freeze({ level: renderVerbosityConstants.DEBUG });
 
 function createRenderErrorContext(label) {
   return function(err) {
@@ -120,7 +131,7 @@ function createInitialRenderWorldmap() {
 function persistRenderWorldmap(state) {
   state.worldmap.html = (typeof document !== 'undefined' && document.body) ? document.body.innerHTML : '';
   enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
-    renderLogger.warn('[RENDERACTOR] state persist failed:', e);
+    logwarn(renderState, '[RENDERACTOR]', 'state persist failed:', e);
   });
 }
 
@@ -271,7 +282,7 @@ function triggerGcCycle(state) {
       }
       if (!obj.handler) {
         var handler = function(e) {
-          renderLogger.debug('[trigger] forwarding', obj.consumer.pipelineId, obj.consumer.stageId);
+          logdebug(renderState, '[RENDERACTOR]', '[trigger] forwarding', obj.consumer.pipelineId, obj.consumer.stageId);
           return callwithstack(
             EVALSTACK,
             'trigger:' + obj.consumer.pipelineId + ':' + obj.consumer.stageId,
@@ -296,7 +307,7 @@ function triggerGcCycle(state) {
               errk: createRenderErrorContext('triggerforward')
             }
           ).catch(function(err) {
-            renderLogger.warn('[RENDERACTOR] trigger forward failed:', err);
+            logwarn(renderState, '[RENDERACTOR]', 'trigger forward failed:', err);
           });
         };
         obj.handler = handler;
@@ -642,7 +653,7 @@ HANDLERS[MESSAGETYPES.RECOVER] = async function(state, msg) {
     scheduleGcCycle(state);
     if (typeof msg.resolve === 'function') msg.resolve(state);
   }).catch(function(e) {
-    renderLogger.warn('[RENDERACTOR] state restore failed:', e);
+    logwarn(renderState, '[RENDERACTOR]', 'state restore failed:', e);
     state.worldmap = createInitialRenderWorldmap();
     persistRenderWorldmap(state);
     scheduleGcCycle(state);
@@ -660,7 +671,7 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
-  renderLogger.debug('[trigger-expectation] registering', msg.pipelineId, msg.stageId, msg.sourceid, msg.event);
+  logdebug(renderState, '[RENDERACTOR]', '[trigger-expectation] registering', msg.pipelineId, msg.stageId, msg.sourceid, msg.event);
 
   var pc = createTriggerProducerConsumer(msg);
   var existing = null;
@@ -707,7 +718,7 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
 };
 
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
-  renderLogger.debug('[trigger-revalidate] manual');
+  logdebug(renderState, '[RENDERACTOR]', '[trigger-revalidate] manual');
   scheduleGcCycle(state);
   if (typeof msg.resolve === 'function') msg.resolve(true);
   return state;
@@ -716,9 +727,9 @@ HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
 var refcounter = 0;
 
 var renderbehavior = function(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : renderLogger.getLevel();
-  renderLogger.setLevel(v);
-  renderLogger.debug('behavior handling action:', message.type, message.id || '');
+  var v = state && state.verbosity !== undefined ? state.verbosity : renderVerbosityConstants.DEBUG;
+  renderState = Object.freeze({ level: v });
+  logdebug(renderState, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
 
   if (message.type === MESSAGETYPES.RENDER && (message.id === null || message.id === undefined)) {
     refcounter += 1;
@@ -882,7 +893,7 @@ var startRenderActor = function(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      renderLogger.setLevel(lvl);
+      renderState = Object.freeze({ level: lvl });
       if (RENDERACTOR && RENDERACTOR.getstate()) {
         RENDERACTOR.getstate().verbosity = lvl;
       }

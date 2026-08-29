@@ -1,6 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/factory/blockcompiler.js
-// Change applied: validatePipelineBriefcase now returns {valid, errors}
+// Changes applied:
+//   P1: validatePipelineBriefcase returns {valid, errors}
+//   P10-ter: removed createLogger; direct portable logging functions
 // ============================================================
 
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
@@ -12,7 +14,13 @@ import {
   validaterevivableobject,
   serializeSelfContainedClosure
 } from './dnaserializer.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createVerbosityConstants,
+  logdebug,
+  loginfo,
+  logwarn,
+  logerror
+} from '../verbosity.js';
 import {
   enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue,
   enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition,
@@ -49,6 +57,8 @@ import {
 } from '../actors/hypervisoractor.js';
 import { consolidateClosures } from './closureconsolidator.js';
 
+var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
+
 function createBlockCompilerConstants() {
   return Object.freeze({
     BLOCKTYPES: Object.freeze({
@@ -58,22 +68,6 @@ function createBlockCompilerConstants() {
     }),
     INHERITEDKEYS: Object.freeze(['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents'])
   });
-}
-
-function createBlockCompilerLogger(verbosityOrOptions) {
-  var constants = createVerbosityConstants();
-  var fns = createVerbosityFunctions(constants);
-  var level = constants.DEBUG;
-  if (verbosityOrOptions !== undefined && verbosityOrOptions !== null) {
-    if (typeof verbosityOrOptions === 'number' || typeof verbosityOrOptions === 'string') {
-      level = verbosityOrOptions;
-    } else if (typeof verbosityOrOptions === 'object') {
-      if (verbosityOrOptions.verbosity !== undefined) level = verbosityOrOptions.verbosity;
-      else if (verbosityOrOptions.verbosityLevel !== undefined) level = verbosityOrOptions.verbosityLevel;
-      else if (verbosityOrOptions.level !== undefined) level = verbosityOrOptions.level;
-    }
-  }
-  return fns.createLogger('[BLOCKCOMPILER]', level);
 }
 
 function cloneObject(obj) {
@@ -210,8 +204,6 @@ function sanitizeEnv(env, maxBytes) {
 
 function createPersistentElementWrapper(compiledElement, elementDef, stagePath, pipelineId, options) {
   var elementId = elementDef.id || compiledElement.id || 'element_unknown';
-  var logger = createBlockCompilerLogger(options);
-
   function wrapper(env) {
     var path = stagePath.concat([elementId]);
     var execEnv = env;
@@ -229,7 +221,7 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
       closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, execEnv);
     }
 
-    logger.debug('submitting persistent element execution:', elementId, 'pipeline:', pipelineId, 'path:', path);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'submitting persistent element execution:', elementId, 'pipeline:', pipelineId, 'path:', path);
 
     return enqueueExecutionSubmit({
       pipelineid: pipelineId,
@@ -247,7 +239,7 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
       programRef: null,
       elementId: elementId
     }).then(function(submitted) {
-      logger.debug('element task submitted, awaiting taskid:', submitted.taskid);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'element task submitted, awaiting taskid:', submitted.taskid);
       return enqueueExecutionAwaitTask(submitted.taskid);
     });
   }
@@ -405,10 +397,9 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
 }
 
 function compileHttpBlock(merged, id, sig, isTextual, options) {
-  var logger = createBlockCompilerLogger(options);
   var blockfn = async function(env) {
     var label = (isTextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
-    logger.debug('executing http block:', id, 'type:', isTextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing http block:', id, 'type:', isTextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
     var inputaccessors = (sig.inputs || []).map(compilepathaccessor);
     var inputdata = {};
     (sig.inputs || []).forEach(function(inp, idx) { inputdata[inp] = inputaccessors[idx](env); });
@@ -424,7 +415,7 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
       if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
     });
 
-    logger.debug('http block sending request:', label, 'payload keys:', Object.keys(payload).join(', '));
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'http block sending request:', label, 'payload keys:', Object.keys(payload).join(', '));
 
     var rawresult = await callwithstack(
       EVALSTACK, label, 'async-await',
@@ -453,7 +444,7 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
     else if (typeof result === 'object' && result) {
       outputkeys.forEach(function(key) { if (result[key] !== undefined) env[key] = result[key]; });
     }
-    logger.debug('http block completed:', id, 'status:', rawresult && rawresult.status);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'http block completed:', id, 'status:', rawresult && rawresult.status);
   };
   blockfn.id = id;
   return blockfn;
@@ -461,13 +452,12 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
 
 function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
   var compilers = {};
-  var logger = createBlockCompilerLogger(options);
 
   compilers[BLOCKTYPES.FN] = function(merged, id, sig, inheritedProperties) {
     if (inheritedProperties === undefined) inheritedProperties = {};
-    logger.debug('compiling FN block:', id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling FN block:', id);
     var blockfn = async function(env) {
-      logger.debug('executing FN block:', id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing FN block:', id);
       var fn = merged.fn;
       if (!fn) throw new Error('fn block must have a function: ' + id);
       var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
@@ -480,7 +470,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') }
       );
       writeoutputs(sig, env, result, id);
-      logger.debug('completed FN block:', id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed FN block:', id);
     };
     blockfn.id = id;
     return blockfn;
@@ -491,9 +481,9 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
 
   compilers[BLOCKTYPES.WRITER] = function(merged, id, sig, inheritedProperties) {
     if (inheritedProperties === undefined) inheritedProperties = {};
-    logger.debug('compiling WRITER block:', id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
     var blockfn = async function(env) {
-      logger.debug('executing WRITER block:', id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
       var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
       var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
@@ -510,22 +500,22 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         env[Object.keys(sig.outputs)[0]] = result;
         env[result.id] = domref;
       }
-      logger.debug('completed WRITER block:', id, 'target:', target);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed WRITER block:', id, 'target:', target);
     };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.IO] = function(merged, id, sig) {
-    logger.debug('compiling IO block:', id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling IO block:', id);
     var blockfn = async function(env) {
-      logger.debug('executing IO block:', id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing IO block:', id);
       var io = typeof merged.ref === 'function' ? merged.ref : null;
       if (!io) throw new Error('io block "' + id + '" ref must be a function');
       var inputdata = {};
       (sig.inputs || []).forEach(function(inp) { inputdata[inp] = compilepathaccessor(inp)(env); });
       var res = await callwithstack(EVALSTACK, 'io:' + (merged.ref || id), 'async-await', async function(e) { return await io(inputdata, e); }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') });
-      logger.debug('completed IO block:', id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed IO block:', id);
       return res;
     };
     blockfn.id = id;
@@ -533,12 +523,12 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
   };
 
   compilers[BLOCKTYPES.DOMQUERY] = function(merged, id, sig) {
-    logger.debug('compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
     var blockfn = async function(env) {
       var cmd = merged.command && merged.command.COMMAND;
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
-      logger.debug('executing DOMQUERY block:', id, 'command:', cmd);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing DOMQUERY block:', id, 'command:', cmd);
 
       if (cmd === 'getviewport') return writeoutputs(sig, env, await enqueuegetviewport(), id);
       if (cmd === 'getscreen') return writeoutputs(sig, env, await enqueuegetscreen(), id);
@@ -566,21 +556,21 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'domquery:' + cmd) }
       );
       writeoutputs(sig, env, result, id);
-      logger.debug('completed DOMQUERY block:', id, 'command:', cmd);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed DOMQUERY block:', id, 'command:', cmd);
     };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.CRYPTO] = function(merged, id, sig) {
-    logger.debug('compiling CRYPTO block:', id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling CRYPTO block:', id);
     var blockfn = async function(env) {
-      logger.debug('executing CRYPTO block:', id, 'bytes:', merged.bytes || 512);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing CRYPTO block:', id, 'bytes:', merged.bytes || 512);
       var outputkey = Object.keys(sig.outputs || {})[0];
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var result = await new Promise(function(resolve, reject) { RENDERACTOR.send({ type: MESSAGETYPES.CRYPTO, bytes: merged.bytes || 512, resolve: resolve, reject: reject }); });
       env[outputkey] = result;
-      logger.debug('completed CRYPTO block:', id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed CRYPTO block:', id);
       return {};
     };
     blockfn.id = id;
@@ -588,13 +578,13 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
   };
 
   compilers[BLOCKTYPES.WAIT] = function(merged, id) {
-    logger.debug('compiling WAIT block:', id, 'ms:', merged.ms);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling WAIT block:', id, 'ms:', merged.ms);
     var blockfn = async function(env) {
       var ms = typeof merged.ms === 'number' ? merged.ms : compilepathaccessor(merged.ms)(env);
-      logger.debug('executing WAIT block:', id, 'ms:', ms);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing WAIT block:', id, 'ms:', ms);
       if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
       await new Promise(function(r) { setTimeout(r, ms); });
-      logger.debug('completed WAIT block:', id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed WAIT block:', id);
       return {};
     };
     blockfn.id = id;
@@ -602,12 +592,12 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
   };
 
   compilers[BLOCKTYPES.EXECUTIONQUERY] = function(merged, id, sig) {
-    logger.debug('compiling EXECUTIONQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling EXECUTIONQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
     var blockfn = async function(env) {
       var command = merged.command || {};
       var COMMAND = command.COMMAND;
       var args = command.args || {};
-      logger.debug('executing EXECUTIONQUERY block:', id, 'command:', COMMAND);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing EXECUTIONQUERY block:', id, 'command:', COMMAND);
       var result;
       switch (COMMAND) {
         case 'get': result = await enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null); break;
@@ -625,14 +615,14 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         default: throw new Error('[executionquery] unknown command: ' + COMMAND);
       }
       writeoutputs(sig, env, { result: result }, id);
-      logger.debug('completed EXECUTIONQUERY block:', id, 'command:', COMMAND);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed EXECUTIONQUERY block:', id, 'command:', COMMAND);
     };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.STOREQUERY] = function(merged, id, sig) {
-    logger.debug('compiling STOREQUERY block:', id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling STOREQUERY block:', id);
     var blockfn = async function() {
       throw new Error('[STOREQUERY] Block "' + id + '" is not implemented; cannot execute storequery.');
     };
@@ -645,8 +635,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
 
 function compileblock(block, inheritedBriefcase, constants, options) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('compileblock block:', block.id, 'type:', block.type);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compileblock block:', block.id, 'type:', block.type);
   var compiler = constants.COMPILERS[block.type];
   if (!compiler) throw new Error('[compileblock] Unknown block type: ' + block.type);
   var analyzer = constants.ANALYZERS[block.type];
@@ -691,8 +680,7 @@ function createTriggerRegistration(stage, children, pipelineId, stagePath) {
 }
 
 function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('processNode element:', node.element, 'id:', node.id);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processNode element:', node.element, 'id:', node.id);
   if (node.element === 'BLOCK') {
     return processElement(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options);
   }
@@ -706,8 +694,7 @@ function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase
 }
 
 function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('processElement element:', el.id, 'type:', el.type);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processElement element:', el.id, 'type:', el.type);
   var fn = compileblock(el, inheritedBriefcase, constants, options);
   fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
   fn.kind = 'element';
@@ -716,8 +703,7 @@ function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcas
 
 function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
   var elementId = el.id || 'pipeline_unknown';
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('processPipelineElement element:', elementId);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipelineElement element:', elementId);
   var blockfn = async function(env) {
     var parentEnv = env;
     var childEnv = cloneObject(parentEnv);
@@ -748,7 +734,7 @@ function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inherited
       options: childOptions
     };
 
-    logger.debug('PIPELINE element boot request:', childPipelineId, bootMessage);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'PIPELINE element boot request:', childPipelineId, bootMessage);
 
     var bootPromise = enqueueHypervisorBootPipeline(bootMessage);
     var outputkey = Object.keys(el.outputs || {})[0] || null;
@@ -766,14 +752,13 @@ function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inherited
 }
 
 function processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants, options) {
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('processStageHeader stage:', stage.id);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processStageHeader stage:', stage.id);
   var stageBriefcase = cloneObject(inheritedBriefcase);
   Object.keys(stage.briefcase || {}).forEach(function(key) { stageBriefcase[key] = stage.briefcase[key]; });
 
   var briefcaseErrors = validaterevivableobject(stageBriefcase, 'stage.' + stage.id + '.briefcase', dnaConstants);
   if (briefcaseErrors.length > 0) {
-    logger.error('processStageHeader briefcase revivability failed:', briefcaseErrors);
+    logerror(blockCompilerState, '[BLOCKCOMPILER]', 'processStageHeader briefcase revivability failed:', briefcaseErrors);
     throw new Error('[processStageHeader] briefcase revivability failed: ' + briefcaseErrors.join(', '));
   }
 
@@ -808,8 +793,7 @@ function processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, c
 }
 
 function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('processStage stage:', stage.id);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processStage stage:', stage.id);
   var header = processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants, options);
   var stagePath = header.stagePath;
   var stageBriefcase = header.stageBriefcase;
@@ -819,7 +803,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
   });
 
   if (header.controlCommand === 'TRIGGER') {
-    logger.debug('processStage created TRIGGER stage:', stage.id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processStage created TRIGGER stage:', stage.id);
     var triggerFn = async function(env) {
       return env;
     };
@@ -852,8 +836,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
 
 function processPipeline(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('processPipeline elements count:', elements.length);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipeline elements count:', elements.length);
 
   function loop(index, stages) {
     if (index >= elements.length) {
@@ -862,7 +845,7 @@ function processPipeline(elements, pipelineId, resumeFrom, parentPath, inherited
 
     var el = elements[index];
     if (el.element !== 'STAGE') {
-      logger.error('processPipeline invalid top-level pipeline element:', el.element);
+      logerror(blockCompilerState, '[BLOCKCOMPILER]', 'processPipeline invalid top-level pipeline element:', el.element);
       throw new Error('[processPipeline] top-level pipeline element must be STAGE, got ' + el.element);
     }
 
@@ -902,9 +885,8 @@ function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stage
 }
 
 function defaultRunner(id, children, startIndex, pipelineId, stagePath, options) {
-  var logger = createBlockCompilerLogger(options);
   return async function(env) {
-    logger.debug('executing defaultRunner stage:', id, 'pipeline:', pipelineId);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing defaultRunner stage:', id, 'pipeline:', pipelineId);
     var stageExecutor = async function(execEnv) {
       await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
       var result = await executeChildren(children.slice(startIndex), execEnv, id, pipelineId, stagePath, options);
@@ -912,14 +894,13 @@ function defaultRunner(id, children, startIndex, pipelineId, stagePath, options)
     };
     var submitted = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: stageExecutor, env: env });
     await enqueueExecutionAwaitTask(submitted.taskid);
-    logger.debug('completed defaultRunner stage:', id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed defaultRunner stage:', id);
   };
 }
 
 function loopRunner(id, control, children, startIndex, pipelineId, stagePath, options) {
-  var logger = createBlockCompilerLogger(options);
   return async function(env) {
-    logger.debug('executing loopRunner stage:', id, 'pipeline:', pipelineId);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing loopRunner stage:', id, 'pipeline:', pipelineId);
     var stageExecutor = async function(execEnv) {
       await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
       var controlprops = {};
@@ -928,14 +909,14 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath, op
 
       function runLoop(iteration, currentEnv) {
         if (!currentEnv.rngactive) return Promise.resolve(currentEnv);
-        logger.debug('loopRunner stage:', id, 'iteration:', iteration);
+        logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'loopRunner stage:', id, 'iteration:', iteration);
         var childSlice = iteration === 0 ? children.slice(startIndex) : children;
         return executeChildren(childSlice, currentEnv, id, pipelineId, stagePath, options).then(function(result) {
           var newEnv = result.env || currentEnv;
           var fnargs = [controlprops].concat(inputaccessors.map(function(fn) { return fn(newEnv); }));
           return Promise.resolve(control.fn.apply(null, fnargs)).then(function(shouldContinue) {
             if (!shouldContinue) {
-              logger.debug('loopRunner stage:', id, 'loop finished at iteration:', iteration);
+              logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'loopRunner stage:', id, 'loop finished at iteration:', iteration);
               return newEnv;
             }
             return runLoop(iteration + 1, newEnv);
@@ -947,7 +928,7 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath, op
     };
     var submitted = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: stageExecutor, env: env });
     await enqueueExecutionAwaitTask(submitted.taskid);
-    logger.debug('completed loopRunner stage:', id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed loopRunner stage:', id);
   };
 }
 
@@ -959,14 +940,13 @@ function deepcloneevent(e) {
 }
 
 function executeChildren(children, env, stageid, pipelineId, stagePath, options) {
-  var logger = createBlockCompilerLogger(options);
   function collect(index, outputs) {
     if (index >= children.length) {
       return Promise.resolve({ env: env, spawnOutputs: outputs });
     }
     var child = children[index];
     var childId = child && child.id ? child.id : ('child_' + index);
-    logger.debug('executeChildren stage:', stageid, 'child:', childId, '(' + (index + 1) + '/' + children.length + ')');
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executeChildren stage:', stageid, 'child:', childId, '(' + (index + 1) + '/' + children.length + ')');
     if (child && !child.origin) {
       child.origin = {
         pipelineId: pipelineId || null,
@@ -979,10 +959,10 @@ function executeChildren(children, env, stageid, pipelineId, stagePath, options)
       };
     }
     return child(env).then(function(result) {
-      logger.debug('executeChildren child completed:', childId, 'in stage:', stageid);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executeChildren child completed:', childId, 'in stage:', stageid);
       return collect(index + 1, outputs);
     }).catch(function(err) {
-      logger.error('executeChildren child failed:', childId, 'in stage:', stageid, err);
+      logerror(blockCompilerState, '[BLOCKCOMPILER]', 'executeChildren child failed:', childId, 'in stage:', stageid, err);
       err.message = 'child ' + (stageid || 'unnamed') + '/' + (child.id || 'unnamed') + ': ' + err.message;
       throw err;
     });
@@ -1014,8 +994,6 @@ function waitForBootReady() {
 }
 
 function runTrampoline(env, stages, pipelineId, options) {
-  var logger = createBlockCompilerLogger(options);
-
   async function step(stack, currentEnv) {
     await waitForBootReady();
 
@@ -1027,14 +1005,14 @@ function runTrampoline(env, stages, pipelineId, options) {
     });
 
     if (stageIndex === -1) {
-      logger.debug('runTrampoline stage not found, skipping:', nextStageId);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'runTrampoline stage not found, skipping:', nextStageId);
       return step(stack.slice(1), currentEnv);
     }
 
     var stage = stages[stageIndex];
 
     if (stage.isTrigger) {
-      logger.debug('runTrampoline trigger stage skipped:', nextStageId);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'runTrampoline trigger stage skipped:', nextStageId);
       return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'completed' })
         .catch(function() {})
         .then(function() {
@@ -1049,7 +1027,7 @@ function runTrampoline(env, stages, pipelineId, options) {
     if (stage.control && stage.control.command !== 'TRIGGER' && stage.control.command !== 'LOOP' && stage.control.fn) {
       return Promise.resolve(stage.control.fn(currentEnv)).then(function(condition) {
         if (!condition) {
-          logger.debug('runTrampoline skipping stage:', nextStageId, 'control condition false');
+          logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'runTrampoline skipping stage:', nextStageId, 'control condition false');
           return step(stack.slice(1), currentEnv);
         }
         return continueWithStage();
@@ -1062,7 +1040,7 @@ function runTrampoline(env, stages, pipelineId, options) {
   async function executeStageStep(stage, nextStageId, stack, currentEnv, pipelineId) {
     await waitForBootReady();
 
-    logger.debug('runTrampoline executing stage step:', nextStageId);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'runTrampoline executing stage step:', nextStageId);
 
     return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'running' })
       .catch(function() {})
@@ -1083,7 +1061,7 @@ function runTrampoline(env, stages, pipelineId, options) {
           })
           .then(function() {
             return enqueueHypervisorSetEnv(pipelineId, newEnv).catch(function(err) {
-              logger.warn('hypervisor env update failed:', err);
+              logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env update failed:', err);
             });
           })
           .then(function() {
@@ -1091,7 +1069,7 @@ function runTrampoline(env, stages, pipelineId, options) {
           });
       })
       .catch(function(err) {
-        logger.error('runTrampoline error at stage:', nextStageId, err);
+        logerror(blockCompilerState, '[BLOCKCOMPILER]', 'runTrampoline error at stage:', nextStageId, err);
 
         return enqueueExecutionStageState(pipelineId, nextStageId, { status: 'failed' })
           .catch(function() {})
@@ -1112,21 +1090,20 @@ function runTrampoline(env, stages, pipelineId, options) {
         return s.id || s.stagemeta.stageid || ('stage_' + idx);
       });
 
-  if (!env.executionStack) logger.debug('pipeline booting fresh:', { pipelineId: pipelineId });
-  else logger.debug('pipeline resuming:', { pipelineId: pipelineId, remainingStages: initialStack.length });
+  if (!env.executionStack) logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'pipeline booting fresh:', { pipelineId: pipelineId });
+  else logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'pipeline resuming:', { pipelineId: pipelineId, remainingStages: initialStack.length });
 
   return step(initialStack, env).then(function(finalEnv) {
-    logger.debug('pipeline completed:', { pipelineId: pipelineId });
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'pipeline completed:', { pipelineId: pipelineId });
     return finalEnv;
   });
 }
 
 async function executeStage(descriptor, env, activation, eventPayload, options) {
-  var logger = createBlockCompilerLogger(options);
   if (!descriptor) throw new Error('[executeStage] missing stage descriptor');
   if (!env || typeof env !== 'object') env = {};
 
-  logger.debug('executeStage start:', descriptor.stageId, 'pipeline:', descriptor.pipelineId, 'activation:', activation);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executeStage start:', descriptor.stageId, 'pipeline:', descriptor.pipelineId, 'activation:', activation);
 
   if (activation === 'trigger' && eventPayload) {
     env.eventtarget = eventPayload.target;
@@ -1144,7 +1121,7 @@ async function executeStage(descriptor, env, activation, eventPayload, options) 
     options
   );
 
-  logger.debug('executeStage completed:', descriptor.stageId);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executeStage completed:', descriptor.stageId);
   return { env: result.env || env };
 }
 
@@ -1152,7 +1129,6 @@ function createpipeline(stages, sinks, onprogress, options) {
   if (!Array.isArray(stages)) throw new Error('[PIPELINE] Stages must be an array.');
   var pipelineId = (options && options.pipelineId) || 'default_pipeline';
   var compilerOptions = (options && options.options) || options || {};
-  var logger = createBlockCompilerLogger(compilerOptions);
 
   return async function(agent) {
     var env = agent.env;
@@ -1164,15 +1140,15 @@ function createpipeline(stages, sinks, onprogress, options) {
       return runTrampoline(env, stages, pipelineId, compilerOptions);
     };
 
-    logger.debug('createpipeline runner invoked for pipeline:', pipelineId);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'createpipeline runner invoked for pipeline:', pipelineId);
 
     enqueueHypervisorSetEnv(pipelineId, env).catch(function(err) {
-      logger.warn('hypervisor env save failed:', err);
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env save failed:', err);
     });
 
     return runTrampoline(env, stages, pipelineId, compilerOptions).then(function(finalEnv) {
       enqueueHypervisorUnregisterPipeline(pipelineId).catch(function(err) {
-        logger.warn('hypervisor unregister failed:', err);
+        logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor unregister failed:', err);
       });
       return finalEnv;
     });
@@ -1203,12 +1179,11 @@ function buildResumeStack(orderedStages, resumeFrom) {
 }
 
 async function restorePipelineState(pipelineDefinition, pipelineId, options) {
-  var logger = createBlockCompilerLogger(options);
-  logger.info('restorePipelineState for pipeline:', pipelineId);
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'restorePipelineState for pipeline:', pipelineId);
 
   var active = await enqueueHypervisorGetActivePipelines().catch(function() { return []; });
   if (active.indexOf(pipelineId) === -1) {
-    logger.debug('pipeline not active, creating fresh compilation for:', pipelineId);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'pipeline not active, creating fresh compilation for:', pipelineId);
     var freshCompiled = await compilepipeline(pipelineDefinition, null, [], pipelineId, options);
     return freshCompiled.pipeline({ id: pipelineId, env: { pipelineid: pipelineId } });
   }
@@ -1219,12 +1194,12 @@ async function restorePipelineState(pipelineDefinition, pipelineId, options) {
   var renderHtml = await enqueueHypervisorGetRenderHtml().catch(function() { return ''; });
   if (renderHtml) {
     await enqueueRenderRestoreBodyHtml(renderHtml).catch(function(err) {
-      logger.warn('render restore failed:', err);
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'render restore failed:', err);
     });
   }
 
   await enqueueExecutionRecover().catch(function(err) {
-    logger.warn('execution recover failed:', err);
+    logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'execution recover failed:', err);
   });
 
   var route = await enqueueHypervisorGetRoute('pipeline:' + pipelineId).catch(function() { return null; });
@@ -1247,7 +1222,7 @@ async function restorePipelineState(pipelineDefinition, pipelineId, options) {
     env.executionStack = resumeStack;
   }
 
-  logger.debug('restorePipelineState resuming pipeline execution:', pipelineId);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'restorePipelineState resuming pipeline execution:', pipelineId);
   return compiled.pipeline({ id: pipelineId, env: env, resumeFrom: resumeFrom });
 }
 
@@ -1258,9 +1233,8 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
 
   var pipelineId = pipelineIdOverride || pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline';
 
-  var logger = createBlockCompilerLogger(options);
-  logger.info('compilepipeline starting for pipeline:', pipelineId);
-  logger.debug('compilepipeline elements count:', pipeline.elements.length, 'options:', options);
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'compilepipeline starting for pipeline:', pipelineId);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compilepipeline elements count:', pipeline.elements.length, 'options:', options);
 
   var constants = createBlockCompilerConstants();
   var BLOCKTYPES = constants.BLOCKTYPES;
@@ -1279,7 +1253,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   if (options.autorun === true) {
     var activePipelines = await enqueueHypervisorGetActivePipelines().catch(function() { return []; });
     if (activePipelines.indexOf(pipelineId) !== -1) {
-      logger.debug('compilepipeline resuming active pipeline from state:', pipelineId);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compilepipeline resuming active pipeline from state:', pipelineId);
       return restorePipelineState(pipeline, pipelineId, options);
     }
   }
@@ -1291,13 +1265,13 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
 
   var briefcaseErrors = validaterevivableobject(pipelineBriefcase, 'pipeline.briefcase', dnaConstants);
   if (briefcaseErrors.length > 0) {
-    logger.error('compilepipeline briefcase revivability failed:', briefcaseErrors);
+    logerror(blockCompilerState, '[BLOCKCOMPILER]', 'compilepipeline briefcase revivability failed:', briefcaseErrors);
     throw new Error('[compilepipeline] briefcase revivability failed: ' + briefcaseErrors.join(', '));
   }
 
-  await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(function(err) { logger.warn('pipeline loaded failed:', err); });
-  await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { logger.warn('hypervisor register failed:', err); });
-  await enqueueExecutionRegisterPipeline(pipelineId, null, {}).catch(function(err) { logger.warn('register pipeline failed:', err); });
+  await enqueueExecutionPipelineLoaded(pipelineId, {}).catch(function(err) { logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'pipeline loaded failed:', err); });
+  await enqueueHypervisorRegisterPipeline(pipelineId).catch(function(err) { logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor register failed:', err); });
+  await enqueueExecutionRegisterPipeline(pipelineId, null, {}).catch(function(err) { logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'register pipeline failed:', err); });
 
   var spawnBootstrapMap = {};
   var resumeFrom = options.resumeFrom || null;
@@ -1320,7 +1294,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
     var compiledTrigger = triggerRegistrations[i];
     var reg = createTriggerRegistrationFromStage(compiledTrigger);
 
-    logger.debug('registering trigger expectation for stage:', reg.stageId, 'source:', reg.sourceid, 'event:', reg.event);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'registering trigger expectation for stage:', reg.stageId, 'source:', reg.sourceid, 'event:', reg.event);
 
     await callwithstack(
       EVALSTACK,
@@ -1343,7 +1317,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
       [],
       { context: { env: {} }, capturecontinuation: true, errk: createerrorcontext('hypervisorDescriptor', 'trigger') }
     ).catch(function(err) {
-      logger.warn('hypervisor stage descriptor failed:', err);
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor stage descriptor failed:', err);
     });
 
     await callwithstack(
@@ -1356,12 +1330,12 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
       [],
       { context: { env: {} }, capturecontinuation: true, errk: createerrorcontext('renderRegister', 'trigger') }
     ).catch(function(err) {
-      logger.warn('trigger registration failed:', err);
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'trigger registration failed:', err);
     });
   }
 
   var compiledpipeline = createpipeline(stages, sinks, undefined, { pipelineId: pipelineId, options: options });
-  logger.debug('compilepipeline completed for pipeline:', pipelineId);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compilepipeline completed for pipeline:', pipelineId);
 
   return {
     pipeline: compiledpipeline,
@@ -1372,12 +1346,10 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
   };
 }
 
-// Explicit pipeline load function constructing orchestration messages to Hypervisor
 export function loadPipeline(pipelineDefinition, pipelineId, options) {
   if (options === undefined) options = {};
-  var logger = createBlockCompilerLogger(options);
   var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
-  logger.info('loadPipeline request for pipeline:', id);
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
   return enqueueHypervisorBootPipeline({
     pipeline: pipelineDefinition,
     accessors: options.accessors || null,
@@ -1394,8 +1366,7 @@ export function loadPipeline(pipelineDefinition, pipelineId, options) {
 
 export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPipeline, options) {
   if (options === undefined) options = {};
-  var logger = createBlockCompilerLogger(options);
-  logger.debug('compileStage start for stage:', stageDef && stageDef.id, 'pipeline:', pipelineId);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compileStage start for stage:', stageDef && stageDef.id, 'pipeline:', pipelineId);
 
   var constants = createBlockCompilerConstants();
   var BLOCKTYPES = constants.BLOCKTYPES;
@@ -1426,7 +1397,7 @@ export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPip
     };
   }
   var isAsync = stageDef && stageDef.async === true;
-  logger.debug('compileStage completed for stage:', stageDef && stageDef.id, 'hasNextStage:', Boolean(nextStageMessage), 'isAsync:', isAsync);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compileStage completed for stage:', stageDef && stageDef.id, 'hasNextStage:', Boolean(nextStageMessage), 'isAsync:', isAsync);
   return { compiledStage: compiledStage, nextStageMessage: nextStageMessage, isAsync: isAsync };
 }
 
@@ -1442,7 +1413,6 @@ export {
   createBlockCompilers,
   executeStage,
   restorePipelineState,
-  createBlockCompilerLogger,
   validatePipelineBriefcase,
   createTriggerRegistrationFromStage
 };

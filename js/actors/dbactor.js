@@ -1,9 +1,20 @@
+// ============================================================
+// UPDATED FILE: js/actors/dbactor.js
+// Change applied: removed createLogger; direct portable logging functions
+// ============================================================
+
 import { createactor } from './actorkernel.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createVerbosityConstants,
+  logdebug,
+  logwarn,
+  logerror,
+  loginfo,
+  logcritical
+} from '../verbosity.js';
 
 var dbVerbosityConstants = createVerbosityConstants();
-var dbVerbosityFunctions = createVerbosityFunctions(dbVerbosityConstants);
-var dbLogger = dbVerbosityFunctions.createLogger('[DBACTOR]', dbVerbosityConstants.DEBUG);
+var dbState = Object.freeze({ level: dbVerbosityConstants.DEBUG });
 
 var DBMESSAGETYPES = Object.freeze({
   STORE: 'store',
@@ -40,11 +51,11 @@ function loadInitialState() {
     if (raw) {
       var parsed = JSON.parse(raw);
       var keys = parsed.keys || {};
-      dbLogger.debug('loadInitialState loaded', Object.keys(keys).length, 'keys');
+      logdebug(dbState, '[DBACTOR]', 'loadInitialState loaded', Object.keys(keys).length, 'keys');
       return { store: Object.keys(keys).reduce(function(acc, k) { acc[k] = keys[k]; return acc; }, {}), verbosity: dbVerbosityConstants.DEBUG };
     }
   } catch (err) {
-    dbLogger.warn('loadInitialState failed:', err);
+    logwarn(dbState, '[DBACTOR]', 'loadInitialState failed:', err);
   }
   return { store: {}, verbosity: dbVerbosityConstants.DEBUG };
 }
@@ -93,7 +104,7 @@ function dnaReviver(key, value) {
       }
       return new Function('return (' + value.source + ')')();
     } catch (err) {
-      dbLogger.warn('[DNA] failed to revive function using new Function:', err);
+      logwarn(dbState, '[DBACTOR]', '[DNA] failed to revive function using new Function:', err);
       return function() { throw new Error('revived function failed'); };
     }
   }
@@ -206,7 +217,7 @@ function deserializePairStore(json) {
   try {
     parsed = JSON.parse(json, dnaReviver);
   } catch (err) {
-    dbLogger.warn('deserializePairStore failed:', err);
+    logwarn(dbState, '[DBACTOR]', 'deserializePairStore failed:', err);
     return;
   }
 
@@ -221,7 +232,7 @@ function deserializePairStore(json) {
 function measureLength(obj) { return JSON.stringify(obj).length; }
 
 function optimizeSerializedDna(jsonString) {
-  dbLogger.debug('optimizeSerializedDna start, input length:', jsonString.length);
+  logdebug(dbState, '[DBACTOR]', 'optimizeSerializedDna start, input length:', jsonString.length);
   var obj = JSON.parse(jsonString);
 
   var passObjectPairDedup = function(node) {
@@ -298,12 +309,12 @@ function optimizeSerializedDna(jsonString) {
 
   optimized.__FRAMEWORK_PAIRSTORE__ = serializePairStore();
   var finalResult = JSON.stringify(optimized);
-  dbLogger.debug('optimizeSerializedDna completed, output length:', finalResult.length);
+  logdebug(dbState, '[DBACTOR]', 'optimizeSerializedDna completed, output length:', finalResult.length);
   return finalResult;
 }
 
 function deoptimizeSerializedDna(jsonString) {
-  dbLogger.debug('deoptimizeSerializedDna start, input length:', jsonString.length);
+  logdebug(dbState, '[DBACTOR]', 'deoptimizeSerializedDna start, input length:', jsonString.length);
   var obj = JSON.parse(jsonString);
 
   if (obj.__FRAMEWORK_PAIRSTORE__) {
@@ -325,28 +336,29 @@ function deoptimizeSerializedDna(jsonString) {
   };
 
   var finalResult = JSON.stringify(resolveNode(obj));
-  dbLogger.debug('deoptimizeSerializedDna completed, output length:', finalResult.length);
+  logdebug(dbState, '[DBACTOR]', 'deoptimizeSerializedDna completed, output length:', finalResult.length);
   return finalResult;
 }
 
 // ==================== ACTOR BEHAVIOR ====================
 
 var dbbehavior = function(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : dbLogger.getLevel();
-  dbLogger.setLevel(v);
+  var v = state && state.verbosity !== undefined ? state.verbosity : dbVerbosityConstants.DEBUG;
+  // Update global dbState for logging
+  dbState = Object.freeze({ level: v });
 
-  dbLogger.debug('behavior handling action:', message.type);
+  logdebug(dbState, '[DBACTOR]', 'behavior handling action:', message.type);
 
   var store = Object.keys(state.store || {}).reduce(function(acc, k) { acc[k] = state.store[k]; return acc; }, {});
   var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
 
   switch (message.type) {
     case DBMESSAGETYPES.STORE: {
-      dbLogger.debug('action STORE key:', message.key);
+      logdebug(dbState, '[DBACTOR]', 'action STORE key:', message.key);
       try {
         var serialized = JSON.stringify(message.value);
         if (serialized.length > MAX_ENTRY_BYTES) {
-          dbLogger.warn('value too large for key:', message.key, 'bytes:', serialized.length);
+          logwarn(dbState, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
           resolve(false);
           return state;
         }
@@ -365,21 +377,21 @@ var dbbehavior = function(state, message) {
       break;
     }
     case DBMESSAGETYPES.RESTORE:
-      dbLogger.debug('action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
+      logdebug(dbState, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
       resolve(store[message.key] !== undefined ? store[message.key] : null);
       break;
     case DBMESSAGETYPES.LIST:
-      dbLogger.debug('action LIST count:', Object.keys(store).length);
+      logdebug(dbState, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
       resolve(Object.keys(store));
       break;
     case DBMESSAGETYPES.DELETE: {
-      dbLogger.debug('action DELETE key:', message.key);
+      logdebug(dbState, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
       resolve(persist(store));
       break;
     }
     default:
-      dbLogger.warn('unknown action:', message.type);
+      logwarn(dbState, '[DBACTOR]', 'unknown action:', message.type);
       if (typeof message.reject === 'function') message.reject(new Error('[DBACTOR] unknown message type'));
       break;
   }
@@ -398,7 +410,7 @@ function startDbActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      dbLogger.setLevel(lvl);
+      dbState = Object.freeze({ level: lvl });
       if (DBACTOR && DBACTOR.getstate()) {
         DBACTOR.getstate().verbosity = lvl;
       }

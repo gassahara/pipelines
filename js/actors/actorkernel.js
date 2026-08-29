@@ -1,8 +1,19 @@
+// ============================================================
+// UPDATED FILE: js/actors/actorkernel.js
+// Change applied: removed createLogger; direct portable logging functions
+// ============================================================
+
 import { createGarbageCollector } from './actorgc.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createVerbosityConstants,
+  logdebug,
+  logwarn,
+  logerror,
+  loginfo,
+  logcritical
+} from '../verbosity.js';
 
 var kernelVerbosityConstants = createVerbosityConstants();
-var kernelVerbosityFunctions = createVerbosityFunctions(kernelVerbosityConstants);
 
 function createMessageValidator(interfaceMap) {
   return function(message) {
@@ -118,13 +129,11 @@ function createactor(behavior, initialstate, messageInterface, options) {
       ? options.verbosityLevel
       : (currentstate.verbosity !== undefined ? currentstate.verbosity : (currentstate.level !== undefined ? currentstate.level : kernelVerbosityConstants.DEBUG)));
 
-  var logger = kernelVerbosityFunctions.createLogger('[ACTOR:' + actorName + ']', initialVerbosity);
-
   if (!currentstate._gc) {
     currentstate._gc = createGarbageCollector();
   }
   if (currentstate.verbosity === undefined) {
-    currentstate.verbosity = logger.getLevel();
+    currentstate.verbosity = initialVerbosity;
   }
 
   var validator = messageInterface ? createMessageValidator(messageInterface) : null;
@@ -153,12 +162,13 @@ function createactor(behavior, initialstate, messageInterface, options) {
 
   function processMessage(message) {
     var msgType = message && message.type ? message.type : String(message);
-    logger.debug('processMessage start:', msgType);
+    var currentVerbosity = currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity;
+    logdebug({ level: currentVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage start:', msgType);
 
     if (validator) {
       var check = validator(message);
       if (!check.valid) {
-        logger.error('[ACTOR:INVALID]', check.error);
+        logerror({ level: currentVerbosity }, '[ACTOR:' + actorName + ']', '[ACTOR:INVALID]', check.error);
         if (typeof message.reject === 'function') {
           message.reject(new Error('[ACTOR:INVALID] ' + check.error));
         }
@@ -168,9 +178,9 @@ function createactor(behavior, initialstate, messageInterface, options) {
 
     try {
       currentstate = behavior(currentstate, message);
-      logger.debug('processMessage done:', msgType);
+      logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage done:', msgType);
     } catch (err) {
-      logger.error('behavior error:', err);
+      logerror({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'behavior error:', err);
       if (typeof message.reject === 'function') {
         message.reject(err);
       } else if (typeof message.resolve === 'function') {
@@ -184,13 +194,13 @@ function createactor(behavior, initialstate, messageInterface, options) {
     if (!running) return;
     if (mailbox.isEmpty()) {
       running = false;
-      logger.debug('drainMemory mailbox empty, waiting resolved');
+      logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainMemory mailbox empty, waiting resolved');
       resolveWaiters();
       return;
     }
     var message = mailbox.peek();
     mailbox.remove();
-    logger.debug('drainMemory processing message:', message && message.type);
+    logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainMemory processing message:', message && message.type);
     processMessage(message);
     setTimeout(drainMemory, 0);
   }
@@ -200,13 +210,13 @@ function createactor(behavior, initialstate, messageInterface, options) {
     var message = await mailbox.peek();
     if (message === null) {
       running = false;
-      logger.debug('drainDb mailbox empty, polling');
+      logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb mailbox empty, polling');
       resolveWaiters();
       polltimer = setTimeout(drainDb, 25);
       return;
     }
     await mailbox.remove();
-    logger.debug('drainDb processing message:', message && message.type);
+    logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb processing message:', message && message.type);
     processMessage(message);
     await mailbox.clearIfEmpty ? mailbox.clearIfEmpty() : null;
     polltimer = setTimeout(drainDb, 0);
@@ -215,7 +225,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
   function ensureLoop() {
     if (!running) {
       running = true;
-      logger.debug('ensureLoop starting loop for mailboxType:', mailboxType);
+      logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'ensureLoop starting loop for mailboxType:', mailboxType);
       if (mailboxType === 'db') {
         drainDb();
       } else {
@@ -228,7 +238,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
     if (!message || typeof message !== 'object') {
       message = { type: message };
     }
-    logger.debug('send message:', message.type);
+    logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'send message:', message.type);
     if (mailboxType === 'db') {
       mailbox.append(message).then(function() {
         ensureLoop();

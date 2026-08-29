@@ -1,10 +1,21 @@
+// ============================================================
+// UPDATED FILE: js/actors/worldmapactor.js
+// Change applied: removed createLogger; direct portable logging functions
+// ============================================================
+
 import { createactor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createVerbosityConstants,
+  logdebug,
+  logwarn,
+  logerror,
+  loginfo,
+  logcritical
+} from '../verbosity.js';
 
 var worldmapVerbosityConstants = createVerbosityConstants();
-var worldmapVerbosityFunctions = createVerbosityFunctions(worldmapVerbosityConstants);
-var worldmapLogger = worldmapVerbosityFunctions.createLogger('[WORLDMAPACTOR]', worldmapVerbosityConstants.DEBUG);
+var worldmapState = Object.freeze({ level: worldmapVerbosityConstants.DEBUG });
 
 var UPDATE = 'update';
 var OBSERVE = 'observe';
@@ -36,30 +47,30 @@ function deepmerge(target, patch) {
 }
 
 var worldmapbehavior = function(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : worldmapLogger.getLevel();
-  worldmapLogger.setLevel(v);
+  var v = state && state.verbosity !== undefined ? state.verbosity : worldmapVerbosityConstants.DEBUG;
+  worldmapState = Object.freeze({ level: v });
 
-  worldmapLogger.debug('behavior handling action:', message.type);
+  logdebug(worldmapState, '[WORLDMAPACTOR]', 'behavior handling action:', message.type);
 
   if (message.type === UPDATE) {
-    worldmapLogger.debug('action UPDATE patch keys:', Object.keys(message.patch || {}).join(', '));
+    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action UPDATE patch keys:', Object.keys(message.patch || {}).join(', '));
     var nextworldmap = deepmerge(state.worldmap, message.patch);
-    worldmapLogger.debug('notifying', state.observers.length, 'observers');
+    logdebug(worldmapState, '[WORLDMAPACTOR]', 'notifying', state.observers.length, 'observers');
     state.observers.forEach(function(observer) {
       try {
         observer(nextworldmap);
       } catch (err) {
-        worldmapLogger.warn('observer notification failed:', err);
+        logwarn(worldmapState, '[WORLDMAPACTOR]', 'observer notification failed:', err);
       }
     });
     return { worldmap: nextworldmap, observers: state.observers, verbosity: v };
   }
   if (message.type === OBSERVE) {
-    worldmapLogger.debug('action OBSERVE new observer attached, total:', state.observers.length + 1);
+    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action OBSERVE new observer attached, total:', state.observers.length + 1);
     return { worldmap: state.worldmap, observers: state.observers.concat([message.observer]), verbosity: v };
   }
   if (message.type === UNOBSERVE) {
-    worldmapLogger.debug('action UNOBSERVE observer detached');
+    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action UNOBSERVE observer detached');
     return { worldmap: state.worldmap, observers: state.observers.filter(function(obs) { return obs !== message.observer; }), verbosity: v };
   }
   return state;
@@ -87,7 +98,7 @@ function startWorldmapActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      worldmapLogger.setLevel(lvl);
+      worldmapState = Object.freeze({ level: lvl });
       if (WORLDMAPACTOR && WORLDMAPACTOR.getstate()) {
         WORLDMAPACTOR.getstate().verbosity = lvl;
       }

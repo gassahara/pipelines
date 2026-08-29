@@ -1,11 +1,22 @@
+// ============================================================
+// UPDATED FILE: js/actors/apiactor.js
+// Change applied: removed createLogger; direct portable logging functions
+// ============================================================
+
 import { createactor } from './actorkernel.js';
 import { createApiConstants } from '../utils.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
-import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import {
+  createVerbosityConstants,
+  logdebug,
+  logwarn,
+  logerror,
+  loginfo,
+  logcritical
+} from '../verbosity.js';
 
 var apiVerbosityConstants = createVerbosityConstants();
-var apiVerbosityFunctions = createVerbosityFunctions(apiVerbosityConstants);
-var apiLogger = apiVerbosityFunctions.createLogger('[APIACTOR]', apiVerbosityConstants.DEBUG);
+var apiState = Object.freeze({ level: apiVerbosityConstants.DEBUG });
 
 var MESSAGETYPES = Object.freeze({
   API: 'api',
@@ -29,20 +40,20 @@ function createInitialApiWorldmap() {
 }
 
 function persistApiWorldmap(state) {
-  apiLogger.debug('persistApiWorldmap saving state to db');
+  logdebug(apiState, '[APIACTOR]', 'persistApiWorldmap saving state to db');
   enqueueDbStore('actor:state:api', state.worldmap).catch(function(e) {
-    apiLogger.warn('state persist failed:', e);
+    logwarn(apiState, '[APIACTOR]', 'state persist failed:', e);
   });
 }
 
 var apibehavior = function(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : apiLogger.getLevel();
-  apiLogger.setLevel(v);
+  var v = state && state.verbosity !== undefined ? state.verbosity : apiVerbosityConstants.DEBUG;
+  apiState = Object.freeze({ level: v });
 
-  apiLogger.debug('behavior handling action:', message.type);
+  logdebug(apiState, '[APIACTOR]', 'behavior handling action:', message.type);
 
   if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
-    apiLogger.debug('action:', message.type, 'method:', message.method, 'endpoint:', message.endpoint);
+    logdebug(apiState, '[APIACTOR]', 'action:', message.type, 'method:', message.method, 'endpoint:', message.endpoint);
     persistApiWorldmap(state);
 
     state.worldmap.lastRequest = {
@@ -74,23 +85,23 @@ var apibehavior = function(state, message) {
 
     fetch(url, { method: method, headers: headers, body: body }).then(function(response) {
       var status = response.status;
-      apiLogger.debug('action response status:', status, 'for:', message.endpoint);
+      logdebug(apiState, '[APIACTOR]', 'action response status:', status, 'for:', message.endpoint);
       if (!isTextual) {
         return response.json().then(function(data) {
-          apiLogger.debug('action JSON response received for:', message.endpoint);
+          logdebug(apiState, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
           if (typeof message.resolve === 'function') {
             message.resolve({ status: status, data: data });
           }
         });
       }
       return response.text().then(function(data) {
-        apiLogger.debug('action text response received for:', message.endpoint);
+        logdebug(apiState, '[APIACTOR]', 'action text response received for:', message.endpoint);
         if (typeof message.resolve === 'function') {
           message.resolve({ status: status, data: data });
         }
       });
     }).catch(function(err) {
-      apiLogger.error('action request error for:', message.endpoint, err);
+      logerror(apiState, '[APIACTOR]', 'action request error for:', message.endpoint, err);
       if (typeof message.reject === 'function') {
         message.reject(err);
       }
@@ -117,7 +128,7 @@ function startApiActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      apiLogger.setLevel(lvl);
+      apiState = Object.freeze({ level: lvl });
       if (APIACTOR && APIACTOR.getstate()) {
         APIACTOR.getstate().verbosity = lvl;
       }
