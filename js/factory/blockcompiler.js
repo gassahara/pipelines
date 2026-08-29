@@ -1311,8 +1311,19 @@ export function loadPipeline(pipelineDefinition, pipelineId, options) {
 
 export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPipeline) {
   var constants = createBlockCompilerConstants();
+  var BLOCKTYPES = constants.BLOCKTYPES;
+  var INHERITEDKEYS = constants.INHERITEDKEYS;
   var dnaConstants = createDnaSerializerConstants();
-  var compiledStage = processStage(stageDef, pipelineId, null, stagePath, briefcase, constants, dnaConstants, []);
+  var ANALYZERS = createBlockAnalyzers(BLOCKTYPES, dnaConstants);
+  var COMPILERS = createBlockCompilers(BLOCKTYPES, INHERITEDKEYS);
+  var compilerConstants = {
+    BLOCKTYPES: BLOCKTYPES,
+    INHERITEDKEYS: INHERITEDKEYS,
+    ANALYZERS: ANALYZERS,
+    COMPILERS: COMPILERS
+  };
+
+  var compiledStage = processStage(stageDef, pipelineId, null, stagePath, briefcase, compilerConstants, dnaConstants, []);
   var nextStageMessage = null;
   var stageIndex = fullPipeline.elements.indexOf(stageDef);
   if (stageIndex !== -1 && stageIndex + 1 < fullPipeline.elements.length) {
@@ -1323,7 +1334,7 @@ export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPip
       stageIndex: stageIndex + 1,
       stagePath: stagePath,
       briefcase: briefcase,
-      env: null // will be filled by hypervisor if needed
+      env: null
     };
   }
   return { compiledStage: compiledStage, nextStageMessage: nextStageMessage };
