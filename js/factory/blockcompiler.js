@@ -668,8 +668,7 @@ function processElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcas
 function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages) {
   var elementId = el.id || 'pipeline_unknown';
   var blockfn = async function(env) {
-    var latestEnv = env;
-    var parentEnv = latestEnv || env;
+    var parentEnv = env;
     var childEnv = cloneObject(parentEnv);
     childEnv.containerid = el.container || null;
     childEnv.pipelineid = pipelineId;
@@ -1269,19 +1268,7 @@ async function compilepipeline(pipeline, accessors, sinks, pipelineIdOverride, o
 
   var compiledpipeline = createpipeline(stages, sinks, undefined, { pipelineId: pipelineId });
 
-  if (options.autorun === true) {
-    var baseEnv = options.baseEnv || { pipelineid: pipelineId, rngactive: true, stack: {} };
-    baseEnv.pipelineid = pipelineId;
-    if (options.updateworldmap) baseEnv.updateworldmap = options.updateworldmap;
-    await enqueueHypervisorSetEnv(pipelineId, cloneObject(baseEnv)).catch(function(err) {
-      console.warn('[BLOCKCOMPILER] hypervisor env save failed:', err);
-    });
-    var env = cloneObject(baseEnv);
-    // P14-rev2: start pipeline execution asynchronously; do not block compilepipeline.
-    compiledpipeline({ id: pipelineId, env: env }).catch(function(err) {
-      console.error('[BLOCKCOMPILER] pipeline execution failed:', err);
-    });
-  }
+  // NOTE: autorun block removed. Pipeline execution is now orchestrated by hypervisor via COMPILE_STAGE messages.
 
   return {
     pipeline: compiledpipeline,
@@ -1304,6 +1291,42 @@ async function loadPipelineFromDefinition(pipeline, pipelineId, env, options) {
     accessors: options.accessors || null
   };
   return compilepipeline(pipeline, normalizedOptions.accessors, normalizedOptions.sinks, pipelineId, normalizedOptions);
+}
+
+// New functions for message-driven stage compilation
+export function loadPipeline(pipelineDefinition, pipelineId, options) {
+  if (options === undefined) options = {};
+  return enqueueHypervisorBootPipeline({
+    pipeline: pipelineDefinition,
+    accessors: null,
+    sinks: [],
+    pipelineId: pipelineId,
+    options: {
+      autorun: true,
+      baseEnv: options.baseEnv || {},
+      updateworldmap: options.updateworldmap || null
+    }
+  });
+}
+
+export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPipeline) {
+  var constants = createBlockCompilerConstants();
+  var dnaConstants = createDnaSerializerConstants();
+  var compiledStage = processStage(stageDef, pipelineId, null, stagePath, briefcase, constants, dnaConstants, []);
+  var nextStageMessage = null;
+  var stageIndex = fullPipeline.elements.indexOf(stageDef);
+  if (stageIndex !== -1 && stageIndex + 1 < fullPipeline.elements.length) {
+    nextStageMessage = {
+      type: 'COMPILE_STAGE',
+      pipeline: fullPipeline,
+      pipelineId: pipelineId,
+      stageIndex: stageIndex + 1,
+      stagePath: stagePath,
+      briefcase: briefcase,
+      env: null // will be filled by hypervisor if needed
+    };
+  }
+  return { compiledStage: compiledStage, nextStageMessage: nextStageMessage };
 }
 
 export {

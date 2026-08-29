@@ -531,6 +531,11 @@ async function runStageTask(taskid, descriptor) {
     await descriptor.stageExecutor(descriptor.env);
     try {
       EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true });
+      // P19-final-rev3: Notify hypervisor that stage completed.
+      var hypervisorMod = await import('./hypervisoractor.js');
+      hypervisorMod.enqueueHypervisorStageCompleted(descriptor.pipelineid, descriptor.stageid).catch(function(e) {
+        console.warn('[EXECUTIONACTOR] stage completed notification failed:', e);
+      });
     } catch (err) {
       console.warn('[EXECUTIONACTOR] task settled send failed:', err);
     }
@@ -591,8 +596,6 @@ function startExecutionActor() {
 
 // P12: optional readiness gate export for explicit use by hypervisor
 function ensureExecutionActorReady() {
-  // Since EXECUTIONACTOR is already created and draining at module init,
-  // this simply returns a resolved promise or pings to confirm.
   return Promise.resolve(EXECUTIONACTOR);
 }
 

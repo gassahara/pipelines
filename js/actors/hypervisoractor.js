@@ -4,6 +4,7 @@ import { executeStage } from '../factory/blockcompiler.js';
 import { callwithstack } from '../factory/callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import { createVerbosityConstants, createVerbosityFunctions } from '../verbosity.js';
+import { enqueueExecutionSubmitStage, enqueueExecutionPing } from './executionactor.js';
 
 var hypervisorVerbosityConstants = createVerbosityConstants();
 var hypervisorVerbosityFunctions = createVerbosityFunctions(hypervisorVerbosityConstants);
@@ -58,7 +59,9 @@ var HYPERVISORMESSAGETYPES = Object.freeze({
   PING: 'ping',
   RECOVER: 'recover',
   ACTIVATE_ACTORS: 'activate_actors',
-  BOOT_PIPELINE: 'boot_pipeline'
+  BOOT_PIPELINE: 'boot_pipeline',
+  COMPILE_STAGE: 'compile_stage',
+  STAGE_COMPLETED: 'stage_completed'
 });
 
 var MESSAGEINTERFACES = {};
@@ -86,6 +89,8 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.PING] = { resolve: 'function?', reject:
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.BOOT_PIPELINE] = { pipeline: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.COMPILE_STAGE] = { pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.STAGE_COMPLETED] = { pipelineId: 'string', stageId: 'string', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 function createInitialHypervisorState() {
@@ -99,6 +104,8 @@ function createInitialHypervisorState() {
     programs: {},
     stageDescriptors: {},
     triggerRecipients: {},
+    loadedPipelines: {},
+    nextStageMessages: {},
     savedAt: Date.now()
   };
 }
@@ -437,6 +444,8 @@ var hypervisorbehavior = function(state, message) {
         if (saved && saved.programs) state.programs = saved.programs;
         if (saved && saved.stageDescriptors) state.stageDescriptors = saved.stageDescriptors;
         if (saved && saved.triggerRecipients) state.triggerRecipients = saved.triggerRecipients;
+        if (saved && saved.loadedPipelines) state.loadedPipelines = saved.loadedPipelines;
+        if (saved && saved.nextStageMessages) state.nextStageMessages = saved.nextStageMessages;
         state.boot = saved.boot !== undefined ? saved.boot : true;
         state.savedAt = Date.now();
         persistHypervisorState(state);
@@ -462,32 +471,74 @@ var hypervisorbehavior = function(state, message) {
         bootOptions.autorun = true;
       }
 
-      hypervisorLogger.debug('[HYPERVISOR] child boot pipeline requested:', message.pipelineId);
+      hypervisorLogger.debug('[HYPERVISOR] pipeline load request:', message.pipelineId);
 
-      activateManagedActors().then(function() {
-        // P12: Explicit readiness gate for execution actor before booting pipeline
-        return getExecutionModule().then(function(execMod) {
-          return execMod.enqueueExecutionPing();
+      state.loadedPipelines = state.loadedPipelines || {};
+      state.loadedPipelines[message.pipelineId] = {
+        pipeline: message.pipeline,
+        accessors: message.accessors || null,
+        sinks: message.sinks || [],
+        options: bootOptions
+      };
+      var firstStageIndex = 0;
+      var firstStagePath = [];
+      HYPERVISOR.send({
+        type: HYPERVISORMESSAGETYPES.COMPILE_STAGE,
+        pipeline: message.pipeline,
+        pipelineId: message.pipelineId,
+        stageIndex: firstStageIndex,
+        stagePath: firstStagePath,
+        briefcase: message.pipeline.briefcase || {},
+        env: bootOptions.baseEnv || {},
+        resolve: null,
+        reject: null
+      });
+      resolveMessage(message, { started: true, pipelineId: message.pipelineId });
+      return state;
+
+    case HYPERVISORMESSAGETYPES.COMPILE_STAGE: {
+      var compileReq = message;
+      import('../factory/blockcompiler.js').then(function(mod) {
+        var result = mod.compileStage(
+          compileReq.pipeline.elements[compileReq.stageIndex],
+          compileReq.briefcase,
+          compileReq.pipelineId,
+          compileReq.stagePath,
+          compileReq.pipeline
+        );
+        state.nextStageMessages = state.nextStageMessages || {};
+        state.nextStageMessages[compileReq.pipelineId + ':' + result.compiledStage.id] = result.nextStageMessage;
+        return enqueueExecutionSubmitStage({
+          pipelineid: compileReq.pipelineId,
+          stageid: result.compiledStage.id,
+          stageExecutor: result.compiledStage,
+          env: compileReq.env || {}
         });
-      }).then(function() {
-        // P14-rev2: Start pipeline asynchronously; do not block hypervisor mailbox.
-        import('../factory/blockcompiler.js').then(function(mod) {
-          mod.compilepipeline(
-            message.pipeline,
-            message.accessors,
-            message.sinks,
-            message.pipelineId,
-            bootOptions
-          ).catch(function(err) {
-            hypervisorLogger.warn('[HYPERVISOR] pipeline execution failed:', err);
-          });
-        });
-        resolveMessage(message, { started: true, pipelineId: message.pipelineId });
+      }).then(function(submitted) {
+        resolveMessage(message, { taskid: submitted.taskid });
       }).catch(function(err) {
-        hypervisorLogger.warn('[HYPERVISOR] boot pipeline scheduling failed:', err);
+        hypervisorLogger.warn('[HYPERVISOR] stage compilation failed:', err);
         rejectMessage(message, err);
       });
       return state;
+    }
+
+    case HYPERVISORMESSAGETYPES.STAGE_COMPLETED: {
+      var key = message.pipelineId + ':' + message.stageId;
+      var nextMsg = state.nextStageMessages ? state.nextStageMessages[key] : null;
+      if (nextMsg) {
+        delete state.nextStageMessages[key];
+        HYPERVISOR.send(nextMsg);
+      } else {
+        hypervisorLogger.debug('[HYPERVISOR] pipeline complete:', message.pipelineId);
+        if (state.activePipelines) {
+          state.activePipelines = state.activePipelines.filter(function(id) { return id !== message.pipelineId; });
+          persistHypervisorState(state);
+        }
+      }
+      resolveMessage(message, true);
+      return state;
+    }
 
     default:
       rejectMessage(message, new Error('[HYPERVISOR] unknown message type: ' + message.type));
@@ -583,6 +634,7 @@ var enqueueHypervisorTrigger = function(payload) { return enqueue(HYPERVISORMESS
 var enqueueHypervisorPing = function() { return enqueue(HYPERVISORMESSAGETYPES.PING); };
 var enqueueHypervisorActivateActors = function() { return enqueue(HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS); };
 var enqueueHypervisorBootPipeline = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.BOOT_PIPELINE, payload); };
+var enqueueHypervisorStageCompleted = function(pipelineId, stageId) { return enqueue(HYPERVISORMESSAGETYPES.STAGE_COMPLETED, { pipelineId: pipelineId, stageId: stageId }); };
 
 export {
   HYPERVISORMESSAGETYPES,
@@ -613,5 +665,6 @@ export {
   enqueueHypervisorTrigger,
   enqueueHypervisorPing,
   enqueueHypervisorActivateActors,
-  enqueueHypervisorBootPipeline
+  enqueueHypervisorBootPipeline,
+  enqueueHypervisorStageCompleted
 };
