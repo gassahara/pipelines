@@ -2,7 +2,8 @@
 // UPDATED FILE: js/factory/blockcompiler.js
 // Changes applied:
 //   P1: validatePipelineBriefcase returns {valid, errors}
-//   P10-ter: removed createLogger; direct portable logging functions
+//   P10-ter: removed createLogger; direct portable logging
+//   P11-bis: env persisted after stage and returned for next stage
 // ============================================================
 
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
@@ -890,7 +891,12 @@ function defaultRunner(id, children, startIndex, pipelineId, stagePath, options)
     var stageExecutor = async function(execEnv) {
       await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
       var result = await executeChildren(children.slice(startIndex), execEnv, id, pipelineId, stagePath, options);
-      return result.env || execEnv;
+      var finalEnv = result.env || execEnv;
+      // P11-bis: persist final env for next stage
+      await enqueueHypervisorSetEnv(pipelineId, finalEnv).catch(function(err) {
+        logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env save failed:', err);
+      });
+      return finalEnv;
     };
     var submitted = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: stageExecutor, env: env });
     await enqueueExecutionAwaitTask(submitted.taskid);
@@ -917,7 +923,10 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath, op
           return Promise.resolve(control.fn.apply(null, fnargs)).then(function(shouldContinue) {
             if (!shouldContinue) {
               logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'loopRunner stage:', id, 'loop finished at iteration:', iteration);
-              return newEnv;
+              // P11-bis: persist final env before returning
+              return enqueueHypervisorSetEnv(pipelineId, newEnv).catch(function(err) {
+                logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env save failed:', err);
+              }).then(function() { return newEnv; });
             }
             return runLoop(iteration + 1, newEnv);
           });

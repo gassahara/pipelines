@@ -3,6 +3,7 @@
 // Changes applied:
 //   P9: defensive validation consumer for validatePipelineBriefcase
 //   P10-ter: removed createLogger; direct portable logging functions
+//   P11-bis: STAGE_COMPLETED forwards persisted env to next compile stage
 // ============================================================
 
 import { createactor, pingActor } from './actorkernel.js';
@@ -12,6 +13,7 @@ import { callwithstack } from '../factory/callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import {
   createVerbosityConstants,
+  getverbosity,
   logdebug,
   logwarn,
   logerror,
@@ -316,7 +318,8 @@ async function bootActors(options) {
 
 var hypervisorbehavior = function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : hypervisorVerbosityConstants.DEBUG;
-  // Use global hypervisorState for logging verbosity; but we can also set state level? Keep as is.
+  hypervisorState = Object.freeze({ level: v });
+
   logdebug(hypervisorState, '[HYPERVISOR]', 'behavior handling action:', message.type);
 
   switch (message.type) {
@@ -716,6 +719,9 @@ var hypervisorbehavior = function(state, message) {
       var nextMsg = state.nextStageMessages ? state.nextStageMessages[key] : null;
       if (nextMsg) {
         delete state.nextStageMessages[key];
+        // P11-bis: forward persisted env to next stage
+        var rootEntry = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
+        nextMsg.env = rootEntry ? rootEntry.env : {};
         logdebug(hypervisorState, '[HYPERVISOR]', 'dispatching next stage message:', nextMsg.type, 'stageIndex:', nextMsg.stageIndex);
         HYPERVISOR.send(nextMsg);
       } else {
