@@ -3,7 +3,7 @@
 // Changes applied:
 //   P1: validatePipelineBriefcase returns {valid, errors}
 //   P10-ter: removed createLogger; direct portable logging
-//   P11-bis: env persisted after stage and returned for next stage
+//   P15: non-blocking SET_ENV + stage completion sent by Block Compiler
 // ============================================================
 
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
@@ -54,7 +54,8 @@ import {
   enqueueHypervisorGetProgram,
   enqueueHypervisorGetRenderHtml,
   enqueueHypervisorSetRenderHtml,
-  enqueueHypervisorSetStageDescriptor
+  enqueueHypervisorSetStageDescriptor,
+  enqueueHypervisorStageCompleted
 } from '../actors/hypervisoractor.js';
 import { consolidateClosures } from './closureconsolidator.js';
 
@@ -892,9 +893,13 @@ function defaultRunner(id, children, startIndex, pipelineId, stagePath, options)
       await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
       var result = await executeChildren(children.slice(startIndex), execEnv, id, pipelineId, stagePath, options);
       var finalEnv = result.env || execEnv;
-      // P11-bis: persist final env for next stage
-      await enqueueHypervisorSetEnv(pipelineId, finalEnv).catch(function(err) {
+      // P15: non-blocking env persistence
+      enqueueHypervisorSetEnv(pipelineId, finalEnv).catch(function(err) {
         logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env save failed:', err);
+      });
+      // P15: Block Compiler sends completion with env and next stage
+      enqueueHypervisorStageCompleted(pipelineId, id, null, finalEnv).catch(function(err) {
+        logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'stage completion send failed:', err);
       });
       return finalEnv;
     };
@@ -923,10 +928,14 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath, op
           return Promise.resolve(control.fn.apply(null, fnargs)).then(function(shouldContinue) {
             if (!shouldContinue) {
               logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'loopRunner stage:', id, 'loop finished at iteration:', iteration);
-              // P11-bis: persist final env before returning
-              return enqueueHypervisorSetEnv(pipelineId, newEnv).catch(function(err) {
+              // P15: non-blocking env persistence + completion
+              enqueueHypervisorSetEnv(pipelineId, newEnv).catch(function(err) {
                 logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env save failed:', err);
-              }).then(function() { return newEnv; });
+              });
+              enqueueHypervisorStageCompleted(pipelineId, id, null, newEnv).catch(function(err) {
+                logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'stage completion send failed:', err);
+              });
+              return newEnv;
             }
             return runLoop(iteration + 1, newEnv);
           });

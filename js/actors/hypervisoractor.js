@@ -3,7 +3,7 @@
 // Changes applied:
 //   P9: defensive validation consumer for validatePipelineBriefcase
 //   P10-ter: removed createLogger; direct portable logging functions
-//   P11-bis: STAGE_COMPLETED forwards persisted env to next compile stage
+//   P15: STAGE_COMPLETED accepts env and nextStageMessage; persists env and dispatches next stage directly
 // ============================================================
 
 import { createactor, pingActor } from './actorkernel.js';
@@ -97,7 +97,7 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.RECOVER] = { resolve: 'function?', reje
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.BOOT_PIPELINE] = { pipeline: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.COMPILE_STAGE] = { pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.STAGE_COMPLETED] = { pipelineId: 'string', stageId: 'string', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.STAGE_COMPLETED] = { pipelineId: 'string', stageId: 'string', env: 'object?', nextStageMessage: 'object?', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
 function createInitialHypervisorState(verbosity) {
@@ -714,14 +714,33 @@ var hypervisorbehavior = function(state, message) {
     case HYPERVISORMESSAGETYPES.STAGE_COMPLETED: {
       var key = message.pipelineId + ':' + message.stageId;
       loginfo(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED looking for next stage message for:', key);
+      logdebug(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED env:', message.env, 'nextStageMessage:', message.nextStageMessage);
 
-      var nextMsg = state.nextStageMessages ? state.nextStageMessages[key] : null;
+      // P15: persist env if provided
+      if (message.env !== undefined && message.env !== null) {
+        if (!state.envByPipeline) state.envByPipeline = {};
+        if (!state.envByPipeline[message.pipelineId]) state.envByPipeline[message.pipelineId] = {};
+        state.envByPipeline[message.pipelineId].__root__ = {
+          __root__: {
+            env: message.env,
+            updatedAt: Date.now()
+          }
+        };
+        persistHypervisorState(state);
+      }
+
+      // P15: use provided nextStageMessage, fallback to map for backward compatibility
+      var nextMsg = message.nextStageMessage || (state.nextStageMessages ? state.nextStageMessages[key] : null);
+
       if (nextMsg) {
-        delete state.nextStageMessages[key];
-        // P11-bis: forward persisted env to next stage
-        var rootEntry = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
-        nextMsg.env = rootEntry ? rootEntry.env : {};
+        if (state.nextStageMessages && state.nextStageMessages[key]) delete state.nextStageMessages[key];
+
+        // ensure env is set on next stage message
+        if (!nextMsg.env) {
+          var rootEntry = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
+          nextMsg.env = rootEntry ? rootEntry.env : (message.env || {});
+        }
+
         logdebug(hypervisorState, '[HYPERVISOR]', 'dispatching next stage message:', nextMsg.type, 'stageIndex:', nextMsg.stageIndex);
         HYPERVISOR.send(nextMsg);
       } else {
@@ -829,7 +848,14 @@ var enqueueHypervisorTrigger = function(payload) { return enqueue(HYPERVISORMESS
 var enqueueHypervisorPing = function() { return enqueue(HYPERVISORMESSAGETYPES.PING); };
 var enqueueHypervisorActivateActors = function() { return enqueue(HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS); };
 var enqueueHypervisorBootPipeline = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.BOOT_PIPELINE, payload); };
-var enqueueHypervisorStageCompleted = function(pipelineId, stageId) { return enqueue(HYPERVISORMESSAGETYPES.STAGE_COMPLETED, { pipelineId: pipelineId, stageId: stageId }); };
+var enqueueHypervisorStageCompleted = function(pipelineId, stageId, nextStageMessage, env) {
+  return enqueue(HYPERVISORMESSAGETYPES.STAGE_COMPLETED, {
+    pipelineId: pipelineId,
+    stageId: stageId,
+    nextStageMessage: nextStageMessage || null,
+    env: env
+  });
+};
 
 export {
   HYPERVISORMESSAGETYPES,

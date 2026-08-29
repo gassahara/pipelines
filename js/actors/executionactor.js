@@ -1,6 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Change applied: removed createLogger; direct portable logging functions
+// Changes applied:
+//   P10-ter: removed createLogger; direct portable logging functions
+//   P15: removed stage completion send; Execution Actor only settles task
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -590,12 +592,10 @@ async function runStageTask(taskid, descriptor) {
     logdebug(executionState, '[EXECUTIONACTOR]', 'runStageTask executing:', taskid, descriptor.stageid, descriptor.path);
     await descriptor.stageExecutor(descriptor.env);
     logdebug(executionState, '[EXECUTIONACTOR]', 'runStageTask completed:', taskid, descriptor.stageid);
+
+    // P15: only settle task; Block Compiler sends STAGE_COMPLETED
     try {
       EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true });
-      var hypervisorMod = await import('./hypervisoractor.js');
-      hypervisorMod.enqueueHypervisorStageCompleted(descriptor.pipelineid, descriptor.stageid).catch(function(e) {
-        logwarn(executionState, '[EXECUTIONACTOR]', 'stage completed notification failed:', e);
-      });
     } catch (err) {
       logwarn(executionState, '[EXECUTIONACTOR]', 'task settled send failed:', err);
     }
