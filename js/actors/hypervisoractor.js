@@ -1,19 +1,19 @@
 // ============================================================
 // UPDATED FILE: js/actors/hypervisoractor.js
 // Changes applied:
-//   - mailboxType changed to 'mail'
-//   - mailTransport injected statically from mailactor.js
-//   - all enqueueHypervisor* functions use sendInstruction +
-//     awaitResponse with tag correlation
-//   - behavior returns results; kernel sends response via tag/sender
-//   - state persistence still uses enqueueDbStore/Restore/Delete
-//   - external actor startup functions remain, but their internal
-//     enqueue calls now use mailTransport (via sendInstruction)
+//   - restored bootActors and activateManagedActors definitions
+//   - static imports only; no dynamic import()
+//   - imported compileStageRequestToElements, orchestrateStage
+//     statically from blockcompiler
+//   - mailTransport injection for mailboxType 'mail'
+//   - all enqueueHypervisor* functions use tag-based messaging
+//   - ensureRenderActorReady and ensureDebugActorReady imported
+//     (will be defined in renderactor/debugactor)
 // ============================================================
 
 import { createactor, pingActor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete, startDbActor } from './dbactor.js';
-import { validatePipelineBriefcase } from '../factory/blockcompiler.js';
+import { validatePipelineBriefcase, compileStageRequestToElements, orchestrateStage } from '../factory/blockcompiler.js';
 import { callwithstack } from '../factory/callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import {
@@ -26,26 +26,29 @@ import {
   logcritical
 } from '../verbosity.js';
 import {
+  startExecutionActor,
+  ensureExecutionActorReady,
+  enqueueExecutionPing
+} from './executionactor.js';
+import {
+  startRenderActor,
+  ensureRenderActorReady,
+  enqueueRenderPing
+} from './renderactor.js';
+import {
+  startDebugActor,
+  ensureDebugActorReady,
+  enqueueDebugPing
+} from './debugactor.js';
+import { startApiActor } from './apiactor.js';
+import { startWorldmapActor } from './worldmapactor.js';
+import {
   sendInstruction,
   requestUnreadMessages,
   sendResponse,
   awaitResponse,
   generateTag
 } from './mailactor.js';
-import {
-  startExecutionActor,
-  ensureExecutionActorReady
-} from './executionactor.js';
-import {
-  startRenderActor,
-  ensureRenderActorReady
-} from './renderactor.js';
-import {
-  startDebugActor,
-  ensureDebugActorReady
-} from './debugactor.js';
-import { startApiActor } from './apiactor.js';
-import { startWorldmapActor } from './worldmapactor.js';
 
 var hypervisorVerbosityConstants = createVerbosityConstants();
 var hypervisorState = Object.freeze({ level: hypervisorVerbosityConstants.DEBUG });
@@ -153,17 +156,6 @@ function recoverHypervisorState(verbosity) {
     var initial = createInitialHypervisorState(verbosity);
     return enqueueDbStore('actor:state:hypervisor', initial).then(function() { return initial; });
   });
-}
-
-// Helper functions to send messages to other actors via MailActor
-function sendToExecution(type, payload, tag, sender) {
-  return sendInstruction('executionactor', type, payload, tag, sender);
-}
-function sendToRender(type, payload, tag, sender) {
-  return sendInstruction('renderactor', type, payload, tag, sender);
-}
-function sendToDebug(type, payload, tag, sender) {
-  return sendInstruction('debugactor', type, payload, tag, sender);
 }
 
 var hypervisorbehavior = function(state, message) {
@@ -275,7 +267,6 @@ var hypervisorbehavior = function(state, message) {
       if (!descriptor) return { error: 'missing trigger descriptor: ' + descriptorKey };
       state.routes['pipeline:' + pipelineId] = { stageId: stageId, stagePath: message.stagePath || [stageId] };
       persistHypervisorState(state);
-      // execute stage asynchronously, not blocking response? For now return true
       callwithstack(EVALSTACK, 'hypervisor-trigger:' + pipelineId + ':' + stageId, 'async-await', function() {
         return executeStage(descriptor, env, 'trigger', message.eventPayload);
       }, [env], { context: { env: env }, capturecontinuation: true, errk: createHypervisorErrorContext('trigger') }).then(function(result) {
@@ -323,9 +314,9 @@ var hypervisorbehavior = function(state, message) {
       state.loadedPipelines[message.pipelineId] = { pipeline: message.pipeline, accessors: message.accessors || null, sinks: message.sinks || [], options: bootOptions };
       var savedRoot = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
       var initialEnv = savedRoot ? savedRoot.env : (bootOptions.baseEnv || {});
-      sendToExecution('pipeline_loaded', { pipelineid: message.pipelineId, env: {} }, null, 'hypervisoractor').catch(function(){});
+      sendInstruction('executionactor', 'pipeline_loaded', { pipelineid: message.pipelineId, env: {} }, null, 'hypervisoractor').catch(function(){});
       sendInstruction('hypervisoractor', HYPERVISORMESSAGETYPES.REGISTER_PIPELINE, { pipelineId: message.pipelineId }, null, 'hypervisoractor').catch(function(){});
-      sendToExecution('register_pipeline', { pipelineid: message.pipelineId, dna: null, env: {} }, null, 'hypervisoractor').catch(function(){});
+      sendInstruction('executionactor', 'register_pipeline', { pipelineid: message.pipelineId, dna: null, env: {} }, null, 'hypervisoractor').catch(function(){});
       var firstStage = message.firstStage || { stageIndex: 0, stagePath: [], briefcase: pipelineBriefcase };
       sendInstruction('hypervisoractor', HYPERVISORMESSAGETYPES.COMPILE_STAGE, {
         pipeline: message.pipeline,
@@ -340,13 +331,6 @@ var hypervisorbehavior = function(state, message) {
     }
     case HYPERVISORMESSAGETYPES.COMPILE_STAGE: {
       logdebug(hypervisorState, '[HYPERVISOR]', 'action COMPILE_STAGE:', message.pipelineId, 'stageIndex:', message.stageIndex);
-      // Instead of importing blockcompiler dynamically, use dynamic import is forbidden; so we must have blockcompiler statically imported? But prior code used import() inside. We'll assume a static import is available (or we handle later). For this file we can include `import { compileStageRequestToElements, orchestrateStage } from '../factory/blockcompiler.js';` at top. But to avoid long circular, we can add static import at top. We'll add it in the import section. For brevity, we'll use static import.
-      // Since we cannot dynamic import, we add top-level import above. But for this response, we'll include the static import line at top. We already omitted it; we'll patch by adding:
-      // import { compileStageRequestToElements, orchestrateStage } from '../factory/blockcompiler.js';
-      // For completeness, I'll incorporate in the file. Let's assume we have static import at top? This response needs to be consistent. I'll add the missing import line in the file.
-      // We'll include at top: import { compileStageRequestToElements, orchestrateStage } from '../factory/blockcompiler.js';
-      // We'll include it in the code block below.
-
       var result = compileStageRequestToElements(message.pipeline, message.stageIndex, message.stagePath, message.briefcase, message.env || {}, message.options || {});
       return orchestrateStage(result.stage, result.elementFunctions, message.pipelineId, message.env || {}, message.stagePath || [], message.options || {}, result.nextStageMessage).then(function() {
         return { started: true };
@@ -385,7 +369,38 @@ var hypervisorbehavior = function(state, message) {
   }
 };
 
-var hypervisorMailboxStore = null; // no longer used
+async function activateManagedActors(options) {
+  var verbosity = (options && options.verbosity !== undefined) ? options.verbosity : (typeof options === 'number' ? options : getverbosity(hypervisorState));
+  await ensureRenderActorReady({ verbosity });
+  await ensureExecutionActorReady({ verbosity });
+  await ensureDebugActorReady({ verbosity });
+  return true;
+}
+
+async function bootActors(options) {
+  if (options === undefined) options = {};
+  var verbosity = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : hypervisorVerbosityConstants.DEBUG));
+  loginfo(hypervisorState, '[HYPERVISOR]', 'bootActors starting with verbosity:', verbosity);
+  await startDbActor({ verbosity });
+  await startApiActor({ verbosity });
+  await startWorldmapActor({ verbosity });
+  await startRenderActor({ verbosity });
+  await startExecutionActor({ verbosity });
+  await startDebugActor({ verbosity });
+  await startHypervisorActor({ verbosity });
+  var actorStatuses = {};
+  var allAlive = true;
+  actorStatuses.dbactor = true; if (!actorStatuses.dbactor) allAlive = false;
+  actorStatuses.apiactor = true; if (!actorStatuses.apiactor) allAlive = false;
+  actorStatuses.worldmapactor = true; if (!actorStatuses.worldmapactor) allAlive = false;
+  actorStatuses.renderactor = await enqueueRenderPing().catch(() => false); if (!actorStatuses.renderactor) allAlive = false;
+  actorStatuses.executionactor = await enqueueExecutionPing().catch(() => false); if (!actorStatuses.executionactor) allAlive = false;
+  actorStatuses.debugactor = await enqueueDebugPing().catch(() => false); if (!actorStatuses.debugactor) allAlive = false;
+  actorStatuses.hypervisoractor = true; // if we got this far, hypervisor is alive
+  return { success: allAlive, status: allAlive ? 'BOOTED' : 'PARTIAL', actors: actorStatuses, timestamp: Date.now(), verbosity };
+}
+
+var hypervisorMailboxStore = null;
 
 var HYPERVISOR = null;
 var hypervisorStartPromise = null;
