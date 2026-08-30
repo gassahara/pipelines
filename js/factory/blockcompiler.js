@@ -3,7 +3,8 @@
 // Changes applied:
 //   P1: validatePipelineBriefcase returns {valid, errors}
 //   P10-ter: removed createLogger; direct portable logging
-//   P15: non-blocking SET_ENV + stage completion sent by Block Compiler
+//   P24: PIPELINE block boots independent pipeline via BOOT_PIPELINE
+//   P27: no separate SET_ENV; STAGE_COMPLETED carries env+nextStageMessage
 // ============================================================
 
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
@@ -43,7 +44,6 @@ import {
 import {
   enqueueHypervisorRegisterPipeline,
   enqueueHypervisorUnregisterPipeline,
-  enqueueHypervisorSetEnv,
   enqueueHypervisorGetEnv,
   enqueueHypervisorGetLatestEnv,
   enqueueHypervisorBootPipeline,
@@ -681,13 +681,13 @@ function createTriggerRegistration(stage, children, pipelineId, stagePath) {
   };
 }
 
-function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
+function processNode(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options, nextStageMessage) {
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processNode element:', node.element, 'id:', node.id);
   if (node.element === 'BLOCK') {
     return processElement(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options);
   }
   if (node.element === 'STAGE') {
-    return processStage(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options);
+    return processStage(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options, nextStageMessage);
   }
   if (node.element === 'PIPELINE') {
     return processPipelineElement(node, pipelineId, resumeFrom, stagePath, inheritedBriefcase, constants, dnaConstants, orderedStages, options);
@@ -710,17 +710,15 @@ function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inherited
     var parentEnv = env;
     var childEnv = cloneObject(parentEnv);
     childEnv.containerid = el.container || null;
-    childEnv.pipelineid = pipelineId;
+    childEnv.pipelineid = el.pipelineIdOverride
+      || (el.pipeline && el.pipeline.id)
+      || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id)
+      || 'pipeline_' + elementId;
 
     var inputkeys = el.inputs || [];
     for (var i = 0; i < inputkeys.length; i++) {
       childEnv[inputkeys[i]] = compilepathaccessor(inputkeys[i])(parentEnv);
     }
-
-    var childPipelineId = el.pipelineIdOverride
-      || (el.pipeline && el.pipeline.id)
-      || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id)
-      || 'child_pipeline';
 
     var childOptions = el.options || {};
     if (childOptions.autorun === undefined) childOptions.autorun = true;
@@ -732,11 +730,11 @@ function processPipelineElement(el, pipelineId, resumeFrom, stagePath, inherited
       pipeline: el.pipeline,
       accessors: el.accessors || null,
       sinks: el.sinks || [],
-      pipelineId: childPipelineId,
+      pipelineId: childEnv.pipelineid,
       options: childOptions
     };
 
-    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'PIPELINE element boot request:', childPipelineId, bootMessage);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'PIPELINE boot request:', childEnv.pipelineid, bootMessage);
 
     var bootPromise = enqueueHypervisorBootPipeline(bootMessage);
     var outputkey = Object.keys(el.outputs || {})[0] || null;
@@ -794,7 +792,7 @@ function processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, c
   };
 }
 
-function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
+function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options, nextStageMessage) {
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processStage stage:', stage.id);
   var header = processStageHeader(stage, pipelineId, parentPath, inheritedBriefcase, constants, dnaConstants, options);
   var stagePath = header.stagePath;
@@ -818,6 +816,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
     triggerFn.rawControl = stage.control;
     triggerFn.pipelineId = pipelineId;
     triggerFn.stagePath = stagePath;
+    triggerFn.nextStageMessage = nextStageMessage || null;
     if (orderedStages) orderedStages.push(triggerFn);
     return triggerFn;
   }
@@ -825,7 +824,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
   var isResumeStage = resumeFrom && resumeFrom.path && resumeFrom.path[0] === stage.id;
   var startIndex = isResumeStage ? Math.max(0, findIndex(stage.elements || [], function(el) { return el.id === resumeFrom.path[resumeFrom.path.length - 1]; })) : 0;
 
-  var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, orderedStages, options);
+  var fn = stageRunner(stage, children, startIndex, pipelineId, isResumeStage, stagePath, resumeFrom, orderedStages, options, nextStageMessage);
   fn.id = stage.id;
   fn.kind = 'stage';
   fn.stagemeta = header.meta;
@@ -836,7 +835,7 @@ function processStage(stage, pipelineId, resumeFrom, parentPath, inheritedBriefc
   return fn;
 }
 
-function processPipeline(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options) {
+function processPipeline(elements, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options, nextStageMessage) {
   if (inheritedBriefcase === undefined) inheritedBriefcase = {};
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipeline elements count:', elements.length);
 
@@ -851,7 +850,7 @@ function processPipeline(elements, pipelineId, resumeFrom, parentPath, inherited
       throw new Error('[processPipeline] top-level pipeline element must be STAGE, got ' + el.element);
     }
 
-    var compiledStage = processStage(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options);
+    var compiledStage = processStage(el, pipelineId, resumeFrom, parentPath, inheritedBriefcase, constants, dnaConstants, orderedStages, options, nextStageMessage);
     stages.push(compiledStage);
 
     return loop(index + 1, stages);
@@ -878,29 +877,27 @@ function findIndex(arr, predicate) {
   return -1;
 }
 
-function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stagePath, resumeFrom, orderedStages, options) {
+function stageRunner(stage, children, startIndex, pipelineId, resumeStage, stagePath, resumeFrom, orderedStages, options, nextStageMessage) {
   var control = stage.control;
   var id = stage.id;
-  if (!control || !control.command) return defaultRunner(id, children, startIndex, pipelineId, stagePath, options);
-  if (control.command === 'LOOP') return loopRunner(id, control, children, startIndex, pipelineId, stagePath, options);
+  if (!control || !control.command) return defaultRunner(id, children, startIndex, pipelineId, stagePath, options, nextStageMessage);
+  if (control.command === 'LOOP') return loopRunner(id, control, children, startIndex, pipelineId, stagePath, options, nextStageMessage);
   throw new Error('unknown stage command: ' + control.command);
 }
 
-function defaultRunner(id, children, startIndex, pipelineId, stagePath, options) {
+function defaultRunner(id, children, startIndex, pipelineId, stagePath, options, nextStageMessage) {
   return async function(env) {
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing defaultRunner stage:', id, 'pipeline:', pipelineId);
     var stageExecutor = async function(execEnv) {
       await enqueueExecutionStageState(pipelineId, id, { status: 'running', children: mapOrderedChildren(children) }).catch(function() {});
       var result = await executeChildren(children.slice(startIndex), execEnv, id, pipelineId, stagePath, options);
       var finalEnv = result.env || execEnv;
-      // P15: non-blocking env persistence
-      enqueueHypervisorSetEnv(pipelineId, finalEnv).catch(function(err) {
-        logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env save failed:', err);
-      });
-      // P15: Block Compiler sends completion with env and next stage
-      enqueueHypervisorStageCompleted(pipelineId, id, null, finalEnv).catch(function(err) {
+
+      // P27: no separate SET_ENV; stage completion carries env and next stage
+      enqueueHypervisorStageCompleted(pipelineId, id, nextStageMessage || null, finalEnv).catch(function(err) {
         logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'stage completion send failed:', err);
       });
+
       return finalEnv;
     };
     var submitted = await enqueueExecutionSubmitStage({ pipelineid: pipelineId, path: stagePath, stageid: id, stageExecutor: stageExecutor, env: env });
@@ -909,7 +906,7 @@ function defaultRunner(id, children, startIndex, pipelineId, stagePath, options)
   };
 }
 
-function loopRunner(id, control, children, startIndex, pipelineId, stagePath, options) {
+function loopRunner(id, control, children, startIndex, pipelineId, stagePath, options, nextStageMessage) {
   return async function(env) {
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing loopRunner stage:', id, 'pipeline:', pipelineId);
     var stageExecutor = async function(execEnv) {
@@ -928,11 +925,8 @@ function loopRunner(id, control, children, startIndex, pipelineId, stagePath, op
           return Promise.resolve(control.fn.apply(null, fnargs)).then(function(shouldContinue) {
             if (!shouldContinue) {
               logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'loopRunner stage:', id, 'loop finished at iteration:', iteration);
-              // P15: non-blocking env persistence + completion
-              enqueueHypervisorSetEnv(pipelineId, newEnv).catch(function(err) {
-                logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'hypervisor env save failed:', err);
-              });
-              enqueueHypervisorStageCompleted(pipelineId, id, null, newEnv).catch(function(err) {
+              // P27: no separate SET_ENV; stage completion carries env and next stage
+              enqueueHypervisorStageCompleted(pipelineId, id, nextStageMessage || null, newEnv).catch(function(err) {
                 logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'stage completion send failed:', err);
               });
               return newEnv;
@@ -1399,9 +1393,8 @@ export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPip
     COMPILERS: COMPILERS
   };
 
-  var compiledStage = processStage(stageDef, pipelineId, null, stagePath, briefcase, compilerConstants, dnaConstants, [], options);
-  var nextStageMessage = null;
   var stageIndex = fullPipeline.elements.indexOf(stageDef);
+  var nextStageMessage = null;
   if (stageIndex !== -1 && stageIndex + 1 < fullPipeline.elements.length) {
     nextStageMessage = {
       type: 'compile_stage',
@@ -1414,6 +1407,20 @@ export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPip
       options: options
     };
   }
+
+  var compiledStage = processStage(
+    stageDef,
+    pipelineId,
+    null,
+    stagePath,
+    briefcase,
+    compilerConstants,
+    dnaConstants,
+    [],
+    options,
+    nextStageMessage
+  );
+
   var isAsync = stageDef && stageDef.async === true;
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compileStage completed for stage:', stageDef && stageDef.id, 'hasNextStage:', Boolean(nextStageMessage), 'isAsync:', isAsync);
   return { compiledStage: compiledStage, nextStageMessage: nextStageMessage, isAsync: isAsync };

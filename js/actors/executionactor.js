@@ -2,7 +2,7 @@
 // UPDATED FILE: js/actors/executionactor.js
 // Changes applied:
 //   P10-ter: removed createLogger; direct portable logging functions
-//   P15: removed stage completion send; Execution Actor only settles task
+//   P27: runStageTask only settles task; no STAGE_COMPLETED send
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -593,7 +593,7 @@ async function runStageTask(taskid, descriptor) {
     await descriptor.stageExecutor(descriptor.env);
     logdebug(executionState, '[EXECUTIONACTOR]', 'runStageTask completed:', taskid, descriptor.stageid);
 
-    // P15: only settle task; Block Compiler sends STAGE_COMPLETED
+    // P27: only settle task; Block Compiler sends STAGE_COMPLETED
     try {
       EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: true });
     } catch (err) {

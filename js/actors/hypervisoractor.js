@@ -3,7 +3,7 @@
 // Changes applied:
 //   P9: defensive validation consumer for validatePipelineBriefcase
 //   P10-ter: removed createLogger; direct portable logging functions
-//   P15: STAGE_COMPLETED accepts env and nextStageMessage; persists env and dispatches next stage directly
+//   P27: STAGE_COMPLETED carries env and nextStageMessage; no separate SET_ENV
 // ============================================================
 
 import { createactor, pingActor } from './actorkernel.js';
@@ -20,9 +20,24 @@ import {
   loginfo,
   logcritical
 } from '../verbosity.js';
-import { enqueueExecutionSubmitStage, enqueueExecutionPing, enqueueExecutionPipelineLoaded, enqueueExecutionRegisterPipeline, startExecutionActor } from './executionactor.js';
-import { startRenderActor, enqueueRenderPing, enqueueRenderRecover, enqueueRenderRegisterTriggerExpectation } from './renderactor.js';
-import { startDebugActor, enqueueDebugPing, enqueueDebugRecover } from './debugactor.js';
+import {
+  enqueueExecutionSubmitStage,
+  enqueueExecutionPing,
+  enqueueExecutionPipelineLoaded,
+  enqueueExecutionRegisterPipeline,
+  startExecutionActor
+} from './executionactor.js';
+import {
+  startRenderActor,
+  enqueueRenderPing,
+  enqueueRenderRecover,
+  enqueueRenderRegisterTriggerExpectation
+} from './renderactor.js';
+import {
+  startDebugActor,
+  enqueueDebugPing,
+  enqueueDebugRecover
+} from './debugactor.js';
 import { startApiActor } from './apiactor.js';
 import { startWorldmapActor } from './worldmapactor.js';
 
@@ -96,7 +111,7 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.PING] = { resolve: 'function?', reject:
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.BOOT_PIPELINE] = { pipeline: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.COMPILE_STAGE] = { pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.COMPILE_STAGE] = { pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', options: 'object?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.STAGE_COMPLETED] = { pipelineId: 'string', stageId: 'string', env: 'object?', nextStageMessage: 'object?', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
 
@@ -618,6 +633,9 @@ var hypervisorbehavior = function(state, message) {
         options: bootOptions
       };
 
+      var savedEnvRoot = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
+      var initialEnv = savedEnvRoot ? savedEnvRoot.env : (bootOptions.baseEnv || {});
+
       enqueueExecutionPipelineLoaded(message.pipelineId, {}).catch(function(err) {
         logwarn(hypervisorState, '[HYPERVISOR]', 'pipeline loaded notification failed:', err);
       });
@@ -628,16 +646,14 @@ var hypervisorbehavior = function(state, message) {
         logwarn(hypervisorState, '[HYPERVISOR]', 'execution register pipeline failed:', err);
       });
 
-      var firstStageIndex = 0;
-      var firstStagePath = [];
       HYPERVISOR.send({
         type: HYPERVISORMESSAGETYPES.COMPILE_STAGE,
         pipeline: message.pipeline,
         pipelineId: message.pipelineId,
-        stageIndex: firstStageIndex,
-        stagePath: firstStagePath,
-        briefcase: message.pipeline.briefcase || {},
-        env: bootOptions.baseEnv || {},
+        stageIndex: 0,
+        stagePath: [],
+        briefcase: pipelineBriefcase,
+        env: initialEnv,
         options: bootOptions,
         resolve: null,
         reject: null
@@ -716,7 +732,6 @@ var hypervisorbehavior = function(state, message) {
       loginfo(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
       logdebug(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED env:', message.env, 'nextStageMessage:', message.nextStageMessage);
 
-      // P15: persist env if provided
       if (message.env !== undefined && message.env !== null) {
         if (!state.envByPipeline) state.envByPipeline = {};
         if (!state.envByPipeline[message.pipelineId]) state.envByPipeline[message.pipelineId] = {};
@@ -729,13 +744,11 @@ var hypervisorbehavior = function(state, message) {
         persistHypervisorState(state);
       }
 
-      // P15: use provided nextStageMessage, fallback to map for backward compatibility
       var nextMsg = message.nextStageMessage || (state.nextStageMessages ? state.nextStageMessages[key] : null);
 
       if (nextMsg) {
         if (state.nextStageMessages && state.nextStageMessages[key]) delete state.nextStageMessages[key];
 
-        // ensure env is set on next stage message
         if (!nextMsg.env) {
           var rootEntry = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
           nextMsg.env = rootEntry ? rootEntry.env : (message.env || {});

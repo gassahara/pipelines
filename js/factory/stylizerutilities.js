@@ -561,7 +561,6 @@ var StylizerCore = {
     return '';
   },
 
-  // Portable logging: direct calls to logdebug/logwarn/logerror/loginfo
   debug: function() {
     logdebug(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
   },
