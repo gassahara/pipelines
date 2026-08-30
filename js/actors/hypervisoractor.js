@@ -21,7 +21,6 @@ import {
   logcritical
 } from '../verbosity.js';
 import {
-  enqueueExecutionSubmitStage,
   enqueueExecutionPing,
   enqueueExecutionPipelineLoaded,
   enqueueExecutionRegisterPipeline,

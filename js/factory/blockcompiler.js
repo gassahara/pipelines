@@ -33,12 +33,11 @@ import {
   enqueueRenderRevalidateTriggers, enqueueRenderRestoreBodyHtml
 } from '../actors/renderactor.js';
 import {
-  enqueueExecutionPipelineLoaded, enqueueExecutionStageState,
+  enqueueExecutionPipelineLoaded,
   enqueueExecutionSubmit, enqueueExecutionAwaitTask,
   enqueueExecutionGetStatus, enqueueExecutionGetTasks,
   enqueueExecutionGetTaskStatus, enqueueExecutionCancelTask, enqueueExecutionStopTask,
-  enqueueExecutionStopStage, enqueueExecutionCancelStage, enqueueExecutionBreakStage,
-  enqueueExecutionRestartStage, enqueueExecutionContinueStage,
+  enqueueExecutionEnvUpdated,
   enqueueExecutionRegisterPipeline
 } from '../actors/executionactor.js';
 import {
@@ -495,11 +494,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         case 'await_task': result = await enqueueExecutionAwaitTask(args.taskid); break;
         case 'cancel_task': await enqueueExecutionCancelTask(args.taskid); return;
         case 'stop_task': await enqueueExecutionStopTask(args.taskid); return;
-        case 'stop': await enqueueExecutionStopStage(args.pipelineid, args.stageid); return;
-        case 'cancel': await enqueueExecutionCancelStage(args.pipelineid, args.stageid); return;
-        case 'break': await enqueueExecutionBreakStage(args.pipelineid, args.stageid); return;
-        case 'restart': await enqueueExecutionRestartStage(args.pipelineid, args.stageid, args.elementid || null); return;
-        case 'continue': await enqueueExecutionContinueStage(args.pipelineid, args.stageid); return;
         default: throw new Error('[executionquery] unknown command: ' + COMMAND);
       }
       writeoutputs(sig, env, { result: result }, id);

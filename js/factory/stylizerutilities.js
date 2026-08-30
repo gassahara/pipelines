@@ -562,16 +562,20 @@ var StylizerCore = {
   },
 
   debug: function() {
-    logdebug(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
+    var args = Array.prototype.slice.call(arguments);
+    logdebug.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
   },
   warn: function() {
-    logwarn(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
+    var args = Array.prototype.slice.call(arguments);
+    logwarn.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
   },
   error: function() {
-    logerror(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
+    var args = Array.prototype.slice.call(arguments);
+    logerror.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
   },
   info: function() {
-    loginfo(defaultVerbosityState, '[STYLIZERCORE]', ...arguments);
+    var args = Array.prototype.slice.call(arguments);
+    loginfo.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
   }
 };
 
