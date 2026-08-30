@@ -1,6 +1,7 @@
 // ============================================================
 // UPDATED FILE: js/factory/stylizerutilities.js
-// Change applied: no `this`, no closures; portable verbosity functions
+// Change applied:
+//   P10: fix checkSpacing recursion to visit all children
 // ============================================================
 
 import {
@@ -586,9 +587,6 @@ StylizerCore.color = {
   contrast: ColorContrast
 };
 
-// NOTE: No verbosity attachment with closures or `this`.
-// All logging uses portable functions from verbosity.js.
-
 var StylizerRewrite = {
   rewritestyleattrs: function(html, rules, StylizerCore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -1044,6 +1042,7 @@ var StylizerVerify = {
     };
   },
 
+  // P10: fixed recursion to visit all children, not only second of each pair
   checkSpacing: function(html, minGap, StylizerCore) {
     if (minGap === undefined) minGap = 12;
     var violations = [];
@@ -1052,6 +1051,7 @@ var StylizerVerify = {
     function walk(parent) {
       var children = Array.prototype.slice.call(parent.children);
 
+      // First check gaps between adjacent children
       for (var i = 0; i < children.length - 1; i++) {
         var a = children[i];
         var b = children[i + 1];
@@ -1064,8 +1064,11 @@ var StylizerVerify = {
             gap: gap
           });
         }
+      }
 
-        walk(b);
+      // Recurse into every child, not just the second of each pair
+      for (var j = 0; j < children.length; j++) {
+        walk(children[j]);
       }
     }
 

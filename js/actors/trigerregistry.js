@@ -44,10 +44,16 @@ function unregisterTrigger(registry, id, event) {
   return Object.freeze({ map: Object.freeze(newMap) });
 }
 
-function revalidateAll(registry) {
+// P11: Inject DOM dependency; optional doc parameter defaults to global document
+function revalidateAll(registry, doc) {
+  var documentRef = doc || (typeof document !== 'undefined' ? document : null);
+  if (!documentRef || typeof documentRef.getElementById !== 'function') {
+    throw new Error('[revalidateAll] Document object not available; provide a valid DOM document.');
+  }
+
   var map = registry.map;
   Object.keys(map).forEach(function(id) {
-    var el = document.getElementById(id);
+    var el = documentRef.getElementById(id);
     if (el) {
       var events = map[id];
       Object.keys(events).forEach(function(event) {

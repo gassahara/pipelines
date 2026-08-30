@@ -1,4 +1,9 @@
-import { updateworldmap as actormirror, observeworldmap as actorobserve, getworldmap } from './actors/worldmapactor.js';
+import {
+  updateworldmap as actormirror,
+  updateworldmapfn,
+  observeworldmap as actorobserve,
+  getworldmap
+} from './actors/worldmapactor.js';
 
 export const deepmerge = (target, source) => {
   if (!target || typeof target !== 'object' || Array.isArray(target)) return source;
@@ -26,9 +31,14 @@ export const createinitialworldmap = (envoverrides = {}) => ({
   layout: { currenttemplate: 'default', isloading: false, error: null, activestage: null, progress: 0, messages: [] }
 });
 
+// P20: functional updates are sent to the worldmap actor for evaluation
+// against the actor's current state, avoiding stale reads.
 export const updateworldmap = (update) => {
-  const current = getworldmap();
-  actormirror(typeof update === 'function' ? update(current) : update);
+  if (typeof update === 'function') {
+    updateworldmapfn(update);
+    return;
+  }
+  actormirror(update);
 };
 
 export const observeworldmap = (observer) => actorobserve(observer);

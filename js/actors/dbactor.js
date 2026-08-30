@@ -1,6 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied: removed createLogger; direct portable logging functions
+// Change applied:
+//   P9: reset PAIRSTORE and pairCounter at start of
+//       optimizeSerializedDna to prevent cross‑call contamination
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -232,6 +234,10 @@ function deserializePairStore(json) {
 function measureLength(obj) { return JSON.stringify(obj).length; }
 
 function optimizeSerializedDna(jsonString) {
+  // P9: reset global pair store and counter to avoid cross‑call contamination
+  Object.keys(PAIRSTORE).forEach(function(key) { delete PAIRSTORE[key]; });
+  pairCounter = 0;
+
   logdebug(dbState, '[DBACTOR]', 'optimizeSerializedDna start, input length:', jsonString.length);
   var obj = JSON.parse(jsonString);
 
@@ -344,7 +350,6 @@ function deoptimizeSerializedDna(jsonString) {
 
 var dbbehavior = function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : dbVerbosityConstants.DEBUG;
-  // Update global dbState for logging
   dbState = Object.freeze({ level: v });
 
   logdebug(dbState, '[DBACTOR]', 'behavior handling action:', message.type);

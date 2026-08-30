@@ -106,14 +106,20 @@ function setproperty(obj, prop, value) {
   return out;
 }
 
-function createnodefromtemplate(templateobj) {
+// P11: Inject DOM dependency; optional doc parameter defaults to global document
+function createnodefromtemplate(templateobj, doc) {
   if (!templateobj) return NOTHING();
+
+  var documentRef = doc || (typeof document !== 'undefined' ? document : null);
+  if (!documentRef || typeof documentRef.createElement !== 'function') {
+    throw new Error('[createnodefromtemplate] Document object not available; provide a valid DOM document.');
+  }
 
   var html = templateobj.html;
   var tagname = templateobj.tagname || 'div';
   var attributes = templateobj.attributes || {};
 
-  var container = document.createElement(tagname);
+  var container = documentRef.createElement(tagname);
 
   Object.keys(attributes).forEach(function(k) {
     var v = attributes[k];

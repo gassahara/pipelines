@@ -1,6 +1,7 @@
 // ============================================================
 // UPDATED FILE: js/actors/worldmapactor.js
-// Change applied: removed createLogger; direct portable logging functions
+// Change applied:
+//   P20: added functional update support (UPDATE_FN)
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -18,11 +19,13 @@ var worldmapVerbosityConstants = createVerbosityConstants();
 var worldmapState = Object.freeze({ level: worldmapVerbosityConstants.DEBUG });
 
 var UPDATE = 'update';
+var UPDATE_FN = 'update_fn';
 var OBSERVE = 'observe';
 var UNOBSERVE = 'unobserve';
 
 var MESSAGEINTERFACES = {};
 MESSAGEINTERFACES[UPDATE] = { patch: 'object' };
+MESSAGEINTERFACES[UPDATE_FN] = { fn: 'function' };
 MESSAGEINTERFACES[OBSERVE] = { observer: 'function' };
 MESSAGEINTERFACES[UNOBSERVE] = { observer: 'function' };
 Object.freeze(MESSAGEINTERFACES);
@@ -65,14 +68,37 @@ var worldmapbehavior = function(state, message) {
     });
     return { worldmap: nextworldmap, observers: state.observers, verbosity: v };
   }
+
+  if (message.type === UPDATE_FN) {
+    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action UPDATE_FN applying functional update');
+    if (typeof message.fn !== 'function') {
+      logwarn(worldmapState, '[WORLDMAPACTOR]', 'UPDATE_FN received non-function value');
+      return state;
+    }
+    var nextworldmapFn = message.fn(state.worldmap);
+    if (nextworldmapFn === undefined) {
+      nextworldmapFn = state.worldmap;
+    }
+    state.observers.forEach(function(observer) {
+      try {
+        observer(nextworldmapFn);
+      } catch (err) {
+        logwarn(worldmapState, '[WORLDMAPACTOR]', 'observer notification failed:', err);
+      }
+    });
+    return { worldmap: nextworldmapFn, observers: state.observers, verbosity: v };
+  }
+
   if (message.type === OBSERVE) {
     logdebug(worldmapState, '[WORLDMAPACTOR]', 'action OBSERVE new observer attached, total:', state.observers.length + 1);
     return { worldmap: state.worldmap, observers: state.observers.concat([message.observer]), verbosity: v };
   }
+
   if (message.type === UNOBSERVE) {
     logdebug(worldmapState, '[WORLDMAPACTOR]', 'action UNOBSERVE observer detached');
     return { worldmap: state.worldmap, observers: state.observers.filter(function(obs) { return obs !== message.observer; }), verbosity: v };
   }
+
   return state;
 };
 
@@ -111,6 +137,10 @@ var updateworldmap = function(patch) {
   return WORLDMAPACTOR.send({ type: UPDATE, patch: patch });
 };
 
+var updateworldmapfn = function(fn) {
+  return WORLDMAPACTOR.send({ type: UPDATE_FN, fn: fn });
+};
+
 var observeworldmap = function(observer) {
   return WORLDMAPACTOR.send({ type: OBSERVE, observer: observer });
 };
@@ -125,6 +155,7 @@ var getworldmap = function() {
 
 export {
   updateworldmap,
+  updateworldmapfn,
   observeworldmap,
   unobserveworldmap,
   getworldmap,

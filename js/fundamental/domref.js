@@ -20,6 +20,14 @@ function getRawElement(ref) {
   return null;
 }
 
+function removeRawElementRef(ref) {
+  for (var i = RAWMAP.length - 1; i >= 0; i--) {
+    if (RAWMAP[i].ref === ref) {
+      RAWMAP.splice(i, 1);
+    }
+  }
+}
+
 function GETRAWELEMENT(ref) {
   if (!ref || typeof ref !== 'object') {
     throw new Error('[GETRAWELEMENT] Invalid domref');
@@ -69,11 +77,17 @@ function CREATEDOMREF(rawelement, actorRegistry) {
         },
         data: {}
       });
+      // Clean up raw element reference after removal request
+      removeRawElementRef(ref);
     }
   };
 
   setRawElement(ref, rawelement);
   return ref;
+}
+
+function REMOVEREF(ref) {
+  removeRawElementRef(ref);
 }
 
 function ISVALIDDOMREF(ref) {
@@ -83,5 +97,6 @@ function ISVALIDDOMREF(ref) {
 export {
   GETRAWELEMENT,
   CREATEDOMREF,
+  REMOVEREF,
   ISVALIDDOMREF
 };

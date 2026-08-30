@@ -1,10 +1,11 @@
 // ============================================================
 // UPDATED FILE: js/factory/blockcompiler.js
 // Changes applied:
-//   P‑REFACTOR: no stage executor; Element orchestration only.
-//   loadPipeline sends BOOT_PIPELINE with preprocessed firstStage.
-//   compileStage returns elementFunctions + nextStageMessage.
-//   orchestrateStage recursively processes elements.
+//   P1: processPipelineElement awaits boot promise
+//   P4: crypto block validates bytes and uses writeoutputs
+//   P5: compileHttpBlock uses writeoutputs
+//   P6: STOREQUERY block implemented (store/restore/list/delete)
+//   P21: nested STAGE support (recursive compile/orchestrate)
 // ============================================================
 
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
@@ -48,6 +49,12 @@ import {
   enqueueHypervisorSetStageDescriptor,
   enqueueHypervisorStageCompleted
 } from '../actors/hypervisoractor.js';
+import {
+  enqueueDbStore,
+  enqueueDbRestore,
+  enqueueDbList,
+  enqueueDbDelete
+} from '../actors/dbactor.js';
 
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
@@ -352,11 +359,8 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
         result = rawresult.data || rawresult;
       }
     }
-    var outputkeys = Object.keys(sig.outputs || {});
-    if (outputkeys.length === 1) env[outputkeys[0]] = result;
-    else if (typeof result === 'object' && result) {
-      outputkeys.forEach(function(key) { if (result[key] !== undefined) env[key] = result[key]; });
-    }
+    // P5: use writeoutputs for consistent output handling
+    writeoutputs(sig, env, result, id);
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'http block completed:', id, 'status:', rawresult && rawresult.status);
   };
   blockfn.id = id;
@@ -458,12 +462,15 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
     return blockfn;
   };
 
+  // P4: validate bytes and use writeoutputs
   compilers[BLOCKTYPES.CRYPTO] = function(merged, id, sig) {
     var blockfn = async function(env) {
       var outputkey = Object.keys(sig.outputs || {})[0];
       if (!outputkey) throw new Error('[crypto] requires outputs');
-      var result = await new Promise(function(resolve, reject) { RENDERACTOR.send({ type: MESSAGETYPES.CRYPTO, bytes: merged.bytes || 512, resolve: resolve, reject: reject }); });
-      env[outputkey] = result;
+      var bytes = merged.bytes === undefined ? 512 : merged.bytes;
+      if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
+      var result = await new Promise(function(resolve, reject) { RENDERACTOR.send({ type: MESSAGETYPES.CRYPTO, bytes: bytes, resolve: resolve, reject: reject }); });
+      writeoutputs(sig, env, { [outputkey]: result }, id);
       return {};
     };
     blockfn.id = id;
@@ -502,8 +509,34 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
     return blockfn;
   };
 
-  compilers[BLOCKTYPES.STOREQUERY] = function(merged, id) {
-    var blockfn = async function() { throw new Error('[STOREQUERY] Block "' + id + '" is not implemented'); };
+  // P6: STOREQUERY block implemented
+  compilers[BLOCKTYPES.STOREQUERY] = function(merged, id, sig) {
+    var blockfn = async function(env) {
+      var command = merged.command || {};
+      var COMMAND = command.COMMAND;
+      var args = command.args || {};
+      var result;
+      switch (COMMAND) {
+        case 'store':
+          if (!args.key) throw new Error('[storequery] store requires key');
+          result = await enqueueDbStore(args.key, args.value !== undefined ? args.value : compilepathaccessor(args.value)(env));
+          break;
+        case 'restore':
+          if (!args.key) throw new Error('[storequery] restore requires key');
+          result = await enqueueDbRestore(args.key);
+          break;
+        case 'list':
+          result = await enqueueDbList();
+          break;
+        case 'delete':
+          if (!args.key) throw new Error('[storequery] delete requires key');
+          result = await enqueueDbDelete(args.key);
+          break;
+        default:
+          throw new Error('[storequery] unknown command: ' + COMMAND);
+      }
+      writeoutputs(sig, env, { result: result }, id);
+    };
     blockfn.id = id;
     return blockfn;
   };
@@ -527,6 +560,7 @@ function compileblock(block, inheritedBriefcase, constants, options) {
 function processNode(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options) {
   if (node.element === 'BLOCK') return processElement(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options);
   if (node.element === 'PIPELINE') return processPipelineElement(node, pipelineId, stagePath, inheritedBriefcase, options);
+  if (node.element === 'STAGE') return processNestedStage(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options);
   throw new Error('unexpected nested element type: ' + node.element);
 }
 
@@ -537,6 +571,7 @@ function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants
   return createPersistentElementWrapper(fn, el, stagePath, pipelineId, options);
 }
 
+// P1: processPipelineElement now returns a promise that resolves after boot completes
 function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, options) {
   var elementId = el.id || 'pipeline_unknown';
   var blockfn = async function(env) {
@@ -568,14 +603,100 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, o
     var bootPromise = enqueueHypervisorBootPipeline(bootMessage);
     var outputkey = Object.keys(el.outputs || {})[0] || null;
     if (outputkey) {
-      bootPromise.then(function(bootResult) { env[outputkey] = bootResult; }).catch(function(err) { env[outputkey] = { status: 'failed', error: err && err.message ? err.message : String(err) }; });
+      return bootPromise.then(function(bootResult) {
+        env[outputkey] = bootResult;
+        return bootResult;
+      }).catch(function(err) {
+        env[outputkey] = { status: 'failed', error: err && err.message ? err.message : String(err) };
+        throw err;
+      });
     }
+    return bootPromise;
   };
   blockfn.id = elementId;
   blockfn.kind = 'pipeline';
   return blockfn;
 }
 
+// P21: process nested stage element
+function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options) {
+  var childStagePath = stagePath.concat([childStage.id]);
+  var childBriefcase = cloneObject(inheritedBriefcase || {});
+  if (childStage.briefcase) {
+    Object.keys(childStage.briefcase).forEach(function(key) { childBriefcase[key] = childStage.briefcase[key]; });
+  }
+
+  // If trigger stage, register separately and return no-op wrapper
+  if (childStage.control && childStage.control.command === 'TRIGGER') {
+    var sourceid = childStage.control.sourceid;
+    var event = childStage.control.event;
+    if (!sourceid || !event) throw new Error('[processNestedStage] trigger stage missing sourceid/event');
+    var descriptor = {
+      pipelineId: pipelineId,
+      stageId: childStage.id,
+      stagePath: childStagePath,
+      control: childStage.control,
+      elements: childStage.elements,
+      briefcase: childBriefcase,
+      options: options || {}
+    };
+    // Register with hypervisor (descriptor) and renderactor (trigger listener)
+    enqueueHypervisorSetStageDescriptor(pipelineId, childStage.id, descriptor).catch(function(err) {
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'failed to set nested stage descriptor:', err);
+    });
+    enqueueRenderRegisterTriggerExpectation({
+      pipelineId: pipelineId,
+      stageId: childStage.id,
+      stagePath: childStagePath,
+      sourceid: sourceid,
+      event: event,
+      control: childStage.control,
+      children: childStage.elements,
+      output: null,
+      env: null
+    }).catch(function(err) {
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'failed to register nested trigger:', err);
+    });
+    var noopWrapper = function(env) { return Promise.resolve(env); };
+    noopWrapper.isTriggerRegistration = true;
+    return noopWrapper;
+  }
+
+  // For normal and async stages, recursively compile child stage
+  var childResult = compileStageRequestToElements(
+    { elements: [childStage] }, // fake pipeline containing only this stage? Actually compileStageRequestToElements expects a pipeline object with elements array; we can pass a wrapper with elements [childStage].
+    0, // stageIndex 0 for this nested stage
+    childStagePath,
+    childBriefcase,
+    {}, // env will be passed at runtime, so use dummy? The function uses env only for building properties for blocks? It passes env to compileStageRequestToElements; but compileStageRequestToElements doesn't use env except for nextStageMessage and maybe process? It passes env to processElement, but processElement uses env only when building wrapper? Actually processElement calls compileblock, which doesn't use env. env is used in createPersistentElementWrapper at call time, not compile time. So env dummy is fine.
+    options || {}
+  );
+
+  var childElementFunctions = childResult.elementFunctions;
+  var childNextStageMessage = childResult.nextStageMessage;
+  var childStageDef = childResult.stage;
+
+  if (childStage.async === true) {
+    var asyncWrapper = function(env) {
+      // fire and forget
+      orchestrateStage(childStageDef, childElementFunctions, pipelineId, env, childStagePath, options || {}, childNextStageMessage)
+        .catch(function(err) {
+          logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
+        });
+      return undefined; // no promise, so parent doesn't await
+    };
+    asyncWrapper.asyncStage = true;
+    return asyncWrapper;
+  } else {
+    var syncWrapper = function(env) {
+      return orchestrateStage(childStageDef, childElementFunctions, pipelineId, env, childStagePath, options || {}, childNextStageMessage);
+    };
+    syncWrapper.asyncStage = false; // explicit, though not needed
+    return syncWrapper;
+  }
+}
+
+// Modify compileStageRequestToElements to include STAGE branch
 function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcase, env, options) {
   if (options === undefined) options = {};
   var constants = createBlockCompilerConstants();
@@ -598,6 +719,8 @@ function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcas
       elementFunctions.push(processElement(child, pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline', stagePath.concat([stage.id]), stageBriefcase, compilerConstants, dnaConstants, options));
     } else if (child.element === 'PIPELINE') {
       elementFunctions.push(processPipelineElement(child, pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline', stagePath.concat([stage.id]), stageBriefcase, options));
+    } else if (child.element === 'STAGE') {
+      elementFunctions.push(processNestedStage(child, pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline', stagePath.concat([stage.id]), stageBriefcase, compilerConstants, dnaConstants, options));
     }
   });
 
@@ -618,16 +741,22 @@ function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcas
   return { elementFunctions: elementFunctions, nextStageMessage: nextStageMessage, stage: stage };
 }
 
+// Update orchestrateStage to handle async wrappers (not await)
 function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, options, nextStageMessage) {
   function runElement(index, currentEnv) {
     if (index >= elementFunctions.length) {
       return Promise.resolve(currentEnv);
     }
     var elementFn = elementFunctions[index];
-    var childId = elementFn.id || ('element_' + index);
-    return elementFn(currentEnv).then(function(result) {
+    if (elementFn.asyncStage === true) {
+      // fire and forget
+      elementFn(currentEnv);
       return runElement(index + 1, currentEnv);
-    });
+    } else {
+      return elementFn(currentEnv).then(function(result) {
+        return runElement(index + 1, currentEnv);
+      });
+    }
   }
 
   return runElement(0, env).then(function(finalEnv) {
@@ -662,7 +791,6 @@ export function loadPipeline(pipelineDefinition, pipelineId, options) {
 }
 
 export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPipeline, options) {
-  // kept for compatibility, but hypervisor should use compileStageRequestToElements + orchestrateStage
   var stageIndex = fullPipeline.elements.indexOf(stageDef);
   return compileStageRequestToElements(fullPipeline, stageIndex, stagePath, briefcase, {}, options);
 }

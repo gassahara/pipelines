@@ -1,8 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
 // Changes applied:
-//   P‑REFACTOR: removed EXECUTE_STAGE and runStageTask.
-//   ExecutionActor now only executes element tasks and sends TASK_SETTLED.
+//   P13: persist combined state (tasks, pipelines, taskCounter)
+//   P15: stopTask rejects promise and consumers
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -108,9 +108,17 @@ function createInitialExecutionWorldmap() {
   };
 }
 
+// P13: persist combined state object so all live fields are saved
 function persistExecutionWorldmap(state) {
-  logdebug(executionState, '[EXECUTIONACTOR]', 'persistExecutionWorldmap saving state to db');
-  enqueueDbStore('actor:state:execution', state.worldmap).catch(function(e) {
+  logdebug(executionState, '[EXECUTIONACTOR]', 'persistExecutionWorldmap saving combined state to db');
+  var persistable = {
+    pipelines: state.pipelines || {},
+    tasks: state.tasks || {},
+    taskCounter: state.taskCounter || 0,
+    htmlSnapshot: state.htmlSnapshot || null,
+    worldmap: state.worldmap || {}
+  };
+  enqueueDbStore('actor:state:execution', persistable).catch(function(e) {
     logwarn(executionState, '[EXECUTIONACTOR]', 'state persist failed:', e);
   });
 }
@@ -162,11 +170,22 @@ function cancelTask(state, taskid) {
   task.consumers = [];
 }
 
+// P15: stopTask rejects promises and consumers to avoid hangs
 function stopTask(state, taskid) {
   var task = state.tasks[taskid];
   if (!task) return;
   logdebug(executionState, '[EXECUTIONACTOR]', 'stopTask stopping task:', taskid);
   task.status = 'STOPPED';
+  var stoppedError = new Error('Task stopped: ' + taskid);
+  if (task.rejectTask) {
+    task.rejectTask(stoppedError);
+  }
+  if (task.consumers) {
+    task.consumers.forEach(function(consumer) {
+      if (consumer.reject) consumer.reject(stoppedError);
+    });
+    task.consumers = [];
+  }
 }
 
 function ensurePipeline(state, pipelineid) {
@@ -256,6 +275,8 @@ var executionbehavior = function(state, message) {
         rejectMessage(message, awaitTask.error || new Error('task failed'));
       } else if (awaitTask.status === 'CANCELLED') {
         rejectMessage(message, awaitTask.error || new Error('task cancelled'));
+      } else if (awaitTask.status === 'STOPPED') {
+        rejectMessage(message, awaitTask.error || new Error('task stopped'));
       } else {
         if (!awaitTask.consumers) awaitTask.consumers = [];
         awaitTask.consumers.push({
@@ -349,7 +370,7 @@ var executionbehavior = function(state, message) {
     case EXECUTIONMESSAGETYPES.RECOVER: {
       enqueueDbRestore('actor:state:execution').then(function(saved) {
         if (saved) {
-          nextState.worldmap = saved;
+          nextState.worldmap = saved.worldmap || saved;
           nextState.pipelines = saved.pipelines || {};
           nextState.tasks = saved.tasks || {};
           nextState.htmlSnapshot = saved.htmlSnapshot || null;
@@ -414,7 +435,7 @@ async function loadInitialState() {
         htmlSnapshot: saved.htmlSnapshot || null,
         tasks: saved.tasks || {},
         taskCounter: saved.taskCounter || 0,
-        worldmap: saved,
+        worldmap: saved.worldmap || saved,
         debugState: { currentContinuation: null }
       };
     }

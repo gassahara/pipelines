@@ -1,6 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: removed createLogger; direct portable logging functions
+// Changes applied:
+//   P14: renderbehavior awaits async handlers to prevent state races
+//   P16: serialize GC cycles with mutex flags
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -234,7 +236,12 @@ function ensureTriggerObserver(state) {
   state._triggerObserver = observer;
 }
 
+// P16: serialize GC cycles with mutex flags
 function scheduleGcCycle(state) {
+  if (state._gcCycleRunning) {
+    state._gcCycleQueued = true;
+    return;
+  }
   if (state._triggerGcScheduled) {
     return;
   }
@@ -246,12 +253,20 @@ function scheduleGcCycle(state) {
 }
 
 function triggerGcCycle(state) {
+  if (state._gcCycleRunning) {
+    state._gcCycleQueued = true;
+    return Promise.resolve();
+  }
+
   if (typeof document === 'undefined') return Promise.resolve();
   if (document.readyState !== 'complete') {
     return waitForDomReady().then(function() {
       return triggerGcCycle(state);
     });
   }
+
+  state._gcCycleRunning = true;
+  state._gcCycleQueued = false;
 
   var objects = listObjects(state._gc);
 
@@ -348,12 +363,17 @@ function triggerGcCycle(state) {
   function processList(index) {
     if (index >= objects.length) {
       collectEnded(state._gc);
+      state._gcCycleRunning = false;
+      if (state._gcCycleQueued) {
+        scheduleGcCycle(state);
+      }
       return Promise.resolve();
     }
     return processOne(objects[index]).then(function() {
       return processList(index + 1);
     });
   }
+
   return processList(0);
 }
 
@@ -726,7 +746,8 @@ HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
 
 var refcounter = 0;
 
-var renderbehavior = function(state, message) {
+// P14: async behavior awaits handler promises
+var renderbehavior = async function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : renderVerbosityConstants.DEBUG;
   renderState = Object.freeze({ level: v });
   logdebug(renderState, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
@@ -737,7 +758,12 @@ var renderbehavior = function(state, message) {
   }
 
   var handler = HANDLERS[message.type];
-  if (handler) handler(state, message);
+  if (handler) {
+    var result = handler(state, message);
+    if (result && typeof result.then === 'function') {
+      await result;
+    }
+  }
   return state;
 };
 
@@ -752,6 +778,8 @@ var initialState = {
   worldmap: createInitialRenderWorldmap(),
   _gc: createGarbageCollector(),
   _triggerGcScheduled: false,
+  _gcCycleRunning: false,   // P16
+  _gcCycleQueued: false,    // P16
   verbosity: renderVerbosityConstants.DEBUG
 };
 
@@ -810,13 +838,13 @@ var enqueuegethtml = createEnqueuer(MESSAGETYPES.GETHTML, true);
 var enqueuegetvalue = createEnqueuer(MESSAGETYPES.GETVALUE, true);
 var enqueuegetstyle = createEnqueuer(MESSAGETYPES.GETSTYLE, true);
 var enqueuegetposition = createEnqueuer(MESSAGETYPES.GETPOSITION, true);
+var enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
 var enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, function(rest) { return { value: rest[0] }; });
 var enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, function(rest) { return { value: rest[0] }; });
 var enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, function(rest) { return { value: rest[0] }; });
 var enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, function(rest) { return { value: rest[0] }; });
 var enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, function(rest) { return { name: rest[0], arguments: rest[1] }; });
-var enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
-var enqueusetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
+var enqueuetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
 var enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
 var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
 var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
@@ -962,7 +990,7 @@ export {
   enqueuesetvalue,
   enqueueproperty,
   enqueuegetlayout,
-  enqueusetlayout,
+  enqueuetlayout,
   enqueuegetviewport,
   enqueuegetscreen,
   enqueuematchmedia,
