@@ -1,14 +1,14 @@
 // ============================================================
 // UPDATED FILE: js/actors/hypervisoractor.js
 // Changes applied:
-//   P9: defensive validation consumer for validatePipelineBriefcase
-//   P10-ter: removed createLogger; direct portable logging functions
-//   P27: STAGE_COMPLETED carries env and nextStageMessage; no separate SET_ENV
+//   P‑REFACTOR: forwards preprocessed firstStage in BOOT_PIPELINE.
+//   COMPILE_STAGE calls BlockCompiler compileStageRequestToElements
+//   and orchestrateStage. STAGE_COMPLETED persists env and dispatches next.
 // ============================================================
 
 import { createactor, pingActor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete, startDbActor } from './dbactor.js';
-import { executeStage, validatePipelineBriefcase, createTriggerRegistrationFromStage } from '../factory/blockcompiler.js';
+import { validatePipelineBriefcase } from '../factory/blockcompiler.js';
 import { callwithstack } from '../factory/callwithstack.js';
 import { EVALSTACK } from '../evalstack.js';
 import {
@@ -46,12 +46,8 @@ var hypervisorState = Object.freeze({ level: hypervisorVerbosityConstants.DEBUG 
 
 function createHypervisorErrorContext(label) {
   return function(err) {
-    if (!err) {
-      err = new Error('unknown hypervisor error');
-    }
-    if (!err.diagnostic) {
-      err.diagnostic = {};
-    }
+    if (!err) err = new Error('unknown hypervisor error');
+    if (!err.diagnostic) err.diagnostic = {};
     err.diagnostic.hypervisorstage = label;
     throw err;
   };
@@ -110,7 +106,7 @@ MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.TRIGGER_EVENT] = { pipelineId: 'string'
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS] = { resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.BOOT_PIPELINE] = { pipeline: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.BOOT_PIPELINE] = { pipeline: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', firstStage: 'object?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.COMPILE_STAGE] = { pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', options: 'object?', resolve: 'function?', reject: 'function?' };
 MESSAGEINTERFACES[HYPERVISORMESSAGETYPES.STAGE_COMPLETED] = { pipelineId: 'string', stageId: 'string', env: 'object?', nextStageMessage: 'object?', resolve: 'function?', reject: 'function?' };
 Object.freeze(MESSAGEINTERFACES);
@@ -159,113 +155,57 @@ function recoverHypervisorState(verbosity) {
     }
     logdebug(hypervisorState, '[HYPERVISOR]', 'recoverHypervisorState creating initial state');
     var initial = createInitialHypervisorState(verbosity);
-    return enqueueDbStore('actor:state:hypervisor', initial).then(function() {
-      return initial;
-    });
+    return enqueueDbStore('actor:state:hypervisor', initial).then(function() { return initial; });
   });
 }
 
 var renderModulePromise = null;
 function getRenderModule() {
-  if (!renderModulePromise) {
-    renderModulePromise = import('./renderactor.js');
-  }
+  if (!renderModulePromise) renderModulePromise = import('./renderactor.js');
   return renderModulePromise;
 }
 
 var executionModulePromise = null;
 function getExecutionModule() {
-  if (!executionModulePromise) {
-    executionModulePromise = import('./executionactor.js');
-  }
+  if (!executionModulePromise) executionModulePromise = import('./executionactor.js');
   return executionModulePromise;
 }
 
 var debugModulePromise = null;
 function getDebugModule() {
-  if (!debugModulePromise) {
-    debugModulePromise = import('./debugactor.js');
-  }
+  if (!debugModulePromise) debugModulePromise = import('./debugactor.js');
   return debugModulePromise;
 }
 
 function ensureActorAlive(name, pingFn, startFn, retries) {
   if (retries === undefined) retries = 3;
-
   function safePing() {
-    return Promise.resolve().then(pingFn).then(function(alive) {
-      return alive === true;
-    }).catch(function() {
-      return false;
-    });
+    return Promise.resolve().then(pingFn).then(function(alive) { return alive === true; }).catch(function() { return false; });
   }
-
   return safePing().then(function(alive) {
-    if (alive) {
-      logdebug(hypervisorState, '[HYPERVISOR]', 'ensureActorAlive actor is alive:', name);
-      return true;
-    }
-
-    if (retries <= 0) {
-      logerror(hypervisorState, '[HYPERVISOR]', 'ensureActorAlive actor unreachable:', name);
-      throw new Error('[activateManagedActors] ' + name + ' actor not reachable');
-    }
-
-    logdebug(hypervisorState, '[HYPERVISOR]', 'ensureActorAlive restarting actor:', name, 'retries left:', retries);
-    return Promise.resolve().then(startFn).then(function() {
-      return ensureActorAlive(name, pingFn, startFn, retries - 1);
-    });
+    if (alive) { logdebug(hypervisorState, '[HYPERVISOR]', 'ensureActorAlive actor alive:', name); return true; }
+    if (retries <= 0) { logerror(hypervisorState, '[HYPERVISOR]', 'actor unreachable:', name); throw new Error('[activateManagedActors] ' + name + ' actor not reachable'); }
+    return Promise.resolve().then(startFn).then(function() { return ensureActorAlive(name, pingFn, startFn, retries - 1); });
   });
 }
 
 async function activateManagedActors(options) {
-  var verbosity = (options && options.verbosity !== undefined)
-    ? options.verbosity
-    : (typeof options === 'number' ? options : getverbosity(hypervisorState));
-
-  logdebug(hypervisorState, '[HYPERVISOR]', 'activateManagedActors booting managed actors with verbosity:', verbosity);
-
+  var verbosity = (options && options.verbosity !== undefined) ? options.verbosity : (typeof options === 'number' ? options : getverbosity(hypervisorState));
   var renderMod = await getRenderModule();
-  await ensureActorAlive(
-    'renderactor',
-    function() { return renderMod.enqueueRenderPing(); },
-    function() { return renderMod.startRenderActor({ verbosity: verbosity }); }
-  );
-  await renderMod.enqueueRenderRecover().catch(function(err) {
-    logwarn(hypervisorState, '[HYPERVISOR]', 'render recover failed:', err);
-  });
-
+  await ensureActorAlive('renderactor', function() { return renderMod.enqueueRenderPing(); }, function() { return renderMod.startRenderActor({ verbosity: verbosity }); });
+  await renderMod.enqueueRenderRecover().catch(function(err) { logwarn(hypervisorState, '[HYPERVISOR]', 'render recover failed:', err); });
   var execMod = await getExecutionModule();
-  await ensureActorAlive(
-    'executionactor',
-    function() { return execMod.enqueueExecutionPing(); },
-    function() { return execMod.startExecutionActor({ verbosity: verbosity }); }
-  );
-  await execMod.enqueueExecutionRecover().catch(function(err) {
-    logwarn(hypervisorState, '[HYPERVISOR]', 'execution recover failed:', err);
-  });
-
+  await ensureActorAlive('executionactor', function() { return execMod.enqueueExecutionPing(); }, function() { return execMod.startExecutionActor({ verbosity: verbosity }); });
+  await execMod.enqueueExecutionRecover().catch(function(err) { logwarn(hypervisorState, '[HYPERVISOR]', 'execution recover failed:', err); });
   var debugMod = await getDebugModule();
-  await ensureActorAlive(
-    'debugactor',
-    function() { return debugMod.enqueueDebugPing(); },
-    function() { return debugMod.startDebugActor({ verbosity: verbosity }); }
-  );
-  await debugMod.enqueueDebugRecover().catch(function(err) {
-    logwarn(hypervisorState, '[HYPERVISOR]', 'debug recover failed:', err);
-  });
+  await ensureActorAlive('debugactor', function() { return debugMod.enqueueDebugPing(); }, function() { return debugMod.startDebugActor({ verbosity: verbosity }); });
+  await debugMod.enqueueDebugRecover().catch(function(err) { logwarn(hypervisorState, '[HYPERVISOR]', 'debug recover failed:', err); });
 }
 
 async function bootActors(options) {
   if (options === undefined) options = {};
-  var verbosity = typeof options === 'number'
-    ? options
-    : (options && options.verbosity !== undefined
-      ? options.verbosity
-      : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : hypervisorVerbosityConstants.DEBUG));
-
-  loginfo(hypervisorState, '[HYPERVISOR]', 'bootActors starting synchronized boot sequence with verbosity:', verbosity);
-
+  var verbosity = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : hypervisorVerbosityConstants.DEBUG));
+  loginfo(hypervisorState, '[HYPERVISOR]', 'bootActors starting with verbosity:', verbosity);
   var dbActor = startDbActor({ verbosity: verbosity });
   var worldmapActor = startWorldmapActor({ verbosity: verbosity });
   var apiActor = startApiActor({ verbosity: verbosity });
@@ -273,68 +213,30 @@ async function bootActors(options) {
   var execActor = startExecutionActor({ verbosity: verbosity });
   var debugActor = startDebugActor({ verbosity: verbosity });
   var hypervisorActor = await startHypervisorActor({ verbosity: verbosity });
-
   var actorStatuses = {};
   var allAlive = true;
-
+  actorStatuses.dbactor = !!dbActor; if (!dbActor) allAlive = false;
+  actorStatuses.worldmapactor = !!worldmapActor; if (!worldmapActor) allAlive = false;
+  actorStatuses.apiactor = !!apiActor; if (!apiActor) allAlive = false;
   try {
-    var dbAlive = dbActor !== null && dbActor !== undefined;
-    actorStatuses['dbactor'] = dbAlive;
-    if (!dbAlive) allAlive = false;
-
-    var worldmapAlive = worldmapActor !== null && worldmapActor !== undefined;
-    actorStatuses['worldmapactor'] = worldmapAlive;
-    if (!worldmapAlive) allAlive = false;
-
-    var apiAlive = apiActor !== null && apiActor !== undefined;
-    actorStatuses['apiactor'] = apiAlive;
-    if (!apiAlive) allAlive = false;
-
-    var renderAlive = await enqueueRenderPing().catch(function() { return false; });
-    actorStatuses['renderactor'] = renderAlive;
-    if (!renderAlive) allAlive = false;
+    actorStatuses.renderactor = await enqueueRenderPing().catch(function() { return false; }); if (!actorStatuses.renderactor) allAlive = false;
     await enqueueRenderRecover().catch(function() {});
-
-    var execAlive = await enqueueExecutionPing().catch(function() { return false; });
-    actorStatuses['executionactor'] = execAlive;
-    if (!execAlive) allAlive = false;
+    actorStatuses.executionactor = await enqueueExecutionPing().catch(function() { return false; }); if (!actorStatuses.executionactor) allAlive = false;
     await import('./executionactor.js').then(function(m) { return m.enqueueExecutionRecover(); }).catch(function() {});
-
-    var debugAlive = await enqueueDebugPing().catch(function() { return false; });
-    actorStatuses['debugactor'] = debugAlive;
-    if (!debugAlive) allAlive = false;
+    actorStatuses.debugactor = await enqueueDebugPing().catch(function() { return false; }); if (!actorStatuses.debugactor) allAlive = false;
     await enqueueDebugRecover().catch(function() {});
-
-    var hyperAlive = await enqueueHypervisorPing().catch(function() { return false; });
-    actorStatuses['hypervisoractor'] = hyperAlive;
-    if (!hyperAlive) allAlive = false;
+    actorStatuses.hypervisoractor = await enqueueHypervisorPing().catch(function() { return false; }); if (!actorStatuses.hypervisoractor) allAlive = false;
     await enqueueHypervisorActivateActors().catch(function() {});
-
-    loginfo(hypervisorState, '[HYPERVISOR]', 'bootActors synchronized boot sequence completed, all alive:', allAlive);
-
-    return {
-      success: allAlive,
-      status: allAlive ? 'BOOTED' : 'PARTIAL',
-      actors: actorStatuses,
-      timestamp: Date.now(),
-      verbosity: verbosity
-    };
+    return { success: allAlive, status: allAlive ? 'BOOTED' : 'PARTIAL', actors: actorStatuses, timestamp: Date.now(), verbosity: verbosity };
   } catch (err) {
-    logerror(hypervisorState, '[HYPERVISOR]', 'bootActors synchronized boot sequence failed:', err);
-    return {
-      success: false,
-      status: 'FAILED',
-      error: err && err.message ? err.message : String(err),
-      actors: actorStatuses,
-      timestamp: Date.now()
-    };
+    logerror(hypervisorState, '[HYPERVISOR]', 'bootActors failed:', err);
+    return { success: false, status: 'FAILED', error: err && err.message ? err.message : String(err), actors: actorStatuses, timestamp: Date.now() };
   }
 }
 
 var hypervisorbehavior = function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : hypervisorVerbosityConstants.DEBUG;
   hypervisorState = Object.freeze({ level: v });
-
   logdebug(hypervisorState, '[HYPERVISOR]', 'behavior handling action:', message.type);
 
   switch (message.type) {
@@ -350,7 +252,6 @@ var hypervisorbehavior = function(state, message) {
       break;
 
     case HYPERVISORMESSAGETYPES.GET_ENV: {
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_ENV pipeline:', message.pipelineId);
       var pipelineState = state.envByPipeline && state.envByPipeline[message.pipelineId];
       var rootEntry = pipelineState && pipelineState.__root__ && pipelineState.__root__.__root__;
       resolveMessage(message, rootEntry ? rootEntry.env : (pipelineState || null));
@@ -358,77 +259,58 @@ var hypervisorbehavior = function(state, message) {
     }
 
     case HYPERVISORMESSAGETYPES.SET_ENV: {
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action SET_ENV pipeline:', message.pipelineId, 'stage:', message.stageId);
+      logdebug(hypervisorState, '[HYPERVISOR]', 'action SET_ENV pipeline:', message.pipelineId);
       if (!state.envByPipeline) state.envByPipeline = {};
       if (!state.envByPipeline[message.pipelineId]) state.envByPipeline[message.pipelineId] = {};
-
       var stageId = message.stageId || '__root__';
       var elementId = message.elementId || '__root__';
       if (!state.envByPipeline[message.pipelineId][stageId]) state.envByPipeline[message.pipelineId][stageId] = {};
-      state.envByPipeline[message.pipelineId][stageId][elementId] = {
-        env: message.env || {},
-        updatedAt: Date.now()
-      };
-
+      state.envByPipeline[message.pipelineId][stageId][elementId] = { env: message.env || {}, updatedAt: Date.now() };
       if (stageId !== '__root__' || elementId !== '__root__') {
-        state.envByPipeline[message.pipelineId].__root__ = {
-          __root__: {
-            env: message.env || {},
-            updatedAt: Date.now()
-          }
-        };
+        state.envByPipeline[message.pipelineId].__root__ = { __root__: { env: message.env || {}, updatedAt: Date.now() } };
       }
-
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
     }
 
     case HYPERVISORMESSAGETYPES.GET_LATEST_ENV: {
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_LATEST_ENV pipeline:', message.pipelineId, 'stage:', message.stageId);
       var pState = state.envByPipeline && state.envByPipeline[message.pipelineId];
       var sState = pState && pState[message.stageId];
       var eState = sState && sState[message.elementId];
-      if (eState) {
-        resolveMessage(message, eState.env);
-      } else {
-        var rootEntry = pState && pState.__root__ && pState.__root__.__root__;
-        resolveMessage(message, rootEntry ? rootEntry.env : null);
+      if (eState) resolveMessage(message, eState.env);
+      else {
+        var root = pState && pState.__root__ && pState.__root__.__root__;
+        resolveMessage(message, root ? root.env : null);
       }
       break;
     }
 
     case HYPERVISORMESSAGETYPES.GET_RENDER_HTML:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_RENDER_HTML');
       resolveMessage(message, state.renderHtml || '');
       break;
 
     case HYPERVISORMESSAGETYPES.SET_RENDER_HTML:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action SET_RENDER_HTML html length:', (message.html || '').length);
       state.renderHtml = message.html || '';
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
 
     case HYPERVISORMESSAGETYPES.GET_EXECUTION_STACK:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_EXECUTION_STACK count:', (state.executionStack || []).length);
       resolveMessage(message, state.executionStack || []);
       break;
 
     case HYPERVISORMESSAGETYPES.SET_EXECUTION_STACK:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action SET_EXECUTION_STACK count:', (message.stack || []).length);
       state.executionStack = message.stack || [];
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
 
     case HYPERVISORMESSAGETYPES.GET_ROUTE:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_ROUTE key:', message.key);
       resolveMessage(message, state.routes && message.key ? (state.routes[message.key] || null) : null);
       break;
 
     case HYPERVISORMESSAGETYPES.SET_ROUTE:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action SET_ROUTE key:', message.key, 'route:', message.route);
       if (!state.routes) state.routes = {};
       state.routes[message.key] = message.route || null;
       persistHypervisorState(state);
@@ -436,35 +318,24 @@ var hypervisorbehavior = function(state, message) {
       break;
 
     case HYPERVISORMESSAGETYPES.GET_ACTIVE_PIPELINES:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_ACTIVE_PIPELINES count:', (state.activePipelines || []).length);
       resolveMessage(message, (state.activePipelines || []).slice());
       break;
 
     case HYPERVISORMESSAGETYPES.REGISTER_PIPELINE:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action REGISTER_PIPELINE:', message.pipelineId);
       if (!state.activePipelines) state.activePipelines = [];
-      if (state.activePipelines.indexOf(message.pipelineId) === -1) {
-        state.activePipelines.push(message.pipelineId);
-        persistHypervisorState(state);
-      }
+      if (state.activePipelines.indexOf(message.pipelineId) === -1) { state.activePipelines.push(message.pipelineId); persistHypervisorState(state); }
       resolveMessage(message, true);
       break;
 
     case HYPERVISORMESSAGETYPES.UNREGISTER_PIPELINE:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action UNREGISTER_PIPELINE:', message.pipelineId);
       if (!state.activePipelines) state.activePipelines = [];
       state.activePipelines = state.activePipelines.filter(function(id) { return id !== message.pipelineId; });
-      if (state.triggerRecipients) {
-        Object.keys(state.triggerRecipients).forEach(function(key) {
-          if (key.indexOf(message.pipelineId + ':') === 0) delete state.triggerRecipients[key];
-        });
-      }
+      if (state.triggerRecipients) Object.keys(state.triggerRecipients).forEach(function(key) { if (key.indexOf(message.pipelineId + ':') === 0) delete state.triggerRecipients[key]; });
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
 
     case HYPERVISORMESSAGETYPES.SET_PROGRAM:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action SET_PROGRAM key:', message.programKey);
       if (!state.programs) state.programs = {};
       state.programs[message.programKey] = message.programSource;
       persistHypervisorState(state);
@@ -472,12 +343,10 @@ var hypervisorbehavior = function(state, message) {
       break;
 
     case HYPERVISORMESSAGETYPES.GET_PROGRAM:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_PROGRAM key:', message.programKey);
       resolveMessage(message, state.programs && message.programKey ? (state.programs[message.programKey] || null) : null);
       break;
 
     case HYPERVISORMESSAGETYPES.MARK_BOOT:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action MARK_BOOT boot:', message.boot);
       state.boot = message.boot !== false;
       persistHypervisorState(state);
       resolveMessage(message, true);
@@ -486,13 +355,9 @@ var hypervisorbehavior = function(state, message) {
     case HYPERVISORMESSAGETYPES.SET_STAGE_DESCRIPTOR: {
       if (!state.stageDescriptors) state.stageDescriptors = {};
       if (!state.triggerRecipients) state.triggerRecipients = {};
-
       var key = message.pipelineId + ':' + message.stageId;
       state.stageDescriptors[key] = message.descriptor;
       state.triggerRecipients[key] = true;
-
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action SET_STAGE_DESCRIPTOR stored key:', key);
-
       persistHypervisorState(state);
       resolveMessage(message, true);
       break;
@@ -501,7 +366,6 @@ var hypervisorbehavior = function(state, message) {
     case HYPERVISORMESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS: {
       var recipientKey = message.pipelineId + ':' + message.stageId;
       var isLive = state.triggerRecipients && state.triggerRecipients[recipientKey] === true;
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action GET_TRIGGER_RECIPIENT_STATUS key:', recipientKey, 'isLive:', isLive);
       resolveMessage(message, isLive);
       break;
     }
@@ -509,112 +373,55 @@ var hypervisorbehavior = function(state, message) {
     case HYPERVISORMESSAGETYPES.TRIGGER_EVENT: {
       var pipelineId = message.pipelineId;
       var stageId = message.stageId;
-      var stagePath = message.stagePath || [stageId];
-
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action TRIGGER_EVENT pipeline:', pipelineId, 'stage:', stageId);
-
       var rootEntry = state.envByPipeline && state.envByPipeline[pipelineId] && state.envByPipeline[pipelineId].__root__ && state.envByPipeline[pipelineId].__root__.__root__;
       var env = rootEntry ? rootEntry.env : { pipelineid: pipelineId };
-
       var descriptorKey = pipelineId + ':' + stageId;
       var descriptor = state.stageDescriptors && state.stageDescriptors[descriptorKey];
-
-      if (!descriptor) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'missing trigger stage descriptor:', descriptorKey);
-        rejectMessage(message, new Error('[HYPERVISOR] missing trigger stage descriptor: ' + descriptorKey));
-        return state;
-      }
-
-      state.routes['pipeline:' + pipelineId] = {
-        stageId: stageId,
-        stagePath: stagePath
-      };
+      if (!descriptor) { logwarn(hypervisorState, '[HYPERVISOR]', 'missing trigger descriptor:', descriptorKey); rejectMessage(message, new Error('missing trigger descriptor: ' + descriptorKey)); return state; }
+      state.routes['pipeline:' + pipelineId] = { stageId: stageId, stagePath: message.stagePath || [stageId] };
       persistHypervisorState(state);
-
-      callwithstack(
-        EVALSTACK,
-        'hypervisor-trigger:' + pipelineId + ':' + stageId,
-        'async-await',
-        function() {
-          return executeStage(descriptor, env, 'trigger', message.eventPayload);
-        },
-        [env],
-        {
-          context: { env: env },
-          capturecontinuation: true,
-          errk: createHypervisorErrorContext('trigger')
-        }
-      ).then(function(result) {
+      callwithstack(EVALSTACK, 'hypervisor-trigger:' + pipelineId + ':' + stageId, 'async-await', function() { return executeStage(descriptor, env, 'trigger', message.eventPayload); }, [env], { context: { env: env }, capturecontinuation: true, errk: createHypervisorErrorContext('trigger') }).then(function(result) {
         var updatedEnv = result && result.env ? result.env : env;
         if (!state.envByPipeline[pipelineId]) state.envByPipeline[pipelineId] = {};
-        state.envByPipeline[pipelineId].__root__ = {
-          __root__: {
-            env: updatedEnv,
-            updatedAt: Date.now()
-          }
-        };
+        state.envByPipeline[pipelineId].__root__ = { __root__: { env: updatedEnv, updatedAt: Date.now() } };
         persistHypervisorState(state);
-        logdebug(hypervisorState, '[HYPERVISOR]', 'trigger completed:', pipelineId, stageId);
         resolveMessage(message, updatedEnv);
-      }).catch(function(err) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'trigger failed:', err);
-        rejectMessage(message, err);
-      });
-
+      }).catch(function(err) { logwarn(hypervisorState, '[HYPERVISOR]', 'trigger failed:', err); rejectMessage(message, err); });
       return state;
     }
 
     case HYPERVISORMESSAGETYPES.PING:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action PING');
       resolveMessage(message, true);
       break;
 
     case HYPERVISORMESSAGETYPES.RECOVER:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action RECOVER');
       recoverHypervisorState(state.verbosity).then(function(saved) {
-        if (saved && saved.envByPipeline) state.envByPipeline = saved.envByPipeline;
-        if (saved && saved.renderHtml) state.renderHtml = saved.renderHtml;
-        if (saved && saved.executionStack) state.executionStack = saved.executionStack;
-        if (saved && saved.routes) state.routes = saved.routes;
-        if (saved && saved.activePipelines) state.activePipelines = saved.activePipelines;
-        if (saved && saved.programs) state.programs = saved.programs;
-        if (saved && saved.stageDescriptors) state.stageDescriptors = saved.stageDescriptors;
-        if (saved && saved.triggerRecipients) state.triggerRecipients = saved.triggerRecipients;
-        if (saved && saved.loadedPipelines) state.loadedPipelines = saved.loadedPipelines;
-        if (saved && saved.nextStageMessages) state.nextStageMessages = saved.nextStageMessages;
-        state.boot = saved.boot !== undefined ? saved.boot : true;
+        if (saved) {
+          state.envByPipeline = saved.envByPipeline || state.envByPipeline;
+          state.renderHtml = saved.renderHtml || state.renderHtml;
+          state.executionStack = saved.executionStack || state.executionStack;
+          state.routes = saved.routes || state.routes;
+          state.activePipelines = saved.activePipelines || state.activePipelines;
+          state.programs = saved.programs || state.programs;
+          state.stageDescriptors = saved.stageDescriptors || state.stageDescriptors;
+          state.triggerRecipients = saved.triggerRecipients || state.triggerRecipients;
+          state.loadedPipelines = saved.loadedPipelines || state.loadedPipelines;
+          state.nextStageMessages = saved.nextStageMessages || state.nextStageMessages;
+        }
         state.savedAt = Date.now();
         persistHypervisorState(state);
-        logdebug(hypervisorState, '[HYPERVISOR]', 'recovery completed');
         resolveMessage(message, state);
-      }).catch(function(err) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'recover failed:', err);
-        rejectMessage(message, err);
-      });
+      }).catch(function(err) { rejectMessage(message, err); });
       return state;
 
     case HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS:
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action ACTIVATE_ACTORS');
-      activateManagedActors({ verbosity: state.verbosity }).then(function() {
-        resolveMessage(message, true);
-      }).catch(function(err) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'managed actor activation failed:', err);
-        rejectMessage(message, err);
-      });
+      activateManagedActors({ verbosity: state.verbosity }).then(function() { resolveMessage(message, true); }).catch(function(err) { rejectMessage(message, err); });
       return state;
 
-    case HYPERVISORMESSAGETYPES.BOOT_PIPELINE:
+    case HYPERVISORMESSAGETYPES.BOOT_PIPELINE: {
       var bootOptions = message.options || {};
-      if (bootOptions.autorun === undefined) {
-        bootOptions.autorun = true;
-      }
-      if (bootOptions.verbosity === undefined && state.verbosity !== undefined) {
-        bootOptions.verbosity = state.verbosity;
-      }
-
-      loginfo(hypervisorState, '[HYPERVISOR]', 'action BOOT_PIPELINE pipelineId:', message.pipelineId);
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action BOOT_PIPELINE details:', message.pipelineId, bootOptions);
-
+      if (bootOptions.autorun === undefined) bootOptions.autorun = true;
+      if (bootOptions.verbosity === undefined && state.verbosity !== undefined) bootOptions.verbosity = state.verbosity;
       var pipelineBriefcase = message.pipeline && message.pipeline.briefcase ? message.pipeline.briefcase : {};
       var briefcaseCheck = validatePipelineBriefcase(pipelineBriefcase);
       var briefcaseErrors = Array.isArray(briefcaseCheck) ? briefcaseCheck : (briefcaseCheck.errors || []);
@@ -626,33 +433,21 @@ var hypervisorbehavior = function(state, message) {
       }
 
       state.loadedPipelines = state.loadedPipelines || {};
-      state.loadedPipelines[message.pipelineId] = {
-        pipeline: message.pipeline,
-        accessors: message.accessors || null,
-        sinks: message.sinks || [],
-        options: bootOptions
-      };
+      state.loadedPipelines[message.pipelineId] = { pipeline: message.pipeline, accessors: message.accessors || null, sinks: message.sinks || [], options: bootOptions };
+      var savedRoot = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
+      var initialEnv = savedRoot ? savedRoot.env : (bootOptions.baseEnv || {});
+      enqueueExecutionPipelineLoaded(message.pipelineId, {}).catch(function(err) { logwarn(hypervisorState, '[HYPERVISOR]', 'pipeline loaded notification failed:', err); });
+      enqueueHypervisorRegisterPipeline(message.pipelineId).catch(function(err) { logwarn(hypervisorState, '[HYPERVISOR]', 'hypervisor register pipeline failed:', err); });
+      enqueueExecutionRegisterPipeline(message.pipelineId, null, {}).catch(function(err) { logwarn(hypervisorState, '[HYPERVISOR]', 'execution register pipeline failed:', err); });
 
-      var savedEnvRoot = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
-      var initialEnv = savedEnvRoot ? savedEnvRoot.env : (bootOptions.baseEnv || {});
-
-      enqueueExecutionPipelineLoaded(message.pipelineId, {}).catch(function(err) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'pipeline loaded notification failed:', err);
-      });
-      enqueueHypervisorRegisterPipeline(message.pipelineId).catch(function(err) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'hypervisor register pipeline failed:', err);
-      });
-      enqueueExecutionRegisterPipeline(message.pipelineId, null, {}).catch(function(err) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'execution register pipeline failed:', err);
-      });
-
+      var firstStage = message.firstStage || { stageIndex: 0, stagePath: [], briefcase: pipelineBriefcase };
       HYPERVISOR.send({
         type: HYPERVISORMESSAGETYPES.COMPILE_STAGE,
         pipeline: message.pipeline,
         pipelineId: message.pipelineId,
-        stageIndex: 0,
-        stagePath: [],
-        briefcase: pipelineBriefcase,
+        stageIndex: firstStage.stageIndex,
+        stagePath: firstStage.stagePath || [],
+        briefcase: firstStage.briefcase || pipelineBriefcase,
         env: initialEnv,
         options: bootOptions,
         resolve: null,
@@ -660,68 +455,19 @@ var hypervisorbehavior = function(state, message) {
       });
       resolveMessage(message, { started: true, pipelineId: message.pipelineId });
       return state;
+    }
 
     case HYPERVISORMESSAGETYPES.COMPILE_STAGE: {
       var compileReq = message;
       logdebug(hypervisorState, '[HYPERVISOR]', 'action COMPILE_STAGE:', compileReq.pipelineId, 'stageIndex:', compileReq.stageIndex);
-
       import('../factory/blockcompiler.js').then(function(mod) {
-        var stageDef = compileReq.pipeline.elements[compileReq.stageIndex];
-        var result = mod.compileStage(
-          stageDef,
-          compileReq.briefcase,
-          compileReq.pipelineId,
-          compileReq.stagePath,
-          compileReq.pipeline,
-          compileReq.options || { verbosity: state.verbosity }
-        );
-
-        if (result.compiledStage && result.compiledStage.isTrigger) {
-          var reg = createTriggerRegistrationFromStage(result.compiledStage);
-          logdebug(hypervisorState, '[HYPERVISOR]', 'registering trigger expectation for stage:', reg.stageId, 'source:', reg.sourceid, 'event:', reg.event);
-
-          enqueueHypervisorSetStageDescriptor(
-            reg.pipelineId,
-            reg.stageId,
-            {
-              stageId: reg.stageId,
-              stagePath: reg.stagePath,
-              pipelineId: reg.pipelineId,
-              children: reg.children,
-              control: reg.control,
-              output: reg.output || null
-            }
-          ).catch(function(err) {
-            logwarn(hypervisorState, '[HYPERVISOR]', 'hypervisor stage descriptor failed:', err);
-          });
-
-          enqueueRenderRegisterTriggerExpectation(reg).catch(function(err) {
-            logwarn(hypervisorState, '[HYPERVISOR]', 'trigger registration failed:', err);
-          });
-        }
-
-        var isAsyncStage = result.isAsync === true || (stageDef && stageDef.async === true);
-
-        if (isAsyncStage && result.nextStageMessage) {
-          logdebug(hypervisorState, '[HYPERVISOR]', 'async stage: immediately dispatching next stage message');
-          HYPERVISOR.send(result.nextStageMessage);
-        } else {
-          state.nextStageMessages = state.nextStageMessages || {};
-          state.nextStageMessages[compileReq.pipelineId + ':' + result.compiledStage.id] = result.nextStageMessage;
-        }
-
-        return enqueueExecutionSubmitStage({
-          pipelineid: compileReq.pipelineId,
-          path: compileReq.stagePath && compileReq.stagePath.length ? compileReq.stagePath : [result.compiledStage.id],
-          stageid: result.compiledStage.id,
-          stageExecutor: result.compiledStage,
-          env: compileReq.env || {}
+        var result = mod.compileStageRequestToElements(compileReq.pipeline, compileReq.stageIndex, compileReq.stagePath, compileReq.briefcase, compileReq.env || {}, compileReq.options || {});
+        return mod.orchestrateStage(result.stage, result.elementFunctions, compileReq.pipelineId, compileReq.env || {}, compileReq.stagePath || [], compileReq.options || {}, result.nextStageMessage).then(function() {
+          logdebug(hypervisorState, '[HYPERVISOR]', 'COMPILE_STAGE orchestration started');
+          resolveMessage(message, { started: true });
         });
-      }).then(function(submitted) {
-        logdebug(hypervisorState, '[HYPERVISOR]', 'stage compilation submitted taskid:', submitted.taskid);
-        resolveMessage(message, { taskid: submitted.taskid });
       }).catch(function(err) {
-        logwarn(hypervisorState, '[HYPERVISOR]', 'stage compilation failed:', err);
+        logwarn(hypervisorState, '[HYPERVISOR]', 'compile stage orchestration failed:', err);
         rejectMessage(message, err);
       });
       return state;
@@ -730,35 +476,23 @@ var hypervisorbehavior = function(state, message) {
     case HYPERVISORMESSAGETYPES.STAGE_COMPLETED: {
       var key = message.pipelineId + ':' + message.stageId;
       loginfo(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
-      logdebug(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED env:', message.env, 'nextStageMessage:', message.nextStageMessage);
-
       if (message.env !== undefined && message.env !== null) {
         if (!state.envByPipeline) state.envByPipeline = {};
         if (!state.envByPipeline[message.pipelineId]) state.envByPipeline[message.pipelineId] = {};
-        state.envByPipeline[message.pipelineId].__root__ = {
-          __root__: {
-            env: message.env,
-            updatedAt: Date.now()
-          }
-        };
+        state.envByPipeline[message.pipelineId].__root__ = { __root__: { env: message.env, updatedAt: Date.now() } };
         persistHypervisorState(state);
       }
-
       var nextMsg = message.nextStageMessage || (state.nextStageMessages ? state.nextStageMessages[key] : null);
-
       if (nextMsg) {
         if (state.nextStageMessages && state.nextStageMessages[key]) delete state.nextStageMessages[key];
-
         if (!nextMsg.env) {
           var rootEntry = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
           nextMsg.env = rootEntry ? rootEntry.env : (message.env || {});
         }
-
-        logdebug(hypervisorState, '[HYPERVISOR]', 'dispatching next stage message:', nextMsg.type, 'stageIndex:', nextMsg.stageIndex);
+        logdebug(hypervisorState, '[HYPERVISOR]', 'dispatching next stage:', nextMsg.stageIndex);
         HYPERVISOR.send(nextMsg);
       } else {
         loginfo(hypervisorState, '[HYPERVISOR]', 'pipeline complete:', message.pipelineId);
-        logdebug(hypervisorState, '[HYPERVISOR]', 'no next stage message, unregistering active pipeline:', message.pipelineId);
         if (state.activePipelines) {
           state.activePipelines = state.activePipelines.filter(function(id) { return id !== message.pipelineId; });
           persistHypervisorState(state);
@@ -772,16 +506,10 @@ var hypervisorbehavior = function(state, message) {
       logwarn(hypervisorState, '[HYPERVISOR]', 'unknown message type:', message.type);
       rejectMessage(message, new Error('[HYPERVISOR] unknown message type: ' + message.type));
   }
-
   return state;
 };
 
-var hypervisorMailboxStore = {
-  store: enqueueDbStore,
-  restore: enqueueDbRestore,
-  delete: enqueueDbDelete
-};
-
+var hypervisorMailboxStore = { store: enqueueDbStore, restore: enqueueDbRestore, delete: enqueueDbDelete };
 var HYPERVISOR = null;
 var hypervisorStartPromise = null;
 
@@ -789,37 +517,20 @@ function startHypervisorActor(options) {
   if (HYPERVISOR) {
     if (options !== undefined) {
       var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-      if (lvl !== undefined) {
-        hypervisorState = Object.freeze({ level: lvl });
-      }
+      if (lvl !== undefined) hypervisorState = Object.freeze({ level: lvl });
     }
     return Promise.resolve(HYPERVISOR);
   }
-
-  var verbosity = typeof options === 'number'
-    ? options
-    : (options && options.verbosity !== undefined
-      ? options.verbosity
-      : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : hypervisorVerbosityConstants.DEBUG));
-
+  var verbosity = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : hypervisorVerbosityConstants.DEBUG));
   hypervisorState = Object.freeze({ level: verbosity });
-
   if (!hypervisorStartPromise) {
     hypervisorStartPromise = recoverHypervisorState(verbosity).then(function(initial) {
-      if (HYPERVISOR) {
-        return HYPERVISOR;
-      }
+      if (HYPERVISOR) return HYPERVISOR;
       initial.verbosity = verbosity;
-      HYPERVISOR = createactor(
-        hypervisorbehavior,
-        initial,
-        MESSAGEINTERFACES,
-        { actorName: 'hypervisoractor', mailboxType: 'db', mailboxStore: hypervisorMailboxStore, verbosity: verbosity }
-      );
+      HYPERVISOR = createactor(hypervisorbehavior, initial, MESSAGEINTERFACES, { actorName: 'hypervisoractor', mailboxType: 'db', mailboxStore: hypervisorMailboxStore, verbosity: verbosity });
       return HYPERVISOR;
     });
   }
-
   return hypervisorStartPromise;
 }
 
@@ -827,9 +538,7 @@ function enqueue(type, payload) {
   return startHypervisorActor().then(function() {
     return new Promise(function(resolve, reject) {
       var message = {};
-      if (payload) {
-        Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
-      }
+      if (payload) Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
       message.type = type;
       message.resolve = resolve;
       message.reject = reject;
@@ -862,12 +571,7 @@ var enqueueHypervisorPing = function() { return enqueue(HYPERVISORMESSAGETYPES.P
 var enqueueHypervisorActivateActors = function() { return enqueue(HYPERVISORMESSAGETYPES.ACTIVATE_ACTORS); };
 var enqueueHypervisorBootPipeline = function(payload) { return enqueue(HYPERVISORMESSAGETYPES.BOOT_PIPELINE, payload); };
 var enqueueHypervisorStageCompleted = function(pipelineId, stageId, nextStageMessage, env) {
-  return enqueue(HYPERVISORMESSAGETYPES.STAGE_COMPLETED, {
-    pipelineId: pipelineId,
-    stageId: stageId,
-    nextStageMessage: nextStageMessage || null,
-    env: env
-  });
+  return enqueue(HYPERVISORMESSAGETYPES.STAGE_COMPLETED, { pipelineId: pipelineId, stageId: stageId, nextStageMessage: nextStageMessage || null, env: env });
 };
 
 export {

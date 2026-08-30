@@ -115,8 +115,6 @@ function getverbosityname(levelValue) {
 }
 
 function createVerbosityFunctions() {
-  // Returns an object of portable function references.
-  // No closures, no `this`. State and prefix are passed explicitly.
   return Object.freeze({
     getverbosity: getverbosity,
     setverbosity: setverbosity,
