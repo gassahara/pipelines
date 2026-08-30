@@ -1,11 +1,22 @@
 // ============================================================
 // UPDATED FILE: js/actors/worldmapactor.js
-// Change applied:
-//   P20: added functional update support (UPDATE_FN)
+// Changes applied:
+//   - mailboxType 'mail' with mailTransport injection
+//   - update/observe/unobserve functions use sendInstruction +
+//     awaitResponse
+//   - getworldmap now sends GET_WORLDMAP instruction and awaits response
+//   - state persistence still uses enqueueDbStore/Restore/Delete
 // ============================================================
 
 import { createactor } from './actorkernel.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
+import {
+  sendInstruction,
+  requestUnreadMessages,
+  sendResponse,
+  awaitResponse,
+  generateTag
+} from './mailactor.js';
 import {
   createVerbosityConstants,
   logdebug,
@@ -22,12 +33,14 @@ var UPDATE = 'update';
 var UPDATE_FN = 'update_fn';
 var OBSERVE = 'observe';
 var UNOBSERVE = 'unobserve';
+var GET_WORLDMAP = 'get_worldmap';
 
 var MESSAGEINTERFACES = {};
 MESSAGEINTERFACES[UPDATE] = { patch: 'object' };
 MESSAGEINTERFACES[UPDATE_FN] = { fn: 'function' };
 MESSAGEINTERFACES[OBSERVE] = { observer: 'function' };
 MESSAGEINTERFACES[UNOBSERVE] = { observer: 'function' };
+MESSAGEINTERFACES[GET_WORLDMAP] = {};
 Object.freeze(MESSAGEINTERFACES);
 
 function deepmerge(target, patch) {
@@ -41,9 +54,7 @@ function deepmerge(target, patch) {
       targetval !== null && typeof targetval === 'object' && !Array.isArray(targetval)
     );
     var result = {};
-    Object.keys(acc).forEach(function(k) {
-      if (k !== key) result[k] = acc[k];
-    });
+    Object.keys(acc).forEach(function(k) { if (k !== key) result[k] = acc[k]; });
     result[key] = bothobjects ? deepmerge(targetval, patchval) : patchval;
     return result;
   }, target);
@@ -56,56 +67,35 @@ var worldmapbehavior = function(state, message) {
   logdebug(worldmapState, '[WORLDMAPACTOR]', 'behavior handling action:', message.type);
 
   if (message.type === UPDATE) {
-    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action UPDATE patch keys:', Object.keys(message.patch || {}).join(', '));
     var nextworldmap = deepmerge(state.worldmap, message.patch);
-    logdebug(worldmapState, '[WORLDMAPACTOR]', 'notifying', state.observers.length, 'observers');
     state.observers.forEach(function(observer) {
-      try {
-        observer(nextworldmap);
-      } catch (err) {
-        logwarn(worldmapState, '[WORLDMAPACTOR]', 'observer notification failed:', err);
-      }
+      try { observer(nextworldmap); } catch (err) { logwarn(worldmapState, '[WORLDMAPACTOR]', 'observer notification failed:', err); }
     });
     return { worldmap: nextworldmap, observers: state.observers, verbosity: v };
   }
 
   if (message.type === UPDATE_FN) {
-    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action UPDATE_FN applying functional update');
-    if (typeof message.fn !== 'function') {
-      logwarn(worldmapState, '[WORLDMAPACTOR]', 'UPDATE_FN received non-function value');
-      return state;
-    }
     var nextworldmapFn = message.fn(state.worldmap);
-    if (nextworldmapFn === undefined) {
-      nextworldmapFn = state.worldmap;
-    }
+    if (nextworldmapFn === undefined) nextworldmapFn = state.worldmap;
     state.observers.forEach(function(observer) {
-      try {
-        observer(nextworldmapFn);
-      } catch (err) {
-        logwarn(worldmapState, '[WORLDMAPACTOR]', 'observer notification failed:', err);
-      }
+      try { observer(nextworldmapFn); } catch (err) { logwarn(worldmapState, '[WORLDMAPACTOR]', 'observer notification failed:', err); }
     });
     return { worldmap: nextworldmapFn, observers: state.observers, verbosity: v };
   }
 
   if (message.type === OBSERVE) {
-    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action OBSERVE new observer attached, total:', state.observers.length + 1);
     return { worldmap: state.worldmap, observers: state.observers.concat([message.observer]), verbosity: v };
   }
 
   if (message.type === UNOBSERVE) {
-    logdebug(worldmapState, '[WORLDMAPACTOR]', 'action UNOBSERVE observer detached');
     return { worldmap: state.worldmap, observers: state.observers.filter(function(obs) { return obs !== message.observer; }), verbosity: v };
   }
 
-  return state;
-};
+  if (message.type === GET_WORLDMAP) {
+    return state.worldmap;
+  }
 
-var worldmapMailboxStore = {
-  store: enqueueDbStore,
-  restore: enqueueDbRestore,
-  delete: enqueueDbDelete
+  return state;
 };
 
 var WORLDMAPACTOR = createactor(
@@ -114,8 +104,13 @@ var WORLDMAPACTOR = createactor(
   MESSAGEINTERFACES,
   {
     actorName: 'worldmapactor',
-    mailboxType: 'db',
-    mailboxStore: worldmapMailboxStore,
+    mailboxType: 'mail',
+    mailTransport: {
+      sendInstruction: sendInstruction,
+      requestUnreadMessages: requestUnreadMessages,
+      sendResponse: sendResponse
+    },
+    pollInterval: 25,
     verbosity: worldmapVerbosityConstants.DEBUG
   }
 );
@@ -133,25 +128,35 @@ function startWorldmapActor(options) {
   return WORLDMAPACTOR;
 }
 
-var updateworldmap = function(patch) {
-  return WORLDMAPACTOR.send({ type: UPDATE, patch: patch });
-};
+function updateworldmap(patch) {
+  const tag = generateTag();
+  sendInstruction('worldmapactor', UPDATE, { patch: patch }, tag, 'system');
+  return awaitResponse('system', tag);
+}
 
-var updateworldmapfn = function(fn) {
-  return WORLDMAPACTOR.send({ type: UPDATE_FN, fn: fn });
-};
+function updateworldmapfn(fn) {
+  const tag = generateTag();
+  sendInstruction('worldmapactor', UPDATE_FN, { fn: fn }, tag, 'system');
+  return awaitResponse('system', tag);
+}
 
-var observeworldmap = function(observer) {
-  return WORLDMAPACTOR.send({ type: OBSERVE, observer: observer });
-};
+function observeworldmap(observer) {
+  const tag = generateTag();
+  sendInstruction('worldmapactor', OBSERVE, { observer: observer }, tag, 'system');
+  return awaitResponse('system', tag);
+}
 
-var unobserveworldmap = function(observer) {
-  return WORLDMAPACTOR.send({ type: UNOBSERVE, observer: observer });
-};
+function unobserveworldmap(observer) {
+  const tag = generateTag();
+  sendInstruction('worldmapactor', UNOBSERVE, { observer: observer }, tag, 'system');
+  return awaitResponse('system', tag);
+}
 
-var getworldmap = function() {
-  return WORLDMAPACTOR.getstate().worldmap;
-};
+function getworldmap() {
+  const tag = generateTag();
+  sendInstruction('worldmapactor', GET_WORLDMAP, {}, tag, 'system');
+  return awaitResponse('system', tag);
+}
 
 export {
   updateworldmap,

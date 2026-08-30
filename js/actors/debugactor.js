@@ -1,6 +1,13 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Change applied: removed createLogger; direct portable logging functions
+// Changes applied:
+//   - mailboxType changed to 'mail'
+//   - mailTransport injected statically from mailactor.js
+//   - behavior no longer embeds resolve/reject; sends response
+//     via sendResponse(sender, tag, result)
+//   - global error/unhandledrejection listeners use sendInstruction
+//   - CCC commands route through sendInstruction to executionactor
+//   - state persistence still uses enqueueDbStore/Restore/Delete
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -16,10 +23,12 @@ import {
 } from '../verbosity.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
 import {
-  enqueueExecutionCccRetry,
-  enqueueExecutionCccContinue,
-  enqueueExecutionCccAbort
-} from './executionactor.js';
+  sendInstruction,
+  requestUnreadMessages,
+  sendResponse,
+  awaitResponse,
+  generateTag
+} from './mailactor.js';
 
 var debugVerbosityConstants = createVerbosityConstants();
 var debugState = Object.freeze({ level: debugVerbosityConstants.DEBUG });
@@ -33,11 +42,11 @@ var DEBUG_MESSAGETYPES = Object.freeze({
 });
 
 var MESSAGEINTERFACES = {};
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.INIT_OVERLAY] = { resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.SHOW] = { error: 'object', continuation: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.HIDE] = { resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[DEBUG_MESSAGETYPES.INIT_OVERLAY] = { sender: 'string?', tag: 'string?' };
+MESSAGEINTERFACES[DEBUG_MESSAGETYPES.SHOW] = { error: 'object', continuation: 'object?', sender: 'string?', tag: 'string?' };
+MESSAGEINTERFACES[DEBUG_MESSAGETYPES.HIDE] = { sender: 'string?', tag: 'string?' };
+MESSAGEINTERFACES[DEBUG_MESSAGETYPES.RECOVER] = { sender: 'string?', tag: 'string?' };
+MESSAGEINTERFACES[DEBUG_MESSAGETYPES.PING] = { sender: 'string?', tag: 'string?' };
 Object.freeze(MESSAGEINTERFACES);
 
 var DEBUGACTOR_INSTANCE = null;
@@ -108,7 +117,11 @@ var debugbehavior = function(state, message) {
 
   if (message.type === DEBUG_MESSAGETYPES.PING) {
     logdebug(debugState, '[DEBUGACTOR]', 'action PING');
-    if (typeof message.resolve === 'function') message.resolve(true);
+    if (message.sender && message.tag) {
+      sendResponse(message.sender, message.tag, true, 'debugactor').catch(function(err) {
+        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
+      });
+    }
     return state;
   }
 
@@ -123,32 +136,31 @@ var debugbehavior = function(state, message) {
       window.addEventListener('error', function(e) {
         e.preventDefault();
         logwarn(debugState, '[DEBUGACTOR]', 'global window error captured:', e.error || e);
-        if (DEBUGACTOR_INSTANCE) {
-          DEBUGACTOR_INSTANCE.send({
-            type: DEBUG_MESSAGETYPES.SHOW,
-            error: e.error || e,
-            continuation: null
-          });
-        }
+        sendInstruction('debugactor', DEBUG_MESSAGETYPES.SHOW, {
+          error: e.error || e,
+          continuation: null
+        }, null, 'window').catch(function(err) { logwarn(debugState, '[DEBUGACTOR]', err); });
       });
 
       window.addEventListener('unhandledrejection', function(e) {
         if (e.reason && e.reason.diagnostic) {
           e.preventDefault();
           logwarn(debugState, '[DEBUGACTOR]', 'global unhandled rejection captured:', e.reason);
-          if (DEBUGACTOR_INSTANCE) {
-            DEBUGACTOR_INSTANCE.send({
-              type: DEBUG_MESSAGETYPES.SHOW,
-              error: e.reason,
-              continuation: e.reason.diagnostic.continuation || null
-            });
-          }
+          sendInstruction('debugactor', DEBUG_MESSAGETYPES.SHOW, {
+            error: e.reason,
+            continuation: e.reason.diagnostic.continuation || null
+          }, null, 'window').catch(function(err) { logwarn(debugState, '[DEBUGACTOR]', err); });
         }
       });
     }
 
     state.worldmap.overlayVisible = false;
     persistDebugWorldmap(state);
+    if (message.sender && message.tag) {
+      sendResponse(message.sender, message.tag, true, 'debugactor').catch(function(err) {
+        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
+      });
+    }
     return state;
   }
 
@@ -162,7 +174,11 @@ var debugbehavior = function(state, message) {
     state.worldmap.overlayVisible = false;
     state.worldmap.cccState.currentContinuation = null;
     persistDebugWorldmap(state);
-    if (typeof message.resolve === 'function') message.resolve(state);
+    if (message.sender && message.tag) {
+      sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
+        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
+      });
+    }
     return state;
   }
 
@@ -187,7 +203,12 @@ var debugbehavior = function(state, message) {
         logdebug(debugState, '[DEBUGACTOR]', 'Retrying stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
-        enqueueExecutionCccRetry(ctx.pipelineid, ctx.path, ctx.elementid, message.continuation).catch(function(e) {
+        sendInstruction('executionactor', 'ccc_retry', {
+          pipelineid: ctx.pipelineid,
+          path: ctx.path,
+          elementid: ctx.elementid,
+          continuation: message.continuation
+        }, null, 'debugactor').catch(function(e) {
           logwarn(debugState, '[DEBUGACTOR]', 'RETRY failed:', e);
         });
       }));
@@ -196,7 +217,12 @@ var debugbehavior = function(state, message) {
         logdebug(debugState, '[DEBUGACTOR]', 'Continuing stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
-        enqueueExecutionCccContinue(ctx.pipelineid, ctx.path, ctx.elementid, message.continuation).catch(function(e) {
+        sendInstruction('executionactor', 'ccc_continue', {
+          pipelineid: ctx.pipelineid,
+          path: ctx.path,
+          elementid: ctx.elementid,
+          continuation: message.continuation
+        }, null, 'debugactor').catch(function(e) {
           logwarn(debugState, '[DEBUGACTOR]', 'CONTINUE failed:', e);
         });
       }));
@@ -209,7 +235,12 @@ var debugbehavior = function(state, message) {
       logdebug(debugState, '[DEBUGACTOR]', 'Aborting stage:', abortCtx);
       overlay.style.display = 'none';
       overlay.innerHTML = '';
-      enqueueExecutionCccAbort(abortCtx.pipelineid, abortCtx.path, abortCtx.elementid, message.continuation).catch(function(e) {
+      sendInstruction('executionactor', 'ccc_abort', {
+        pipelineid: abortCtx.pipelineid,
+        path: abortCtx.path,
+        elementid: abortCtx.elementid,
+        continuation: message.continuation
+      }, null, 'debugactor').catch(function(e) {
         logwarn(debugState, '[DEBUGACTOR]', 'ABORT failed:', e);
       });
     }));
@@ -221,7 +252,11 @@ var debugbehavior = function(state, message) {
     state.worldmap.cccState.currentContinuation = message.continuation || null;
     persistDebugWorldmap(state);
 
-    if (typeof message.resolve === 'function') message.resolve(state);
+    if (message.sender && message.tag) {
+      sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
+        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
+      });
+    }
     return state;
   }
 
@@ -244,12 +279,20 @@ var debugbehavior = function(state, message) {
         persistDebugWorldmap(state);
       }
       logdebug(debugState, '[DEBUGACTOR]', 'debug recovery completed');
-      if (typeof message.resolve === 'function') message.resolve(state);
+      if (message.sender && message.tag) {
+        sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
+          logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
+        });
+      }
     }).catch(function(e) {
       logwarn(debugState, '[DEBUGACTOR]', 'state restore failed:', e);
       state.worldmap = createInitialDebugWorldmap();
       persistDebugWorldmap(state);
-      if (typeof message.resolve === 'function') message.resolve(state);
+      if (message.sender && message.tag) {
+        sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
+          logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
+        });
+      }
     });
     return state;
   }
@@ -257,66 +300,53 @@ var debugbehavior = function(state, message) {
   return state;
 };
 
-var debugMailboxStore = {
-  store: enqueueDbStore,
-  restore: enqueueDbRestore,
-  delete: enqueueDbDelete
-};
-
-function createDebugActor(options) {
-  if (DEBUGACTOR_INSTANCE) {
-    if (options !== undefined) {
-      var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-      if (lvl !== undefined) {
-        debugState = Object.freeze({ level: lvl });
-      }
-    }
-    return DEBUGACTOR_INSTANCE;
-  }
-
-  var verbosity = typeof options === 'number'
-    ? options
-    : (options && options.verbosity !== undefined
-      ? options.verbosity
-      : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : debugVerbosityConstants.DEBUG));
-
-  debugState = Object.freeze({ level: verbosity });
-
-  var actor = createactor(
-    debugbehavior,
-    {
-      overlay: null,
-      currentContinuation: null,
-      worldmap: createInitialDebugWorldmap(),
-      verbosity: verbosity
+var DEBUGACTOR = createactor(
+  debugbehavior,
+  {
+    overlay: null,
+    currentContinuation: null,
+    worldmap: createInitialDebugWorldmap(),
+    verbosity: debugVerbosityConstants.DEBUG
+  },
+  MESSAGEINTERFACES,
+  {
+    actorName: 'debugactor',
+    mailboxType: 'mail',
+    mailTransport: {
+      sendInstruction: sendInstruction,
+      requestUnreadMessages: requestUnreadMessages,
+      sendResponse: sendResponse
     },
-    MESSAGEINTERFACES,
-    { actorName: 'debugactor', mailboxType: 'db', mailboxStore: debugMailboxStore, verbosity: verbosity }
-  );
-  DEBUGACTOR_INSTANCE = actor;
-  return actor;
-}
+    pollInterval: 25,
+    verbosity: debugVerbosityConstants.DEBUG
+  }
+);
+DEBUGACTOR_INSTANCE = DEBUGACTOR;
 
 function startDebugActor(options) {
-  return createDebugActor(options);
+  if (options !== undefined) {
+    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    if (lvl !== undefined) {
+      debugState = Object.freeze({ level: lvl });
+      if (DEBUGACTOR && DEBUGACTOR.getstate()) {
+        DEBUGACTOR.getstate().verbosity = lvl;
+      }
+    }
+  }
+  return DEBUGACTOR;
 }
 
-var enqueueDebugPing = function() {
-  return new Promise(function(resolve, reject) {
-    if (!DEBUGACTOR_INSTANCE) {
-      reject(new Error('[DEBUGACTOR] not started'));
-      return;
-    }
-    DEBUGACTOR_INSTANCE.send({ type: DEBUG_MESSAGETYPES.PING, resolve: resolve, reject: reject });
-  });
-};
+function enqueueDebugPing() {
+  const tag = generateTag();
+  sendInstruction('debugactor', DEBUG_MESSAGETYPES.PING, {}, tag, 'system');
+  return awaitResponse('system', tag);
+}
 
-var enqueueDebugRecover = function() {
-  return new Promise(function(resolve, reject) {
-    var actor = startDebugActor();
-    actor.send({ type: DEBUG_MESSAGETYPES.RECOVER, resolve: resolve, reject: reject });
-  });
-};
+function enqueueDebugRecover() {
+  const tag = generateTag();
+  sendInstruction('debugactor', DEBUG_MESSAGETYPES.RECOVER, {}, tag, 'system');
+  return awaitResponse('system', tag);
+}
 
 export {
   DEBUG_MESSAGETYPES,

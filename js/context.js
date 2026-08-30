@@ -1,8 +1,19 @@
+// ============================================================
+// UPDATED FILE: js/context.js
+// Changes applied:
+//   - updated imports from worldmapactor to use new Mail Actor wrappers
+//   - updateworldmap now supports both patch objects and functions
+//     (using updateworldmapfn when update is a function)
+//   - all worldmap interactions are asynchronous; functions now
+//     return Promises resolved via tag-based responses
+//   - no dynamic imports; static imports only
+// ============================================================
+
 import {
-  updateworldmap as actormirror,
+  updateworldmap as actorUpdateWorldmap,
   updateworldmapfn,
-  observeworldmap as actorobserve,
-  getworldmap
+  observeworldmap as actorObserveWorldmap,
+  getworldmap as actorGetWorldmap
 } from './actors/worldmapactor.js';
 
 export const deepmerge = (target, source) => {
@@ -31,15 +42,13 @@ export const createinitialworldmap = (envoverrides = {}) => ({
   layout: { currenttemplate: 'default', isloading: false, error: null, activestage: null, progress: 0, messages: [] }
 });
 
-// P20: functional updates are sent to the worldmap actor for evaluation
-// against the actor's current state, avoiding stale reads.
+// Functional update: if passed a function, use updateworldmapfn; otherwise patch.
 export const updateworldmap = (update) => {
   if (typeof update === 'function') {
-    updateworldmapfn(update);
-    return;
+    return updateworldmapfn(update);
   }
-  actormirror(update);
+  return actorUpdateWorldmap(update);
 };
 
-export const observeworldmap = (observer) => actorobserve(observer);
+export const observeworldmap = (observer) => actorObserveWorldmap(observer);
 export const select = (selectorfn) => (state) => selectorfn(state);

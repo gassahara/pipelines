@@ -1,10 +1,15 @@
 // ============================================================
 // UPDATED FILE: js/actors/actorkernel.js
 // Changes applied:
-//   P1: processMessage async, awaits behavior result
-//   P8: drain race fix (draining flag, clear pending timer)
-//   P1 (new): DB mailbox polling loop does NOT set running=false
-//             in empty branch, so polltimer remains functional
+//   - removed all dynamic import() calls; static imports only
+//   - mailboxType 'mail' now requires options.mailTransport with
+//     sendInstruction, requestUnreadMessages, sendResponse
+//   - dedicated setInterval polling loop independent of ensureLoop
+//   - pollInterval configurable (default 25ms)
+//   - send for mail actors only sends via mailTransport, does not
+//     affect polling
+//   - processMessage async, awaits behavior result
+//   - retained memory/db mailbox logic and drain fixes
 // ============================================================
 
 import { createGarbageCollector } from './actorgc.js';
@@ -152,6 +157,13 @@ function createactor(behavior, initialstate, messageInterface, options) {
 
   if (mailboxType === 'db' && options.mailboxStore) {
     mailbox = createDbMailbox(actorName, options.mailboxStore);
+  } else if (mailboxType === 'mail') {
+    if (!options.mailTransport || typeof options.mailTransport.requestUnreadMessages !== 'function' ||
+        typeof options.mailTransport.sendInstruction !== 'function' ||
+        typeof options.mailTransport.sendResponse !== 'function') {
+      throw new Error('[createactor] mailboxType "mail" requires options.mailTransport with requestUnreadMessages, sendInstruction, sendResponse');
+    }
+    mailbox = null;
   } else {
     mailbox = createMemoryMailbox();
   }
@@ -174,10 +186,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
       var check = validator(message);
       if (!check.valid) {
         logerror({ level: currentVerbosity }, '[ACTOR:' + actorName + ']', '[ACTOR:INVALID]', check.error);
-        if (typeof message.reject === 'function') {
-          message.reject(new Error('[ACTOR:INVALID] ' + check.error));
-        }
-        return true;
+        return null;
       }
     }
 
@@ -189,15 +198,11 @@ function createactor(behavior, initialstate, messageInterface, options) {
         currentstate = result;
       }
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage done:', msgType);
+      return result;
     } catch (err) {
       logerror({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'behavior error:', err);
-      if (typeof message.reject === 'function') {
-        message.reject(err);
-      } else if (typeof message.resolve === 'function') {
-        message.resolve(undefined);
-      }
+      throw err;
     }
-    return true;
   }
 
   async function drainMemory() {
@@ -221,7 +226,6 @@ function createactor(behavior, initialstate, messageInterface, options) {
     var message = await mailbox.peek();
     if (message === null) {
       draining = false;
-      // P1 (new): do NOT set running = false; keep polling active
       if (polltimer) { clearTimeout(polltimer); polltimer = null; }
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb mailbox empty, polling');
       resolveWaiters();
@@ -243,7 +247,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'ensureLoop starting loop for mailboxType:', mailboxType);
       if (mailboxType === 'db') {
         drainDb();
-      } else {
+      } else if (mailboxType === 'memory') {
         setTimeout(drainMemory, 0);
       }
     }
@@ -254,6 +258,13 @@ function createactor(behavior, initialstate, messageInterface, options) {
       message = { type: message };
     }
     logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'send message:', message.type);
+    if (mailboxType === 'mail') {
+      options.mailTransport.sendInstruction(actorName, message.type, message.payload || message, null, 'system')
+        .catch(function(err) {
+          logerror({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'sendInstruction failed:', err);
+        });
+      return;
+    }
     if (mailboxType === 'db') {
       mailbox.append(message).then(function() {
         ensureLoop();
@@ -284,6 +295,27 @@ function createactor(behavior, initialstate, messageInterface, options) {
 
   if (options.actorName) {
     actorRegistry[options.actorName] = actor;
+  }
+
+  // Start dedicated polling interval for mail actors
+  if (mailboxType === 'mail') {
+    var pollInterval = options.pollInterval !== undefined ? options.pollInterval : 25;
+    var mailTransport = options.mailTransport;
+    var pollMailbox = async function() {
+      try {
+        var envelopes = await mailTransport.requestUnreadMessages(actorName);
+        for (var i = 0; i < envelopes.length; i++) {
+          var env = envelopes[i];
+          var result = await processMessage(env.payload);
+          if (env.tag && env.sender && result !== undefined && result !== null) {
+            await mailTransport.sendResponse(env.sender, env.tag, result, actorName);
+          }
+        }
+      } catch (err) {
+        logwarn({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'pollMailbox error:', err);
+      }
+    };
+    setInterval(pollMailbox, pollInterval);
   }
 
   return actor;

@@ -1,8 +1,11 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
 // Changes applied:
-//   P13: persist combined state (tasks, pipelines, taskCounter)
-//   P15: stopTask rejects promise and consumers
+//   - mailboxType 'mail' with mailTransport injection
+//   - all enqueue functions use tag-based sendInstruction + awaitResponse
+//   - behavior returns results; kernel sends response via tag/sender
+//   - TASK_SETTLED self-notification via sendInstruction (flat)
+//   - state persistence still uses enqueueDbStore/Restore/Delete
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -17,6 +20,13 @@ import {
   serializePairStore,
   deserializePairStore
 } from './dbactor.js';
+import {
+  sendInstruction,
+  requestUnreadMessages,
+  sendResponse,
+  awaitResponse,
+  generateTag
+} from './mailactor.js';
 import {
   createVerbosityConstants,
   logdebug,
@@ -49,32 +59,23 @@ var EXECUTIONMESSAGETYPES = Object.freeze({
 });
 
 var MESSAGEINTERFACES = {};
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PIPELINE_LOADED] = { pipelineid: 'string', env: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.ENV_UPDATED] = { pipelineid: 'string', env: 'object', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_STATUS] = { pipelineid: 'string?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?', programRef: 'string?', elementId: 'string?', origin: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.AWAIT_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASK_STATUS] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CANCEL_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STOP_TASK] = { taskid: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_ABORT] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_CONTINUE] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_RETRY] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.TASK_SETTLED] = { taskid: 'string', status: 'string', result: 'any', error: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.RECOVER] = { resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PING] = { resolve: 'function?', reject: 'function?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PIPELINE_LOADED] = { pipelineid: 'string', env: 'object?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.ENV_UPDATED] = { pipelineid: 'string', env: 'object' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_STATUS] = { pipelineid: 'string?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?', programRef: 'string?', elementId: 'string?', origin: 'object?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.AWAIT_TASK] = { taskid: 'string' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASK_STATUS] = { taskid: 'string' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CANCEL_TASK] = { taskid: 'string' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STOP_TASK] = { taskid: 'string' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_ABORT] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_CONTINUE] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_RETRY] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.TASK_SETTLED] = { taskid: 'string', status: 'string', result: 'any', error: 'object?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.RECOVER] = {};
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?' };
+MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PING] = {};
 Object.freeze(MESSAGEINTERFACES);
-
-function resolveMessage(message, value) {
-  if (value === undefined) value = true;
-  if (message && typeof message.resolve === 'function') message.resolve(value);
-}
-
-function rejectMessage(message, error) {
-  if (message && typeof message.reject === 'function') message.reject(error);
-}
 
 function sanitizeForState(value, seen) {
   if (value === null || value === undefined) return value;
@@ -108,7 +109,6 @@ function createInitialExecutionWorldmap() {
   };
 }
 
-// P13: persist combined state object so all live fields are saved
 function persistExecutionWorldmap(state) {
   logdebug(executionState, '[EXECUTIONACTOR]', 'persistExecutionWorldmap saving combined state to db');
   var persistable = {
@@ -138,9 +138,6 @@ function makeTask(state, descriptor) {
     parentTaskid: null,
     childTaskIds: [],
     status: 'WAITING',
-    resolveTask: null,
-    rejectTask: null,
-    promise: null,
     serialized: descriptor.serialized || null,
     programRef: descriptor.programRef || null,
     origin: descriptor.origin || null,
@@ -148,10 +145,6 @@ function makeTask(state, descriptor) {
     result: null,
     error: null
   };
-  task.promise = new Promise(function(resolve, reject) {
-    task.resolveTask = resolve;
-    task.rejectTask = reject;
-  });
   state.tasks[taskid] = task;
   logdebug(executionState, '[EXECUTIONACTOR]', 'makeTask created element task:', taskid, 'pipelineid:', task.pipelineid, 'elementid:', task.elementid);
   return task;
@@ -163,29 +156,23 @@ function cancelTask(state, taskid) {
   logdebug(executionState, '[EXECUTIONACTOR]', 'cancelTask cancelling task:', taskid);
   task.status = 'CANCELLED';
   (task.childTaskIds || []).forEach(function(childId) { cancelTask(state, childId); });
-  if (task.rejectTask) task.rejectTask(new Error('Task cancelled: ' + taskid));
+  var err = { error: 'Task cancelled: ' + taskid };
   (task.consumers || []).forEach(function(consumer) {
-    if (consumer.reject) consumer.reject(new Error('Task cancelled: ' + taskid));
+    sendResponse(consumer.sender, consumer.tag, err, 'executionactor').catch(function(){});
   });
   task.consumers = [];
 }
 
-// P15: stopTask rejects promises and consumers to avoid hangs
 function stopTask(state, taskid) {
   var task = state.tasks[taskid];
   if (!task) return;
   logdebug(executionState, '[EXECUTIONACTOR]', 'stopTask stopping task:', taskid);
   task.status = 'STOPPED';
-  var stoppedError = new Error('Task stopped: ' + taskid);
-  if (task.rejectTask) {
-    task.rejectTask(stoppedError);
-  }
-  if (task.consumers) {
-    task.consumers.forEach(function(consumer) {
-      if (consumer.reject) consumer.reject(stoppedError);
-    });
-    task.consumers = [];
-  }
+  var err = { error: 'Task stopped: ' + taskid };
+  (task.consumers || []).forEach(function(consumer) {
+    sendResponse(consumer.sender, consumer.tag, err, 'executionactor').catch(function(){});
+  });
+  task.consumers = [];
 }
 
 function ensurePipeline(state, pipelineid) {
@@ -228,23 +215,15 @@ var executionbehavior = function(state, message) {
       var pipeline = ensurePipeline(nextState, message.pipelineid);
       if (message.env && Object.keys(message.env).length > 0) pipeline.env = message.env;
       pipeline.status = 'running';
-      resolveMessage(message, true);
-      break;
+      return true;
     }
     case EXECUTIONMESSAGETYPES.ENV_UPDATED: {
       var p3 = ensurePipeline(nextState, message.pipelineid);
       p3.env = sanitizeForState(message.env || {});
-      resolveMessage(message, true);
-      break;
+      return true;
     }
     case EXECUTIONMESSAGETYPES.GET_STATUS: {
-      if (message.pipelineid) {
-        var p4 = nextState.pipelines[message.pipelineid] || null;
-        resolveMessage(message, p4);
-      } else {
-        resolveMessage(message, nextState.pipelines);
-      }
-      break;
+      return message.pipelineid ? (nextState.pipelines[message.pipelineid] || null) : nextState.pipelines;
     }
     case EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action EXECUTE_ELEMENT element:', message.elementid, 'pipeline:', message.pipelineid, 'path:', message.path);
@@ -257,34 +236,27 @@ var executionbehavior = function(state, message) {
         origin: message.origin || null
       });
       runElementTask(task.taskid, message);
-      resolveMessage(message, { taskid: task.taskid });
-      break;
+      return { taskid: task.taskid };
     }
     case EXECUTIONMESSAGETYPES.AWAIT_TASK: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action AWAIT_TASK task:', message.taskid);
       var awaitTask = nextState.tasks[message.taskid];
       if (!awaitTask) {
-        logwarn(executionState, '[EXECUTIONACTOR]', 'AWAIT_TASK unknown task:', message.taskid);
-        rejectMessage(message, new Error('[EXECUTIONACTOR] unknown task: ' + message.taskid));
-        break;
+        return { error: '[EXECUTIONACTOR] unknown task: ' + message.taskid };
       }
-
       if (awaitTask.status === 'EXECUTED') {
-        resolveMessage(message, awaitTask.result || {});
+        return awaitTask.result || {};
       } else if (awaitTask.status === 'FAILED') {
-        rejectMessage(message, awaitTask.error || new Error('task failed'));
+        return { error: awaitTask.error ? awaitTask.error.message : 'task failed' };
       } else if (awaitTask.status === 'CANCELLED') {
-        rejectMessage(message, awaitTask.error || new Error('task cancelled'));
+        return { error: awaitTask.error ? awaitTask.error.message : 'task cancelled' };
       } else if (awaitTask.status === 'STOPPED') {
-        rejectMessage(message, awaitTask.error || new Error('task stopped'));
+        return { error: 'task stopped' };
       } else {
         if (!awaitTask.consumers) awaitTask.consumers = [];
-        awaitTask.consumers.push({
-          resolve: message.resolve,
-          reject: message.reject
-        });
+        awaitTask.consumers.push({ sender: message.sender, tag: message.tag });
+        return null; // no immediate response; will send when TASK_SETTLED
       }
-      break;
     }
     case EXECUTIONMESSAGETYPES.GET_TASKS: {
       var result = [];
@@ -306,12 +278,11 @@ var executionbehavior = function(state, message) {
           consumerCount: (t.consumers || []).length
         });
       });
-      resolveMessage(message, result);
-      break;
+      return result;
     }
     case EXECUTIONMESSAGETYPES.GET_TASK_STATUS: {
       var t2 = nextState.tasks[message.taskid];
-      resolveMessage(message, t2 ? {
+      return t2 ? {
         taskid: t2.taskid,
         kind: t2.kind,
         pipelineid: t2.pipelineid,
@@ -322,24 +293,20 @@ var executionbehavior = function(state, message) {
         programRef: t2.programRef,
         serialized: t2.serialized,
         consumerCount: (t2.consumers || []).length
-      } : null);
-      break;
+      } : null;
     }
     case EXECUTIONMESSAGETYPES.CANCEL_TASK: {
       cancelTask(nextState, message.taskid);
-      resolveMessage(message, true);
-      break;
+      return true;
     }
     case EXECUTIONMESSAGETYPES.STOP_TASK: {
       stopTask(nextState, message.taskid);
-      resolveMessage(message, true);
-      break;
+      return true;
     }
     case EXECUTIONMESSAGETYPES.CCC_ABORT:
     case EXECUTIONMESSAGETYPES.CCC_CONTINUE:
     case EXECUTIONMESSAGETYPES.CCC_RETRY: {
-      resolveMessage(message, true);
-      break;
+      return true;
     }
     case EXECUTIONMESSAGETYPES.TASK_SETTLED: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action TASK_SETTLED task:', message.taskid, 'status:', message.status);
@@ -351,21 +318,17 @@ var executionbehavior = function(state, message) {
 
         var consumers = task4.consumers || [];
         if (message.status === 'EXECUTED') {
-          if (task4.resolveTask) task4.resolveTask(message.result || {});
           consumers.forEach(function(consumer) {
-            if (consumer.resolve) consumer.resolve(message.result || {});
+            sendResponse(consumer.sender, consumer.tag, message.result || {}, 'executionactor').catch(function(){});
           });
         } else if (message.status === 'FAILED') {
-          var err = message.error || new Error('task failed');
-          if (task4.rejectTask) task4.rejectTask(err);
           consumers.forEach(function(consumer) {
-            if (consumer.reject) consumer.reject(err);
+            sendResponse(consumer.sender, consumer.tag, { error: message.error ? message.error.message : 'task failed' }, 'executionactor').catch(function(){});
           });
         }
         task4.consumers = [];
       }
-      resolveMessage(message, true);
-      break;
+      return null;
     }
     case EXECUTIONMESSAGETYPES.RECOVER: {
       enqueueDbRestore('actor:state:execution').then(function(saved) {
@@ -381,49 +344,28 @@ var executionbehavior = function(state, message) {
           nextState.tasks = nextState.worldmap.tasks || {};
           nextState.htmlSnapshot = nextState.worldmap.htmlSnapshot || null;
           nextState.taskCounter = nextState.worldmap.taskCounter || 0;
-          enqueueDbStore('actor:state:execution', nextState.worldmap).catch(function(e) {
-            logwarn(executionState, '[EXECUTIONACTOR]', 'default state persist failed:', e);
-          });
         }
-        resolveMessage(message, nextState);
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, nextState, 'executionactor').catch(function(){});
       }).catch(function(e) {
-        logwarn(executionState, '[EXECUTIONACTOR]', 'state restore failed:', e);
-        nextState.worldmap = createInitialExecutionWorldmap();
-        nextState.pipelines = {};
-        nextState.tasks = {};
-        nextState.htmlSnapshot = null;
-        nextState.taskCounter = 0;
-        enqueueDbStore('actor:state:execution', nextState.worldmap).catch(function(e2) {
-          logwarn(executionState, '[EXECUTIONACTOR]', 'default state persist failed:', e2);
-        });
-        resolveMessage(message, nextState);
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'executionactor').catch(function(){});
       });
-      return state;
+      return null;
     }
     case EXECUTIONMESSAGETYPES.REGISTER_PIPELINE: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action REGISTER_PIPELINE:', message.pipelineid);
       var p10 = ensurePipeline(nextState, message.pipelineid);
       p10.usesElementSnapshots = true;
       if (message.env) p10.env = sanitizeForState(message.env);
-      resolveMessage(message, true);
-      break;
+      return true;
     }
     case EXECUTIONMESSAGETYPES.PING: {
-      resolveMessage(message, true);
-      break;
+      return true;
     }
     default: {
       logwarn(executionState, '[EXECUTIONACTOR]', 'unknown message type:', message.type);
-      rejectMessage(message, new Error('[EXECUTIONACTOR] unknown message type'));
-      return state;
+      return { error: '[EXECUTIONACTOR] unknown message type' };
     }
   }
-
-  if (readOnly.indexOf(message.type) === -1) {
-    persistExecutionWorldmap(nextState);
-  }
-
-  return nextState;
 };
 
 async function loadInitialState() {
@@ -485,10 +427,14 @@ async function runElementTask(taskid, descriptor) {
     }
 
     logdebug(executionState, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'EXECUTED', result: result || {} });
+    sendInstruction('executionactor', EXECUTIONMESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor').catch(function(err) {
+      logerror(executionState, '[EXECUTIONACTOR]', 'TASK_SETTLED send failed:', err);
+    });
   } catch (err) {
     logerror(executionState, '[EXECUTIONACTOR]', 'runElementTask failed:', taskid, descriptor.elementid, err);
-    EXECUTIONACTOR.send({ type: EXECUTIONMESSAGETYPES.TASK_SETTLED, taskid: taskid, status: 'FAILED', error: err, result: false });
+    sendInstruction('executionactor', EXECUTIONMESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor').catch(function(e) {
+      logerror(executionState, '[EXECUTIONACTOR]', 'TASK_SETTLED send failed:', e);
+    });
   }
 }
 
@@ -497,35 +443,94 @@ var EXECUTIONACTOR = createactor(
   executionbehavior,
   initialState,
   MESSAGEINTERFACES,
-  { actorName: 'executionactor', mailboxType: 'memory', verbosity: executionVerbosityConstants.DEBUG }
+  {
+    actorName: 'executionactor',
+    mailboxType: 'mail',
+    mailTransport: {
+      sendInstruction: sendInstruction,
+      requestUnreadMessages: requestUnreadMessages,
+      sendResponse: sendResponse
+    },
+    pollInterval: 25,
+    verbosity: executionVerbosityConstants.DEBUG
+  }
 );
 
-var enqueue = function(type, payload) {
-  return new Promise(function(resolve, reject) {
-    var message = {};
-    if (payload) Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
-    message.type = type;
-    message.resolve = resolve;
-    message.reject = reject;
-    EXECUTIONACTOR.send(message);
-  });
-};
-
-var enqueueExecutionPipelineLoaded = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }); };
-var enqueueExecutionSubmit = function(descriptor) { return enqueue(EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT, descriptor); };
-var enqueueExecutionAwaitTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.AWAIT_TASK, { taskid: taskid }); };
-var enqueueExecutionGetTasks = function(filters) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASKS, filters || {}); };
-var enqueueExecutionGetTaskStatus = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }); };
-var enqueueExecutionCancelTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.CANCEL_TASK, { taskid: taskid }); };
-var enqueueExecutionStopTask = function(taskid) { return enqueue(EXECUTIONMESSAGETYPES.STOP_TASK, { taskid: taskid }); };
-var enqueueExecutionGetStatus = function(pipelineid) { return enqueue(EXECUTIONMESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }); };
-var enqueueExecutionEnvUpdated = function(pipelineid, env) { return enqueue(EXECUTIONMESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }); };
-var enqueueExecutionCccAbort = function(pipelineid, path, elementid, continuation) { return enqueue(EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }); };
-var enqueueExecutionCccContinue = function(pipelineid, path, elementid, continuation) { return enqueue(EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }); };
-var enqueueExecutionCccRetry = function(pipelineid, path, elementid, continuation) { return enqueue(EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }); };
-var enqueueExecutionRegisterPipeline = function(pipelineid, dna, env) { return enqueue(EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }); };
-var enqueueExecutionRecover = function() { return enqueue(EXECUTIONMESSAGETYPES.RECOVER, {}); };
-var enqueueExecutionPing = function() { return enqueue(EXECUTIONMESSAGETYPES.PING); };
+function enqueueExecutionPipelineLoaded(pipelineid, env) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionSubmit(descriptor) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionAwaitTask(taskid) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.AWAIT_TASK, { taskid: taskid }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionGetTasks(filters) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.GET_TASKS, filters || {}, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionGetTaskStatus(taskid) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionCancelTask(taskid) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CANCEL_TASK, { taskid: taskid }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionStopTask(taskid) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.STOP_TASK, { taskid: taskid }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionGetStatus(pipelineid) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionEnvUpdated(pipelineid, env) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionCccAbort(pipelineid, path, elementid, continuation) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid, path, elementid, continuation }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionCccContinue(pipelineid, path, elementid, continuation) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid, path, elementid, continuation }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionCccRetry(pipelineid, path, elementid, continuation) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid, path, elementid, continuation }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionRegisterPipeline(pipelineid, dna, env) {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid, dna, env }, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionRecover() {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.RECOVER, {}, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
+function enqueueExecutionPing() {
+  const tag = generateTag();
+  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.PING, {}, tag, 'blockcompiler');
+  return awaitResponse('blockcompiler', tag);
+}
 
 function startExecutionActor(options) {
   if (options !== undefined) {

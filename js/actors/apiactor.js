@@ -1,11 +1,23 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Change applied: removed createLogger; direct portable logging functions
+// Changes applied:
+//   - mailboxType changed to 'mail'
+//   - mailTransport injected from mailactor.js static imports
+//   - enqueue functions use tag-based sendInstruction/awaitResponse
+//   - behavior sends response via mailTransport.sendResponse
+//   - state persistence still uses enqueueDbStore/Restore/Delete
 // ============================================================
 
 import { createactor } from './actorkernel.js';
 import { createApiConstants } from '../utils.js';
 import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
+import {
+  sendInstruction,
+  requestUnreadMessages,
+  sendResponse,
+  awaitResponse,
+  generateTag
+} from './mailactor.js';
 import {
   createVerbosityConstants,
   logdebug,
@@ -25,10 +37,10 @@ var MESSAGETYPES = Object.freeze({
 
 var MESSAGEINTERFACES = {};
 MESSAGEINTERFACES[MESSAGETYPES.API] = {
-  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', resolve: 'function', reject: 'function?'
+  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
 };
 MESSAGEINTERFACES[MESSAGETYPES.FETCH] = {
-  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', resolve: 'function', reject: 'function?'
+  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
 };
 Object.freeze(MESSAGEINTERFACES);
 
@@ -89,39 +101,43 @@ var apibehavior = function(state, message) {
       if (!isTextual) {
         return response.json().then(function(data) {
           logdebug(apiState, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
-          if (typeof message.resolve === 'function') {
-            message.resolve({ status: status, data: data });
-          }
+          sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor').catch(function(err) {
+            logwarn(apiState, '[APIACTOR]', 'sendResponse failed:', err);
+          });
         });
       }
       return response.text().then(function(data) {
         logdebug(apiState, '[APIACTOR]', 'action text response received for:', message.endpoint);
-        if (typeof message.resolve === 'function') {
-          message.resolve({ status: status, data: data });
-        }
+        sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor').catch(function(err) {
+          logwarn(apiState, '[APIACTOR]', 'sendResponse failed:', err);
+        });
       });
     }).catch(function(err) {
       logerror(apiState, '[APIACTOR]', 'action request error for:', message.endpoint, err);
-      if (typeof message.reject === 'function') {
-        message.reject(err);
-      }
+      sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'apiactor').catch(function(e) {
+        logwarn(apiState, '[APIACTOR]', 'sendResponse failed:', e);
+      });
     });
   }
 
   return state;
 };
 
-var apiMailboxStore = {
-  store: enqueueDbStore,
-  restore: enqueueDbRestore,
-  delete: enqueueDbDelete
-};
-
 var APIACTOR = createactor(
   apibehavior,
   { worldmap: createInitialApiWorldmap(), verbosity: apiVerbosityConstants.DEBUG },
   MESSAGEINTERFACES,
-  { actorName: 'apiactor', mailboxType: 'db', mailboxStore: apiMailboxStore, verbosity: apiVerbosityConstants.DEBUG }
+  {
+    actorName: 'apiactor',
+    mailboxType: 'mail',
+    mailTransport: {
+      sendInstruction: sendInstruction,
+      requestUnreadMessages: requestUnreadMessages,
+      sendResponse: sendResponse
+    },
+    pollInterval: 25,
+    verbosity: apiVerbosityConstants.DEBUG
+  }
 );
 
 function startApiActor(options) {
@@ -138,31 +154,25 @@ function startApiActor(options) {
 }
 
 function enqueueapi(endpoint, method, payload, options) {
-  return new Promise(function(resolve, reject) {
-    APIACTOR.send({
-      type: MESSAGETYPES.API,
-      endpoint: endpoint,
-      method: method,
-      payload: payload || {},
-      token: (options && options.token) || '',
-      resolve: resolve,
-      reject: reject
-    });
-  });
+  const tag = generateTag();
+  sendInstruction('apiactor', MESSAGETYPES.API, {
+    endpoint: endpoint,
+    method: method,
+    payload: payload || {},
+    token: (options && options.token) || ''
+  }, tag, tag);
+  return awaitResponse(tag, tag);
 }
 
 function enqueuefetch(endpoint, method, payload, options) {
-  return new Promise(function(resolve, reject) {
-    APIACTOR.send({
-      type: MESSAGETYPES.FETCH,
-      endpoint: endpoint,
-      method: method,
-      payload: payload || {},
-      token: (options && options.token) || '',
-      resolve: resolve,
-      reject: reject
-    });
-  });
+  const tag = generateTag();
+  sendInstruction('apiactor', MESSAGETYPES.FETCH, {
+    endpoint: endpoint,
+    method: method,
+    payload: payload || {},
+    token: (options && options.token) || ''
+  }, tag, tag);
+  return awaitResponse(tag, tag);
 }
 
 export {
