@@ -1,11 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/factory/blockcompiler.js
 // Changes applied:
-//   P1: processPipelineElement awaits boot promise
-//   P4: crypto block validates bytes and uses writeoutputs
-//   P5: compileHttpBlock uses writeoutputs
-//   P6: STOREQUERY block implemented (store/restore/list/delete)
-//   P21: nested STAGE support (recursive compile/orchestrate)
+//   P1: fix import typo enqueusetlayout -> enqueuetlayout
+//   P2: add and export validatePipelineBriefcase
+//   (previous changes from full system cycle retained)
 // ============================================================
 
 import { enqueueapi, enqueuefetch } from '../actors/apiactor.js';
@@ -28,7 +26,7 @@ import {
   enqueuehtml, expectelement, enqueuegethtml, enqueuegetvalue,
   enqueuegetstyle, enqueuegetposition, enqueuesethtml, enqueuesetposition,
   enqueuesetstyle, enqueuesetvalue, enqueueproperty, enqueuegetlayout,
-  enqueusetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
+  enqueuetlayout, enqueuetoggleclass, DOMQUERYGETTERS, DOMQUERYSETTERS,
   DOMQUERYMESSAGES, RENDERACTOR, MESSAGETYPES, enqueuegetviewport,
   enqueuegetscreen, enqueuematchmedia, enqueueRenderRegisterTriggerExpectation,
   enqueueRenderRevalidateTriggers, enqueueRenderRestoreBodyHtml
@@ -444,7 +442,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         gethtml: enqueuegethtml, getvalue: enqueuegetvalue, getstyle: enqueuegetstyle,
         getposition: enqueuegetposition, getlayout: enqueuegetlayout, sethtml: enqueuesethtml,
         setposition: enqueuesetposition, setstyle: enqueuesetstyle, setvalue: enqueuesetvalue,
-        setlayout: enqueusetlayout, toggleclass: enqueuetoggleclass, property: enqueueproperty
+        setlayout: enqueuetlayout, toggleclass: enqueuetoggleclass, property: enqueueproperty
       };
       var handler = handlerMap[cmd];
       if (!handler) throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
@@ -664,11 +662,11 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
 
   // For normal and async stages, recursively compile child stage
   var childResult = compileStageRequestToElements(
-    { elements: [childStage] }, // fake pipeline containing only this stage? Actually compileStageRequestToElements expects a pipeline object with elements array; we can pass a wrapper with elements [childStage].
-    0, // stageIndex 0 for this nested stage
+    { elements: [childStage] },
+    0,
     childStagePath,
     childBriefcase,
-    {}, // env will be passed at runtime, so use dummy? The function uses env only for building properties for blocks? It passes env to compileStageRequestToElements; but compileStageRequestToElements doesn't use env except for nextStageMessage and maybe process? It passes env to processElement, but processElement uses env only when building wrapper? Actually processElement calls compileblock, which doesn't use env. env is used in createPersistentElementWrapper at call time, not compile time. So env dummy is fine.
+    {},
     options || {}
   );
 
@@ -683,7 +681,7 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
         .catch(function(err) {
           logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
         });
-      return undefined; // no promise, so parent doesn't await
+      return undefined;
     };
     asyncWrapper.asyncStage = true;
     return asyncWrapper;
@@ -691,12 +689,11 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
     var syncWrapper = function(env) {
       return orchestrateStage(childStageDef, childElementFunctions, pipelineId, env, childStagePath, options || {}, childNextStageMessage);
     };
-    syncWrapper.asyncStage = false; // explicit, though not needed
+    syncWrapper.asyncStage = false;
     return syncWrapper;
   }
 }
 
-// Modify compileStageRequestToElements to include STAGE branch
 function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcase, env, options) {
   if (options === undefined) options = {};
   var constants = createBlockCompilerConstants();
@@ -741,7 +738,6 @@ function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcas
   return { elementFunctions: elementFunctions, nextStageMessage: nextStageMessage, stage: stage };
 }
 
-// Update orchestrateStage to handle async wrappers (not await)
 function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, options, nextStageMessage) {
   function runElement(index, currentEnv) {
     if (index >= elementFunctions.length) {
@@ -749,7 +745,6 @@ function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, o
     }
     var elementFn = elementFunctions[index];
     if (elementFn.asyncStage === true) {
-      // fire and forget
       elementFn(currentEnv);
       return runElement(index + 1, currentEnv);
     } else {
@@ -795,7 +790,31 @@ export function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPip
   return compileStageRequestToElements(fullPipeline, stageIndex, stagePath, briefcase, {}, options);
 }
 
-export { compileStageRequestToElements, orchestrateStage };
+// P2: validatePipelineBriefcase implementation
+function validatePipelineBriefcase(briefcase) {
+  var errors = [];
+  if (briefcase === undefined || briefcase === null) {
+    return { valid: true, errors: [] };
+  }
+  if (typeof briefcase !== 'object') {
+    errors.push('[validatePipelineBriefcase] briefcase must be an object');
+    return { valid: false, errors: errors };
+  }
+  // Use revivability validator for functions and nested objects
+  try {
+    var dnaConstants = createDnaSerializerConstants();
+    var revivabilityErrors = validaterevivableobject(briefcase, 'briefcase', dnaConstants);
+    errors = errors.concat(revivabilityErrors);
+  } catch (err) {
+    errors.push('[validatePipelineBriefcase] validation error: ' + err.message);
+  }
+  return {
+    valid: errors.length === 0,
+    errors: errors
+  };
+}
+
+export { compileStageRequestToElements, orchestrateStage, validatePipelineBriefcase };
 
 function createPersistentElementWrapper(compiledElement, elementDef, stagePath, pipelineId, options) {
   var elementId = elementDef.id || compiledElement.id || 'element_unknown';
