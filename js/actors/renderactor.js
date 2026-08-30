@@ -1,8 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
 // Changes applied:
-//   P14: renderbehavior awaits async handlers to prevent state races
-//   P16: serialize GC cycles with mutex flags
+//   P2: renderbehavior is synchronous (no async)
+//   P4: guard in persistRenderWorldmap against missing worldmap
+//   P5: ensure initialState includes worldmap; behavior returns same state
+//   (retains P16 GC mutex)
 // ============================================================
 
 import { createactor } from './actorkernel.js';
@@ -130,7 +132,12 @@ function createInitialRenderWorldmap() {
   };
 }
 
+// P4: guard against missing state.worldmap
 function persistRenderWorldmap(state) {
+  if (!state || typeof state !== 'object') return;
+  if (!state.worldmap || typeof state.worldmap !== 'object') {
+    state.worldmap = createInitialRenderWorldmap();
+  }
   state.worldmap.html = (typeof document !== 'undefined' && document.body) ? document.body.innerHTML : '';
   enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
     logwarn(renderState, '[RENDERACTOR]', 'state persist failed:', e);
@@ -746,8 +753,8 @@ HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) {
 
 var refcounter = 0;
 
-// P14: async behavior awaits handler promises
-var renderbehavior = async function(state, message) {
+// P2: synchronous behavior, do not return Promise
+var renderbehavior = function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : renderVerbosityConstants.DEBUG;
   renderState = Object.freeze({ level: v });
   logdebug(renderState, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
@@ -760,8 +767,11 @@ var renderbehavior = async function(state, message) {
   var handler = HANDLERS[message.type];
   if (handler) {
     var result = handler(state, message);
+    // if handler returns a Promise (async handler), catch errors but do not await
     if (result && typeof result.then === 'function') {
-      await result;
+      result.catch(function(err) {
+        logerror(renderState, '[RENDERACTOR]', 'async handler error:', err);
+      });
     }
   }
   return state;
@@ -778,8 +788,8 @@ var initialState = {
   worldmap: createInitialRenderWorldmap(),
   _gc: createGarbageCollector(),
   _triggerGcScheduled: false,
-  _gcCycleRunning: false,   // P16
-  _gcCycleQueued: false,    // P16
+  _gcCycleRunning: false,
+  _gcCycleQueued: false,
   verbosity: renderVerbosityConstants.DEBUG
 };
 

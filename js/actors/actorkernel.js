@@ -1,8 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/actors/actorkernel.js
-// Change applied:
-//   P8: fix DB mailbox drain race; add draining flag and clear
-//       pending poll timer before starting new loop.
+// Changes applied:
+//   P1: processMessage now async and awaits behavior result;
+//       drainMemory and drainDb await processMessage to preserve
+//       sequential processing and keep currentstate as object.
 // ============================================================
 
 import { createGarbageCollector } from './actorgc.js';
@@ -143,7 +144,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
 
   var mailbox = null;
   var running = false;
-  var draining = false;              // P8: guard against concurrent DB drains
+  var draining = false;
   var drainpromise = null;
   var drainresolve = null;
   var polltimer = null;
@@ -163,7 +164,8 @@ function createactor(behavior, initialstate, messageInterface, options) {
     }
   }
 
-  function processMessage(message) {
+  // P1: processMessage becomes async to await async behavior results
+  async function processMessage(message) {
     var msgType = message && message.type ? message.type : String(message);
     var currentVerbosity = currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity;
     logdebug({ level: currentVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage start:', msgType);
@@ -180,7 +182,12 @@ function createactor(behavior, initialstate, messageInterface, options) {
     }
 
     try {
-      currentstate = behavior(currentstate, message);
+      var result = behavior(currentstate, message);
+      if (result && typeof result.then === 'function') {
+        currentstate = await result;
+      } else if (result !== undefined) {
+        currentstate = result;
+      }
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage done:', msgType);
     } catch (err) {
       logerror({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'behavior error:', err);
@@ -204,18 +211,18 @@ function createactor(behavior, initialstate, messageInterface, options) {
     var message = mailbox.peek();
     mailbox.remove();
     logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainMemory processing message:', message && message.type);
-    processMessage(message);
+    await processMessage(message);
     setTimeout(drainMemory, 0);
   }
 
   async function drainDb() {
     if (!running) return;
-    draining = true;  // P8
+    draining = true;
     var message = await mailbox.peek();
     if (message === null) {
-      draining = false;   // P8
+      draining = false;
       running = false;
-      if (polltimer) { clearTimeout(polltimer); polltimer = null; }  // P8: clear stale timer
+      if (polltimer) { clearTimeout(polltimer); polltimer = null; }
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb mailbox empty, polling');
       resolveWaiters();
       polltimer = setTimeout(drainDb, 25);
@@ -223,15 +230,15 @@ function createactor(behavior, initialstate, messageInterface, options) {
     }
     await mailbox.remove();
     logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb processing message:', message && message.type);
-    processMessage(message);
+    await processMessage(message);
     await mailbox.clearIfEmpty ? mailbox.clearIfEmpty() : null;
-    draining = false;   // P8
-    if (polltimer) { clearTimeout(polltimer); polltimer = null; }  // P8: clear before scheduling new
+    draining = false;
+    if (polltimer) { clearTimeout(polltimer); polltimer = null; }
     polltimer = setTimeout(drainDb, 0);
   }
 
   function ensureLoop() {
-    if (!running && !draining) {   // P8: do not start if drain in progress
+    if (!running && !draining) {
       running = true;
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'ensureLoop starting loop for mailboxType:', mailboxType);
       if (mailboxType === 'db') {
