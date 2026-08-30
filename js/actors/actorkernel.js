@@ -1,9 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/actorkernel.js
 // Changes applied:
-//   P1: processMessage now async and awaits behavior result;
-//       drainMemory and drainDb await processMessage to preserve
-//       sequential processing and keep currentstate as object.
+//   P1: processMessage async, awaits behavior result
+//   P8: drain race fix (draining flag, clear pending timer)
+//   P1 (new): DB mailbox polling loop does NOT set running=false
+//             in empty branch, so polltimer remains functional
 // ============================================================
 
 import { createGarbageCollector } from './actorgc.js';
@@ -164,7 +165,6 @@ function createactor(behavior, initialstate, messageInterface, options) {
     }
   }
 
-  // P1: processMessage becomes async to await async behavior results
   async function processMessage(message) {
     var msgType = message && message.type ? message.type : String(message);
     var currentVerbosity = currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity;
@@ -221,7 +221,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
     var message = await mailbox.peek();
     if (message === null) {
       draining = false;
-      running = false;
+      // P1 (new): do NOT set running = false; keep polling active
       if (polltimer) { clearTimeout(polltimer); polltimer = null; }
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb mailbox empty, polling');
       resolveWaiters();
