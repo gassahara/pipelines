@@ -1,24 +1,24 @@
 // ============================================================
 // UPDATED FILE: js/actors/worldmapactor.js
-// Change applied: FINAL SWEEP
-//   - No self-registration (moved to registerconsumers.js)
-//   - createactor receives worldmapactorINTERFACES directly
-//   - sendworldmappatch/updateworldmapfn/observeworldmap/unobserveworldmap/getworldmap
-//     fire-and-forget, accept optional responseSpec
+// Change applied: PURE FUNCTION REFACTOR
+//   - No message interface definitions.
+//   - No MESSAGEREGISTRY references.
+//   - No createactor object construction.
+//   - Exports only createInitialWorldmapState, worldmapbehavior,
+//     and enqueue producers.
+//   - Actor state owned by the runtime (actorkernel.js).
 // ============================================================
-
 
 var worldmapVerbosityConstants = createVerbosityConstants();
 var worldmapState = Object.freeze({ level: worldmapVerbosityConstants.DEBUG });
 
-
-var worldmapactorINTERFACES = {};
-worldmapactorINTERFACES[MESSAGETYPES.UPDATE] = { patch: 'object' };
-worldmapactorINTERFACES[MESSAGETYPES.UPDATE_FN] = { fn: 'function' };
-worldmapactorINTERFACES[MESSAGETYPES.OBSERVE] = { observer: 'function' };
-worldmapactorINTERFACES[MESSAGETYPES.UNOBSERVE] = { observer: 'function' };
-worldmapactorINTERFACES[MESSAGETYPES.GET_WORLDMAP] = {};
-Object.freeze(worldmapactorINTERFACES);
+function createInitialWorldmapState() {
+  return {
+    worldmap: {},
+    observers: [],
+    verbosity: worldmapVerbosityConstants.DEBUG
+  };
+}
 
 function deepmerge(target, patch) {
   if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return patch;
@@ -37,7 +37,8 @@ function deepmerge(target, patch) {
   }, target);
 }
 
-var worldmapbehavior = function(state, message) {
+// Pure behavior function: (state, message) -> state
+function worldmapbehavior(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : worldmapVerbosityConstants.DEBUG;
   worldmapState = Object.freeze({ level: v });
 
@@ -69,33 +70,31 @@ var worldmapbehavior = function(state, message) {
   }
 
   if (message.type === MESSAGETYPES.GET_WORLDMAP) {
-    return state.worldmap;
+    if (message.sender && message.tag) {
+      sendResponse(message.sender, message.tag, state.worldmap, 'worldmapactor');
+    }
+    return state;
   }
 
   return state;
+}
+
+// Register initial state with runtime.
+registerActorState('worldmapactor', createInitialWorldmapState());
+
+// Compatibility handle (stateless) for enqueue producers.
+var WORLDMAPACTOR = {
+  getstate: function() { return getActorState('worldmapactor'); },
+  dispatch: function(message) { return dispatchToActor('worldmapactor', worldmapbehavior, message); }
 };
-
-// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
-
-var WORLDMAPACTOR = createactor(
-  worldmapbehavior,
-  { worldmap: {}, observers: [], verbosity: worldmapVerbosityConstants.DEBUG },
-  worldmapactorINTERFACES,
-  {
-    actorName: 'worldmapactor',
-    mailboxType: 'mail',
-    verbosity: worldmapVerbosityConstants.DEBUG
-  }
-);
 
 function startWorldmapActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       worldmapState = Object.freeze({ level: lvl });
-      if (WORLDMAPACTOR && WORLDMAPACTOR.getstate()) {
-        WORLDMAPACTOR.getstate().verbosity = lvl;
-      }
+      var wmStateObj = getActorState('worldmapactor');
+      if (wmStateObj) wmStateObj.verbosity = lvl;
     }
   }
   return WORLDMAPACTOR;

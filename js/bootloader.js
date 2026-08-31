@@ -69,32 +69,49 @@ function checkRegistration(entry) {
 function runPipelineBoot(loadProgram, report, manifest) {
   var list = manifest || PIPELINES_MANIFEST;
   var index = 0;
-  function next() {
-    if (index >= list.length) {
-      report({ ok: true, failures: [], loaded: list.length });
+  var entries = list.slice();
+  var loadFailures = [];
+
+  function loadNext() {
+    if (index >= entries.length) {
+      // All scripts loaded. Now perform final registration checks.
+      var regFailures = [];
+      entries.forEach(function(entry) {
+        if (entry.owner) {
+          var reg = checkRegistration(entry);
+          if (!reg.ok) {
+            regFailures.push({ src: entry.src, missingTypes: reg.missing });
+          }
+        }
+      });
+
+      if (regFailures.length) {
+        report({ ok: false, failures: regFailures, loaded: entries.length });
+      } else {
+        report({ ok: true, failures: [], loaded: entries.length });
+      }
       return;
     }
-    var entry = list[index];
+
+    var entry = entries[index];
     loadProgram(entry, function(err) {
       if (err) {
-        report({ ok: false, failures: [{ src: entry.src, error: err }], loaded: index });
+        loadFailures.push({ src: entry.src, error: err });
+        report({ ok: false, failures: loadFailures, loaded: index });
         return;
       }
       var exists = checkExistence(entry);
       if (!exists.ok) {
-        report({ ok: false, failures: [{ src: entry.src, missingGlobals: exists.missing }], loaded: index });
-        return;
-      }
-      var registered = checkRegistration(entry);
-      if (!registered.ok) {
-        report({ ok: false, failures: [{ src: entry.src, missingTypes: registered.missing }], loaded: index });
+        loadFailures.push({ src: entry.src, missingGlobals: exists.missing });
+        report({ ok: false, failures: loadFailures, loaded: index });
         return;
       }
       index = index + 1;
-      next();
+      loadNext();
     });
   }
-  next();
+
+  loadNext();
 }
 
 var PIPELINES_BASE = (typeof document !== 'undefined' && document.currentScript && document.currentScript.src)

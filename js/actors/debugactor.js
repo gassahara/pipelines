@@ -1,32 +1,28 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Change applied: FINAL SWEEP
-//   - No self-registration (moved to registerconsumers.js)
-//   - createactor receives debugactorINTERFACES directly
-//   - enqueueDebugPing/enqueueDebugRecover fire-and-forget, accept responseSpec
+// Change applied: PURE FUNCTION REFACTOR
+//   - No message interface definitions.
+//   - No MESSAGEREGISTRY references.
+//   - No createactor object construction.
+//   - Exports only createInitialDebugState, debugbehavior, enqueue producers.
+//   - Actor state owned by the runtime (actorkernel.js).
 // ============================================================
-
 
 var debugVerbosityConstants = createVerbosityConstants();
 var debugState = Object.freeze({ level: debugVerbosityConstants.DEBUG });
 
-
-var debugactorINTERFACES = {};
-debugactorINTERFACES[MESSAGETYPES.INIT_OVERLAY] = { sender: 'string?', tag: 'string?' };
-debugactorINTERFACES[MESSAGETYPES.SHOW] = { error: 'object', continuation: 'object?', sender: 'string?', tag: 'string?' };
-debugactorINTERFACES[MESSAGETYPES.HIDE] = { sender: 'string?', tag: 'string?' };
-debugactorINTERFACES[MESSAGETYPES.RECOVER] = { sender: 'string?', tag: 'string?' };
-debugactorINTERFACES[MESSAGETYPES.PING] = { sender: 'string?', tag: 'string?' };
-Object.freeze(debugactorINTERFACES);
-
-var DEBUGACTOR_INSTANCE = null;
-
-function createInitialDebugWorldmap() {
+function createInitialDebugState() {
   return {
-    overlayVisible: false,
-    cccState: {
-      currentContinuation: null
-    }
+    overlay: null,
+    currentContinuation: null,
+    worldmap: {
+      overlayVisible: false,
+      cccState: {
+        currentContinuation: null
+      }
+    },
+    globalListenersInstalled: false,
+    verbosity: debugVerbosityConstants.DEBUG
   };
 }
 
@@ -75,14 +71,18 @@ function ensureOverlay(state) {
   return state.overlay;
 }
 
-var debugbehavior = function(state, message) {
+// Pure behavior function: (state, message) -> state
+function debugbehavior(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : debugVerbosityConstants.DEBUG;
   debugState = Object.freeze({ level: v });
 
   logdebug(debugState, '[DEBUGACTOR]', 'behavior handling action:', message.type);
 
   if (!state.worldmap) {
-    state.worldmap = createInitialDebugWorldmap();
+    state.worldmap = {
+      overlayVisible: false,
+      cccState: { currentContinuation: null }
+    };
   }
 
   if (message.type === MESSAGETYPES.PING) {
@@ -235,7 +235,10 @@ var debugbehavior = function(state, message) {
           state.currentContinuation = saved.cccState.currentContinuation;
         }
       } else {
-        state.worldmap = createInitialDebugWorldmap();
+        state.worldmap = {
+          overlayVisible: false,
+          cccState: { currentContinuation: null }
+        };
         persistDebugWorldmap(state);
       }
       logdebug(debugState, '[DEBUGACTOR]', 'debug recovery completed');
@@ -245,7 +248,10 @@ var debugbehavior = function(state, message) {
       }
     }).catch(function(e) {
       logwarn(debugState, '[DEBUGACTOR]', 'state restore failed:', e);
-      state.worldmap = createInitialDebugWorldmap();
+      state.worldmap = {
+        overlayVisible: false,
+        cccState: { currentContinuation: null }
+      };
       persistDebugWorldmap(state);
       if (message.sender && message.tag) {
         var responseTypeErr = (message.responseSpec && message.responseSpec.responseType) || 'response';
@@ -256,35 +262,24 @@ var debugbehavior = function(state, message) {
   }
 
   return state;
+}
+
+// Register initial state with runtime.
+registerActorState('debugactor', createInitialDebugState());
+
+// Compatibility handle (stateless) for external access.
+var DEBUGACTOR = {
+  getstate: function() { return getActorState('debugactor'); },
+  dispatch: function(message) { return dispatchToActor('debugactor', debugbehavior, message); }
 };
-
-// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
-
-var DEBUGACTOR = createactor(
-  debugbehavior,
-  {
-    overlay: null,
-    currentContinuation: null,
-    worldmap: createInitialDebugWorldmap(),
-    verbosity: debugVerbosityConstants.DEBUG
-  },
-  debugactorINTERFACES,
-  {
-    actorName: 'debugactor',
-    mailboxType: 'mail',
-    verbosity: debugVerbosityConstants.DEBUG
-  }
-);
-DEBUGACTOR_INSTANCE = DEBUGACTOR;
 
 function startDebugActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       debugState = Object.freeze({ level: lvl });
-      if (DEBUGACTOR && DEBUGACTOR.getstate()) {
-        DEBUGACTOR.getstate().verbosity = lvl;
-      }
+      var debugStateObj = getActorState('debugactor');
+      if (debugStateObj) debugStateObj.verbosity = lvl;
     }
   }
   return DEBUGACTOR;

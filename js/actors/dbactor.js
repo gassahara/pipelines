@@ -1,23 +1,16 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied: FINAL SWEEP
-//   - No self-registration (moved to registerconsumers.js)
-//   - createactor receives dbactorINTERFACES directly
-//   - retains memory mailbox for persistence
-//   - enqueueDb* functions remain fire-and-forget with callbacks
+// Change applied: PURE FUNCTION REFACTOR
+//   - No message interface definitions.
+//   - No MESSAGEREGISTRY references.
+//   - No createactor object construction.
+//   - Exports only createInitialDbState, dbbehavior, enqueue producers,
+//     and DNA serialization utilities.
+//   - Actor state owned by the runtime (actorkernel.js).
 // ============================================================
-
 
 var dbVerbosityConstants = createVerbosityConstants();
 var dbState = Object.freeze({ level: dbVerbosityConstants.DEBUG });
-
-
-var dbactorINTERFACES = {};
-dbactorINTERFACES[MESSAGETYPES.STORE] = { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' };
-dbactorINTERFACES[MESSAGETYPES.RESTORE] = { key: 'string', resolve: 'function?', reject: 'function?' };
-dbactorINTERFACES[MESSAGETYPES.LIST] = { resolve: 'function?', reject: 'function?' };
-dbactorINTERFACES[MESSAGETYPES.DELETE] = { key: 'string', resolve: 'function?', reject: 'function?' };
-Object.freeze(dbactorINTERFACES);
 
 var ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
 var MAX_KEYS = 100;
@@ -33,6 +26,13 @@ function getStorage() {
   return null;
 }
 
+function createInitialDbState() {
+  return {
+    store: {},
+    verbosity: dbVerbosityConstants.DEBUG
+  };
+}
+
 function loadInitialState() {
   try {
     var storage = getStorage();
@@ -41,12 +41,15 @@ function loadInitialState() {
       var parsed = JSON.parse(raw);
       var keys = parsed.keys || {};
       logdebug(dbState, '[DBACTOR]', 'loadInitialState loaded', Object.keys(keys).length, 'keys');
-      return { store: Object.keys(keys).reduce(function(acc, k) { acc[k] = keys[k]; return acc; }, {}), verbosity: dbVerbosityConstants.DEBUG };
+      return {
+        store: Object.keys(keys).reduce(function(acc, k) { acc[k] = keys[k]; return acc; }, {}),
+        verbosity: dbVerbosityConstants.DEBUG
+      };
     }
   } catch (err) {
     logwarn(dbState, '[DBACTOR]', 'loadInitialState failed:', err);
   }
-  return { store: {}, verbosity: dbVerbosityConstants.DEBUG };
+  return createInitialDbState();
 }
 
 function persistAttempt(store, root, storage, attempt) {
@@ -68,7 +71,6 @@ function persist(store) {
   var root = { namespace: 'FRAMEWORK_DBACTOR_V1', updatedAt: Date.now(), keys: store };
   var storage = getStorage();
   if (!storage) return false;
-
   return persistAttempt(store, root, storage, 0);
 }
 
@@ -224,7 +226,6 @@ function deserializePairStore(json) {
 function measureLength(obj) { return JSON.stringify(obj).length; }
 
 function optimizeSerializedDna(jsonString) {
-  // P9: reset global pair store and counter to avoid cross-call contamination
   Object.keys(PAIRSTORE).forEach(function(key) { delete PAIRSTORE[key]; });
   pairCounter = 0;
 
@@ -336,7 +337,7 @@ function deoptimizeSerializedDna(jsonString) {
   return finalResult;
 }
 
-// ==================== ACTOR BEHAVIOR ====================
+// ==================== ACTOR BEHAVIOR (PURE FUNCTION) ====================
 
 var dbbehavior = function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : dbVerbosityConstants.DEBUG;
@@ -394,27 +395,15 @@ var dbbehavior = function(state, message) {
   return { store: store, verbosity: v };
 };
 
-// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
+// Register initial state with runtime.
+registerActorState('dbactor', loadInitialState());
 
-var DBACTOR = createactor(
-  dbbehavior,
-  loadInitialState(),
-  dbactorINTERFACES,
-  { actorName: 'dbactor', mailboxType: 'memory', verbosity: dbVerbosityConstants.DEBUG }
-);
-
-function startDbActor(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-    if (lvl !== undefined) {
-      dbState = Object.freeze({ level: lvl });
-      if (DBACTOR && DBACTOR.getstate()) {
-        DBACTOR.getstate().verbosity = lvl;
-      }
-    }
+// Compatibility handle (stateless) for enqueue producers.
+var DBACTOR = {
+  send: function(message) {
+    return dispatchToActor('dbactor', dbbehavior, message);
   }
-  return DBACTOR;
-}
+};
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {
@@ -433,3 +422,15 @@ var enqueueDbStore = function(key, value) { return enqueue(MESSAGETYPES.STORE, {
 var enqueueDbRestore = function(key) { return enqueue(MESSAGETYPES.RESTORE, { key: key }); };
 var enqueueDbList = function() { return enqueue(MESSAGETYPES.LIST); };
 var enqueueDbDelete = function(key) { return enqueue(MESSAGETYPES.DELETE, { key: key }); };
+
+function startDbActor(options) {
+  if (options !== undefined) {
+    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    if (lvl !== undefined) {
+      dbState = Object.freeze({ level: lvl });
+      var dbStateObj = getActorState('dbactor');
+      if (dbStateObj) dbStateObj.verbosity = lvl;
+    }
+  }
+  return DBACTOR;
+}

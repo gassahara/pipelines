@@ -1,29 +1,23 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Change applied: FINAL SWEEP
-//   - No self-registration (moved to registerconsumers.js)
-//   - createactor receives apiactorINTERFACES directly
-//   - enqueueapi/enqueuefetch fire-and-forget, accept responseSpec
-//   - apibehavior uses message.responseSpec.responseType when sending response
+// Change applied: PURE FUNCTION REFACTOR
+//   - No message interface definitions.
+//   - No MESSAGEREGISTRY references.
+//   - No createactor object construction.
+//   - Exports only createInitialApiState, apibehavior, and enqueue producers.
+//   - Actor state is owned by the runtime (actorkernel.js).
 // ============================================================
-
 
 var apiVerbosityConstants = createVerbosityConstants();
 var apiState = Object.freeze({ level: apiVerbosityConstants.DEBUG });
 
-var apiactorINTERFACES = {};
-apiactorINTERFACES[MESSAGETYPES.API] = {
-  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
-};
-apiactorINTERFACES[MESSAGETYPES.FETCH] = {
-  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
-};
-Object.freeze(apiactorINTERFACES);
-
-function createInitialApiWorldmap() {
+function createInitialApiState() {
   return {
-    lastRequest: null,
-    requestCount: 0
+    worldmap: {
+      lastRequest: null,
+      requestCount: 0
+    },
+    verbosity: apiVerbosityConstants.DEBUG
   };
 }
 
@@ -34,7 +28,8 @@ function persistApiWorldmap(state) {
   });
 }
 
-var apibehavior = function(state, message) {
+// Pure behavior function: (state, message) -> state
+function apibehavior(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : apiVerbosityConstants.DEBUG;
   apiState = Object.freeze({ level: v });
 
@@ -94,29 +89,24 @@ var apibehavior = function(state, message) {
   }
 
   return state;
+}
+
+// Register initial state with runtime.
+registerActorState('apiactor', createInitialApiState());
+
+// Minimal handle for compatibility (stateless).
+var APIACTOR = {
+  getstate: function() { return getActorState('apiactor'); },
+  dispatch: function(message) { return dispatchToActor('apiactor', apibehavior, message); }
 };
-
-// NOTE: No MESSAGEREGISTRY.register here. Registration is centralized in registerconsumers.js.
-
-var APIACTOR = createactor(
-  apibehavior,
-  { worldmap: createInitialApiWorldmap(), verbosity: apiVerbosityConstants.DEBUG },
-  apiactorINTERFACES,
-  {
-    actorName: 'apiactor',
-    mailboxType: 'mail',
-    verbosity: apiVerbosityConstants.DEBUG
-  }
-);
 
 function startApiActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       apiState = Object.freeze({ level: lvl });
-      if (APIACTOR && APIACTOR.getstate()) {
-        APIACTOR.getstate().verbosity = lvl;
-      }
+      var apiStateObj = getActorState('apiactor');
+      if (apiStateObj) apiStateObj.verbosity = lvl;
     }
   }
   return APIACTOR;

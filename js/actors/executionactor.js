@@ -1,35 +1,16 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Change applied: FINAL SWEEP
-//   - No self-registration (moved to registerconsumers.js)
-//   - createactor receives executionactorINTERFACES directly
-//   - Removed self-message in runElementTask: now uses internal settleTask
-//   - enqueueExecution* functions fire-and-forget, accept responseSpec
+// Change applied: PURE FUNCTION REFACTOR
+//   - No message interface definitions.
+//   - No MESSAGEREGISTRY references.
+//   - No createactor object construction.
+//   - Exports only createInitialExecutionState, executionbehavior,
+//     enqueue producers, and task helpers.
+//   - Actor state owned by the runtime (actorkernel.js).
 // ============================================================
-
 
 var executionVerbosityConstants = createVerbosityConstants();
 var executionState = Object.freeze({ level: executionVerbosityConstants.DEBUG });
-
-
-var executionactorINTERFACES = {};
-executionactorINTERFACES[MESSAGETYPES.PIPELINE_LOADED] = { pipelineid: 'string', env: 'object?' };
-executionactorINTERFACES[MESSAGETYPES.ENV_UPDATED] = { pipelineid: 'string', env: 'object' };
-executionactorINTERFACES[MESSAGETYPES.GET_STATUS] = { pipelineid: 'string?' };
-executionactorINTERFACES[MESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?', programRef: 'string?', elementId: 'string?', origin: 'object?' };
-executionactorINTERFACES[MESSAGETYPES.AWAIT_TASK] = { taskid: 'string' };
-executionactorINTERFACES[MESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?' };
-executionactorINTERFACES[MESSAGETYPES.GET_TASK_STATUS] = { taskid: 'string' };
-executionactorINTERFACES[MESSAGETYPES.CANCEL_TASK] = { taskid: 'string' };
-executionactorINTERFACES[MESSAGETYPES.STOP_TASK] = { taskid: 'string' };
-executionactorINTERFACES[MESSAGETYPES.CCC_ABORT] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
-executionactorINTERFACES[MESSAGETYPES.CCC_CONTINUE] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
-executionactorINTERFACES[MESSAGETYPES.CCC_RETRY] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
-executionactorINTERFACES[MESSAGETYPES.TASK_SETTLED] = { taskid: 'string', status: 'string', result: 'any', error: 'object?' };
-executionactorINTERFACES[MESSAGETYPES.RECOVER] = {};
-executionactorINTERFACES[MESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?' };
-executionactorINTERFACES[MESSAGETYPES.PING] = {};
-Object.freeze(executionactorINTERFACES);
 
 function sanitizeForState(value, seen) {
   if (value === null || value === undefined) return value;
@@ -54,12 +35,20 @@ function sanitizeForState(value, seen) {
   return out;
 }
 
-function createInitialExecutionWorldmap() {
+function createInitialExecutionState() {
   return {
     pipelines: {},
-    tasks: {},
     htmlSnapshot: null,
-    taskCounter: 0
+    tasks: {},
+    taskCounter: 0,
+    worldmap: {
+      pipelines: {},
+      tasks: {},
+      htmlSnapshot: null,
+      taskCounter: 0
+    },
+    debugState: { currentContinuation: null },
+    verbosity: executionVerbosityConstants.DEBUG
   };
 }
 
@@ -142,7 +131,8 @@ function ensurePipeline(state, pipelineid) {
   return state.pipelines[pipelineid];
 }
 
-var executionbehavior = function(state, message) {
+// Pure behavior function: (state, message) -> state
+function executionbehavior(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : executionVerbosityConstants.DEBUG;
   executionState = Object.freeze({ level: v });
 
@@ -169,15 +159,19 @@ var executionbehavior = function(state, message) {
       var pipeline = ensurePipeline(nextState, message.pipelineid);
       if (message.env && Object.keys(message.env).length > 0) pipeline.env = message.env;
       pipeline.status = 'running';
-      return true;
+      return nextState;
     }
     case MESSAGETYPES.ENV_UPDATED: {
       var p3 = ensurePipeline(nextState, message.pipelineid);
       p3.env = sanitizeForState(message.env || {});
-      return true;
+      return nextState;
     }
     case MESSAGETYPES.GET_STATUS: {
-      return message.pipelineid ? (nextState.pipelines[message.pipelineid] || null) : nextState.pipelines;
+      var status = message.pipelineid ? (nextState.pipelines[message.pipelineid] || null) : nextState.pipelines;
+      if (message.sender && message.tag) {
+        sendResponse(message.sender, message.tag, status, 'executionactor');
+      }
+      return nextState;
     }
     case MESSAGETYPES.EXECUTE_ELEMENT: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action EXECUTE_ELEMENT element:', message.elementid, 'pipeline:', message.pipelineid, 'path:', message.path);
@@ -190,27 +184,38 @@ var executionbehavior = function(state, message) {
         origin: message.origin || null
       });
       runElementTask(task.taskid, message);
-      return { taskid: task.taskid };
+      return nextState;
     }
     case MESSAGETYPES.AWAIT_TASK: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action AWAIT_TASK task:', message.taskid);
       var awaitTask = nextState.tasks[message.taskid];
       if (!awaitTask) {
-        return { error: '[EXECUTIONACTOR] unknown task: ' + message.taskid };
+        if (message.sender && message.tag) {
+          sendResponse(message.sender, message.tag, { error: '[EXECUTIONACTOR] unknown task: ' + message.taskid }, 'executionactor');
+        }
+        return nextState;
       }
       if (awaitTask.status === 'EXECUTED') {
-        return awaitTask.result || {};
+        if (message.sender && message.tag) {
+          sendResponse(message.sender, message.tag, awaitTask.result || {}, 'executionactor');
+        }
       } else if (awaitTask.status === 'FAILED') {
-        return { error: awaitTask.error ? awaitTask.error.message : 'task failed' };
+        if (message.sender && message.tag) {
+          sendResponse(message.sender, message.tag, { error: awaitTask.error ? awaitTask.error.message : 'task failed' }, 'executionactor');
+        }
       } else if (awaitTask.status === 'CANCELLED') {
-        return { error: awaitTask.error ? awaitTask.error.message : 'task cancelled' };
+        if (message.sender && message.tag) {
+          sendResponse(message.sender, message.tag, { error: awaitTask.error ? awaitTask.error.message : 'task cancelled' }, 'executionactor');
+        }
       } else if (awaitTask.status === 'STOPPED') {
-        return { error: 'task stopped' };
+        if (message.sender && message.tag) {
+          sendResponse(message.sender, message.tag, { error: 'task stopped' }, 'executionactor');
+        }
       } else {
         if (!awaitTask.consumers) awaitTask.consumers = [];
         awaitTask.consumers.push({ sender: message.sender, tag: message.tag });
-        return null; // no immediate response; will send when TASK_SETTLED
       }
+      return nextState;
     }
     case MESSAGETYPES.GET_TASKS: {
       var result = [];
@@ -232,11 +237,14 @@ var executionbehavior = function(state, message) {
           consumerCount: (t.consumers || []).length
         });
       });
-      return result;
+      if (message.sender && message.tag) {
+        sendResponse(message.sender, message.tag, result, 'executionactor');
+      }
+      return nextState;
     }
     case MESSAGETYPES.GET_TASK_STATUS: {
       var t2 = nextState.tasks[message.taskid];
-      return t2 ? {
+      var statusResult = t2 ? {
         taskid: t2.taskid,
         kind: t2.kind,
         pipelineid: t2.pipelineid,
@@ -248,19 +256,23 @@ var executionbehavior = function(state, message) {
         serialized: t2.serialized,
         consumerCount: (t2.consumers || []).length
       } : null;
+      if (message.sender && message.tag) {
+        sendResponse(message.sender, message.tag, statusResult, 'executionactor');
+      }
+      return nextState;
     }
     case MESSAGETYPES.CANCEL_TASK: {
       cancelTask(nextState, message.taskid);
-      return true;
+      return nextState;
     }
     case MESSAGETYPES.STOP_TASK: {
       stopTask(nextState, message.taskid);
-      return true;
+      return nextState;
     }
     case MESSAGETYPES.CCC_ABORT:
     case MESSAGETYPES.CCC_CONTINUE:
     case MESSAGETYPES.CCC_RETRY: {
-      return true;
+      return nextState;
     }
     case MESSAGETYPES.TASK_SETTLED: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action TASK_SETTLED task:', message.taskid, 'status:', message.status);
@@ -282,7 +294,7 @@ var executionbehavior = function(state, message) {
         }
         task4.consumers = [];
       }
-      return null;
+      return nextState;
     }
     case MESSAGETYPES.RECOVER: {
       enqueueDbRestore('actor:state:execution').then(function(saved) {
@@ -293,68 +305,41 @@ var executionbehavior = function(state, message) {
           nextState.htmlSnapshot = saved.htmlSnapshot || null;
           nextState.taskCounter = saved.taskCounter || 0;
         } else {
-          nextState.worldmap = createInitialExecutionWorldmap();
-          nextState.pipelines = nextState.worldmap.pipelines || {};
-          nextState.tasks = nextState.worldmap.tasks || {};
-          nextState.htmlSnapshot = nextState.worldmap.htmlSnapshot || null;
-          nextState.taskCounter = nextState.worldmap.taskCounter || 0;
+          nextState.worldmap = createInitialExecutionState().worldmap;
+          nextState.pipelines = {};
+          nextState.tasks = {};
+          nextState.htmlSnapshot = null;
+          nextState.taskCounter = 0;
         }
         if (message.sender && message.tag) sendResponse(message.sender, message.tag, nextState, 'executionactor');
       }).catch(function(e) {
         if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'executionactor');
       });
-      return null;
+      return nextState;
     }
     case MESSAGETYPES.REGISTER_PIPELINE: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action REGISTER_PIPELINE:', message.pipelineid);
       var p10 = ensurePipeline(nextState, message.pipelineid);
       p10.usesElementSnapshots = true;
       if (message.env) p10.env = sanitizeForState(message.env);
-      return true;
+      return nextState;
     }
     case MESSAGETYPES.PING: {
-      return true;
+      if (message.sender && message.tag) {
+        sendResponse(message.sender, message.tag, true, 'executionactor');
+      }
+      return nextState;
     }
     default: {
       logwarn(executionState, '[EXECUTIONACTOR]', 'unknown message type:', message.type);
-      return { error: '[EXECUTIONACTOR] unknown message type' };
+      return nextState;
     }
   }
-};
-
-function createInitialExecutionState() {
-  return {
-    pipelines: {},
-    htmlSnapshot: null,
-    tasks: {},
-    taskCounter: 0,
-    worldmap: createInitialExecutionWorldmap(),
-    debugState: { currentContinuation: null }
-  };
-}
-
-function restoreExecutionStateInto(actor) {
-  enqueueDbRestore('actor:state:execution').then(function(saved) {
-    var live = actor.getstate();
-    if (saved) {
-      live.pipelines = saved.pipelines || {};
-      live.htmlSnapshot = saved.htmlSnapshot || null;
-      live.tasks = saved.tasks || {};
-      live.taskCounter = saved.taskCounter || 0;
-      live.worldmap = saved.worldmap || saved;
-    } else {
-      enqueueDbStore('actor:state:execution', live.worldmap).catch(function(e) {
-        logwarn(executionState, '[EXECUTIONACTOR]', 'default state persist failed:', e);
-      });
-    }
-  }).catch(function(err) {
-    logwarn(executionState, '[EXECUTIONACTOR]', 'state restore failed:', err);
-  });
 }
 
 // Internal task settlement: direct call, no self-message
 function settleTask(taskid, status, result, error) {
-  var currentActorState = EXECUTIONACTOR ? EXECUTIONACTOR.getstate() : null;
+  var currentActorState = getActorState('executionactor');
   if (!currentActorState || !currentActorState.tasks) return;
   var task = currentActorState.tasks[taskid];
   if (!task) return;
@@ -410,20 +395,14 @@ function runElementTask(taskid, descriptor) {
   });
 }
 
-var executionInitialState = createInitialExecutionState();
-// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
+// Register initial state with runtime.
+registerActorState('executionactor', createInitialExecutionState());
 
-var EXECUTIONACTOR = createactor(
-  executionbehavior,
-  executionInitialState,
-  executionactorINTERFACES,
-  {
-    actorName: 'executionactor',
-    mailboxType: 'mail',
-    verbosity: executionVerbosityConstants.DEBUG
-  }
-);
-restoreExecutionStateInto(EXECUTIONACTOR);
+// Compatibility handle (stateless) for enqueue producers.
+var EXECUTIONACTOR = {
+  getstate: function() { return getActorState('executionactor'); },
+  dispatch: function(message) { return dispatchToActor('executionactor', executionbehavior, message); }
+};
 
 function enqueueExecutionPipelineLoaded(pipelineid, env, responseSpec) {
   var tag = generateTag();
@@ -491,9 +470,8 @@ function startExecutionActor(options) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       executionState = Object.freeze({ level: lvl });
-      if (EXECUTIONACTOR && EXECUTIONACTOR.getstate()) {
-        EXECUTIONACTOR.getstate().verbosity = lvl;
-      }
+      var execStateObj = getActorState('executionactor');
+      if (execStateObj) execStateObj.verbosity = lvl;
     }
   }
   return EXECUTIONACTOR;

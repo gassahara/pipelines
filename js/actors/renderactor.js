@@ -1,12 +1,13 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: FINAL SWEEP
-//   - No self-registration (moved to registerconsumers.js)
-//   - createactor receives renderactorINTERFACES directly
-//   - enqueue* functions fire-and-forget, accept optional responseSpec
-//   - enqueuesetlayout typo corrected
+// Change applied: PURE FUNCTION REFACTOR
+//   - No message interface definitions.
+//   - No MESSAGEREGISTRY references.
+//   - No createactor object construction.
+//   - Exports only createInitialRenderState, renderbehavior, enqueue producers,
+//     and DOM helper functions.
+//   - Actor state owned by the runtime (actorkernel.js).
 // ============================================================
-
 
 var renderVerbosityConstants = createVerbosityConstants();
 var renderState = Object.freeze({ level: renderVerbosityConstants.DEBUG });
@@ -20,14 +21,23 @@ function createRenderErrorContext(label) {
   };
 }
 
-function createInitialRenderWorldmap() {
-  return { html: '', viewport: null };
+function createInitialRenderState() {
+  return {
+    actorRegistry: createActorRegistry(),
+    worldmap: { html: '', viewport: null },
+    _gc: createGarbageCollector(),
+    _triggerGcScheduled: false,
+    _gcCycleRunning: false,
+    _gcCycleQueued: false,
+    _triggerObserverInstalled: false,
+    verbosity: renderVerbosityConstants.DEBUG
+  };
 }
 
 function persistRenderWorldmap(state) {
   if (!state || typeof state !== 'object') return;
   if (!state.worldmap || typeof state.worldmap !== 'object') {
-    state.worldmap = createInitialRenderWorldmap();
+    state.worldmap = { html: '', viewport: null };
   }
   state.worldmap.html = (typeof document !== 'undefined' && document.body) ? document.body.innerHTML : '';
   enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
@@ -339,12 +349,12 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
         state.worldmap = saved;
         if (document.body) document.body.innerHTML = saved.html;
       } else {
-        state.worldmap = createInitialRenderWorldmap();
+        state.worldmap = { html: '', viewport: null };
         persistRenderWorldmap(state);
       }
       scheduleGcCycle(state);
     }).catch(function(e) {
-      state.worldmap = createInitialRenderWorldmap();
+      state.worldmap = { html: '', viewport: null };
       persistRenderWorldmap(state);
     }).then(function() {
       return state;
@@ -374,7 +384,8 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
 };
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) { scheduleGcCycle(state); return true; };
 
-var renderbehavior = function(state, message) {
+// Pure behavior function: (state, message) -> state | Promise<state>
+function renderbehavior(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : renderVerbosityConstants.DEBUG;
   renderState = Object.freeze({ level: v });
   logdebug(renderState, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
@@ -382,75 +393,20 @@ var renderbehavior = function(state, message) {
   if (handler) {
     var result = handler(state, message);
     if (result && typeof result.then === 'function') {
-      return result;
+      return result.then(function() { return state; });
     }
-    return result;
+    return state;
   }
   return state;
-};
+}
 
-var renderInitialState = {
-  actorRegistry: createActorRegistry(),
-  worldmap: createInitialRenderWorldmap(),
-  _gc: createGarbageCollector(),
-  _triggerGcScheduled: false,
-  _gcCycleRunning: false,
-  _gcCycleQueued: false,
-  _triggerObserverInstalled: false,
-  verbosity: renderVerbosityConstants.DEBUG
-};
-
-var renderactorINTERFACES = {};
-renderactorINTERFACES[MESSAGETYPES.RENDER] = { id: 'string', renderer: 'function', data: 'any', env: 'object' };
-renderactorINTERFACES[MESSAGETYPES.CLEAR] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.HTML] = { id: 'string', markup: 'string', append: 'boolean' };
-renderactorINTERFACES[MESSAGETYPES.REMOVE] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.SETSTYLES] = { id: 'string', styles: 'object' };
-renderactorINTERFACES[MESSAGETYPES.SETATTR] = { id: 'string', name: 'string', value: 'string' };
-renderactorINTERFACES[MESSAGETYPES.TOGGLECLASS] = { id: 'string', classname: 'string', force: 'boolean?' };
-renderactorINTERFACES[MESSAGETYPES.CRYPTO] = { bytes: 'number' };
-renderactorINTERFACES[MESSAGETYPES.GEOLOCATION] = { enablehighaccuracy: 'boolean', timeout: 'number' };
-renderactorINTERFACES[MESSAGETYPES.PERSISTENCE] = { action: 'string', key: 'string?', value: 'string?' };
-renderactorINTERFACES[MESSAGETYPES.CREATEELEMENT] = { tag: 'string', props: 'object?' };
-renderactorINTERFACES[MESSAGETYPES.CREATECONTAINER] = {};
-renderactorINTERFACES[MESSAGETYPES.CREATEFROMHTML] = { html: 'string' };
-renderactorINTERFACES[MESSAGETYPES.PROPERTY] = { id: 'string', name: 'string', arguments: 'array?' };
-renderactorINTERFACES[MESSAGETYPES.GETHTML] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETVALUE] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETSTYLE] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETPOSITION] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETLAYOUT] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.SETHTML] = { id: 'string', value: 'string' };
-renderactorINTERFACES[MESSAGETYPES.SETPOSITION] = { id: 'string', value: 'object' };
-renderactorINTERFACES[MESSAGETYPES.SETSTYLE] = { id: 'string', value: 'object' };
-renderactorINTERFACES[MESSAGETYPES.SETVALUE] = { id: 'string', value: 'any' };
-renderactorINTERFACES[MESSAGETYPES.SETLAYOUT] = { id: 'string', value: 'object' };
-renderactorINTERFACES[MESSAGETYPES.GETVIEWPORT] = {};
-renderactorINTERFACES[MESSAGETYPES.GETSCREEN] = {};
-renderactorINTERFACES[MESSAGETYPES.MATCHMEDIA] = { query: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GET_BODY_HTML] = {};
-renderactorINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string' };
-renderactorINTERFACES[MESSAGETYPES.RECOVER] = {};
-renderactorINTERFACES[MESSAGETYPES.PING] = {};
-renderactorINTERFACES[MESSAGETYPES.REGISTER_TRIGGER] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array' };
-renderactorINTERFACES[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', output: 'string?' };
-renderactorINTERFACES[MESSAGETYPES.REVALIDATE_TRIGGERS] = {};
-Object.freeze(renderactorINTERFACES);
-
-// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
-
-var RENDERACTOR = createactor(
-  renderbehavior,
-  renderInitialState,
-  renderactorINTERFACES,
-  {
-    actorName: 'renderactor',
-    mailboxType: 'mail',
-    verbosity: renderVerbosityConstants.DEBUG
-  }
-);
-
-renderInitialState.actorRegistry = setRenderActor(renderInitialState.actorRegistry, RENDERACTOR);
+// Register initial state with runtime.
+var renderInitialState = createInitialRenderState();
+registerActorState('renderactor', renderInitialState);
+renderInitialState.actorRegistry = setRenderActor(renderInitialState.actorRegistry, {
+  getstate: function() { return getActorState('renderactor'); },
+  dispatch: function(message) { return dispatchToActor('renderactor', renderbehavior, message); }
+});
 ensureTriggerObserver(renderInitialState);
 
 function createEnqueuer(type, idRequired, extraPayloadFn) {
@@ -537,12 +493,14 @@ var startRenderActor = function(options) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       renderState = Object.freeze({ level: lvl });
-      if (RENDERACTOR && RENDERACTOR.getstate()) {
-        RENDERACTOR.getstate().verbosity = lvl;
-      }
+      var renderStateObj = getActorState('renderactor');
+      if (renderStateObj) renderStateObj.verbosity = lvl;
     }
   }
-  return RENDERACTOR;
+  return {
+    getstate: function() { return getActorState('renderactor'); },
+    dispatch: function(message) { return dispatchToActor('renderactor', renderbehavior, message); }
+  };
 };
 
 var expectelement = function(id, timeout) {
