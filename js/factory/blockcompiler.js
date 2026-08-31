@@ -1,595 +1,827 @@
 // ============================================================
-// UPDATED FILE: js/actors/renderactor.js
-// Change applied: full ES5 rewrite (copy-B base; embedded assistant
-// prose at L129-140 purged). Imports → require, arrows → function
-// expressions, async handlers → promise chains, globalThis →
-// manual fallback chain, Object.assign → manual copy, const → var,
-// export → module.exports. Re-specified missing functions:
-// ensureTriggerObserver (delegated DOM listener forwarding
-// TRIGGER_EVENT to hypervisoractor via sendInstruction) and
-// scheduleGcCycle (throttled collectEnded pass). ADDED
-// enqueueRenderCrypto (mail wrapper for CRYPTO, no resolve/reject).
-// FIX: enqueuetlayout → enqueuesetlayout
+// UPDATED FILE: js/factory/blockcompiler.js
+// Change applied: DIRECT DISPATCH REFACTOR (partial)
+//   - loadPipeline now fire-and-forget with responseSpec pipeline_booted
+//   - Registered response consumer for pipeline_booted (logging)
+//   - Orchestration still promise-based internally (will be converted later)
 // ============================================================
 
 
-var renderVerbosityConstants = createVerbosityConstants();
-var renderState = Object.freeze({ level: renderVerbosityConstants.DEBUG });
+var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
-function createRenderErrorContext(label) {
+function createBlockCompilerConstants() {
+  return Object.freeze({
+    BLOCKTYPES: Object.freeze({
+      FN: 'fn', API: 'api', FETCH: 'fetch', WRITER: 'writer',
+      IO: 'io', DOMQUERY: 'domquery', CRYPTO: 'crypto',
+      WAIT: 'wait', EXECUTIONQUERY: 'executionquery', STOREQUERY: 'storequery'
+    }),
+    INHERITEDKEYS: Object.freeze(['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents'])
+  });
+}
+
+function cloneObject(obj) {
+  var out = {};
+  Object.keys(obj || {}).forEach(function(key) { out[key] = obj[key]; });
+  return out;
+}
+
+function extendObject(target, source) {
+  Object.keys(source || {}).forEach(function(key) { target[key] = source[key]; });
+  return target;
+}
+
+function stripQuotes(str) {
+  return str.split('').reduce(function(out, ch) {
+    return ch !== '"' && ch !== "'" ? out + ch : out;
+  }, '');
+}
+
+function splitPathSegments(pathstr) {
+  function scan(i, current, parts) {
+    if (i >= pathstr.length) {
+      if (current) parts.push(current);
+      return parts;
+    }
+    var ch = pathstr.charAt(i);
+    if (ch === '[' || ch === ']' || ch === '.') {
+      if (current) parts.push(current);
+      return scan(i + 1, '', parts);
+    }
+    return scan(i + 1, current + ch, parts);
+  }
+  return scan(0, '', []);
+}
+
+function containsPathAccessorChars(str) {
+  return str.split('').reduce(function(found, c) {
+    return found || c === '.' || c === '[' || c === ']';
+  }, false);
+}
+
+function containsStyleAccess(source) {
+  if (typeof source !== 'string') return false;
+
+  function matchesTyle(j, k) {
+    var expected = 'tyle';
+    if (k >= expected.length) return j;
+    if (j >= source.length || source.charAt(j).toLowerCase() !== expected.charAt(k)) return -1;
+    return matchesTyle(j + 1, k + 1);
+  }
+
+  function skipWhitespace(j) {
+    if (j >= source.length) return j;
+    var c = source.charAt(j);
+    if (c === ' ' || c === '\t' || c === '\n') return skipWhitespace(j + 1);
+    return j;
+  }
+
+  function scan(i) {
+    if (i >= source.length) return false;
+    var ch = source.charAt(i);
+    if (ch === 's' || ch === 'S') {
+      var after = matchesTyle(i + 1, 0);
+      if (after !== -1) {
+        var ws = skipWhitespace(after);
+        if (source.charAt(ws) === '.') return true;
+      }
+    }
+    return scan(i + 1);
+  }
+
+  return scan(0);
+}
+
+function compilepathaccessor(pathstr) {
+  if (typeof pathstr !== 'string') {
+    return function() { return pathstr; };
+  }
+  var segments = pathstr.split('.').reduce(function(acc, dotPart) {
+    return acc.concat(splitPathSegments(dotPart).map(function(seg) { return stripQuotes(seg); }));
+  }, []);
+  return function(env) {
+    return segments.reduce(function(curr, key) { return (curr != null ? curr[key] : undefined); }, env);
+  };
+}
+
+function buildproperties(merged, inherited) {
+  if (inherited === undefined) inherited = {};
+  return Object.keys(merged).reduce(function(result, key) {
+    if (key !== 'fn') result[key] = merged[key];
+    return result;
+  }, cloneObject(inherited));
+}
+
+function buildBlockProperties(merged, inherited, io, env) {
+  if (inherited === undefined) inherited = {};
+  if (io === undefined) io = { inputs: [], outputs: {} };
+  if (env === undefined) env = {};
+
+  var properties = buildproperties(merged, inherited);
+  var inputsObj = {};
+
+  (io.inputs || []).forEach(function(name) {
+    inputsObj[name] = compilepathaccessor(name)(env);
+  });
+
+  properties.inputs = inputsObj;
+  properties.outputs = io.outputs || {};
+
+  return properties;
+}
+
+function writeoutputs(sig, env, result, id) {
+  var patch = {};
+  var outputkeys = sig && sig.outputs ? Object.keys(sig.outputs) : [];
+  if (result === null || result === undefined) {
+    if (outputkeys.length > 0) throw new Error('block returned ' + result + ' but outputs expected keys: ' + outputkeys.join(', '));
+    return patch;
+  }
+  if (outputkeys.length === 1) {
+    var key = outputkeys[0];
+    var value = result[key] !== undefined ? result[key] : result;
+    patch[key] = value;
+    env[key] = value;
+    return patch;
+  }
+  outputkeys.forEach(function(k) {
+    if (result[k] === undefined) throw new Error('missing required output "' + k + '" from block result');
+    patch[k] = result[k];
+    env[k] = result[k];
+  });
+  return patch;
+}
+
+function createerrorcontext(id, stagetype) {
   return function(err) {
-    if (!err) err = new Error('unknown render error');
-    if (!err.diagnostic) err.diagnostic = {};
-    err.diagnostic.renderstage = label;
+    err.diagnostic = err.diagnostic || {};
+    err.diagnostic.blockid = id;
+    err.diagnostic.stagetype = stagetype;
     throw err;
   };
 }
 
-function createInitialRenderWorldmap() {
-  return { html: '', viewport: null };
-}
-
-function persistRenderWorldmap(state) {
-  if (!state || typeof state !== 'object') return;
-  if (!state.worldmap || typeof state.worldmap !== 'object') {
-    state.worldmap = createInitialRenderWorldmap();
-  }
-  state.worldmap.html = (typeof document !== 'undefined' && document.body) ? document.body.innerHTML : '';
-  enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
-    logwarn(renderState, '[RENDERACTOR]', 'state persist failed:', e);
-  });
-}
-
-function withElement(id, reject, fn) {
-  if (!id || typeof id !== 'string') {
-    if (typeof reject === 'function') reject(new Error('[RENDERACTOR] id must be a non-empty string'));
-    return null;
-  }
-  var el = document.getElementById(id);
-  if (!el) {
-    if (typeof reject === 'function') reject(new Error('[RENDERACTOR] element not found: ' + id));
-    return null;
-  }
-  return fn(el);
-}
-
-function withElementRetry(id, reject, fn, timeout) {
-  if (timeout === undefined) timeout = 5000;
-  var existing = document.getElementById(id);
-  if (existing) return fn(existing);
-  return new Promise(function(resolve, rejectPromise) {
-    var observer = null;
-    var timeoutId = setTimeout(function() {
-      if (observer) observer.disconnect();
-      rejectPromise(new Error('[RENDERACTOR] element not found after timeout: ' + id));
-    }, timeout);
-    observer = new MutationObserver(function() {
-      var el = document.getElementById(id);
-      if (el) {
-        clearTimeout(timeoutId);
-        observer.disconnect();
-        try { resolve(fn(el)); } catch (err) { rejectPromise(err); }
+function createBlockAnalyzer(rules) {
+  return function(block) {
+    var errors = [];
+    rules.forEach(function(rule) {
+      var value = block[rule.field];
+      if (rule.required && (value === undefined || value === null)) {
+        errors.push(rule.message);
+      } else if (value !== undefined && value !== null) {
+        if (rule.type && typeof value !== rule.type) {
+          errors.push(rule.message + ' (expected ' + rule.type + ', got ' + typeof value + ')');
+        }
+        if (rule.custom && !rule.custom(value, block)) errors.push(rule.message);
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
-  });
-}
-
-function waitForDomReady() {
-  if (typeof document === 'undefined') return Promise.resolve();
-  if (document.readyState === 'loading') {
-    return new Promise(function(resolve) { document.addEventListener('DOMContentLoaded', resolve, { once: true }); });
-  }
-  if (document.readyState !== 'complete') {
-    return new Promise(function(resolve) { window.addEventListener('load', resolve, { once: true }); });
-  }
-  return Promise.resolve();
-}
-
-function createTriggerProducerConsumer(msg) {
-  return {
-    producer: { type: 'dom-event', id: msg.sourceid, event: msg.event },
-    consumer: { type: 'trigger-recipient', pipelineId: msg.pipelineId, stageId: msg.stageId },
-    metadata: { stagePath: msg.stagePath || [], control: msg.control, children: msg.children, env: msg.env || {} }
+    return {
+      valid: errors.length === 0,
+      errors: errors,
+      warnings: [],
+      dependencies: [],
+      outputs: block.outputs ? block.outputs : {},
+      contracts: []
+    };
   };
 }
 
-// scheduleGcCycle — throttled GC pass: collects ENDED gc objects.
-function scheduleGcCycle(state) {
-  if (!state) return;
-  if (state._triggerGcScheduled) return;
-  state._triggerGcScheduled = true;
-  setTimeout(function() {
-    state._triggerGcScheduled = false;
-    if (state._gc) {
-      collectEnded(state._gc);
-    }
-  }, 0);
-}
-
-// ensureTriggerObserver — delegated DOM listener forwarding matching dom-event
-// triggers to hypervisoractor via sendInstruction (mail pattern).
-function ensureTriggerObserver(state) {
-  if (!state || state._triggerObserverInstalled) return;
-  if (typeof document === 'undefined') return;
-  state._triggerObserverInstalled = true;
-
-  var handler = function(event) {
-    var target = event.target;
-    var targetId = target && target.id;
-    if (!targetId || !state._gc) return;
-
-    listObjects(state._gc).forEach(function(gcObj) {
-      var producer = gcObj.producer || {};
-      if (producer.type !== 'dom-event') return;
-      if (producer.id !== targetId) return;
-      if (producer.event !== event.type) return;
-
-      incrementSent(state._gc, gcObj.id, 1);
-
-      sendInstruction('hypervisoractor', 'trigger_event', {
-        pipelineId: gcObj.consumer && gcObj.consumer.pipelineId,
-        stageId: gcObj.consumer && gcObj.consumer.stageId,
-        stagePath: gcObj.metadata && gcObj.metadata.stagePath ? gcObj.metadata.stagePath : [],
-        eventPayload: { type: event.type, targetId: targetId }
-      }, null, 'renderactor').catch(function(err) {
-        logwarn(renderState, '[RENDERACTOR]', 'trigger forward failed:', err);
-      });
-    });
-  };
-
-  document.addEventListener('click', handler, true);
-  document.addEventListener('input', handler, true);
-  document.addEventListener('change', handler, true);
-}
-
-var HANDLERS = {};
-HANDLERS[MESSAGETYPES.RENDER] = function(state, msg) {
-  var target = msg.id ? document.getElementById(msg.id) : null;
-  if (typeof msg.renderer === 'function') {
-    try { msg.renderer(target, msg.data, msg.env || {}); } catch (err) { console.error('[RENDERACTOR] Renderer error:', err); throw err; }
-  }
-  return true;
-};
-HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElement(msg.id, null, function(el) { el.innerHTML = ''; });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
-  return waitForDomReady().then(function() {
-    persistRenderWorldmap(state);
-    withElementRetry(msg.id, null, function(el) {
-      if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
-      else el.innerHTML = msg.markup;
-    });
-    persistRenderWorldmap(state);
-    return true;
-  });
-};
-HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElement(msg.id, null, function(el) { el.remove(); });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElementRetry(msg.id, null, function(el) {
-    Object.keys(msg.styles || {}).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
-  });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.SETATTR] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElementRetry(msg.id, null, function(el) { el.setAttribute(msg.name, msg.value); });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElementRetry(msg.id, null, function(el) { el.classList.toggle(msg.classname, msg.force); });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.CRYPTO] = function(state, msg) {
-  var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-  var array = new Uint8Array(msg.bytes);
-  win.crypto.getRandomValues(array);
-  return Array.prototype.slice.call(array);
-};
-HANDLERS[MESSAGETYPES.GEOLOCATION] = function(state, msg) {
-  return new Promise(function(resolve, reject) {
-    var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-    var geo = win.navigator && win.navigator.geolocation;
-    if (!geo) return reject(new Error('geolocation API unavailable'));
-    geo.getCurrentPosition(
-      function(pos) { resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }); },
-      function(err) { reject(new Error('geolocation failed: ' + err.message)); },
-      { enablehighaccuracy: msg.enablehighaccuracy || false, timeout: msg.timeout || 5000 }
-    );
-  });
-};
-HANDLERS[MESSAGETYPES.PERSISTENCE] = function(state, msg) {
-  var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-  var storage = win.localStorage;
-  if (!storage) return { error: 'localStorage unavailable' };
-  try {
-    if (msg.action === 'getItem') return { value: storage.getItem(msg.key) };
-    else if (msg.action === 'setItem') { storage.setItem(msg.key, msg.value); return { success: true }; }
-    else if (msg.action === 'removeItem') { storage.removeItem(msg.key); return { success: true }; }
-    else if (msg.action === 'clear') { storage.clear(); return { success: true }; }
-    else return { error: 'unknown persistence action: ' + msg.action };
-  } catch (err) { return { error: err.message }; }
-};
-HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(state, msg) {
-  persistRenderWorldmap(state);
-  try {
-    var el = document.createElement(msg.tag);
-    if (msg.props) Object.keys(msg.props).forEach(function(prop) { el[prop] = msg.props[prop]; });
-    return CREATEDOMREF(el, state.actorRegistry);
-  } catch (err) { return { error: err.message }; }
-};
-HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(state, msg) {
-  persistRenderWorldmap(state);
-  try { return CREATEDOMREF(document.createElement('div'), state.actorRegistry); } catch (err) { return { error: err.message }; }
-};
-HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(state, msg) {
-  persistRenderWorldmap(state);
-  try {
-    var wrapper = document.createElement('div');
-    wrapper.innerHTML = msg.html;
-    var child = wrapper.firstElementChild || wrapper;
-    return CREATEDOMREF(child, state.actorRegistry);
-  } catch (err) { return { error: err.message }; }
-};
-HANDLERS[MESSAGETYPES.PROPERTY] = function(state, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  var fn = el[msg.name];
-  if (typeof fn !== 'function') return { error: 'property "' + msg.name + '" is not a function' };
-  try { return fn.apply(el, msg.arguments || []); } catch (e) { return { error: e.message }; }
-};
-HANDLERS[MESSAGETYPES.GETHTML] = function(state, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  return { tag: el.tagName.toLowerCase(), innerHTML: el.innerHTML };
-};
-HANDLERS[MESSAGETYPES.GETVALUE] = function(state, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  return el.value;
-};
-HANDLERS[MESSAGETYPES.GETSTYLE] = function(state, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  var computed = window.getComputedStyle(el);
-  var styleobj = Array.prototype.slice.call(computed).reduce(function(acc, prop) {
-    acc[prop] = computed.getPropertyValue(prop);
-    return acc;
-  }, {});
-  return styleobj;
-};
-HANDLERS[MESSAGETYPES.GETPOSITION] = function(state, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  var rect = el.getBoundingClientRect();
-  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
-};
-HANDLERS[MESSAGETYPES.GETLAYOUT] = function(state, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  return {
-    offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight,
-    offsetLeft: el.offsetLeft, offsetTop: el.offsetTop,
-    scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight,
-    clientWidth: el.clientWidth, clientHeight: el.clientHeight
-  };
-};
-HANDLERS[MESSAGETYPES.SETHTML] = function(state, msg) {
-  return waitForDomReady().then(function() {
-    persistRenderWorldmap(state);
-    withElementRetry(msg.id, null, function(el) { el.innerHTML = msg.value; });
-    persistRenderWorldmap(state);
-    return true;
-  });
-};
-HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.SETSTYLE] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.SETVALUE] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElementRetry(msg.id, null, function(el) { el.value = msg.value; });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.SETLAYOUT] = function(state, msg) {
-  persistRenderWorldmap(state);
-  withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el[prop] = msg.value[prop]; }); });
-  persistRenderWorldmap(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(state, msg) {
-  var doc = document.documentElement;
-  return { viewportWidth: doc.clientWidth, viewportHeight: doc.clientHeight };
-};
-HANDLERS[MESSAGETYPES.GETSCREEN] = function(state, msg) {
-  var scr = window.screen;
-  return { screenWidth: scr.width, screenHeight: scr.height, availWidth: scr.availWidth, availHeight: scr.availHeight };
-};
-HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(state, msg) {
-  return { matches: window.matchMedia(msg.query).matches };
-};
-HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(state, msg) {
-  return document.body ? document.body.innerHTML : '';
-};
-HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
-  return waitForDomReady().then(function() {
-    persistRenderWorldmap(state);
-    if (document.body) document.body.innerHTML = msg.html;
-    persistRenderWorldmap(state);
-    return true;
-  });
-};
-HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
-  return waitForDomReady().then(function() {
-    return enqueueDbRestore('actor:state:render').then(function(saved) {
-      if (saved) {
-        state.worldmap = saved;
-        if (document.body) document.body.innerHTML = saved.html;
-      } else {
-        state.worldmap = createInitialRenderWorldmap();
-        persistRenderWorldmap(state);
-      }
-      scheduleGcCycle(state);
-    }).catch(function(e) {
-      state.worldmap = createInitialRenderWorldmap();
-      persistRenderWorldmap(state);
-    }).then(function() {
-      return state;
-    });
-  });
-};
-HANDLERS[MESSAGETYPES.PING] = function(state, msg) { return true; };
-HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
-  return HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION](state, msg);
-};
-HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
-  var pc = createTriggerProducerConsumer(msg);
-  var existing = listObjects(state._gc).filter(function(obj) {
-    return obj.producer.id === pc.producer.id && obj.producer.event === pc.producer.event &&
-      obj.consumer.pipelineId === pc.consumer.pipelineId && obj.consumer.stageId === pc.consumer.stageId;
-  })[0];
-  if (existing) {
-    existing.metadata = pc.metadata; existing.status = 'EXPECTING'; existing.sentCount = 0; existing.receivedCount = 1;
-  } else {
-    var gcObject = { producer: pc.producer, consumer: pc.consumer, metadata: pc.metadata, status: 'EXPECTING', sentCount: 0, receivedCount: 0 };
-    registerObject(state._gc, gcObject);
-    incrementReceived(state._gc, gcObject.id, 1);
-    ensureTriggerObserver(state);
-  }
-  scheduleGcCycle(state);
-  return true;
-};
-HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) { scheduleGcCycle(state); return true; };
-
-// renderbehavior — plain function returning handler result (promise or value);
-// kernel's processMessage handles both (awaits promises, sends result as response).
-var renderbehavior = function(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : renderVerbosityConstants.DEBUG;
-  renderState = Object.freeze({ level: v });
-  logdebug(renderState, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
-  var handler = HANDLERS[message.type];
-  if (handler) {
-    var result = handler(state, message);
-    if (result && typeof result.then === 'function') {
-      return result;
-    }
+function buildPayload(mappingobj, data) {
+  return Object.keys(mappingobj).reduce(function(result, fieldkey) {
+    var mappingdef = mappingobj[fieldkey];
+    if (typeof mappingdef === 'function') result[fieldkey] = mappingdef(data);
+    else if (typeof mappingdef === 'object' && mappingdef !== null && !Array.isArray(mappingdef)) {
+      result[fieldkey] = mappingdef.from !== undefined ? data[mappingdef.from] : buildPayload(mappingdef, data);
+    } else result[fieldkey] = mappingdef;
     return result;
-  }
-  return state;
-};
+  }, {});
+}
 
-var renderInitialState = {
-  actorRegistry: createActorRegistry(),
-  worldmap: createInitialRenderWorldmap(),
-  _gc: createGarbageCollector(),
-  _triggerGcScheduled: false,
-  _gcCycleRunning: false,
-  _gcCycleQueued: false,
-  _triggerObserverInstalled: false,
-  verbosity: renderVerbosityConstants.DEBUG
-};
+function buildResponse(mappingobj, raw) {
+  return Object.keys(mappingobj).reduce(function(result, fieldkey) {
+    var mappingdef = mappingobj[fieldkey];
+    if (typeof mappingdef === 'function') result[fieldkey] = mappingdef(raw);
+    else if (typeof mappingdef === 'object' && mappingdef !== null && mappingdef.from !== undefined) result[fieldkey] = raw[mappingdef.from];
+    else if (typeof mappingdef === 'object' && mappingdef !== null) result[fieldkey] = buildResponse(mappingdef, raw);
+    else result[fieldkey] = raw[mappingdef];
+    return result;
+  }, {});
+}
 
-var renderactorINTERFACES = {};
-renderactorINTERFACES[MESSAGETYPES.RENDER] = { id: 'string', renderer: 'function', data: 'any', env: 'object' };
-renderactorINTERFACES[MESSAGETYPES.CLEAR] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.HTML] = { id: 'string', markup: 'string', append: 'boolean' };
-renderactorINTERFACES[MESSAGETYPES.REMOVE] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.SETSTYLES] = { id: 'string', styles: 'object' };
-renderactorINTERFACES[MESSAGETYPES.SETATTR] = { id: 'string', name: 'string', value: 'string' };
-renderactorINTERFACES[MESSAGETYPES.TOGGLECLASS] = { id: 'string', classname: 'string', force: 'boolean?' };
-renderactorINTERFACES[MESSAGETYPES.CRYPTO] = { bytes: 'number' };
-renderactorINTERFACES[MESSAGETYPES.GEOLOCATION] = { enablehighaccuracy: 'boolean', timeout: 'number' };
-renderactorINTERFACES[MESSAGETYPES.PERSISTENCE] = { action: 'string', key: 'string?', value: 'string?' };
-renderactorINTERFACES[MESSAGETYPES.CREATEELEMENT] = { tag: 'string', props: 'object?' };
-renderactorINTERFACES[MESSAGETYPES.CREATECONTAINER] = {};
-renderactorINTERFACES[MESSAGETYPES.CREATEFROMHTML] = { html: 'string' };
-renderactorINTERFACES[MESSAGETYPES.PROPERTY] = { id: 'string', name: 'string', arguments: 'array?' };
-renderactorINTERFACES[MESSAGETYPES.GETHTML] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETVALUE] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETSTYLE] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETPOSITION] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GETLAYOUT] = { id: 'string' };
-renderactorINTERFACES[MESSAGETYPES.SETHTML] = { id: 'string', value: 'string' };
-renderactorINTERFACES[MESSAGETYPES.SETPOSITION] = { id: 'string', value: 'object' };
-renderactorINTERFACES[MESSAGETYPES.SETSTYLE] = { id: 'string', value: 'object' };
-renderactorINTERFACES[MESSAGETYPES.SETVALUE] = { id: 'string', value: 'any' };
-renderactorINTERFACES[MESSAGETYPES.SETLAYOUT] = { id: 'string', value: 'object' };
-renderactorINTERFACES[MESSAGETYPES.GETVIEWPORT] = {};
-renderactorINTERFACES[MESSAGETYPES.GETSCREEN] = {};
-renderactorINTERFACES[MESSAGETYPES.MATCHMEDIA] = { query: 'string' };
-renderactorINTERFACES[MESSAGETYPES.GET_BODY_HTML] = {};
-renderactorINTERFACES[MESSAGETYPES.RESTORE_BODY_HTML] = { html: 'string' };
-renderactorINTERFACES[MESSAGETYPES.RECOVER] = {};
-renderactorINTERFACES[MESSAGETYPES.PING] = {};
-renderactorINTERFACES[MESSAGETYPES.REGISTER_TRIGGER] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array' };
-renderactorINTERFACES[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = { pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', output: 'string?' };
-renderactorINTERFACES[MESSAGETYPES.REVALIDATE_TRIGGERS] = {};
-Object.freeze(renderactorINTERFACES);
-
-Object.keys(renderactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('renderactor', type, renderactorINTERFACES[type], renderbehavior);
-});
-
-var RENDERACTOR = createactor(
-  renderbehavior,
-  renderInitialState,
-  MESSAGEREGISTRY.getInterfaces('renderactor'),
-  {
-    actorName: 'renderactor',
-    mailboxType: 'mail',
-    mailTransport: {
-      sendInstruction: sendInstruction,
-      requestUnreadMessages: requestUnreadMessages,
-      sendResponse: sendResponse
-    },
-    pollInterval: 25,
-    verbosity: renderVerbosityConstants.DEBUG
-  }
-);
-
-renderInitialState.actorRegistry = setRenderActor(renderInitialState.actorRegistry, RENDERACTOR);
-ensureTriggerObserver(renderInitialState);
-
-function createEnqueuer(type, idRequired, extraPayloadFn) {
-  return function() {
-    var args = Array.prototype.slice.call(arguments);
-    var id, rest;
-    if (idRequired) { id = args[0]; rest = args.slice(1); } else { id = undefined; rest = args; }
-    var tag = generateTag();
-    var payload = idRequired ? { id: id } : {};
-    if (extraPayloadFn) {
-      var extra = extraPayloadFn(rest);
-      Object.keys(extra).forEach(function(key) { payload[key] = extra[key]; });
+function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
+  var analyzers = {};
+  analyzers[BLOCKTYPES.FN] = function(block) {
+    var errors = [];
+    if (!block.fn) errors.push('fn block must have a function');
+    if (typeof block.fn === 'function') {
+      if (block.fn.toString().indexOf('document.') !== -1 || containsStyleAccess(block.fn.toString())) {
+        errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
+      }
+      errors = errors.concat(validaterevivablefunctionblock(block, BLOCKTYPES, dnaConstants));
     }
-    sendInstruction('renderactor', type, payload, tag, 'system');
-    return awaitResponse('system', tag);
+    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
+  };
+
+  analyzers[BLOCKTYPES.API] = createBlockAnalyzer([
+    { field: 'endpoint', required: true, message: 'api block must have an endpoint' },
+    { field: 'method', required: true, message: 'api block must have GET/POST method', custom: function(v) { return v === 'GET' || v === 'POST'; } }
+  ]);
+
+  analyzers[BLOCKTYPES.FETCH] = createBlockAnalyzer([
+    { field: 'endpoint', required: true, message: 'fetch block must have an endpoint' },
+    { field: 'method', required: true, message: 'fetch block must have GET/POST method', custom: function(v) { return v === 'GET' || v === 'POST'; } }
+  ]);
+
+  analyzers[BLOCKTYPES.WRITER] = function(block) {
+    var errors = [];
+    if (typeof block.fn !== 'function' && typeof block.ref !== 'function') errors.push('writer block must have fn or ref');
+    if (typeof block.fn === 'function' || typeof block.ref === 'function') errors = errors.concat(validaterevivablefunctionblock(block, BLOCKTYPES, dnaConstants));
+    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
+  };
+
+  analyzers[BLOCKTYPES.IO] = createBlockAnalyzer([
+    { field: 'ref', required: true, type: 'function', message: 'io block ref must be a function' }
+  ]);
+
+  analyzers[BLOCKTYPES.DOMQUERY] = function(block) {
+    var valid = Boolean(block.command && block.command.COMMAND);
+    return { valid: valid, errors: valid ? [] : ['domquery block requires command.COMMAND'], warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
+  };
+
+  analyzers[BLOCKTYPES.CRYPTO] = createBlockAnalyzer([
+    { field: 'outputs', required: true, message: 'crypto block must have outputs', custom: function(v, b) { return Object.keys(b.outputs ? b.outputs : {}).length > 0; } }
+  ]);
+
+  analyzers[BLOCKTYPES.WAIT] = createBlockAnalyzer([
+    { field: 'ms', required: true, message: 'wait block must have ms' }
+  ]);
+
+  analyzers[BLOCKTYPES.EXECUTIONQUERY] = createBlockAnalyzer([
+    { field: 'command', required: true, message: 'executionquery requires command', custom: function(v) { return v && typeof v.COMMAND === 'string'; } }
+  ]);
+
+  analyzers[BLOCKTYPES.STOREQUERY] = createBlockAnalyzer([
+    { field: 'command', required: true, message: 'storequery requires command', custom: function(v) { return v && typeof v.COMMAND === 'string'; } }
+  ]);
+
+  return Object.freeze(analyzers);
+}
+
+function compileHttpBlock(merged, id, sig, isTextual, options) {
+  var blockfn = function(env) {
+    var label = (isTextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing http block:', id, 'type:', isTextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
+    var inputaccessors = (sig.inputs || []).map(compilepathaccessor);
+    var inputdata = {};
+    (sig.inputs || []).forEach(function(inp, idx) { inputdata[inp] = inputaccessors[idx](env); });
+
+    var endpoint = merged.endpoint;
+    if (typeof merged.endpoint === 'string' && containsPathAccessorChars(merged.endpoint)) {
+      endpoint = compilepathaccessor(merged.endpoint)(env);
+    }
+    if (endpoint === undefined) endpoint = merged.endpoint;
+
+    var payload = buildPayload(merged.mapping && merged.mapping.payload ? merged.mapping.payload : {}, inputdata);
+    Object.keys(sig.outputs || {}).forEach(function(field) {
+      if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
+    });
+
+    return callwithstack(
+      EVALSTACK, label, 'async-await',
+      function() {
+        if (isTextual) {
+          return enqueuefetch(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' }).then(function(apiresolve) {
+            return { status: apiresolve.status, data: apiresolve.data };
+          });
+        }
+        return enqueueapi(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' }).then(function(apiresolve) {
+          return { status: apiresolve.status, data: apiresolve.data };
+        });
+      },
+      [], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, label) }
+    ).then(function(rawresult) {
+      var result = rawresult.data;
+      if (merged.mapping && merged.mapping.response) {
+        if (rawresult && typeof rawresult === 'object' && !Array.isArray(rawresult)) {
+          result = buildResponse(merged.mapping.response, rawresult);
+        } else {
+          result = rawresult.data || rawresult;
+        }
+      }
+      writeoutputs(sig, env, result, id);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'http block completed:', id, 'status:', rawresult && rawresult.status);
+    });
+  };
+  blockfn.id = id;
+  return blockfn;
+}
+
+function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
+  var compilers = {};
+  compilers[BLOCKTYPES.FN] = function(merged, id, sig, inheritedProperties) {
+    if (inheritedProperties === undefined) inheritedProperties = {};
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling FN block:', id);
+    var blockfn = function(env) {
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing FN block:', id);
+      var fn = merged.fn;
+      if (!fn) throw new Error('fn block must have a function: ' + id);
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
+      var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
+      var fnargs = [properties].concat(inputargs);
+      return callwithstack(EVALSTACK, 'fn:' + (merged.ref || id), 'async-await', function() {
+        return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
+      }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') }).then(function(result) {
+        writeoutputs(sig, env, result, id);
+        logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed FN block:', id);
+      });
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  compilers[BLOCKTYPES.API] = function(merged, id, sig) { return compileHttpBlock(merged, id, sig, false, options); };
+  compilers[BLOCKTYPES.FETCH] = function(merged, id, sig) { return compileHttpBlock(merged, id, sig, true, options); };
+
+  compilers[BLOCKTYPES.WRITER] = function(merged, id, sig, inheritedProperties) {
+    if (inheritedProperties === undefined) inheritedProperties = {};
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
+    var blockfn = function(env) {
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
+      var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
+      if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
+      var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
+      return Promise.resolve(fn(properties, inputargs)).then(function(result) {
+        if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) throw new Error('[WRITER] Block "' + id + '" returned invalid result');
+        var target = merged.targetlabel || env.approot;
+        if (!target) throw new Error('[WRITER] missing targetlabel/approot');
+        return enqueuehtml(target, result.html, !merged.replace).then(function() {
+          if (result.id && Object.keys(sig.outputs || {}).length > 0) {
+            return expectelement(result.id, result.timeout || 5000).then(function(domref) {
+              env[Object.keys(sig.outputs)[0]] = result;
+              env[result.id] = domref;
+            });
+          }
+        }).then(function() {
+          logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed WRITER block:', id, 'target:', target);
+        });
+      });
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  compilers[BLOCKTYPES.IO] = function(merged, id, sig) {
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling IO block:', id);
+    var blockfn = function(env) {
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing IO block:', id);
+      var io = typeof merged.ref === 'function' ? merged.ref : null;
+      if (!io) throw new Error('io block "' + id + '" ref must be a function');
+      var inputdata = {};
+      (sig.inputs || []).forEach(function(inp) { inputdata[inp] = compilepathaccessor(inp)(env); });
+      return callwithstack(EVALSTACK, 'io:' + (merged.ref || id), 'async-await', function(e) {
+        return Promise.resolve(io(inputdata, e));
+      }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') });
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  compilers[BLOCKTYPES.DOMQUERY] = function(merged, id, sig) {
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
+    var blockfn = function(env) {
+      var cmd = merged.command && merged.command.COMMAND;
+      if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
+      var props = merged.command.properties || {};
+      if (cmd === 'getviewport') return enqueuegetviewport().then(function(r) { return writeoutputs(sig, env, r, id); });
+      if (cmd === 'getscreen') return enqueuegetscreen().then(function(r) { return writeoutputs(sig, env, r, id); });
+      if (cmd === 'matchmedia') return enqueuematchmedia(props.query).then(function(r) { return writeoutputs(sig, env, r, id); });
+      var handlerMap = {
+        gethtml: enqueuegethtml, getvalue: enqueuegetvalue, getstyle: enqueuegetstyle,
+        getposition: enqueuegetposition, getlayout: enqueuegetlayout, sethtml: enqueuesethtml,
+        setposition: enqueuesetposition, setstyle: enqueuesetstyle, setvalue: enqueuesetvalue,
+        setlayout: enqueuesetlayout, toggleclass: enqueuetoggleclass, property: enqueueproperty
+      };
+      var handler = handlerMap[cmd];
+      if (!handler) throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
+      return callwithstack(EVALSTACK, 'domquery:' + cmd, 'async-await', function() {
+        if (DOMQUERYSETTERS.indexOf(cmd) !== -1) {
+          if (cmd === 'toggleclass') return handler(props.id, props.classname != null ? props.classname : props.value, props.force !== undefined ? props.force : false);
+          var val = sig.inputs && sig.inputs.length > 0 ? compilepathaccessor(props.value)(env) : props.value;
+          return handler(props.id, val);
+        }
+        return handler(props.id);
+      }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'domquery:' + cmd) }).then(function(result) {
+        writeoutputs(sig, env, result, id);
+      });
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  compilers[BLOCKTYPES.CRYPTO] = function(merged, id, sig) {
+    var blockfn = function(env) {
+      var outputkey = Object.keys(sig.outputs || {})[0];
+      if (!outputkey) throw new Error('[crypto] requires outputs');
+      var bytes = merged.bytes === undefined ? 512 : merged.bytes;
+      if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
+      return enqueueRenderCrypto(bytes).then(function(result) {
+        var out = {};
+        out[outputkey] = result;
+        writeoutputs(sig, env, out, id);
+        return {};
+      });
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  compilers[BLOCKTYPES.WAIT] = function(merged, id) {
+    var blockfn = function(env) {
+      var ms = typeof merged.ms === 'number' ? merged.ms : compilepathaccessor(merged.ms)(env);
+      if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
+      return new Promise(function(r) { setTimeout(r, ms); }).then(function() { return {}; });
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  compilers[BLOCKTYPES.EXECUTIONQUERY] = function(merged, id, sig) {
+    var blockfn = function(env) {
+      var command = merged.command || {};
+      var COMMAND = command.COMMAND;
+      var args = command.args || {};
+      switch (COMMAND) {
+        case 'get':
+          return enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null).then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        case 'tasks':
+          return enqueueExecutionGetTasks(args).then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        case 'task_status':
+          return enqueueExecutionGetTaskStatus(args.taskid).then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        case 'await_task':
+          return enqueueExecutionAwaitTask(args.taskid).then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        case 'cancel_task':
+          return enqueueExecutionCancelTask(args.taskid).then(function() { return; });
+        case 'stop_task':
+          return enqueueExecutionStopTask(args.taskid).then(function() { return; });
+        default:
+          throw new Error('[executionquery] unknown command: ' + COMMAND);
+      }
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  compilers[BLOCKTYPES.STOREQUERY] = function(merged, id, sig) {
+    var blockfn = function(env) {
+      var command = merged.command || {};
+      var COMMAND = command.COMMAND;
+      var args = command.args || {};
+      switch (COMMAND) {
+        case 'store':
+          if (!args.key) throw new Error('[storequery] store requires key');
+          return enqueueDbStore(args.key, args.value !== undefined ? args.value : compilepathaccessor(args.value)(env)).then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        case 'restore':
+          if (!args.key) throw new Error('[storequery] restore requires key');
+          return enqueueDbRestore(args.key).then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        case 'list':
+          return enqueueDbList().then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        case 'delete':
+          if (!args.key) throw new Error('[storequery] delete requires key');
+          return enqueueDbDelete(args.key).then(function(result) {
+            writeoutputs(sig, env, { result: result }, id);
+          });
+        default:
+          throw new Error('[storequery] unknown command: ' + COMMAND);
+      }
+    };
+    blockfn.id = id;
+    return blockfn;
+  };
+
+  return Object.freeze(compilers);
+}
+
+function compileblock(block, inheritedBriefcase, constants, options) {
+  if (inheritedBriefcase === undefined) inheritedBriefcase = {};
+  var compiler = constants.COMPILERS[block.type];
+  if (!compiler) throw new Error('[compileblock] Unknown block type: ' + block.type);
+  var analyzer = constants.ANALYZERS[block.type];
+  if (analyzer) {
+    var check = analyzer(block);
+    if (!check.valid) throw new Error('[compileblock] Analysis failed: ' + check.errors.join(', '));
+  }
+  var blockIo = { inputs: block.inputs || [], outputs: block.outputs || {} };
+  return compiler(block, block.id, blockIo, inheritedBriefcase);
+}
+
+function processNode(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options) {
+  if (node.element === 'BLOCK') return processElement(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options);
+  if (node.element === 'PIPELINE') return processPipelineElement(node, pipelineId, stagePath, inheritedBriefcase, options);
+  if (node.element === 'STAGE') return processNestedStage(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options);
+  throw new Error('unexpected nested element type: ' + node.element);
+}
+
+function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options) {
+  var fn = compileblock(el, inheritedBriefcase, constants, options);
+  fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
+  fn.kind = 'element';
+  return createPersistentElementWrapper(fn, el, stagePath, pipelineId, options);
+}
+
+function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, options) {
+  var elementId = el.id || 'pipeline_unknown';
+  var blockfn = function(env) {
+    var parentEnv = env;
+    var childEnv = cloneObject(parentEnv);
+    childEnv.containerid = el.container || null;
+    childEnv.pipelineid = el.pipelineIdOverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline_' + elementId;
+
+    var inputkeys = el.inputs || [];
+    inputkeys.forEach(function(key) {
+      childEnv[key] = compilepathaccessor(key)(parentEnv);
+    });
+
+    var childOptions = el.options || {};
+    if (childOptions.autorun === undefined) childOptions.autorun = true;
+    if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
+    if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
+    if (childOptions.verbosity === undefined && options && options.verbosity !== undefined) childOptions.verbosity = options.verbosity;
+
+    var bootMessage = {
+      pipeline: el.pipeline,
+      accessors: el.accessors || null,
+      sinks: el.sinks || [],
+      pipelineId: childEnv.pipelineid,
+      options: childOptions
+    };
+
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'PIPELINE boot request:', childEnv.pipelineid);
+
+    var bootPromise = enqueueHypervisorBootPipeline(bootMessage);
+    var outputkey = Object.keys(el.outputs || {})[0] || null;
+    if (outputkey) {
+      return bootPromise.then(function(bootResult) {
+        env[outputkey] = bootResult;
+        return bootResult;
+      }).catch(function(err) {
+        env[outputkey] = { status: 'failed', error: err && err.message ? err.message : String(err) };
+        throw err;
+      });
+    }
+    return bootPromise;
+  };
+  blockfn.id = elementId;
+  blockfn.kind = 'pipeline';
+  return blockfn;
+}
+
+function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, options) {
+  var childStagePath = stagePath.concat([childStage.id]);
+  var childBriefcase = cloneObject(inheritedBriefcase || {});
+  if (childStage.briefcase) {
+    Object.keys(childStage.briefcase).forEach(function(key) { childBriefcase[key] = childStage.briefcase[key]; });
+  }
+
+  if (childStage.control && childStage.control.command === 'TRIGGER') {
+    var sourceid = childStage.control.sourceid;
+    var event = childStage.control.event;
+    if (!sourceid || !event) throw new Error('[processNestedStage] trigger stage missing sourceid/event');
+    var descriptor = {
+      pipelineId: pipelineId,
+      stageId: childStage.id,
+      stagePath: childStagePath,
+      control: childStage.control,
+      elements: childStage.elements,
+      briefcase: childBriefcase,
+      options: options || {}
+    };
+    enqueueHypervisorSetStageDescriptor(pipelineId, childStage.id, descriptor).catch(function(err) {
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'failed to set nested stage descriptor:', err);
+    });
+    enqueueRenderRegisterTriggerExpectation({
+      pipelineId: pipelineId,
+      stageId: childStage.id,
+      stagePath: childStagePath,
+      sourceid: sourceid,
+      event: event,
+      control: childStage.control,
+      children: childStage.elements,
+      output: null,
+      env: null
+    }).catch(function(err) {
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'failed to register nested trigger:', err);
+    });
+    var noopWrapper = function(env) { return Promise.resolve(env); };
+    noopWrapper.isTriggerRegistration = true;
+    return noopWrapper;
+  }
+
+  var childResult = compileStageRequestToElements(
+    { elements: [childStage] },
+    0,
+    childStagePath,
+    childBriefcase,
+    {},
+    options || {}
+  );
+
+  var childElementFunctions = childResult.elementFunctions;
+  var childNextStageMessage = childResult.nextStageMessage;
+  var childStageDef = childResult.stage;
+
+  if (childStage.async === true) {
+    var asyncWrapper = function(env) {
+      orchestrateStage(childStageDef, childElementFunctions, pipelineId, env, childStagePath, options || {}, childNextStageMessage)
+        .catch(function(err) {
+          logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
+        });
+      return undefined;
+    };
+    asyncWrapper.asyncStage = true;
+    return asyncWrapper;
+  } else {
+    var syncWrapper = function(env) {
+      return orchestrateStage(childStageDef, childElementFunctions, pipelineId, env, childStagePath, options || {}, childNextStageMessage);
+    };
+    syncWrapper.asyncStage = false;
+    return syncWrapper;
+  }
+}
+
+function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcase, env, options) {
+  if (options === undefined) options = {};
+  var constants = createBlockCompilerConstants();
+  var BLOCKTYPES = constants.BLOCKTYPES;
+  var INHERITEDKEYS = constants.INHERITEDKEYS;
+  var dnaConstants = createDnaSerializerConstants();
+  var ANALYZERS = createBlockAnalyzers(BLOCKTYPES, dnaConstants);
+  var COMPILERS = createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options);
+  var compilerConstants = { BLOCKTYPES: BLOCKTYPES, INHERITEDKEYS: INHERITEDKEYS, ANALYZERS: ANALYZERS, COMPILERS: COMPILERS };
+
+  var stage = pipeline.elements[stageIndex];
+  if (!stage || stage.element !== 'STAGE') throw new Error('[compileStageRequestToElements] invalid stage at index ' + stageIndex);
+
+  var stageBriefcase = cloneObject(briefcase || {});
+  Object.keys(stage.briefcase || {}).forEach(function(key) { stageBriefcase[key] = stage.briefcase[key]; });
+
+  var elementFunctions = [];
+  (stage.elements || []).forEach(function(child) {
+    if (child.element === 'BLOCK') {
+      elementFunctions.push(processElement(child, pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline', stagePath.concat([stage.id]), stageBriefcase, compilerConstants, dnaConstants, options));
+    } else if (child.element === 'PIPELINE') {
+      elementFunctions.push(processPipelineElement(child, pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline', stagePath.concat([stage.id]), stageBriefcase, options));
+    } else if (child.element === 'STAGE') {
+      elementFunctions.push(processNestedStage(child, pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline', stagePath.concat([stage.id]), stageBriefcase, compilerConstants, dnaConstants, options));
+    }
+  });
+
+  var nextStageMessage = null;
+  if (stageIndex + 1 < pipeline.elements.length) {
+    nextStageMessage = {
+      type: 'compile_stage',
+      pipeline: pipeline,
+      pipelineId: pipeline.id || (pipeline.identity && pipeline.identity.id) || 'default_pipeline',
+      stageIndex: stageIndex + 1,
+      stagePath: stagePath,
+      briefcase: stageBriefcase,
+      env: null,
+      options: options
+    };
+  }
+
+  return { elementFunctions: elementFunctions, nextStageMessage: nextStageMessage, stage: stage };
+}
+
+function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, options, nextStageMessage) {
+  function runElement(index, currentEnv) {
+    if (index >= elementFunctions.length) {
+      return Promise.resolve(currentEnv);
+    }
+    var elementFn = elementFunctions[index];
+    if (elementFn.asyncStage === true) {
+      elementFn(currentEnv);
+      return runElement(index + 1, currentEnv);
+    } else {
+      return elementFn(currentEnv).then(function(result) {
+        return runElement(index + 1, currentEnv);
+      });
+    }
+  }
+
+  return runElement(0, env).then(function(finalEnv) {
+    return enqueueHypervisorStageCompleted(pipelineId, stage.id, nextStageMessage || null, finalEnv).then(function() {
+      return finalEnv;
+    });
+  });
+}
+
+function loadPipeline(pipelineDefinition, pipelineId, options) {
+  if (options === undefined) options = {};
+  var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
+  var firstStage = {
+    stageIndex: 0,
+    stagePath: [],
+    briefcase: pipelineDefinition.briefcase || {}
+  };
+  var tag = generateTag();
+  sendInstruction('hypervisoractor', 'boot_pipeline', {
+    pipeline: pipelineDefinition,
+    accessors: options.accessors || null,
+    sinks: options.sinks || [],
+    pipelineId: id,
+    options: {
+      autorun: options.autorun !== false,
+      baseEnv: options.baseEnv || {},
+      updateworldmap: options.updateworldmap || null,
+      verbosity: options.verbosity
+    },
+    firstStage: firstStage
+  }, tag, 'blockcompiler', {
+    responseType: 'pipeline_booted'
+  });
+}
+
+function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPipeline, options) {
+  var stageIndex = fullPipeline.elements.indexOf(stageDef);
+  return compileStageRequestToElements(fullPipeline, stageIndex, stagePath, briefcase, {}, options);
+}
+
+function validatePipelineBriefcase(briefcase) {
+  var errors = [];
+  if (briefcase === undefined || briefcase === null) {
+    return { valid: true, errors: [] };
+  }
+  if (typeof briefcase !== 'object') {
+    errors.push('[validatePipelineBriefcase] briefcase must be an object');
+    return { valid: false, errors: errors };
+  }
+  try {
+    var dnaConstants = createDnaSerializerConstants();
+    var revivabilityErrors = validaterevivableobject(briefcase, 'briefcase', dnaConstants);
+    errors = errors.concat(revivabilityErrors);
+  } catch (err) {
+    errors.push('[validatePipelineBriefcase] validation error: ' + err.message);
+  }
+  return {
+    valid: errors.length === 0,
+    errors: errors
   };
 }
 
-var enqueuerender = createEnqueuer(MESSAGETYPES.RENDER, true, function(rest) { return { renderer: rest[0], data: rest[1], env: rest[2] }; });
-var enqueueclear = createEnqueuer(MESSAGETYPES.CLEAR, true);
-var enqueuehtml = createEnqueuer(MESSAGETYPES.HTML, true, function(rest) { return { markup: rest[0], append: rest[1] }; });
-var enqueueremove = createEnqueuer(MESSAGETYPES.REMOVE, true);
-var enqueuestyles = createEnqueuer(MESSAGETYPES.SETSTYLES, true, function(rest) { return { styles: rest[0] }; });
-var enqueuesetattr = createEnqueuer(MESSAGETYPES.SETATTR, true, function(rest) { return { name: rest[0], value: rest[1] }; });
-var enqueuetoggleclass = createEnqueuer(MESSAGETYPES.TOGGLECLASS, true, function(rest) { return { classname: rest[0], force: rest[1] }; });
-var enqueuecreateelement = createEnqueuer(MESSAGETYPES.CREATEELEMENT, false, function(rest) { return { tag: rest[0], props: rest[1] }; });
-var enqueuecreatecontainer = createEnqueuer(MESSAGETYPES.CREATECONTAINER, false);
-var enqueuecreatefromhtml = createEnqueuer(MESSAGETYPES.CREATEFROMHTML, false, function(rest) { return { html: rest[0] }; });
-var enqueuegethtml = createEnqueuer(MESSAGETYPES.GETHTML, true);
-var enqueuegetvalue = createEnqueuer(MESSAGETYPES.GETVALUE, true);
-var enqueuegetstyle = createEnqueuer(MESSAGETYPES.GETSTYLE, true);
-var enqueuegetposition = createEnqueuer(MESSAGETYPES.GETPOSITION, true);
-var enqueuegetlayout = createEnqueuer(MESSAGETYPES.GETLAYOUT, true);
-var enqueuesethtml = createEnqueuer(MESSAGETYPES.SETHTML, true, function(rest) { return { value: rest[0] }; });
-var enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, function(rest) { return { value: rest[0] }; });
-var enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, function(rest) { return { value: rest[0] }; });
-var enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, function(rest) { return { value: rest[0] }; });
-var enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, function(rest) { return { name: rest[0], arguments: rest[1] }; });
-var enqueuesetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
-var enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
-var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
-var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
-var enqueueRenderRegisterTrigger = function(registration) {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER, registration, tag, 'system');
-  return awaitResponse('system', tag);
-};
-var enqueueRenderRegisterTriggerExpectation = function(registration) {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, registration, tag, 'system');
-  return awaitResponse('system', tag);
-};
-var enqueueRenderRevalidateTriggers = function() {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, tag, 'system');
-  return awaitResponse('system', tag);
-};
-var enqueueRenderPing = function() {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.PING, {}, tag, 'system');
-  return awaitResponse('system', tag);
-};
-var enqueueRenderGetBodyHtml = function() {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.GET_BODY_HTML, {}, tag, 'system');
-  return awaitResponse('system', tag);
-};
-var enqueueRenderRestoreBodyHtml = function(html) {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.RESTORE_BODY_HTML, { html: html }, tag, 'system');
-  return awaitResponse('system', tag);
-};
-var enqueueRenderRecover = function() {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.RECOVER, {}, tag, 'system');
-  return awaitResponse('system', tag);
-};
-// NEW: mail-based crypto wrapper (blockcompiler CRYPTO block consumer);
-// no resolve/reject embedded in messages — sendInstruction + awaitResponse.
-var enqueueRenderCrypto = function(bytes) {
-  var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'system');
-  return awaitResponse('system', tag);
-};
-
-var startRenderActor = function(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-    if (lvl !== undefined) {
-      renderState = Object.freeze({ level: lvl });
-      if (RENDERACTOR && RENDERACTOR.getstate()) {
-        RENDERACTOR.getstate().verbosity = lvl;
-      }
-    }
-  }
-  return RENDERACTOR;
-};
-
-
-var expectelement = function(id, timeout) {
-  if (timeout === undefined) timeout = 30000;
-  return new Promise(function(resolve, reject) {
-    var existing = document.getElementById(id);
-    if (existing) return resolve(CREATEDOMREF(existing, renderInitialState.actorRegistry));
-    var observer = null;
-    var timeoutid = setTimeout(function() { if (observer) observer.disconnect(); reject(new Error('[expectelement] element not found: ' + id)); }, timeout);
-    observer = new MutationObserver(function() {
-      var el = document.getElementById(id);
-      if (el) { clearTimeout(timeoutid); observer.disconnect(); resolve(CREATEDOMREF(el, renderInitialState.actorRegistry)); }
+function createPersistentElementWrapper(compiledElement, elementDef, stagePath, pipelineId, options) {
+  var elementId = elementDef.id || compiledElement.id || 'element_unknown';
+  function wrapper(env) {
+    var path = stagePath.concat([elementId]);
+    var execEnv = env;
+    var executor = function(executionContext) {
+      var effectiveEnv = executionContext.env || execEnv;
+      return compiledElement(effectiveEnv);
+    };
+    var blockInputs = elementDef && elementDef.inputs ? elementDef.inputs : [];
+    var blockOutputs = elementDef && elementDef.outputs ? elementDef.outputs : {};
+    var inputargs = blockInputs.map(function(inp) { return compilepathaccessor(inp)(execEnv); });
+    var closureSerialized = null;
+    if (typeof compiledElement === 'function') closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, execEnv);
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'submitting element:', elementId);
+    return enqueueExecutionSubmit({
+      pipelineid: pipelineId,
+      path: path,
+      elementid: elementId,
+      env: execEnv,
+      signature: { inputs: blockInputs, outputs: blockOutputs },
+      executor: executor,
+      properties: elementDef || {},
+      serialized: closureSerialized,
+      origin: compiledElement.origin || null,
+      programRef: null,
+      elementId: elementId
+    }).then(function(submitted) {
+      return enqueueExecutionAwaitTask(submitted.taskid);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
-  });
-};
+  }
+  wrapper.id = elementId;
+  wrapper.kind = 'element';
+  if (compiledElement.blockmeta) wrapper.blockmeta = compiledElement.blockmeta;
+  return wrapper;
+}
 
-var handlefilereaderrequest = function(payload) {
-  return new Promise(function(resolve, reject) {
-    var reader = new FileReader();
-    reader.onload = function(e) { resolve({ text: e.target.result }); };
-    reader.onerror = function() { reject(new Error('[renderactor] FileReader error')); };
-    reader.readAsText(payload.file);
-  });
+// Response consumer for pipeline_booted
+RESPONSECONSUMERS['pipeline_booted'] = function(result, tag) {
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'pipeline booted:', result);
 };

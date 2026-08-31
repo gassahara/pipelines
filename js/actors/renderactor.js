@@ -1,14 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: full ES5 rewrite (copy-B base; embedded assistant
-// prose at L129-140 purged). Imports → require, arrows → function
-// expressions, async handlers → promise chains, globalThis →
-// manual fallback chain, Object.assign → manual copy, const → var,
-// export → module.exports. Re-specified missing functions:
-// ensureTriggerObserver (delegated DOM listener forwarding
-// TRIGGER_EVENT to hypervisoractor via sendInstruction) and
-// scheduleGcCycle (throttled collectEnded pass). ADDED
-// enqueueRenderCrypto (mail wrapper for CRYPTO, no resolve/reject).
+// Change applied: DIRECT DISPATCH REFACTOR
+//   - No mailTransport, no pollInterval (consumer registration in kernel)
+//   - enqueue* functions fire-and-forget, accept responseSpec
+//   - enqueuesetlayout typo corrected
 // ============================================================
 
 
@@ -131,9 +126,7 @@ function ensureTriggerObserver(state) {
         stageId: gcObj.consumer && gcObj.consumer.stageId,
         stagePath: gcObj.metadata && gcObj.metadata.stagePath ? gcObj.metadata.stagePath : [],
         eventPayload: { type: event.type, targetId: targetId }
-      }, null, 'renderactor').catch(function(err) {
-        logwarn(renderState, '[RENDERACTOR]', 'trigger forward failed:', err);
-      });
+      }, null, 'renderactor');
     });
   };
 
@@ -459,12 +452,6 @@ var RENDERACTOR = createactor(
   {
     actorName: 'renderactor',
     mailboxType: 'mail',
-    mailTransport: {
-      sendInstruction: sendInstruction,
-      requestUnreadMessages: requestUnreadMessages,
-      sendResponse: sendResponse
-    },
-    pollInterval: 25,
     verbosity: renderVerbosityConstants.DEBUG
   }
 );
@@ -483,8 +470,15 @@ function createEnqueuer(type, idRequired, extraPayloadFn) {
       var extra = extraPayloadFn(rest);
       Object.keys(extra).forEach(function(key) { payload[key] = extra[key]; });
     }
-    sendInstruction('renderactor', type, payload, tag, 'system');
-    return awaitResponse('system', tag);
+    // last argument may be responseSpec
+    var responseSpec = undefined;
+    if (arguments.length > 0) {
+      var lastArg = arguments[arguments.length - 1];
+      if (lastArg && typeof lastArg === 'object' && lastArg.responseType) {
+        responseSpec = lastArg;
+      }
+    }
+    sendInstruction('renderactor', type, payload, tag, 'system', responseSpec);
   };
 }
 
@@ -508,51 +502,41 @@ var enqueuesetposition = createEnqueuer(MESSAGETYPES.SETPOSITION, true, function
 var enqueuesetstyle = createEnqueuer(MESSAGETYPES.SETSTYLE, true, function(rest) { return { value: rest[0] }; });
 var enqueuesetvalue = createEnqueuer(MESSAGETYPES.SETVALUE, true, function(rest) { return { value: rest[0] }; });
 var enqueueproperty = createEnqueuer(MESSAGETYPES.PROPERTY, true, function(rest) { return { name: rest[0], arguments: rest[1] }; });
-var enqueuetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
+var enqueuesetlayout = createEnqueuer(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
 var enqueuegetviewport = createEnqueuer(MESSAGETYPES.GETVIEWPORT, false);
 var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
 var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
-var enqueueRenderRegisterTrigger = function(registration) {
+var enqueueRenderRegisterTrigger = function(registration, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER, registration, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER, registration, tag, 'system', responseSpec);
 };
-var enqueueRenderRegisterTriggerExpectation = function(registration) {
+var enqueueRenderRegisterTriggerExpectation = function(registration, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, registration, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, registration, tag, 'system', responseSpec);
 };
-var enqueueRenderRevalidateTriggers = function() {
+var enqueueRenderRevalidateTriggers = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, tag, 'system', responseSpec);
 };
-var enqueueRenderPing = function() {
+var enqueueRenderPing = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.PING, {}, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.PING, {}, tag, 'system', responseSpec);
 };
-var enqueueRenderGetBodyHtml = function() {
+var enqueueRenderGetBodyHtml = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.GET_BODY_HTML, {}, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.GET_BODY_HTML, {}, tag, 'system', responseSpec);
 };
-var enqueueRenderRestoreBodyHtml = function(html) {
+var enqueueRenderRestoreBodyHtml = function(html, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.RESTORE_BODY_HTML, { html: html }, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.RESTORE_BODY_HTML, { html: html }, tag, 'system', responseSpec);
 };
-var enqueueRenderRecover = function() {
+var enqueueRenderRecover = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.RECOVER, {}, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.RECOVER, {}, tag, 'system', responseSpec);
 };
-// NEW: mail-based crypto wrapper (blockcompiler CRYPTO block consumer);
-// no resolve/reject embedded in messages — sendInstruction + awaitResponse.
-var enqueueRenderCrypto = function(bytes) {
+var enqueueRenderCrypto = function(bytes, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('renderactor', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'system', responseSpec);
 };
 
 var startRenderActor = function(options) {

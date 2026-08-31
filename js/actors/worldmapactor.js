@@ -1,8 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/actors/worldmapactor.js
-// Change applied: ES5 conversion — imports → require, const → var,
-// export → module.exports. Mail-based pattern preserved
-// (sendInstruction + awaitResponse, sender 'system').
+// Change applied: DIRECT DISPATCH REFACTOR
+//   - No mailTransport, no pollInterval (consumer registration in kernel)
+//   - sendworldmappatch/updateworldmapfn/observeworldmap/unobserveworldmap/getworldmap
+//     fire-and-forget, accept optional responseSpec
 // ============================================================
 
 
@@ -84,12 +85,6 @@ var WORLDMAPACTOR = createactor(
   {
     actorName: 'worldmapactor',
     mailboxType: 'mail',
-    mailTransport: {
-      sendInstruction: sendInstruction,
-      requestUnreadMessages: requestUnreadMessages,
-      sendResponse: sendResponse
-    },
-    pollInterval: 25,
     verbosity: worldmapVerbosityConstants.DEBUG
   }
 );
@@ -107,32 +102,27 @@ function startWorldmapActor(options) {
   return WORLDMAPACTOR;
 }
 
-function sendworldmappatch(patch) {
+function sendworldmappatch(patch, responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, { patch: patch }, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, { patch: patch }, tag, 'system', responseSpec);
 }
 
-function updateworldmapfn(fn) {
+function updateworldmapfn(fn, responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE_FN, { fn: fn }, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE_FN, { fn: fn }, tag, 'system', responseSpec);
 }
 
-function observeworldmap(observer) {
+function observeworldmap(observer, responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.OBSERVE, { observer: observer }, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('worldmapactor', MESSAGETYPES.OBSERVE, { observer: observer }, tag, 'system', responseSpec);
 }
 
-function unobserveworldmap(observer) {
+function unobserveworldmap(observer, responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.UNOBSERVE, { observer: observer }, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('worldmapactor', MESSAGETYPES.UNOBSERVE, { observer: observer }, tag, 'system', responseSpec);
 }
 
-function getworldmap() {
+function getworldmap(responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.GET_WORLDMAP, {}, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('worldmapactor', MESSAGETYPES.GET_WORLDMAP, {}, tag, 'system', responseSpec);
 }

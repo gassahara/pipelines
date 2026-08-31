@@ -1,15 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/actorkernel.js
-// Change applied: ES5 syntax, no arrow functions, no const, no async/await syntax,
-// module.exports. Promise chains retained per blueprint §2 (kernel surface).
-// - mailboxType 'mail' now requires options.mailTransport with
-//   sendInstruction, requestUnreadMessages, sendResponse
-// - dedicated setInterval polling loop independent of ensureLoop
-// - pollInterval configurable (default 25ms)
-// - send for mail actors now throws error (prevent self-send)
+// Change applied: DIRECT DISPATCH REFACTOR
+// - Mail actors no longer poll; register consumer in ACTORCONSUMERS
+// - send for mail actors throws error (use sendInstruction)
 // - waitforemptymailbox for mail actors resolves immediately
-// - processMessage returns a promise chain; async keyword removed
-// - retained memory/db mailbox logic and drain fixes
+// - memory/db mailbox logic retained for non-mail actors
 // ============================================================
 
 
@@ -309,31 +304,14 @@ function createactor(behavior, initialstate, messageInterface, options) {
     actorRegistry[options.actorName] = actor;
   }
 
-  // Start dedicated polling interval for mail actors
-  if (mailboxType === 'mail') {
-    var pollInterval = options.pollInterval !== undefined ? options.pollInterval : 25;
-    var mailTransport = options.mailTransport;
-    var pollMailbox = function() {
-      mailTransport.requestUnreadMessages(actorName).then(function(envelopes) {
-        var i = 0;
-        var processNext = function() {
-          if (i >= envelopes.length) return;
-          var env = envelopes[i];
-          i += 1;
-          processMessage(env.payload).then(function(result) {
-            if (env.tag && env.sender && result !== undefined && result !== null) {
-              mailTransport.sendResponse(env.sender, env.tag, result, actorName).then(processNext);
-            } else {
-              processNext();
-            }
-          }, function() { processNext(); });
-        };
-        processNext();
-      }).catch(function(err) {
-        logwarn({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'pollMailbox error:', err);
-      });
-    };
-    setInterval(pollMailbox, pollInterval);
+  // DIRECT DISPATCH: for mail actors, register consumer for each message type
+  if (mailboxType === 'mail' && messageInterface) {
+    Object.keys(messageInterface).forEach(function(type) {
+      var consumerKey = actorName + ':' + type;
+      ACTORCONSUMERS[consumerKey] = function(message) {
+        return processMessage(message);
+      };
+    });
   }
 
   return actor;

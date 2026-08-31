@@ -1,8 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied: ES5 syntax, no arrow functions, no const, module.exports
-//   P9: reset PAIRSTORE and pairCounter at start of
-//       optimizeSerializedDna to prevent cross-call contamination
+// Change applied: Minor update – no direct dispatch; retains memory mailbox.
+// No pollInterval, no mailTransport.
+// Other actors continue to use enqueueDb* for persistence via fire-and-forget.
 // ============================================================
 
 

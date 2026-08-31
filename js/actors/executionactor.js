@@ -1,11 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Change applied: ES5 conversion — imports → require, const → var,
-// shorthand properties → explicit, export → module.exports.
-// Top-level await removed (loadInitialState → sync default state +
-// fire-and-forget restore-merge into live actor, mailactor pattern).
-// runElementTask async/await → promise chain (program-restore
-// fallback semantics preserved).
+// Change applied: DIRECT DISPATCH REFACTOR
+//   - No mailTransport, no pollInterval (consumer registration in kernel)
+//   - enqueueExecution* functions fire-and-forget, accept responseSpec
 // ============================================================
 
 
@@ -113,7 +110,7 @@ function cancelTask(state, taskid) {
   (task.childTaskIds || []).forEach(function(childId) { cancelTask(state, childId); });
   var err = { error: 'Task cancelled: ' + taskid };
   (task.consumers || []).forEach(function(consumer) {
-    sendResponse(consumer.sender, consumer.tag, err, 'executionactor').catch(function(){});
+    sendResponse(consumer.sender, consumer.tag, err, 'executionactor');
   });
   task.consumers = [];
 }
@@ -125,7 +122,7 @@ function stopTask(state, taskid) {
   task.status = 'STOPPED';
   var err = { error: 'Task stopped: ' + taskid };
   (task.consumers || []).forEach(function(consumer) {
-    sendResponse(consumer.sender, consumer.tag, err, 'executionactor').catch(function(){});
+    sendResponse(consumer.sender, consumer.tag, err, 'executionactor');
   });
   task.consumers = [];
 }
@@ -274,11 +271,11 @@ var executionbehavior = function(state, message) {
         var consumers = task4.consumers || [];
         if (message.status === 'EXECUTED') {
           consumers.forEach(function(consumer) {
-            sendResponse(consumer.sender, consumer.tag, message.result || {}, 'executionactor').catch(function(){});
+            sendResponse(consumer.sender, consumer.tag, message.result || {}, 'executionactor');
           });
         } else if (message.status === 'FAILED') {
           consumers.forEach(function(consumer) {
-            sendResponse(consumer.sender, consumer.tag, { error: message.error ? message.error.message : 'task failed' }, 'executionactor').catch(function(){});
+            sendResponse(consumer.sender, consumer.tag, { error: message.error ? message.error.message : 'task failed' }, 'executionactor');
           });
         }
         task4.consumers = [];
@@ -300,9 +297,9 @@ var executionbehavior = function(state, message) {
           nextState.htmlSnapshot = nextState.worldmap.htmlSnapshot || null;
           nextState.taskCounter = nextState.worldmap.taskCounter || 0;
         }
-        if (message.sender && message.tag) sendResponse(message.sender, message.tag, nextState, 'executionactor').catch(function(){});
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, nextState, 'executionactor');
       }).catch(function(e) {
-        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'executionactor').catch(function(){});
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'executionactor');
       });
       return null;
     }
@@ -383,14 +380,10 @@ function runElementTask(taskid, descriptor) {
 
   return runWithProgram().then(function(result) {
     logdebug(executionState, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
-    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor').catch(function(err) {
-      logerror(executionState, '[EXECUTIONACTOR]', 'TASK_SETTLED send failed:', err);
-    });
+    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor');
   }).catch(function(err) {
     logerror(executionState, '[EXECUTIONACTOR]', 'runElementTask failed:', taskid, descriptor.elementid, err);
-    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor').catch(function(e) {
-      logerror(executionState, '[EXECUTIONACTOR]', 'TASK_SETTLED send failed:', e);
-    });
+    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor');
   });
 }
 
@@ -406,91 +399,70 @@ var EXECUTIONACTOR = createactor(
   {
     actorName: 'executionactor',
     mailboxType: 'mail',
-    mailTransport: {
-      sendInstruction: sendInstruction,
-      requestUnreadMessages: requestUnreadMessages,
-      sendResponse: sendResponse
-    },
-    pollInterval: 25,
     verbosity: executionVerbosityConstants.DEBUG
   }
 );
 restoreExecutionStateInto(EXECUTIONACTOR);
 
-function enqueueExecutionPipelineLoaded(pipelineid, env) {
+function enqueueExecutionPipelineLoaded(pipelineid, env, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionSubmit(descriptor) {
+function enqueueExecutionSubmit(descriptor, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionAwaitTask(taskid) {
+function enqueueExecutionAwaitTask(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.AWAIT_TASK, { taskid: taskid }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.AWAIT_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionGetTasks(filters) {
+function enqueueExecutionGetTasks(filters, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.GET_TASKS, filters || {}, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.GET_TASKS, filters || {}, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionGetTaskStatus(taskid) {
+function enqueueExecutionGetTaskStatus(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionCancelTask(taskid) {
+function enqueueExecutionCancelTask(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CANCEL_TASK, { taskid: taskid }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.CANCEL_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionStopTask(taskid) {
+function enqueueExecutionStopTask(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.STOP_TASK, { taskid: taskid }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.STOP_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionGetStatus(pipelineid) {
+function enqueueExecutionGetStatus(pipelineid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionEnvUpdated(pipelineid, env) {
+function enqueueExecutionEnvUpdated(pipelineid, env, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionCccAbort(pipelineid, path, elementid, continuation) {
+function enqueueExecutionCccAbort(pipelineid, path, elementid, continuation, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionCccContinue(pipelineid, path, elementid, continuation) {
+function enqueueExecutionCccContinue(pipelineid, path, elementid, continuation, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionCccRetry(pipelineid, path, elementid, continuation) {
+function enqueueExecutionCccRetry(pipelineid, path, elementid, continuation, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionRegisterPipeline(pipelineid, dna, env) {
+function enqueueExecutionRegisterPipeline(pipelineid, dna, env, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionRecover() {
+function enqueueExecutionRecover(responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.RECOVER, {}, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.RECOVER, {}, tag, 'blockcompiler', responseSpec);
 }
-function enqueueExecutionPing() {
+function enqueueExecutionPing(responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.PING, {}, tag, 'blockcompiler');
-  return awaitResponse('blockcompiler', tag);
+  sendInstruction('executionactor', MESSAGETYPES.PING, {}, tag, 'blockcompiler', responseSpec);
 }
 
 function startExecutionActor(options) {

@@ -1,9 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Change applied: ES5 conversion — imports → require, const → var,
-// export → module.exports. PURGED dangling export createDebugActor
-// (undefined identifier in original, zero consumers — would throw
-// ReferenceError at require-time in CJS).
+// Change applied: DIRECT DISPATCH REFACTOR
+//   - No mailTransport, no pollInterval (consumer registration in kernel)
+//   - enqueueDebugPing/enqueueDebugRecover fire-and-forget, accept responseSpec
 // ============================================================
 
 
@@ -88,9 +87,7 @@ var debugbehavior = function(state, message) {
   if (message.type === MESSAGETYPES.PING) {
     logdebug(debugState, '[DEBUGACTOR]', 'action PING');
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, true, 'debugactor').catch(function(err) {
-        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
-      });
+      sendResponse(message.sender, message.tag, true, 'debugactor');
     }
     return state;
   }
@@ -127,9 +124,7 @@ var debugbehavior = function(state, message) {
     state.worldmap.overlayVisible = false;
     persistDebugWorldmap(state);
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, true, 'debugactor').catch(function(err) {
-        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
-      });
+      sendResponse(message.sender, message.tag, true, 'debugactor');
     }
     return state;
   }
@@ -145,9 +140,7 @@ var debugbehavior = function(state, message) {
     state.worldmap.cccState.currentContinuation = null;
     persistDebugWorldmap(state);
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
-        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
-      });
+      sendResponse(message.sender, message.tag, state, 'debugactor');
     }
     return state;
   }
@@ -223,9 +216,7 @@ var debugbehavior = function(state, message) {
     persistDebugWorldmap(state);
 
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
-        logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
-      });
+      sendResponse(message.sender, message.tag, state, 'debugactor');
     }
     return state;
   }
@@ -250,18 +241,14 @@ var debugbehavior = function(state, message) {
       }
       logdebug(debugState, '[DEBUGACTOR]', 'debug recovery completed');
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
-          logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
-        });
+        sendResponse(message.sender, message.tag, state, 'debugactor');
       }
     }).catch(function(e) {
       logwarn(debugState, '[DEBUGACTOR]', 'state restore failed:', e);
       state.worldmap = createInitialDebugWorldmap();
       persistDebugWorldmap(state);
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, state, 'debugactor').catch(function(err) {
-          logwarn(debugState, '[DEBUGACTOR]', 'sendResponse failed:', err);
-        });
+        sendResponse(message.sender, message.tag, state, 'debugactor');
       }
     });
     return state;
@@ -286,12 +273,6 @@ var DEBUGACTOR = createactor(
   {
     actorName: 'debugactor',
     mailboxType: 'mail',
-    mailTransport: {
-      sendInstruction: sendInstruction,
-      requestUnreadMessages: requestUnreadMessages,
-      sendResponse: sendResponse
-    },
-    pollInterval: 25,
     verbosity: debugVerbosityConstants.DEBUG
   }
 );
@@ -310,14 +291,12 @@ function startDebugActor(options) {
   return DEBUGACTOR;
 }
 
-function enqueueDebugPing() {
+function enqueueDebugPing(responseSpec) {
   var tag = generateTag();
-  sendInstruction('debugactor', MESSAGETYPES.PING, {}, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('debugactor', MESSAGETYPES.PING, {}, tag, 'system', responseSpec);
 }
 
-function enqueueDebugRecover() {
+function enqueueDebugRecover(responseSpec) {
   var tag = generateTag();
-  sendInstruction('debugactor', MESSAGETYPES.RECOVER, {}, tag, 'system');
-  return awaitResponse('system', tag);
+  sendInstruction('debugactor', MESSAGETYPES.RECOVER, {}, tag, 'system', responseSpec);
 }

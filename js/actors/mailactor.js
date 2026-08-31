@@ -1,40 +1,29 @@
 // ============================================================
 // UPDATED FILE: js/actors/mailactor.js
-// Change applied: ES5 syntax, no arrow functions, no const, no async/await syntax,
-// module.exports. Top-level await removed (CJS): actor starts with synchronous
-// initial state; persisted state is restored asynchronously after load and merged
-// into the live actor state (preserves persistence semantics).
-// Purpose: dedicated message broker for all actor communication.
-// Mail Actor persists its message queues via DB Actor storage
-// (enqueueDbStore / enqueueDbRestore), presenting a clean
-// abstraction from storage. Actors never touch DB Actor directly
-// for messaging; they only use sendInstruction / requestUnreadMessages.
-// Messages are flat: type, sender, tag, and original fields are
-// all top-level in the payload. Responses use type 'response' and
-// carry result under payload.result.
+// Change applied: DIRECT DISPATCH REFACTOR
+// - No polling, no POLL message type
+// - Global consumer registries (ACTORCONSUMERS, RESPONSECONSUMERS)
+// - sendInstruction fire-and-forget with responseSpec
+// - sendResponse triggers response consumer via mail actor
+// - persist before/after state-changing actions
 // ============================================================
-
 
 var mailVerbosityConstants = createVerbosityConstants();
 var mailState = Object.freeze({ level: mailVerbosityConstants.DEBUG });
 
+// Global registries
+var ACTORCONSUMERS = {}; // key: actorName + ':' + messageType -> function(message)
+var RESPONSECONSUMERS = {}; // key: responseType -> function(response, tag)
+var EXPECTATIONS = {}; // key: tag -> { responseType: string }
+
 var mailactorINTERFACES = {};
 mailactorINTERFACES[MESSAGETYPES.SEND] = {
   recipient: 'string',
-  message: 'object',
-  resolve: 'function?',
-  reject: 'function?'
-};
-mailactorINTERFACES[MESSAGETYPES.POLL] = {
-  recipient: 'string',
-  resolve: 'function',
-  reject: 'function?'
+  message: 'object'
 };
 mailactorINTERFACES[MESSAGETYPES.ACK] = {
   recipient: 'string',
-  ids: 'array',
-  resolve: 'function?',
-  reject: 'function?'
+  ids: 'array'
 };
 Object.freeze(mailactorINTERFACES);
 
@@ -74,13 +63,15 @@ var mailbehavior = function(state, message) {
   if (!state.nextId) state.nextId = 1;
 
   if (message.type === MESSAGETYPES.SEND) {
+    // Pre-action persist
+    persistMailState(state);
+
     var recipient = message.recipient;
     if (!recipient || typeof recipient !== 'string') {
       if (typeof message.reject === 'function') message.reject(new Error('[MAILACTOR] recipient required'));
       return state;
     }
     if (!state.queues[recipient]) state.queues[recipient] = [];
-    // envelope contains id, recipient, sender, tag, unread, timestamp, payload (flat message)
     var envelope = {
       id: 'mail_' + (state.nextId++),
       recipient: recipient,
@@ -91,42 +82,58 @@ var mailbehavior = function(state, message) {
       payload: message.message
     };
     state.queues[recipient].push(envelope);
+    // Post-action persist
     persistMailState(state);
-    if (typeof message.resolve === 'function') message.resolve(true);
-    return state;
-  }
 
-  if (message.type === MESSAGETYPES.POLL) {
-    var pollRecipient = message.recipient;
-    if (!pollRecipient || typeof pollRecipient !== 'string') {
-      if (typeof message.reject === 'function') message.reject(new Error('[MAILACTOR] recipient required'));
-      return state;
+    // DIRECT DISPATCH: invoke consumer for recipient and message type
+    var flatMessage = message.message;
+    var consumerKey = recipient + ':' + flatMessage.type;
+    var consumer = ACTORCONSUMERS[consumerKey];
+    if (consumer) {
+      // Call asynchronously to avoid blocking mail actor
+      setTimeout(function() { consumer(flatMessage); }, 0);
     }
-    var queue = state.queues[pollRecipient] || [];
-    var unread = queue.filter(function(m) { return m.unread === true; });
-    queue.forEach(function(m) { if (m.unread === true) m.unread = false; });
-    persistMailState(state);
-    if (typeof message.resolve === 'function') message.resolve(unread);
+
+    // Store expectation if responseSpec present
+    if (flatMessage.responseSpec && flatMessage.tag) {
+      EXPECTATIONS[flatMessage.tag] = flatMessage.responseSpec;
+    }
+
     return state;
   }
 
   if (message.type === MESSAGETYPES.ACK) {
+    // Pre-action persist
+    persistMailState(state);
+
     var ackRecipient = message.recipient;
     var ackIds = message.ids || [];
     var ackQueue = state.queues[ackRecipient] || [];
     ackQueue.forEach(function(m) {
       if (ackIds.indexOf(m.id) !== -1) m.unread = false;
     });
+    // Post-action persist
     persistMailState(state);
-    if (typeof message.resolve === 'function') message.resolve(true);
     return state;
+  }
+
+  // Response message handling (type 'response')
+  if (flatMessage && flatMessage.type === 'response') {
+    var tag = flatMessage.tag;
+    if (tag && EXPECTATIONS[tag]) {
+      var expectation = EXPECTATIONS[tag];
+      var responseConsumer = RESPONSECONSUMERS[expectation.responseType];
+      if (responseConsumer) {
+        // Invoke response consumer asynchronously
+        setTimeout(function() { responseConsumer(flatMessage.result, tag); }, 0);
+      }
+      delete EXPECTATIONS[tag];
+    }
   }
 
   return state;
 };
 
-// CJS: no top-level await. Start with synchronous fresh state, then merge
-// persisted state asynchronously once restored.
 var initialMailState = createInitialMailState();
 Object.keys(mailactorINTERFACES).forEach(function(type) {
   MESSAGEREGISTRY.register('mailactor', type, mailactorINTERFACES[type], mailbehavior);
@@ -138,7 +145,7 @@ var MAILACTOR = createactor(
   MESSAGEREGISTRY.getInterfaces('mailactor'),
   {
     actorName: 'mailactor',
-    mailboxType: 'memory',   // Mail Actor itself uses memory to avoid recursion
+    mailboxType: 'memory',
     verbosity: mailVerbosityConstants.DEBUG
   }
 );
@@ -168,85 +175,33 @@ function startMailActor(options) {
   return MAILACTOR;
 }
 
-// Generate a unique correlation tag
 function generateTag() {
   return 'tag_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
 }
 
-// sendInstruction(recipient, type, payload, tag, sender)
-// Constructs a flat message: { type, sender, tag, ...payload }
-// Sends it to Mail Actor; returns storage ack promise (may be ignored).
-function sendInstruction(recipient, type, payload, tag, sender) {
+// Fire-and-forget sendInstruction
+function sendInstruction(recipient, type, payload, tag, sender, responseSpec) {
   if (tag === undefined) tag = generateTag();
   if (sender === undefined) sender = 'system';
 
   var flatMessage = { type: type, sender: sender, tag: tag };
-  // Flatten payload keys into the flat message, but never override reserved keys
   if (payload && typeof payload === 'object') {
     Object.keys(payload).forEach(function(key) {
-      if (key !== 'type' && key !== 'sender' && key !== 'tag') {
+      if (key !== 'type' && key !== 'sender' && key !== 'tag' && key !== 'responseSpec') {
         flatMessage[key] = payload[key];
       }
     });
   }
+  if (responseSpec) flatMessage.responseSpec = responseSpec;
 
-  return new Promise(function(resolve, reject) {
-    MAILACTOR.send({
-      type: MESSAGETYPES.SEND,
-      recipient: recipient,
-      message: flatMessage,
-      resolve: resolve,
-      reject: reject
-    });
+  MAILACTOR.send({
+    type: MESSAGETYPES.SEND,
+    recipient: recipient,
+    message: flatMessage
   });
 }
 
-// requestUnreadMessages(recipient) – poll Mail Actor for unread envelopes.
-function requestUnreadMessages(recipient) {
-  return new Promise(function(resolve, reject) {
-    MAILACTOR.send({
-      type: MESSAGETYPES.POLL,
-      recipient: recipient,
-      resolve: resolve,
-      reject: reject
-    });
-  });
-}
-
-// sendResponse(recipient, tag, result, sender)
-// Sends a response message: { type:'response', sender, tag, payload:{ result } }
+// sendResponse sends a response message; mail actor activates response consumer
 function sendResponse(recipient, tag, result, sender) {
-  return sendInstruction(recipient, 'response', { result: result }, tag, sender);
-}
-
-// awaitResponse(recipient, tag, timeout) – caller polls until response with matching tag arrives.
-// ES5: promise chain + setTimeout recursion instead of async/await while-loop.
-function awaitResponse(recipient, tag, timeout) {
-  if (timeout === undefined) timeout = 30000;
-  var start = Date.now();
-
-  function attempt(resolve, reject) {
-    requestUnreadMessages(recipient).then(function(envelopes) {
-      var found = envelopes.filter(function(env) {
-        return env.tag === tag && env.payload && env.payload.type === 'response';
-      }).reduce(function(acc, env) {
-        return acc !== null ? acc : (env.payload.payload ? env.payload.payload.result : env.payload.result);
-      }, null);
-      if (found !== null) {
-        resolve(found);
-        return;
-      }
-      if (Date.now() - start >= timeout) {
-        reject(new Error('[awaitResponse] timeout waiting for tag: ' + tag));
-        return;
-      }
-      setTimeout(function() { attempt(resolve, reject); }, 25);
-    }).catch(function(err) {
-      reject(err);
-    });
-  }
-
-  return new Promise(function(resolve, reject) {
-    attempt(resolve, reject);
-  });
+  sendInstruction(recipient, 'response', { result: result }, tag, sender);
 }

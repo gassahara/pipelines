@@ -1,10 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Change applied: ES5 conversion — imports → require, const → var,
-// export → module.exports. WI-T6 FIX: enqueueapi/enqueuefetch no
-// longer pass tag as sender/recipient — sender is 'system',
-// awaitResponse targets 'system' (per mail envelope contract
-// {recipient, sender, tag}).
+// Change applied: DIRECT DISPATCH REFACTOR
+//   - No mailTransport, no pollInterval (consumer registration in kernel)
+//   - enqueueapi/enqueuefetch fire-and-forget, accept responseSpec
 // ============================================================
 
 
@@ -77,22 +75,16 @@ var apibehavior = function(state, message) {
       if (!isTextual) {
         return response.json().then(function(data) {
           logdebug(apiState, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
-          sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor').catch(function(err) {
-            logwarn(apiState, '[APIACTOR]', 'sendResponse failed:', err);
-          });
+          sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor');
         });
       }
       return response.text().then(function(data) {
         logdebug(apiState, '[APIACTOR]', 'action text response received for:', message.endpoint);
-        sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor').catch(function(err) {
-          logwarn(apiState, '[APIACTOR]', 'sendResponse failed:', err);
-        });
+        sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor');
       });
     }).catch(function(err) {
       logerror(apiState, '[APIACTOR]', 'action request error for:', message.endpoint, err);
-      sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'apiactor').catch(function(e) {
-        logwarn(apiState, '[APIACTOR]', 'sendResponse failed:', e);
-      });
+      sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'apiactor');
     });
   }
 
@@ -110,12 +102,6 @@ var APIACTOR = createactor(
   {
     actorName: 'apiactor',
     mailboxType: 'mail',
-    mailTransport: {
-      sendInstruction: sendInstruction,
-      requestUnreadMessages: requestUnreadMessages,
-      sendResponse: sendResponse
-    },
-    pollInterval: 25,
     verbosity: apiVerbosityConstants.DEBUG
   }
 );
@@ -133,24 +119,22 @@ function startApiActor(options) {
   return APIACTOR;
 }
 
-function enqueueapi(endpoint, method, payload, options) {
+function enqueueapi(endpoint, method, payload, options, responseSpec) {
   var tag = generateTag();
   sendInstruction('apiactor', MESSAGETYPES.API, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},
     token: (options && options.token) || ''
-  }, tag, 'system');
-  return awaitResponse('system', tag);
+  }, tag, 'system', responseSpec);
 }
 
-function enqueuefetch(endpoint, method, payload, options) {
+function enqueuefetch(endpoint, method, payload, options, responseSpec) {
   var tag = generateTag();
   sendInstruction('apiactor', MESSAGETYPES.FETCH, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},
     token: (options && options.token) || ''
-  }, tag, 'system');
-  return awaitResponse('system', tag);
+  }, tag, 'system', responseSpec);
 }
