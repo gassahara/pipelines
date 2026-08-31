@@ -1,26 +1,16 @@
 // ============================================================
 // UPDATED FILE: js/actors/actorkernel.js
-// Changes applied:
-//   - removed all dynamic import() calls; static imports only
-//   - mailboxType 'mail' now requires options.mailTransport with
-//     sendInstruction, requestUnreadMessages, sendResponse
-//   - dedicated setInterval polling loop independent of ensureLoop
-//   - pollInterval configurable (default 25ms)
-//   - send for mail actors only sends via mailTransport, does not
-//     affect polling
-//   - processMessage async, awaits behavior result
-//   - retained memory/db mailbox logic and drain fixes
+// Change applied: ES5 syntax, no arrow functions, no const, no async/await syntax,
+// module.exports. Promise chains retained per blueprint §2 (kernel surface).
+// - mailboxType 'mail' now requires options.mailTransport with
+//   sendInstruction, requestUnreadMessages, sendResponse
+// - dedicated setInterval polling loop independent of ensureLoop
+// - pollInterval configurable (default 25ms)
+// - send for mail actors only sends via mailTransport, does not affect polling
+// - processMessage returns a promise chain; async keyword removed
+// - retained memory/db mailbox logic and drain fixes
 // ============================================================
 
-import { createGarbageCollector } from './actorgc.js';
-import {
-  createVerbosityConstants,
-  logdebug,
-  logwarn,
-  logerror,
-  loginfo,
-  logcritical
-} from '../verbosity.js';
 
 var kernelVerbosityConstants = createVerbosityConstants();
 
@@ -38,8 +28,8 @@ function createMessageValidator(interfaceMap) {
       return { valid: false, error: 'unknown message type: ' + type, type: type };
     }
     var keys = Object.keys(iface);
-    for (var i = 0; i < keys.length; i++) {
-      var key = keys[i];
+    var invalid = keys.reduce(function(acc, key) {
+      if (acc) return acc;
       var spec = iface[key];
       var optional = spec.charAt(spec.length - 1) === '?';
       var expectedtype = optional ? spec.slice(0, -1) : spec;
@@ -47,9 +37,9 @@ function createMessageValidator(interfaceMap) {
         if (!optional) {
           return { valid: false, error: 'type "' + type + '" missing required field "' + key + '" (' + expectedtype + ')', type: type };
         }
-        continue;
+        return acc;
       }
-      if (expectedtype === 'any') continue;
+      if (expectedtype === 'any') return acc;
 
       if (expectedtype === 'array') {
         if (!Array.isArray(message[key])) {
@@ -65,7 +55,9 @@ function createMessageValidator(interfaceMap) {
           return { valid: false, error: 'type "' + type + '" field "' + key + '" expected ' + expectedtype + ' got ' + actualtype, type: type };
         }
       }
-    }
+      return acc;
+    }, null);
+    if (invalid) return invalid;
     return { valid: true, error: null, type: type };
   };
 }
@@ -97,26 +89,30 @@ function createDbMailbox(actorName, dbStore) {
   }
 
   return {
-    append: async function(message) {
-      var data = await load();
-      data.items.push(message);
-      await save(data);
+    append: function(message) {
+      return load().then(function(data) {
+        data.items.push(message);
+        return save(data);
+      });
     },
-    peek: async function() {
-      var data = await load();
-      return data.items.length ? data.items[0] : null;
+    peek: function() {
+      return load().then(function(data) {
+        return data.items.length ? data.items[0] : null;
+      });
     },
-    remove: async function() {
-      var data = await load();
-      data.items.shift();
-      await save(data);
+    remove: function() {
+      return load().then(function(data) {
+        data.items.shift();
+        return save(data);
+      });
     },
-    clear: async function() {
-      await dbStore.delete(key);
+    clear: function() {
+      return dbStore.delete(key);
     },
-    isEmpty: async function() {
-      var data = await load();
-      return data.items.length === 0;
+    isEmpty: function() {
+      return load().then(function(data) {
+        return data.items.length === 0;
+      });
     }
   };
 }
@@ -177,7 +173,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
     }
   }
 
-  async function processMessage(message) {
+  function processMessage(message) {
     var msgType = message && message.type ? message.type : String(message);
     var currentVerbosity = currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity;
     logdebug({ level: currentVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage start:', msgType);
@@ -186,26 +182,31 @@ function createactor(behavior, initialstate, messageInterface, options) {
       var check = validator(message);
       if (!check.valid) {
         logerror({ level: currentVerbosity }, '[ACTOR:' + actorName + ']', '[ACTOR:INVALID]', check.error);
-        return null;
+        return Promise.resolve(null);
       }
     }
 
     try {
       var result = behavior(currentstate, message);
       if (result && typeof result.then === 'function') {
-        currentstate = await result;
-      } else if (result !== undefined) {
+        return result.then(function(res) {
+          currentstate = res;
+          logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage done:', msgType);
+          return res;
+        });
+      }
+      if (result !== undefined) {
         currentstate = result;
       }
       logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'processMessage done:', msgType);
-      return result;
+      return Promise.resolve(result);
     } catch (err) {
       logerror({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'behavior error:', err);
-      throw err;
+      return Promise.reject(err);
     }
   }
 
-  async function drainMemory() {
+  function drainMemory() {
     if (!running) return;
     if (mailbox.isEmpty()) {
       running = false;
@@ -216,29 +217,40 @@ function createactor(behavior, initialstate, messageInterface, options) {
     var message = mailbox.peek();
     mailbox.remove();
     logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainMemory processing message:', message && message.type);
-    await processMessage(message);
-    setTimeout(drainMemory, 0);
+    processMessage(message).then(function() {
+      setTimeout(drainMemory, 0);
+    });
   }
 
-  async function drainDb() {
+  function drainDb() {
     if (!running) return;
     draining = true;
-    var message = await mailbox.peek();
-    if (message === null) {
-      draining = false;
-      if (polltimer) { clearTimeout(polltimer); polltimer = null; }
-      logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb mailbox empty, polling');
-      resolveWaiters();
-      polltimer = setTimeout(drainDb, 25);
-      return;
-    }
-    await mailbox.remove();
-    logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb processing message:', message && message.type);
-    await processMessage(message);
-    await mailbox.clearIfEmpty ? mailbox.clearIfEmpty() : null;
-    draining = false;
-    if (polltimer) { clearTimeout(polltimer); polltimer = null; }
-    polltimer = setTimeout(drainDb, 0);
+    mailbox.peek().then(function(message) {
+      if (message === null) {
+        draining = false;
+        if (polltimer) { clearTimeout(polltimer); polltimer = null; }
+        logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb mailbox empty, polling');
+        resolveWaiters();
+        polltimer = setTimeout(drainDb, 25);
+        return;
+      }
+      mailbox.remove().then(function() {
+        logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'drainDb processing message:', message && message.type);
+        processMessage(message).then(function() {
+          var after = mailbox.clearIfEmpty ? mailbox.clearIfEmpty() : null;
+          var finish = function() {
+            draining = false;
+            if (polltimer) { clearTimeout(polltimer); polltimer = null; }
+            polltimer = setTimeout(drainDb, 0);
+          };
+          if (after && typeof after.then === 'function') {
+            after.then(finish);
+          } else {
+            finish();
+          }
+        });
+      });
+    });
   }
 
   function ensureLoop() {
@@ -301,19 +313,25 @@ function createactor(behavior, initialstate, messageInterface, options) {
   if (mailboxType === 'mail') {
     var pollInterval = options.pollInterval !== undefined ? options.pollInterval : 25;
     var mailTransport = options.mailTransport;
-    var pollMailbox = async function() {
-      try {
-        var envelopes = await mailTransport.requestUnreadMessages(actorName);
-        for (var i = 0; i < envelopes.length; i++) {
+    var pollMailbox = function() {
+      mailTransport.requestUnreadMessages(actorName).then(function(envelopes) {
+        var i = 0;
+        var processNext = function() {
+          if (i >= envelopes.length) return;
           var env = envelopes[i];
-          var result = await processMessage(env.payload);
-          if (env.tag && env.sender && result !== undefined && result !== null) {
-            await mailTransport.sendResponse(env.sender, env.tag, result, actorName);
-          }
-        }
-      } catch (err) {
+          i += 1;
+          processMessage(env.payload).then(function(result) {
+            if (env.tag && env.sender && result !== undefined && result !== null) {
+              mailTransport.sendResponse(env.sender, env.tag, result, actorName).then(processNext);
+            } else {
+              processNext();
+            }
+          }, function() { processNext(); });
+        };
+        processNext();
+      }).catch(function(err) {
         logwarn({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'pollMailbox error:', err);
-      }
+      });
     };
     setInterval(pollMailbox, pollInterval);
   }
@@ -340,5 +358,3 @@ function pingActor(enqueuePing, timeout) {
 function getActorRegistry() {
   return actorRegistry;
 }
-
-export { createactor, createMessageValidator, pingActor, getActorRegistry };

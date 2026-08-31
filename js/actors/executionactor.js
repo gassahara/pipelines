@@ -1,81 +1,36 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Changes applied:
-//   - mailboxType 'mail' with mailTransport injection
-//   - all enqueue functions use tag-based sendInstruction + awaitResponse
-//   - behavior returns results; kernel sends response via tag/sender
-//   - TASK_SETTLED self-notification via sendInstruction (flat)
-//   - state persistence still uses enqueueDbStore/Restore/Delete
+// Change applied: ES5 conversion — imports → require, const → var,
+// shorthand properties → explicit, export → module.exports.
+// Top-level await removed (loadInitialState → sync default state +
+// fire-and-forget restore-merge into live actor, mailactor pattern).
+// runElementTask async/await → promise chain (program-restore
+// fallback semantics preserved).
 // ============================================================
 
-import { createactor } from './actorkernel.js';
-import {
-  enqueueDbStore,
-  enqueueDbRestore,
-  enqueueDbDelete,
-  serializeDna,
-  deserializeDna,
-  consolidateGraph,
-  restoreGraph,
-  serializePairStore,
-  deserializePairStore
-} from './dbactor.js';
-import {
-  sendInstruction,
-  requestUnreadMessages,
-  sendResponse,
-  awaitResponse,
-  generateTag
-} from './mailactor.js';
-import {
-  createVerbosityConstants,
-  logdebug,
-  logwarn,
-  logerror,
-  loginfo,
-  logcritical
-} from '../verbosity.js';
 
 var executionVerbosityConstants = createVerbosityConstants();
 var executionState = Object.freeze({ level: executionVerbosityConstants.DEBUG });
 
-var EXECUTIONMESSAGETYPES = Object.freeze({
-  PIPELINE_LOADED: 'pipeline_loaded',
-  ENV_UPDATED: 'env_updated',
-  GET_STATUS: 'get_status',
-  EXECUTE_ELEMENT: 'execute_element',
-  AWAIT_TASK: 'await_task',
-  GET_TASKS: 'get_tasks',
-  GET_TASK_STATUS: 'get_task_status',
-  CANCEL_TASK: 'cancel_task',
-  STOP_TASK: 'stop_task',
-  CCC_ABORT: 'ccc_abort',
-  CCC_CONTINUE: 'ccc_continue',
-  CCC_RETRY: 'ccc_retry',
-  TASK_SETTLED: 'task_settled',
-  RECOVER: 'recover',
-  REGISTER_PIPELINE: 'register_pipeline',
-  PING: 'ping'
-});
 
-var MESSAGEINTERFACES = {};
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PIPELINE_LOADED] = { pipelineid: 'string', env: 'object?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.ENV_UPDATED] = { pipelineid: 'string', env: 'object' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_STATUS] = { pipelineid: 'string?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?', programRef: 'string?', elementId: 'string?', origin: 'object?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.AWAIT_TASK] = { taskid: 'string' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.GET_TASK_STATUS] = { taskid: 'string' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CANCEL_TASK] = { taskid: 'string' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.STOP_TASK] = { taskid: 'string' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_ABORT] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_CONTINUE] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.CCC_RETRY] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.TASK_SETTLED] = { taskid: 'string', status: 'string', result: 'any', error: 'object?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.RECOVER] = {};
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?' };
-MESSAGEINTERFACES[EXECUTIONMESSAGETYPES.PING] = {};
-Object.freeze(MESSAGEINTERFACES);
+var executionactorINTERFACES = {};
+executionactorINTERFACES[MESSAGETYPES.PIPELINE_LOADED] = { pipelineid: 'string', env: 'object?' };
+executionactorINTERFACES[MESSAGETYPES.ENV_UPDATED] = { pipelineid: 'string', env: 'object' };
+executionactorINTERFACES[MESSAGETYPES.GET_STATUS] = { pipelineid: 'string?' };
+executionactorINTERFACES[MESSAGETYPES.EXECUTE_ELEMENT] = { pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object', executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?', programRef: 'string?', elementId: 'string?', origin: 'object?' };
+executionactorINTERFACES[MESSAGETYPES.AWAIT_TASK] = { taskid: 'string' };
+executionactorINTERFACES[MESSAGETYPES.GET_TASKS] = { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?' };
+executionactorINTERFACES[MESSAGETYPES.GET_TASK_STATUS] = { taskid: 'string' };
+executionactorINTERFACES[MESSAGETYPES.CANCEL_TASK] = { taskid: 'string' };
+executionactorINTERFACES[MESSAGETYPES.STOP_TASK] = { taskid: 'string' };
+executionactorINTERFACES[MESSAGETYPES.CCC_ABORT] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
+executionactorINTERFACES[MESSAGETYPES.CCC_CONTINUE] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
+executionactorINTERFACES[MESSAGETYPES.CCC_RETRY] = { pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?' };
+executionactorINTERFACES[MESSAGETYPES.TASK_SETTLED] = { taskid: 'string', status: 'string', result: 'any', error: 'object?' };
+executionactorINTERFACES[MESSAGETYPES.RECOVER] = {};
+executionactorINTERFACES[MESSAGETYPES.REGISTER_PIPELINE] = { pipelineid: 'string', dna: 'object?', env: 'object?' };
+executionactorINTERFACES[MESSAGETYPES.PING] = {};
+Object.freeze(executionactorINTERFACES);
 
 function sanitizeForState(value, seen) {
   if (value === null || value === undefined) return value;
@@ -195,12 +150,12 @@ var executionbehavior = function(state, message) {
   logdebug(executionState, '[EXECUTIONACTOR]', 'behavior handling action:', message.type);
 
   var readOnly = [
-    EXECUTIONMESSAGETYPES.GET_STATUS,
-    EXECUTIONMESSAGETYPES.RECOVER,
-    EXECUTIONMESSAGETYPES.AWAIT_TASK,
-    EXECUTIONMESSAGETYPES.GET_TASKS,
-    EXECUTIONMESSAGETYPES.GET_TASK_STATUS,
-    EXECUTIONMESSAGETYPES.PING
+    MESSAGETYPES.GET_STATUS,
+    MESSAGETYPES.RECOVER,
+    MESSAGETYPES.AWAIT_TASK,
+    MESSAGETYPES.GET_TASKS,
+    MESSAGETYPES.GET_TASK_STATUS,
+    MESSAGETYPES.PING
   ];
 
   if (readOnly.indexOf(message.type) === -1) {
@@ -210,22 +165,22 @@ var executionbehavior = function(state, message) {
   var nextState = state;
 
   switch (message.type) {
-    case EXECUTIONMESSAGETYPES.PIPELINE_LOADED: {
+    case MESSAGETYPES.PIPELINE_LOADED: {
       loginfo(executionState, '[EXECUTIONACTOR]', 'action PIPELINE_LOADED:', message.pipelineid);
       var pipeline = ensurePipeline(nextState, message.pipelineid);
       if (message.env && Object.keys(message.env).length > 0) pipeline.env = message.env;
       pipeline.status = 'running';
       return true;
     }
-    case EXECUTIONMESSAGETYPES.ENV_UPDATED: {
+    case MESSAGETYPES.ENV_UPDATED: {
       var p3 = ensurePipeline(nextState, message.pipelineid);
       p3.env = sanitizeForState(message.env || {});
       return true;
     }
-    case EXECUTIONMESSAGETYPES.GET_STATUS: {
+    case MESSAGETYPES.GET_STATUS: {
       return message.pipelineid ? (nextState.pipelines[message.pipelineid] || null) : nextState.pipelines;
     }
-    case EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT: {
+    case MESSAGETYPES.EXECUTE_ELEMENT: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action EXECUTE_ELEMENT element:', message.elementid, 'pipeline:', message.pipelineid, 'path:', message.path);
       var task = makeTask(nextState, {
         kind: 'element',
@@ -238,7 +193,7 @@ var executionbehavior = function(state, message) {
       runElementTask(task.taskid, message);
       return { taskid: task.taskid };
     }
-    case EXECUTIONMESSAGETYPES.AWAIT_TASK: {
+    case MESSAGETYPES.AWAIT_TASK: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action AWAIT_TASK task:', message.taskid);
       var awaitTask = nextState.tasks[message.taskid];
       if (!awaitTask) {
@@ -258,7 +213,7 @@ var executionbehavior = function(state, message) {
         return null; // no immediate response; will send when TASK_SETTLED
       }
     }
-    case EXECUTIONMESSAGETYPES.GET_TASKS: {
+    case MESSAGETYPES.GET_TASKS: {
       var result = [];
       Object.keys(nextState.tasks).forEach(function(tid) {
         var t = nextState.tasks[tid];
@@ -280,7 +235,7 @@ var executionbehavior = function(state, message) {
       });
       return result;
     }
-    case EXECUTIONMESSAGETYPES.GET_TASK_STATUS: {
+    case MESSAGETYPES.GET_TASK_STATUS: {
       var t2 = nextState.tasks[message.taskid];
       return t2 ? {
         taskid: t2.taskid,
@@ -295,20 +250,20 @@ var executionbehavior = function(state, message) {
         consumerCount: (t2.consumers || []).length
       } : null;
     }
-    case EXECUTIONMESSAGETYPES.CANCEL_TASK: {
+    case MESSAGETYPES.CANCEL_TASK: {
       cancelTask(nextState, message.taskid);
       return true;
     }
-    case EXECUTIONMESSAGETYPES.STOP_TASK: {
+    case MESSAGETYPES.STOP_TASK: {
       stopTask(nextState, message.taskid);
       return true;
     }
-    case EXECUTIONMESSAGETYPES.CCC_ABORT:
-    case EXECUTIONMESSAGETYPES.CCC_CONTINUE:
-    case EXECUTIONMESSAGETYPES.CCC_RETRY: {
+    case MESSAGETYPES.CCC_ABORT:
+    case MESSAGETYPES.CCC_CONTINUE:
+    case MESSAGETYPES.CCC_RETRY: {
       return true;
     }
-    case EXECUTIONMESSAGETYPES.TASK_SETTLED: {
+    case MESSAGETYPES.TASK_SETTLED: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action TASK_SETTLED task:', message.taskid, 'status:', message.status);
       var task4 = nextState.tasks[message.taskid];
       if (task4) {
@@ -330,7 +285,7 @@ var executionbehavior = function(state, message) {
       }
       return null;
     }
-    case EXECUTIONMESSAGETYPES.RECOVER: {
+    case MESSAGETYPES.RECOVER: {
       enqueueDbRestore('actor:state:execution').then(function(saved) {
         if (saved) {
           nextState.worldmap = saved.worldmap || saved;
@@ -351,14 +306,14 @@ var executionbehavior = function(state, message) {
       });
       return null;
     }
-    case EXECUTIONMESSAGETYPES.REGISTER_PIPELINE: {
+    case MESSAGETYPES.REGISTER_PIPELINE: {
       logdebug(executionState, '[EXECUTIONACTOR]', 'action REGISTER_PIPELINE:', message.pipelineid);
       var p10 = ensurePipeline(nextState, message.pipelineid);
       p10.usesElementSnapshots = true;
       if (message.env) p10.env = sanitizeForState(message.env);
       return true;
     }
-    case EXECUTIONMESSAGETYPES.PING: {
+    case MESSAGETYPES.PING: {
       return true;
     }
     default: {
@@ -368,24 +323,9 @@ var executionbehavior = function(state, message) {
   }
 };
 
-async function loadInitialState() {
-  try {
-    var saved = await enqueueDbRestore('actor:state:execution');
-    if (saved) {
-      return {
-        pipelines: saved.pipelines || {},
-        htmlSnapshot: saved.htmlSnapshot || null,
-        tasks: saved.tasks || {},
-        taskCounter: saved.taskCounter || 0,
-        worldmap: saved.worldmap || saved,
-        debugState: { currentContinuation: null }
-      };
-    }
-  } catch (err) {
-    logwarn(executionState, '[EXECUTIONACTOR]', 'state restore failed:', err);
-  }
-
-  var defaultState = {
+// Top-level await removed: sync default state + fire-and-forget restore-merge.
+function createInitialExecutionState() {
+  return {
     pipelines: {},
     htmlSnapshot: null,
     tasks: {},
@@ -393,56 +333,76 @@ async function loadInitialState() {
     worldmap: createInitialExecutionWorldmap(),
     debugState: { currentContinuation: null }
   };
-  enqueueDbStore('actor:state:execution', defaultState.worldmap).catch(function(e) {
-    logwarn(executionState, '[EXECUTIONACTOR]', 'default state persist failed:', e);
-  });
-  return defaultState;
 }
 
-async function runElementTask(taskid, descriptor) {
-  try {
-    logdebug(executionState, '[EXECUTIONACTOR]', 'runElementTask executing:', taskid, descriptor.elementid, descriptor.path);
-    var executionContext = {
-      env: descriptor.env,
-      inputs: descriptor.signature && descriptor.signature.inputs ? descriptor.signature.inputs : [],
-      outputs: descriptor.signature && descriptor.signature.outputs ? descriptor.signature.outputs : {},
-      properties: descriptor.properties || {}
-    };
+function restoreExecutionStateInto(actor) {
+  enqueueDbRestore('actor:state:execution').then(function(saved) {
+    var live = actor.getstate();
+    if (saved) {
+      live.pipelines = saved.pipelines || {};
+      live.htmlSnapshot = saved.htmlSnapshot || null;
+      live.tasks = saved.tasks || {};
+      live.taskCounter = saved.taskCounter || 0;
+      live.worldmap = saved.worldmap || saved;
+    } else {
+      enqueueDbStore('actor:state:execution', live.worldmap).catch(function(e) {
+        logwarn(executionState, '[EXECUTIONACTOR]', 'default state persist failed:', e);
+      });
+    }
+  }).catch(function(err) {
+    logwarn(executionState, '[EXECUTIONACTOR]', 'state restore failed:', err);
+  });
+}
 
-    var result;
+function runElementTask(taskid, descriptor) {
+  var executionContext = {
+    env: descriptor.env,
+    inputs: descriptor.signature && descriptor.signature.inputs ? descriptor.signature.inputs : [],
+    outputs: descriptor.signature && descriptor.signature.outputs ? descriptor.signature.outputs : {},
+    properties: descriptor.properties || {}
+  };
+
+  function runWithProgram() {
     if (descriptor.programRef && descriptor.programSource) {
       try {
         var program = new Function('return ' + descriptor.programSource)();
         if (program && typeof program[descriptor.elementid] === 'function') {
-          result = await program[descriptor.elementid]();
-        } else {
-          result = await descriptor.executor(executionContext);
+          return Promise.resolve(program[descriptor.elementid]()).then(function(r) {
+            return r;
+          }).catch(function(err) {
+            logwarn(executionState, '[EXECUTIONACTOR]', 'program restoration failed:', err);
+            return descriptor.executor(executionContext);
+          });
         }
       } catch (err) {
         logwarn(executionState, '[EXECUTIONACTOR]', 'program restoration failed:', err);
-        result = await descriptor.executor(executionContext);
       }
-    } else {
-      result = await descriptor.executor(executionContext);
     }
+    return Promise.resolve(descriptor.executor(executionContext));
+  }
 
+  return runWithProgram().then(function(result) {
     logdebug(executionState, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
-    sendInstruction('executionactor', EXECUTIONMESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor').catch(function(err) {
+    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor').catch(function(err) {
       logerror(executionState, '[EXECUTIONACTOR]', 'TASK_SETTLED send failed:', err);
     });
-  } catch (err) {
+  }).catch(function(err) {
     logerror(executionState, '[EXECUTIONACTOR]', 'runElementTask failed:', taskid, descriptor.elementid, err);
-    sendInstruction('executionactor', EXECUTIONMESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor').catch(function(e) {
+    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor').catch(function(e) {
       logerror(executionState, '[EXECUTIONACTOR]', 'TASK_SETTLED send failed:', e);
     });
-  }
+  });
 }
 
-var initialState = await loadInitialState();
+var executionInitialState = createInitialExecutionState();
+Object.keys(executionactorINTERFACES).forEach(function(type) {
+  MESSAGEREGISTRY.register('executionactor', type, executionactorINTERFACES[type], executionbehavior);
+});
+
 var EXECUTIONACTOR = createactor(
   executionbehavior,
-  initialState,
-  MESSAGEINTERFACES,
+  executionInitialState,
+  MESSAGEREGISTRY.getInterfaces('executionactor'),
   {
     actorName: 'executionactor',
     mailboxType: 'mail',
@@ -455,80 +415,81 @@ var EXECUTIONACTOR = createactor(
     verbosity: executionVerbosityConstants.DEBUG
   }
 );
+restoreExecutionStateInto(EXECUTIONACTOR);
 
 function enqueueExecutionPipelineLoaded(pipelineid, env) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionSubmit(descriptor) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionAwaitTask(taskid) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.AWAIT_TASK, { taskid: taskid }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.AWAIT_TASK, { taskid: taskid }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionGetTasks(filters) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.GET_TASKS, filters || {}, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.GET_TASKS, filters || {}, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionGetTaskStatus(taskid) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionCancelTask(taskid) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CANCEL_TASK, { taskid: taskid }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.CANCEL_TASK, { taskid: taskid }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionStopTask(taskid) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.STOP_TASK, { taskid: taskid }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.STOP_TASK, { taskid: taskid }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionGetStatus(pipelineid) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionEnvUpdated(pipelineid, env) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionCccAbort(pipelineid, path, elementid, continuation) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CCC_ABORT, { pipelineid, path, elementid, continuation }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionCccContinue(pipelineid, path, elementid, continuation) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CCC_CONTINUE, { pipelineid, path, elementid, continuation }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionCccRetry(pipelineid, path, elementid, continuation) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.CCC_RETRY, { pipelineid, path, elementid, continuation }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionRegisterPipeline(pipelineid, dna, env) {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.REGISTER_PIPELINE, { pipelineid, dna, env }, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionRecover() {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.RECOVER, {}, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.RECOVER, {}, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 function enqueueExecutionPing() {
-  const tag = generateTag();
-  sendInstruction('executionactor', EXECUTIONMESSAGETYPES.PING, {}, tag, 'blockcompiler');
+  var tag = generateTag();
+  sendInstruction('executionactor', MESSAGETYPES.PING, {}, tag, 'blockcompiler');
   return awaitResponse('blockcompiler', tag);
 }
 
@@ -548,25 +509,3 @@ function startExecutionActor(options) {
 function ensureExecutionActorReady(options) {
   return Promise.resolve(startExecutionActor(options));
 }
-
-export {
-  EXECUTIONMESSAGETYPES,
-  EXECUTIONACTOR,
-  enqueueExecutionPipelineLoaded,
-  enqueueExecutionSubmit,
-  enqueueExecutionAwaitTask,
-  enqueueExecutionGetTasks,
-  enqueueExecutionGetTaskStatus,
-  enqueueExecutionCancelTask,
-  enqueueExecutionStopTask,
-  enqueueExecutionGetStatus,
-  enqueueExecutionEnvUpdated,
-  enqueueExecutionCccAbort,
-  enqueueExecutionCccContinue,
-  enqueueExecutionCccRetry,
-  enqueueExecutionRegisterPipeline,
-  enqueueExecutionRecover,
-  enqueueExecutionPing,
-  startExecutionActor,
-  ensureExecutionActorReady
-};

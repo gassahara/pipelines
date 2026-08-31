@@ -1,53 +1,23 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Changes applied:
-//   - mailboxType changed to 'mail'
-//   - mailTransport injected statically from mailactor.js
-//   - behavior no longer embeds resolve/reject; sends response
-//     via sendResponse(sender, tag, result)
-//   - global error/unhandledrejection listeners use sendInstruction
-//   - CCC commands route through sendInstruction to executionactor
-//   - state persistence still uses enqueueDbStore/Restore/Delete
+// Change applied: ES5 conversion — imports → require, const → var,
+// export → module.exports. PURGED dangling export createDebugActor
+// (undefined identifier in original, zero consumers — would throw
+// ReferenceError at require-time in CJS).
 // ============================================================
 
-import { createactor } from './actorkernel.js';
-import { frames } from '../evalstack.js';
-import { formatdebugtrace } from '../debugformatter.js';
-import {
-  createVerbosityConstants,
-  logdebug,
-  logwarn,
-  logerror,
-  loginfo,
-  logcritical
-} from '../verbosity.js';
-import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
-import {
-  sendInstruction,
-  requestUnreadMessages,
-  sendResponse,
-  awaitResponse,
-  generateTag
-} from './mailactor.js';
 
 var debugVerbosityConstants = createVerbosityConstants();
 var debugState = Object.freeze({ level: debugVerbosityConstants.DEBUG });
 
-var DEBUG_MESSAGETYPES = Object.freeze({
-  INIT_OVERLAY: 'init_overlay',
-  SHOW: 'show',
-  HIDE: 'hide',
-  RECOVER: 'recover',
-  PING: 'ping'
-});
 
-var MESSAGEINTERFACES = {};
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.INIT_OVERLAY] = { sender: 'string?', tag: 'string?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.SHOW] = { error: 'object', continuation: 'object?', sender: 'string?', tag: 'string?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.HIDE] = { sender: 'string?', tag: 'string?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.RECOVER] = { sender: 'string?', tag: 'string?' };
-MESSAGEINTERFACES[DEBUG_MESSAGETYPES.PING] = { sender: 'string?', tag: 'string?' };
-Object.freeze(MESSAGEINTERFACES);
+var debugactorINTERFACES = {};
+debugactorINTERFACES[MESSAGETYPES.INIT_OVERLAY] = { sender: 'string?', tag: 'string?' };
+debugactorINTERFACES[MESSAGETYPES.SHOW] = { error: 'object', continuation: 'object?', sender: 'string?', tag: 'string?' };
+debugactorINTERFACES[MESSAGETYPES.HIDE] = { sender: 'string?', tag: 'string?' };
+debugactorINTERFACES[MESSAGETYPES.RECOVER] = { sender: 'string?', tag: 'string?' };
+debugactorINTERFACES[MESSAGETYPES.PING] = { sender: 'string?', tag: 'string?' };
+Object.freeze(debugactorINTERFACES);
 
 var DEBUGACTOR_INSTANCE = null;
 
@@ -115,7 +85,7 @@ var debugbehavior = function(state, message) {
     state.worldmap = createInitialDebugWorldmap();
   }
 
-  if (message.type === DEBUG_MESSAGETYPES.PING) {
+  if (message.type === MESSAGETYPES.PING) {
     logdebug(debugState, '[DEBUGACTOR]', 'action PING');
     if (message.sender && message.tag) {
       sendResponse(message.sender, message.tag, true, 'debugactor').catch(function(err) {
@@ -125,7 +95,7 @@ var debugbehavior = function(state, message) {
     return state;
   }
 
-  if (message.type === DEBUG_MESSAGETYPES.INIT_OVERLAY) {
+  if (message.type === MESSAGETYPES.INIT_OVERLAY) {
     logdebug(debugState, '[DEBUGACTOR]', 'action INIT_OVERLAY');
     persistDebugWorldmap(state);
     ensureOverlay(state);
@@ -136,7 +106,7 @@ var debugbehavior = function(state, message) {
       window.addEventListener('error', function(e) {
         e.preventDefault();
         logwarn(debugState, '[DEBUGACTOR]', 'global window error captured:', e.error || e);
-        sendInstruction('debugactor', DEBUG_MESSAGETYPES.SHOW, {
+        sendInstruction('debugactor', MESSAGETYPES.SHOW, {
           error: e.error || e,
           continuation: null
         }, null, 'window').catch(function(err) { logwarn(debugState, '[DEBUGACTOR]', err); });
@@ -146,7 +116,7 @@ var debugbehavior = function(state, message) {
         if (e.reason && e.reason.diagnostic) {
           e.preventDefault();
           logwarn(debugState, '[DEBUGACTOR]', 'global unhandled rejection captured:', e.reason);
-          sendInstruction('debugactor', DEBUG_MESSAGETYPES.SHOW, {
+          sendInstruction('debugactor', MESSAGETYPES.SHOW, {
             error: e.reason,
             continuation: e.reason.diagnostic.continuation || null
           }, null, 'window').catch(function(err) { logwarn(debugState, '[DEBUGACTOR]', err); });
@@ -164,7 +134,7 @@ var debugbehavior = function(state, message) {
     return state;
   }
 
-  if (message.type === DEBUG_MESSAGETYPES.HIDE) {
+  if (message.type === MESSAGETYPES.HIDE) {
     logdebug(debugState, '[DEBUGACTOR]', 'action HIDE');
     persistDebugWorldmap(state);
     if (state.overlay) {
@@ -182,7 +152,7 @@ var debugbehavior = function(state, message) {
     return state;
   }
 
-  if (message.type === DEBUG_MESSAGETYPES.SHOW) {
+  if (message.type === MESSAGETYPES.SHOW) {
     loginfo(debugState, '[DEBUGACTOR]', 'action SHOW debug overlay');
     logdebug(debugState, '[DEBUGACTOR]', 'action SHOW error:', message.error, 'continuation:', message.continuation);
     persistDebugWorldmap(state);
@@ -260,7 +230,7 @@ var debugbehavior = function(state, message) {
     return state;
   }
 
-  if (message.type === DEBUG_MESSAGETYPES.RECOVER) {
+  if (message.type === MESSAGETYPES.RECOVER) {
     logdebug(debugState, '[DEBUGACTOR]', 'action RECOVER debug state');
     enqueueDbRestore('actor:state:debug').then(function(saved) {
       if (saved) {
@@ -300,6 +270,10 @@ var debugbehavior = function(state, message) {
   return state;
 };
 
+Object.keys(debugactorINTERFACES).forEach(function(type) {
+  MESSAGEREGISTRY.register('debugactor', type, debugactorINTERFACES[type], debugbehavior);
+});
+
 var DEBUGACTOR = createactor(
   debugbehavior,
   {
@@ -308,7 +282,7 @@ var DEBUGACTOR = createactor(
     worldmap: createInitialDebugWorldmap(),
     verbosity: debugVerbosityConstants.DEBUG
   },
-  MESSAGEINTERFACES,
+  MESSAGEREGISTRY.getInterfaces('debugactor'),
   {
     actorName: 'debugactor',
     mailboxType: 'mail',
@@ -337,21 +311,13 @@ function startDebugActor(options) {
 }
 
 function enqueueDebugPing() {
-  const tag = generateTag();
-  sendInstruction('debugactor', DEBUG_MESSAGETYPES.PING, {}, tag, 'system');
+  var tag = generateTag();
+  sendInstruction('debugactor', MESSAGETYPES.PING, {}, tag, 'system');
   return awaitResponse('system', tag);
 }
 
 function enqueueDebugRecover() {
-  const tag = generateTag();
-  sendInstruction('debugactor', DEBUG_MESSAGETYPES.RECOVER, {}, tag, 'system');
+  var tag = generateTag();
+  sendInstruction('debugactor', MESSAGETYPES.RECOVER, {}, tag, 'system');
   return awaitResponse('system', tag);
 }
-
-export {
-  DEBUG_MESSAGETYPES,
-  createDebugActor,
-  startDebugActor,
-  enqueueDebugPing,
-  enqueueDebugRecover
-};

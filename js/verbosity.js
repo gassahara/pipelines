@@ -58,8 +58,7 @@ function setverbosity(state, level) {
   var lvl = resolveLevel(level);
   if (lvl !== null) {
     if (state && typeof state === 'object') {
-      var copy = {};
-      Object.keys(state).forEach(function(k) { copy[k] = state[k]; });
+      var copy = Object.keys(state).reduce(function(acc, k) { acc[k] = state[k]; return acc; }, {});
       copy.level = lvl;
       copy.verbosity = lvl;
       return Object.freeze(copy);
@@ -126,16 +125,3 @@ function createVerbosityFunctions() {
     getverbosityname: getverbosityname
   });
 }
-
-export {
-  createVerbosityConstants,
-  createVerbosityFunctions,
-  getverbosity,
-  setverbosity,
-  logcritical,
-  logerror,
-  logwarn,
-  loginfo,
-  logdebug,
-  getverbosityname
-};

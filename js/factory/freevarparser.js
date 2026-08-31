@@ -1,11 +1,28 @@
+// ============================================================
+// UPDATED FILE: js/factory/freevarparser.js
+// Change applied: ESM purge (export block → module.exports).
+// Body already ES5 (var/function only). PUNCTUATORS/scanner string
+// data ('=>', '?.', '`') is DATA, not syntax. Trivial linear scans
+// simplified to indexOf/reduce; state-machine scanner/parser loops
+// retained (ES5-legal; functional conversion deferred — see trace).
+// ============================================================
+
 var hasOwn = Object.prototype.hasOwnProperty;
 
+// trampoline — plan Phase 3 TIP: avoid stack overflow with deep recursion.
+function trampoline(fn) {
+  return function() {
+    var result = fn.apply(null, arguments);
+    while (typeof result === 'function') { result = result(); }
+    return result;
+  };
+}
+
 function cloneObj(obj) {
-  var out = {};
-  for (var k in obj) {
+  return Object.keys(obj).reduce(function(out, k) {
     if (hasOwn.call(obj, k)) out[k] = obj[k];
-  }
-  return out;
+    return out;
+  }, {});
 }
 
 function has(obj, key) {
@@ -13,10 +30,7 @@ function has(obj, key) {
 }
 
 function contains(arr, item) {
-  for (var i = 0; i < arr.length; i++) {
-    if (arr[i] === item) return true;
-  }
-  return false;
+  return arr.indexOf(item) !== -1;
 }
 
 function isWhitespace(ch) {
@@ -47,8 +61,7 @@ var RESERVED = (function() {
     'export','default','void','delete','yield','await','async','static','get','set',
     'debugger','with','enum','implements','interface','package','private','protected','public'
   ];
-  var map = {};
-  for (var i = 0; i < words.length; i++) map[words[i]] = true;
+  var map = words.reduce(function(acc, word) { acc[word] = true; return acc; }, {});
   return map;
 })();
 
@@ -60,8 +73,7 @@ var BUILTINS = (function() {
     'decodeURIComponent','DOMParser','HTMLElement','Node','EventTarget','Set','Map',
     'WeakMap','WeakSet','Reflect','Proxy','Symbol','BigInt','arguments'
   ];
-  var map = {};
-  for (var j = 0; j < words.length; j++) map[words[j]] = true;
+  var map = words.reduce(function(acc, word) { acc[word] = true; return acc; }, {});
   return map;
 })();
 
@@ -91,229 +103,217 @@ function startsWithAt(source, str, index) {
 }
 
 function matchPunctuator(source, i) {
-  for (var idx = 0; idx < PUNCTUATORS.length; idx++) {
-    var p = PUNCTUATORS[idx];
+  var found = null;
+  PUNCTUATORS.some(function(p) {
     if (startsWithAt(source, p[0], i)) {
-      return { value: p[0], kind: p[1], length: p[0].length };
+      found = { value: p[0], kind: p[1], length: p[0].length };
+      return true;
     }
-  }
-  return null;
+    return false;
+  });
+  return found;
 }
 
 function scanRegExp(source, start) {
   if (source.charAt(start) !== '/') return null;
-  var i = start + 1;
-  var body = '';
-  var inClass = false;
-  var escaped = false;
-  while (i < source.length) {
+
+  function loop(i, body, escaped, inClass) {
+    if (i >= source.length) return null;
     var c = source.charAt(i);
     if (escaped) {
-      body += '\\' + c;
-      escaped = false;
-      i += 1;
-      continue;
+      return function() { return loop(i + 1, body + '\\' + c, false, inClass); };
     }
     if (c === '\\') {
-      body += c;
-      escaped = true;
-      i += 1;
-      continue;
+      return function() { return loop(i + 1, body + c, true, inClass); };
     }
     if (c === '[') {
-      inClass = true;
-      body += c;
-      i += 1;
-      continue;
+      return function() { return loop(i + 1, body + c, false, true); };
     }
     if (c === ']') {
-      inClass = false;
-      body += c;
-      i += 1;
-      continue;
+      return function() { return loop(i + 1, body + c, false, false); };
     }
     if (c === '/' && !inClass) {
-      i += 1;
-      var flags = '';
-      while (i < source.length && isIdentifierPart(source.charAt(i))) {
-        flags += source.charAt(i);
-        i += 1;
+      function scanFlags(j, flags) {
+        if (j < source.length && isIdentifierPart(source.charAt(j))) {
+          return scanFlags(j + 1, flags + source.charAt(j));
+        }
+        return { body: body, flags: flags, end: j };
       }
-      return { body: body, flags: flags, end: i };
+      return scanFlags(i + 1, '');
     }
     if (isLineTerminator(c)) return null;
-    body += c;
-    i += 1;
+    return function() { return loop(i + 1, body + c, false, inClass); };
   }
-  return null;
+
+  return trampoline(loop)(start + 1, '', false, false);
 }
 
 function scanString(source, start, quote) {
-  var i = start + 1;
-  var value = '';
-  while (i < source.length) {
+  function loop(i, value) {
+    if (i >= source.length) return null;
     var c = source.charAt(i);
     if (c === '\\') {
-      value += c + (source.charAt(i + 1) || '');
-      i += 2;
-      continue;
+      return function() { return loop(i + 2, value + c + (source.charAt(i + 1) || '')); };
     }
     if (c === quote) {
-      i += 1;
-      return { value: value, end: i };
+      return { value: value, end: i + 1 };
     }
     if (isLineTerminator(c)) return null;
-    value += c;
-    i += 1;
+    return function() { return loop(i + 1, value + c); };
   }
-  return null;
+  return trampoline(loop)(start + 1, '');
 }
 
 function scanTemplate(source, start) {
-  var i = start + 1;
-  var value = '';
-  var expressions = [];
-  while (i < source.length) {
+  function scanExpr(j, depth) {
+    if (j >= source.length) return { depth: depth, end: j };
+    var cc = source.charAt(j);
+    if (cc === '{') return scanExpr(j + 1, depth + 1);
+    if (cc === '}') {
+      var d = depth - 1;
+      if (d === 0) return { depth: 0, end: j };
+      return scanExpr(j + 1, d);
+    }
+    return scanExpr(j + 1, depth);
+  }
+
+  function loop(i, value, expressions) {
+    if (i >= source.length) return { value: value, expressions: expressions, end: i };
     var c = source.charAt(i);
     if (c === '\\') {
-      value += c + (source.charAt(i + 1) || '');
-      i += 2;
-      continue;
+      return function() { return loop(i + 2, value + c + (source.charAt(i + 1) || ''), expressions); };
     }
     if (c === '`') {
-      i += 1;
-      return { value: value, expressions: expressions, end: i };
+      return { value: value, expressions: expressions, end: i + 1 };
     }
     if (c === '$' && source.charAt(i + 1) === '{') {
-      var exprStart = i + 2;
-      var j = exprStart;
-      var depth = 1;
-      while (j < source.length && depth > 0) {
-        var cc = source.charAt(j);
-        if (cc === '{') depth += 1;
-        else if (cc === '}') {
-          depth -= 1;
-          if (depth === 0) break;
-        }
-        j += 1;
-      }
-      if (depth === 0) {
-        var expr = source.slice(exprStart, j);
-        expressions.push({ raw: expr });
-        i = j + 1;
-        continue;
+      var exprResult = scanExpr(i + 2, 1);
+      if (exprResult.depth === 0) {
+        var expr = source.slice(i + 2, exprResult.end);
+        return function() {
+          return loop(exprResult.end + 1, value, expressions.concat([{ raw: expr }]));
+        };
       }
     }
-    value += c;
-    i += 1;
+    return function() { return loop(i + 1, value + c, expressions); };
   }
-  return { value: value, expressions: expressions, end: i };
+
+  return trampoline(loop)(start + 1, '', []);
 }
 
 function scanNumber(source, start) {
-  var i = start;
-  var value = '';
-  while (i < source.length) {
+  function loop(i, value) {
+    if (i >= source.length) return { value: value, end: i };
     var c = source.charAt(i);
     if (isDigit(c) || c === '.' || c === '_') {
-      value += c;
-      i += 1;
-      continue;
+      return function() { return loop(i + 1, value + c); };
     }
-    break;
+    return { value: value, end: i };
   }
-  if (value.length === 0) return null;
-  return { value: value, end: i };
+  var result = trampoline(loop)(start, '');
+  if (result.value.length === 0) return null;
+  return result;
 }
 
 function containsIdentifier(src, target) {
-  var i = 0;
   var len = src.length;
-  while (i < len) {
+
+  function skipIdent(i) {
+    if (i < len && isIdentifierPart(src[i])) return skipIdent(i + 1);
+    return i;
+  }
+
+  function scan(i) {
+    if (i >= len) return false;
     if (isIdentifierStart(src[i])) {
       var start = i;
-      i++;
-      while (i < len && isIdentifierPart(src[i])) i++;
-      var word = src.slice(start, i);
+      var end = skipIdent(i + 1);
+      var word = src.slice(start, end);
       if (word === target) return true;
-    } else {
-      i++;
+      return scan(end);
     }
+    return scan(i + 1);
   }
-  return false;
+
+  return scan(0);
 }
 
 function findMatchingParen(src, openIndex) {
-  var depth = 0;
-  var i = openIndex;
-  while (i < src.length) {
+  function skipQuoted(i, quote) {
+    if (i >= src.length) return i;
+    if (src[i] === '\\') return skipQuoted(i + 2, quote);
+    if (src[i] === quote) return i + 1;
+    return skipQuoted(i + 1, quote);
+  }
+
+  function loop(i, depth) {
+    if (i >= src.length) return -1;
     var ch = src[i];
     if (ch === '"' || ch === "'" || ch === '`') {
-      var quote = ch;
-      i++;
-      while (i < src.length) {
-        if (src[i] === '\\') { i += 2; continue; }
-        if (src[i] === quote) { i++; break; }
-        i++;
-      }
-      continue;
+      return function() { return loop(skipQuoted(i + 1, ch), depth); };
     }
-    if (ch === '(') depth++;
-    else if (ch === ')') {
-      depth--;
-      if (depth === 0) return i;
+    if (ch === '(') return function() { return loop(i + 1, depth + 1); };
+    if (ch === ')') {
+      var d = depth - 1;
+      if (d === 0) return i;
+      return function() { return loop(i + 1, d); };
     }
-    i++;
+    return function() { return loop(i + 1, depth); };
   }
-  return -1;
+
+  return trampoline(loop)(openIndex, 0);
 }
 
 function findBodyBrace(src, startIndex) {
-  var i = startIndex;
-  var depthParen = 0;
-  var depthBrace = 0;
-  var depthBracket = 0;
-  while (i < src.length) {
+  function skipQuoted(i, quote) {
+    if (i >= src.length) return i;
+    if (src[i] === '\\') return skipQuoted(i + 2, quote);
+    if (src[i] === quote) return i + 1;
+    return skipQuoted(i + 1, quote);
+  }
+
+  function skipLineComment(i) {
+    if (i < src.length && src[i] !== '\n') return skipLineComment(i + 1);
+    return i;
+  }
+
+  function skipBlockComment(i) {
+    if (i >= src.length) return i;
+    if (src[i] === '*' && src[i + 1] === '/') return i + 2;
+    return skipBlockComment(i + 1);
+  }
+
+  function loop(i, depthParen, depthBrace, depthBracket) {
+    if (i >= src.length) return -1;
     var ch = src[i];
 
     if (ch === '"' || ch === "'" || ch === '`') {
-      var quote = ch;
-      i++;
-      while (i < src.length) {
-        if (src[i] === '\\') { i += 2; continue; }
-        if (src[i] === quote) { i++; break; }
-        i++;
-      }
-      continue;
+      return function() { return loop(skipQuoted(i + 1, ch), depthParen, depthBrace, depthBracket); };
     }
 
     if (ch === '/' && i + 1 < src.length && src[i + 1] === '/') {
-      i += 2;
-      while (i < src.length && src[i] !== '\n') i++;
-      continue;
+      return function() { return loop(skipLineComment(i + 2), depthParen, depthBrace, depthBracket); };
     }
     if (ch === '/' && i + 1 < src.length && src[i + 1] === '*') {
-      i += 2;
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
-      i += 2;
-      continue;
+      return function() { return loop(skipBlockComment(i + 2), depthParen, depthBrace, depthBracket); };
     }
 
-    if (ch === '(') depthParen++;
-    else if (ch === ')') depthParen--;
-    else if (ch === '[') depthBracket++;
-    else if (ch === ']') depthBracket--;
-    else if (ch === '{') {
+    if (ch === '(') return function() { return loop(i + 1, depthParen + 1, depthBrace, depthBracket); };
+    if (ch === ')') return function() { return loop(i + 1, depthParen - 1, depthBrace, depthBracket); };
+    if (ch === '[') return function() { return loop(i + 1, depthParen, depthBrace, depthBracket + 1); };
+    if (ch === ']') return function() { return loop(i + 1, depthParen, depthBrace, depthBracket - 1); };
+    if (ch === '{') {
       if (depthParen === 0 && depthBracket === 0) return i;
-      depthBrace++;
+      return function() { return loop(i + 1, depthParen, depthBrace + 1, depthBracket); };
     }
-    else if (ch === '}') {
-      if (depthBrace > 0) depthBrace--;
+    if (ch === '}') {
+      return function() { return loop(i + 1, depthParen, depthBrace > 0 ? depthBrace - 1 : 0, depthBracket); };
     }
 
-    i++;
+    return function() { return loop(i + 1, depthParen, depthBrace, depthBracket); };
   }
-  return -1;
+
+  return trampoline(loop)(startIndex, 0, 0, 0);
 }
 
 function makeToken(type, value, kind, extra) {
@@ -325,17 +325,15 @@ function makeToken(type, value, kind, extra) {
 
 function tokenize(source) {
   var tokens = [];
-  var i = 0;
-  var exprAllowed = true;
 
-  function pushToken(token) {
+  function pushToken(token, exprAllowed) {
     tokens.push(token);
     var type = token.type;
     if (type === 'RegExpLiteral' || type === 'StringLiteral' ||
         type === 'NumericLiteral' || type === 'Identifier' ||
         type === 'TemplateLiteral' || type === 'CloseParen' ||
         type === 'CloseBracket' || type === 'CloseBrace') {
-      exprAllowed = false;
+      return false;
     } else if (type === 'Punctuator') {
       var kind = token.kind;
       if (kind === 'open' || kind === 'separator' ||
@@ -343,54 +341,65 @@ function tokenize(source) {
           kind === 'assignment' || kind === 'conditional' ||
           kind === 'colon' || kind === 'arrow' ||
           kind === 'spread' || kind === 'prefixOrPostfix') {
-        exprAllowed = true;
+        return true;
       } else if (kind === 'close' || kind === 'dot' || kind === 'optionalAccess') {
-        exprAllowed = false;
+        return false;
       } else {
-        exprAllowed = false;
+        return false;
       }
     } else if (type === 'Keyword') {
-      exprAllowed = contains(['return','throw','case','new','typeof','void','delete','yield','await','else','in','instanceof'], token.value);
+      return contains(['return','throw','case','new','typeof','void','delete','yield','await','else','in','instanceof'], token.value);
     } else {
-      exprAllowed = false;
+      return false;
     }
   }
 
-  while (i < source.length) {
+  function skipLineComment(i) {
+    if (i < source.length && source.charAt(i) !== '\n') return skipLineComment(i + 1);
+    return i;
+  }
+
+  function skipBlockComment(i) {
+    if (i >= source.length) return i;
+    if (source.charAt(i) === '*' && source.charAt(i + 1) === '/') return i + 2;
+    return skipBlockComment(i + 1);
+  }
+
+  function skipIdentifier(i) {
+    if (i < source.length && isIdentifierPart(source.charAt(i))) return skipIdentifier(i + 1);
+    return i;
+  }
+
+  function loop(i, exprAllowed) {
+    if (i >= source.length) return exprAllowed;
     var ch = source.charAt(i);
 
-    if (isWhitespace(ch) || isLineTerminator(ch)) { i += 1; continue; }
+    if (isWhitespace(ch) || isLineTerminator(ch)) {
+      return function() { return loop(i + 1, exprAllowed); };
+    }
 
     if (ch === '/' && source.charAt(i + 1) === '/') {
-      i += 2;
-      while (i < source.length && source.charAt(i) !== '\n') i += 1;
-      continue;
+      return function() { return loop(skipLineComment(i + 2), exprAllowed); };
     }
     if (ch === '/' && source.charAt(i + 1) === '*') {
-      i += 2;
-      while (i < source.length && !(source.charAt(i) === '*' && source.charAt(i + 1) === '/')) i += 1;
-      i += 2;
-      continue;
+      return function() { return loop(skipBlockComment(i + 2), exprAllowed); };
     }
 
     if (ch === '/') {
       var regex = exprAllowed ? scanRegExp(source, i) : null;
       if (regex) {
-        pushToken(makeToken('RegExpLiteral', regex.body, undefined, { flags: regex.flags }));
-        i = regex.end;
-        continue;
+        pushToken(makeToken('RegExpLiteral', regex.body, undefined, { flags: regex.flags }), exprAllowed);
+        return function() { return loop(regex.end, false); };
       }
-      pushToken(makeToken('Punctuator', '/', 'binary'));
-      i += 1;
-      continue;
+      pushToken(makeToken('Punctuator', '/', 'binary'), exprAllowed);
+      return function() { return loop(i + 1, true); };
     }
 
     if (ch === '"' || ch === "'") {
       var str = scanString(source, i, ch);
       if (str) {
-        pushToken(makeToken('StringLiteral', str.value));
-        i = str.end;
-        continue;
+        pushToken(makeToken('StringLiteral', str.value), exprAllowed);
+        return function() { return loop(str.end, false); };
       }
       throw new Error('[freevarparser] Unterminated string literal at ' + i);
     }
@@ -398,9 +407,8 @@ function tokenize(source) {
     if (ch === '`') {
       var tpl = scanTemplate(source, i);
       if (tpl) {
-        pushToken(makeToken('TemplateLiteral', tpl.value, undefined, { expressions: tpl.expressions }));
-        i = tpl.end;
-        continue;
+        pushToken(makeToken('TemplateLiteral', tpl.value, undefined, { expressions: tpl.expressions }), exprAllowed);
+        return function() { return loop(tpl.end, false); };
       }
       throw new Error('[freevarparser] Unterminated template literal at ' + i);
     }
@@ -408,34 +416,33 @@ function tokenize(source) {
     if (isDigit(ch) || (ch === '.' && isDigit(source.charAt(i + 1)))) {
       var num = scanNumber(source, i);
       if (num) {
-        pushToken(makeToken('NumericLiteral', num.value));
-        i = num.end;
-        continue;
+        pushToken(makeToken('NumericLiteral', num.value), exprAllowed);
+        return function() { return loop(num.end, false); };
       }
     }
 
     if (isIdentifierStart(ch)) {
       var start = i;
-      i += 1;
-      while (i < source.length && isIdentifierPart(source.charAt(i))) i += 1;
-      var word = source.slice(start, i);
+      var wordEnd = skipIdentifier(i + 1);
+      var word = source.slice(start, wordEnd);
       if (isReserved(word)) {
-        pushToken(makeToken('Keyword', word));
+        pushToken(makeToken('Keyword', word), exprAllowed);
       } else {
-        pushToken(makeToken('Identifier', word));
+        pushToken(makeToken('Identifier', word), exprAllowed);
       }
-      continue;
+      return function() { return loop(wordEnd, false); };
     }
 
     var punct = matchPunctuator(source, i);
     if (punct) {
-      pushToken(makeToken('Punctuator', punct.value, punct.kind));
-      i += punct.length;
-      continue;
+      var nextExpr = pushToken(makeToken('Punctuator', punct.value, punct.kind), exprAllowed);
+      return function() { return loop(i + punct.length, nextExpr); };
     }
 
-    i += 1;
+    return function() { return loop(i + 1, exprAllowed); };
   }
+
+  trampoline(loop)(0, true);
 
   tokens.push(makeToken('EOF', null));
   return tokens;
@@ -500,10 +507,12 @@ function declare(state, id) {
 }
 
 function isDeclared(scopes, id) {
-  for (var i = scopes.length - 1; i >= 0; i--) {
+  function scan(i) {
+    if (i < 0) return false;
     if (has(scopes[i], id)) return true;
+    return scan(i - 1);
   }
-  return false;
+  return scan(scopes.length - 1);
 }
 
 function pushContext(state, ctx) {
@@ -564,32 +573,33 @@ function popTentative(state) {
 }
 
 function findKind(kindKey) {
-  for (var i = 0; i < KINDS.length; i++) {
-    if (KINDS[i].name === kindKey) return KINDS[i];
-  }
-  return null;
+  var found = null;
+  KINDS.some(function(kind) {
+    if (kind.name === kindKey) { found = kind; return true; }
+    return false;
+  });
+  return found;
 }
 
 function parsePrimaryFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 0; i < tokens.length; i++) {
-    var t = tokens[i];
+  tokens.forEach(function(t) {
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = advance(next);
   return next;
 }
 
 function parseBlockFromBuffer(state, tokens) {
   var next = pushScope(state);
-  for (var i = 1; i < tokens.length - 1; i++) {
-    var t = tokens[i];
+  var inner = tokens.slice(1, -1);
+  inner.forEach(function(t) {
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = popScope(next);
   next = advance(next);
   return next;
@@ -597,91 +607,82 @@ function parseBlockFromBuffer(state, tokens) {
 
 function parseObjectLiteralFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 1; i < tokens.length - 1; i++) {
-    var t = tokens[i];
+  var inner = tokens.slice(1, -1);
+
+  function scan(i) {
+    if (i >= inner.length) return next;
+    var t = inner[i];
     if (t.type === 'Identifier') {
-      var ahead = tokens[i + 1];
+      var ahead = inner[i + 1];
       if (ahead && ahead.type === 'Punctuator' && ahead.value === ':') {
-        i += 2;
-        continue;
+        return scan(i + 3);
       }
       next = addFreeVar(next, t.value);
     }
+    return scan(i + 1);
   }
+  scan(0);
   next = advance(next);
   return next;
 }
 
 function parseArrayLiteralFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 1; i < tokens.length - 1; i++) {
-    var t = tokens[i];
+  tokens.slice(1, -1).forEach(function(t) {
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = advance(next);
   return next;
 }
 
 function parseJsonFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 1; i < tokens.length - 1; i++) {
-    var t = tokens[i];
+  tokens.slice(1, -1).forEach(function(t) {
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = advance(next);
   return next;
 }
 
 function parseArrowFunctionFromBuffer(state, tokens) {
   var next = pushScope(state);
-  var arrowIndex = -1;
-  for (var i = 0; i < tokens.length; i++) {
-    if (tokens[i].type === 'Punctuator' && tokens[i].value === '=>') {
-      arrowIndex = i;
-      break;
-    }
-  }
-  for (var j = 0; j < arrowIndex; j++) {
-    var t = tokens[j];
+  var arrowIndex = tokens.reduce(function(acc, t, i) {
+    return acc !== -1 ? acc : (t.type === 'Punctuator' && t.value === '=>' ? i : acc);
+  }, -1);
+
+  tokens.slice(0, arrowIndex).forEach(function(t) {
     if (t.type === 'Identifier') {
       next = declare(next, t.value);
     }
-  }
-  for (var k = arrowIndex + 1; k < tokens.length; k++) {
-    var b = tokens[k];
+  });
+  tokens.slice(arrowIndex + 1).forEach(function(b) {
     if (b.type === 'Identifier') {
       next = addFreeVar(next, b.value);
     }
-  }
+  });
   next = popScope(next);
   next = advance(next);
   return next;
 }
 
 function parseOptionalAccessFromBuffer(state, tokens) {
+  // Original loop body was a no-op (only `continue` on Identifier, no effect).
   var next = state;
-  for (var i = 1; i < tokens.length; i++) {
-    var t = tokens[i];
-    if (t.type === 'Identifier') {
-      continue;
-    }
-  }
   next = advance(next);
   return next;
 }
 
 function parseArgumentsFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 1; i < tokens.length - 1; i++) {
-    var t = tokens[i];
+  tokens.slice(1, -1).forEach(function(t) {
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = advance(next);
   return next;
 }
@@ -689,59 +690,55 @@ function parseArgumentsFromBuffer(state, tokens) {
 function parseForHeaderFromBuffer(state, tokens) {
   var next = state;
   var hasInOf = false;
-  for (var i = 0; i < tokens.length; i++) {
-    var t = tokens[i];
+  tokens.forEach(function(t) {
     if (t.type === 'Keyword' && (t.value === 'in' || t.value === 'of')) {
       hasInOf = true;
     }
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = advance(next);
   return next;
 }
 
 function parseTemplateFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 0; i < tokens.length; i++) {
-    var t = tokens[i];
+  tokens.forEach(function(t) {
     if (t.type === 'TemplateLiteral' && t.extra && t.extra.expressions) {
-      for (var j = 0; j < t.extra.expressions.length; j++) {
-        var subTokens = tokenize(t.extra.expressions[j].raw);
+      t.extra.expressions.forEach(function(expr) {
+        var subTokens = tokenize(expr.raw);
         var subState = createState(subTokens);
         subState.scopes = next.scopes;
         subState.freeVars = next.freeVars;
         subState = parseExpression(subState, [';', ',', ')', ']', '}']);
         next = cloneObj(next);
         next.freeVars = subState.freeVars;
-      }
+      });
     }
-  }
+  });
   next = advance(next);
   return next;
 }
 
 function parseConditionalFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 0; i < tokens.length; i++) {
-    var t = tokens[i];
+  tokens.forEach(function(t) {
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = advance(next);
   return next;
 }
 
 function parseMapConstructFromBuffer(state, tokens) {
   var next = state;
-  for (var i = 0; i < tokens.length; i++) {
-    var t = tokens[i];
+  tokens.forEach(function(t) {
     if (t.type === 'Identifier') {
       next = addFreeVar(next, t.value);
     }
-  }
+  });
   next = advance(next);
   return next;
 }
@@ -1048,34 +1045,37 @@ function isArrowFunctionStart(state) {
   }
 
   if (tokens[idx].type === 'Punctuator' && tokens[idx].value === '(') {
-    var depth = 0;
-    for (var i = idx; i < tokens.length; i++) {
+    function scanParen(i, depth) {
+      if (i >= tokens.length) return false;
       var t = tokens[i];
       if (t.type === 'Punctuator') {
-        if (t.value === '(') depth += 1;
-        else if (t.value === ')') {
-          depth -= 1;
-          if (depth === 0) {
+        if (t.value === '(') return scanParen(i + 1, depth + 1);
+        if (t.value === ')') {
+          var d = depth - 1;
+          if (d === 0) {
             return tokens[i + 1] && tokens[i + 1].type === 'Punctuator' && tokens[i + 1].value === '=>';
           }
+          return scanParen(i + 1, d);
         }
       }
-      if (t.type === 'EOF') break;
+      if (t.type === 'EOF') return false;
+      return scanParen(i + 1, depth);
     }
+    return scanParen(idx, 0);
   }
 
   return false;
 }
 
 function parseProgram(state) {
-  while (peek(state).type !== 'EOF') {
-    state = parseStatement(state);
+  function loop(s) {
+    if (peek(s).type === 'EOF') return s;
+    return function() { return loop(parseStatement(s)); };
   }
-  var keys = [];
-  for (var k in state.freeVars) {
-    if (has(state.freeVars, k)) keys.push(k);
-  }
-  return keys;
+  var finalState = trampoline(loop)(state);
+  return Object.keys(finalState.freeVars).filter(function(k) {
+    return has(finalState.freeVars, k);
+  });
 }
 
 function parseStatement(state) {
@@ -1135,61 +1135,61 @@ function parseStatement(state) {
 function parseBlock(state) {
   state = expectPunctuator(state, '{');
   state = pushScope(state);
-  while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') &&
-         peek(state).type !== 'EOF') {
-    state = parseStatement(state);
+  function loop(s) {
+    if (peek(s).type === 'Punctuator' && peek(s).value === '}') return s;
+    if (peek(s).type === 'EOF') return s;
+    return function() { return loop(parseStatement(s)); };
   }
+  state = trampoline(loop)(state);
   state = expectPunctuator(state, '}');
   return popScope(state);
 }
 
 function parseVariableDeclaration(state) {
   state = advance(state);
-  while (true) {
-    var t = peek(state);
+  function loop(s) {
+    var t = peek(s);
+    var nextState;
     if (t.type === 'Identifier') {
-      state = declare(state, t.value);
-      state = advance(state);
+      nextState = declare(s, t.value);
+      nextState = advance(nextState);
     } else if (t.type === 'Punctuator' && (t.value === '{' || t.value === '[')) {
-      state = parseBindingPattern(state);
+      nextState = parseBindingPattern(s);
     } else {
-      break;
+      return s;
     }
 
-    if (peek(state).type === 'Punctuator' && peek(state).value === '=') {
-      state = advance(state);
-      state = parseExpression(state, [',', ';']);
+    if (peek(nextState).type === 'Punctuator' && peek(nextState).value === '=') {
+      nextState = advance(nextState);
+      nextState = parseExpression(nextState, [',', ';']);
     }
 
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') {
-      state = advance(state);
-      continue;
+    if (peek(nextState).type === 'Punctuator' && peek(nextState).value === ',') {
+      return function() { return loop(advance(nextState)); };
     }
-    break;
+    return nextState;
   }
+  state = trampoline(loop)(state);
   return consumeSemicolon(state);
 }
 
 function parseBindingPattern(state) {
-  var depth = 0;
-  while (true) {
-    var t = peek(state);
+  function loop(s, depth) {
+    var t = peek(s);
     if (t.type === 'Punctuator' && (t.value === '{' || t.value === '[')) {
-      depth += 1;
-      state = advance(state);
-      continue;
+      return function() { return loop(advance(s), depth + 1); };
     }
     if (t.type === 'Punctuator' && (t.value === '}' || t.value === ']')) {
-      depth -= 1;
-      state = advance(state);
-      if (depth === 0) return state;
-      continue;
+      var d = depth - 1;
+      if (d === 0) return advance(s);
+      return function() { return loop(advance(s), d); };
     }
     if (t.type === 'Identifier') {
-      state = declare(state, t.value);
+      return function() { return loop(advance(declare(s, t.value)), depth); };
     }
-    state = advance(state);
+    return function() { return loop(advance(s), depth); };
   }
+  return trampoline(loop)(state, 0);
 }
 
 function parseFunctionDeclaration(state) {
@@ -1206,19 +1206,23 @@ function parseFunctionBody(state) {
   state = pushScope(state);
   if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
     state = advance(state);
-    while (!(peek(state).type === 'Punctuator' && peek(state).value === ')') &&
-           peek(state).type !== 'EOF') {
-      var p = peek(state);
+    function loopParams(s) {
+      if (peek(s).type === 'Punctuator' && peek(s).value === ')') return s;
+      if (peek(s).type === 'EOF') return s;
+      var p = peek(s);
+      var nextState;
       if (p.type === 'Identifier') {
-        state = declare(state, p.value);
-        state = advance(state);
+        nextState = declare(s, p.value);
+        nextState = advance(nextState);
       } else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) {
-        state = parseBindingPattern(state);
+        nextState = parseBindingPattern(s);
       } else {
-        state = advance(state);
+        nextState = advance(s);
       }
-      if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
+      if (peek(nextState).type === 'Punctuator' && peek(nextState).value === ',') nextState = advance(nextState);
+      return function() { return loopParams(nextState); };
     }
+    state = trampoline(loopParams)(state);
     state = expectPunctuator(state, ')');
   }
 
@@ -1341,19 +1345,24 @@ function parseSwitchStatement(state) {
   }
   if (peek(state).type === 'Punctuator' && peek(state).value === '{') {
     state = advance(state);
-    while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') && peek(state).type !== 'EOF') {
-      var t = peek(state);
+    function loop(s) {
+      if (peek(s).type === 'Punctuator' && peek(s).value === '}') return s;
+      if (peek(s).type === 'EOF') return s;
+      var t = peek(s);
+      var nextState;
       if (t.type === 'Keyword' && t.value === 'case') {
-        state = advance(state);
-        state = parseExpression(state, [':']);
-        state = expectPunctuator(state, ':');
+        nextState = advance(s);
+        nextState = parseExpression(nextState, [':']);
+        nextState = expectPunctuator(nextState, ':');
       } else if (t.type === 'Keyword' && t.value === 'default') {
-        state = advance(state);
-        state = expectPunctuator(state, ':');
+        nextState = advance(s);
+        nextState = expectPunctuator(nextState, ':');
       } else {
-        state = parseStatement(state);
+        nextState = parseStatement(s);
       }
+      return function() { return loop(nextState); };
     }
+    state = trampoline(loop)(state);
     state = expectPunctuator(state, '}');
   }
   return state;
@@ -1370,21 +1379,30 @@ function parseClassDeclaration(state) {
   if (peek(state).type === 'Punctuator' && peek(state).value === '{') {
     state = pushScope(state);
     state = advance(state);
-    while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') && peek(state).type !== 'EOF') {
-      if (peek(state).type === 'Identifier' || peek(state).type === 'Keyword') state = advance(state);
-      if (peek(state).type === 'Punctuator' && peek(state).value === '(') {
-        state = pushScope(state);
-        state = advance(state);
-        while (!(peek(state).type === 'Punctuator' && peek(state).value === ')')) {
-          var p = peek(state);
-          if (p.type === 'Identifier') { state = declare(state, p.value); state = advance(state); }
-          else state = advance(state);
+    function loopMembers(s) {
+      if (peek(s).type === 'Punctuator' && peek(s).value === '}') return s;
+      if (peek(s).type === 'EOF') return s;
+      var nextState = s;
+      if (peek(nextState).type === 'Identifier' || peek(nextState).type === 'Keyword') nextState = advance(nextState);
+      if (peek(nextState).type === 'Punctuator' && peek(nextState).value === '(') {
+        nextState = pushScope(nextState);
+        nextState = advance(nextState);
+        function loopParams(s2) {
+          if (peek(s2).type === 'Punctuator' && peek(s2).value === ')') return s2;
+          var p = peek(s2);
+          var ns = s2;
+          if (p.type === 'Identifier') { ns = declare(ns, p.value); ns = advance(ns); }
+          else ns = advance(ns);
+          return function() { return loopParams(ns); };
         }
-        state = expectPunctuator(state, ')');
-        if (peek(state).type === 'Punctuator' && peek(state).value === '{') state = parseBlock(state);
-        state = popScope(state);
-      } else state = advance(state);
+        nextState = trampoline(loopParams)(nextState);
+        nextState = expectPunctuator(nextState, ')');
+        if (peek(nextState).type === 'Punctuator' && peek(nextState).value === '{') nextState = parseBlock(nextState);
+        nextState = popScope(nextState);
+      } else nextState = advance(nextState);
+      return function() { return loopMembers(nextState); };
     }
+    state = trampoline(loopMembers)(state);
     state = expectPunctuator(state, '}');
     state = popScope(state);
   }
@@ -1442,22 +1460,22 @@ function parseConditionalExpression(state, stopTokens) {
 
 function parseBinaryExpression(state, stopTokens) {
   state = parseUnaryExpression(state);
-  while (true) {
-    var t = peek(state);
-    if (t.type === 'EOF') break;
+  function loop(s) {
+    var t = peek(s);
+    if (t.type === 'EOF') return s;
     if (t.type === 'Punctuator') {
-      if (contains(stopTokens, t.value)) break;
+      if (contains(stopTokens, t.value)) return s;
       if (t.kind === 'binary' || t.kind === 'assignment' || t.kind === 'conditional' ||
           t.kind === 'colon' || t.kind === 'binaryOrPrefix') {
-        state = advance(state);
-        state = parseUnaryExpression(state);
-        continue;
+        var nextState = advance(s);
+        nextState = parseUnaryExpression(nextState);
+        return function() { return loop(nextState); };
       }
-      break;
+      return s;
     }
-    break;
+    return s;
   }
-  return state;
+  return trampoline(loop)(state);
 }
 
 function parseUnaryExpression(state) {
@@ -1516,33 +1534,33 @@ function parsePrimaryAndMemberAndCall(state) {
     state = advance(state);
   }
 
-  while (true) {
-    var ct = peek(state);
+  function loopMember(s) {
+    var ct = peek(s);
     if (ct.type === 'Punctuator' && (ct.value === '.' || ct.value === '?.')) {
-      state = advance(state);
-      var prop = peek(state);
-      if (prop.type === 'Identifier' || prop.type === 'Keyword') state = advance(state);
+      var nextState = advance(s);
+      var prop = peek(nextState);
+      if (prop.type === 'Identifier' || prop.type === 'Keyword') nextState = advance(nextState);
       else if (prop.type === 'Punctuator' && prop.value === '(') {
-        state = advance(state);
-        state = parseArguments(state);
-      } else state = advance(state);
-      continue;
+        nextState = advance(nextState);
+        nextState = parseArguments(nextState);
+      } else nextState = advance(nextState);
+      return function() { return loopMember(nextState); };
     }
     if (ct.type === 'Punctuator' && ct.value === '[') {
-      state = advance(state);
-      state = parseExpression(state, [']']);
-      state = expectPunctuator(state, ']');
-      continue;
+      var nextState2 = advance(s);
+      nextState2 = parseExpression(nextState2, [']']);
+      nextState2 = expectPunctuator(nextState2, ']');
+      return function() { return loopMember(nextState2); };
     }
     if (ct.type === 'Punctuator' && ct.value === '(') {
-      state = advance(state);
-      state = parseArguments(state);
-      continue;
+      var nextState3 = advance(s);
+      nextState3 = parseArguments(nextState3);
+      return function() { return loopMember(nextState3); };
     }
-    break;
+    return s;
   }
 
-  return state;
+  return trampoline(loopMember)(state);
 }
 
 function isAsyncArrowStart(state) {
@@ -1555,18 +1573,21 @@ function isAsyncArrowStart(state) {
     return tokens[idx + 2] && tokens[idx + 2].type === 'Punctuator' && tokens[idx + 2].value === '=>';
   }
   if (nxt.type === 'Punctuator' && nxt.value === '(') {
-    var depth = 0;
-    for (var i = idx + 1; i < tokens.length; i++) {
+    function scanParen(i, depth) {
+      if (i >= tokens.length) return false;
       var t = tokens[i];
       if (t.type === 'Punctuator') {
-        if (t.value === '(') depth += 1;
-        else if (t.value === ')') {
-          depth -= 1;
-          if (depth === 0) return tokens[i + 1] && tokens[i + 1].type === 'Punctuator' && tokens[i + 1].value === '=>';
+        if (t.value === '(') return scanParen(i + 1, depth + 1);
+        if (t.value === ')') {
+          var d = depth - 1;
+          if (d === 0) return tokens[i + 1] && tokens[i + 1].type === 'Punctuator' && tokens[i + 1].value === '=>';
+          return scanParen(i + 1, d);
         }
       }
-      if (t.type === 'EOF') break;
+      if (t.type === 'EOF') return false;
+      return scanParen(i + 1, depth);
     }
+    return scanParen(idx + 1, 0);
   }
   return false;
 }
@@ -1582,13 +1603,18 @@ function parseArrowFunctionFromTokens(state) {
     state = advance(state);
   } else if (t.type === 'Punctuator' && t.value === '(') {
     state = advance(state);
-    while (!(peek(state).type === 'Punctuator' && peek(state).value === ')') && peek(state).type !== 'EOF') {
-      var p = peek(state);
-      if (p.type === 'Identifier') { state = declare(state, p.value); state = advance(state); }
-      else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) state = parseBindingPattern(state);
-      else state = advance(state);
-      if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
+    function loopParams(s) {
+      if (peek(s).type === 'Punctuator' && peek(s).value === ')') return s;
+      if (peek(s).type === 'EOF') return s;
+      var p = peek(s);
+      var nextState;
+      if (p.type === 'Identifier') { nextState = declare(s, p.value); nextState = advance(nextState); }
+      else if (p.type === 'Punctuator' && (p.value === '{' || p.value === '[')) nextState = parseBindingPattern(s);
+      else nextState = advance(s);
+      if (peek(nextState).type === 'Punctuator' && peek(nextState).value === ',') nextState = advance(nextState);
+      return function() { return loopParams(nextState); };
     }
+    state = trampoline(loopParams)(state);
     state = expectPunctuator(state, ')');
   }
 
@@ -1607,8 +1633,8 @@ function parseTemplateToken(state) {
   var token = peek(state);
   state = advance(state);
   if (token.extra && token.extra.expressions) {
-    for (var i = 0; i < token.extra.expressions.length; i++) {
-      var subTokens = tokenize(token.extra.expressions[i].raw);
+    token.extra.expressions.forEach(function(expr) {
+      var subTokens = tokenize(expr.raw);
       var subState = createState(subTokens);
       subState.scopes = state.scopes;
       subState.freeVars = state.freeVars;
@@ -1616,58 +1642,75 @@ function parseTemplateToken(state) {
       var next = cloneObj(state);
       next.freeVars = subState.freeVars;
       state = next;
-    }
+    });
   }
   return state;
 }
 
 function parseObjectLiteral(state) {
   state = expectPunctuator(state, '{');
-  while (!(peek(state).type === 'Punctuator' && peek(state).value === '}') && peek(state).type !== 'EOF') {
-    var t = peek(state);
+  function loop(s) {
+    if (peek(s).type === 'Punctuator' && peek(s).value === '}') return s;
+    if (peek(s).type === 'EOF') return s;
+    var t = peek(s);
+    var nextState = s;
     if (t.type === 'Identifier' || t.type === 'StringLiteral' || t.type === 'NumericLiteral') {
-      var lookahead = state.tokens[state.index + 1];
+      var lookahead = s.tokens[s.index + 1];
       if (lookahead && lookahead.type === 'Punctuator' && lookahead.value === ':') {
-        state = advance(state);
-        state = expectPunctuator(state, ':');
-        state = parseExpression(state, [',', '}']);
+        nextState = advance(s);
+        nextState = expectPunctuator(nextState, ':');
+        nextState = parseExpression(nextState, [',', '}']);
       } else {
-        state = parsePrimaryAndMemberAndCall(state);
+        nextState = parsePrimaryAndMemberAndCall(s);
       }
     } else if (t.type === 'Punctuator' && t.value === '[') {
-      state = advance(state);
-      state = parseExpression(state, [']']);
-      state = expectPunctuator(state, ']');
-      if (peek(state).type === 'Punctuator' && peek(state).value === ':') {
-        state = advance(state);
-        state = parseExpression(state, [',', '}']);
+      nextState = advance(s);
+      nextState = parseExpression(nextState, [']']);
+      nextState = expectPunctuator(nextState, ']');
+      if (peek(nextState).type === 'Punctuator' && peek(nextState).value === ':') {
+        nextState = advance(nextState);
+        nextState = parseExpression(nextState, [',', '}']);
       }
     } else if (t.type === 'Punctuator' && t.value === ',') {
-      state = advance(state);
+      nextState = advance(s);
     } else {
-      state = advance(state);
+      nextState = advance(s);
     }
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
+    if (peek(nextState).type === 'Punctuator' && peek(nextState).value === ',') nextState = advance(nextState);
+    return function() { return loop(nextState); };
   }
+  state = trampoline(loop)(state);
   return expectPunctuator(state, '}');
 }
 
 function parseArrayLiteral(state) {
   state = expectPunctuator(state, '[');
-  while (!(peek(state).type === 'Punctuator' && peek(state).value === ']') && peek(state).type !== 'EOF') {
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') { state = advance(state); continue; }
-    state = parseExpression(state, [',', ']']);
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
+  function loop(s) {
+    if (peek(s).type === 'Punctuator' && peek(s).value === ']') return s;
+    if (peek(s).type === 'EOF') return s;
+    if (peek(s).type === 'Punctuator' && peek(s).value === ',') {
+      return function() { return loop(advance(s)); };
+    }
+    var nextState = parseExpression(s, [',', ']']);
+    if (peek(nextState).type === 'Punctuator' && peek(nextState).value === ',') nextState = advance(nextState);
+    return function() { return loop(nextState); };
   }
+  state = trampoline(loop)(state);
   return expectPunctuator(state, ']');
 }
 
 function parseArguments(state) {
-  while (!(peek(state).type === 'Punctuator' && peek(state).value === ')') && peek(state).type !== 'EOF') {
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') { state = advance(state); continue; }
-    state = parseExpression(state, [',', ')']);
-    if (peek(state).type === 'Punctuator' && peek(state).value === ',') state = advance(state);
+  function loop(s) {
+    if (peek(s).type === 'Punctuator' && peek(s).value === ')') return s;
+    if (peek(s).type === 'EOF') return s;
+    if (peek(s).type === 'Punctuator' && peek(s).value === ',') {
+      return function() { return loop(advance(s)); };
+    }
+    var nextState = parseExpression(s, [',', ')']);
+    if (peek(nextState).type === 'Punctuator' && peek(nextState).value === ',') nextState = advance(nextState);
+    return function() { return loop(nextState); };
   }
+  state = trampoline(loop)(state);
   return expectPunctuator(state, ')');
 }
 
@@ -1676,12 +1719,3 @@ function detectFreeIdentifiers(source) {
   var state = createState(tokens);
   return parseProgram(state);
 }
-
-export {
-  detectFreeIdentifiers,
-  isIdentifierStart,
-  isIdentifierPart,
-  containsIdentifier,
-  findMatchingParen,
-  findBodyBrace
-};

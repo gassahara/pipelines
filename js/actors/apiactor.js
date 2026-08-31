@@ -1,48 +1,24 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Changes applied:
-//   - mailboxType changed to 'mail'
-//   - mailTransport injected from mailactor.js static imports
-//   - enqueue functions use tag-based sendInstruction/awaitResponse
-//   - behavior sends response via mailTransport.sendResponse
-//   - state persistence still uses enqueueDbStore/Restore/Delete
+// Change applied: ES5 conversion — imports → require, const → var,
+// export → module.exports. WI-T6 FIX: enqueueapi/enqueuefetch no
+// longer pass tag as sender/recipient — sender is 'system',
+// awaitResponse targets 'system' (per mail envelope contract
+// {recipient, sender, tag}).
 // ============================================================
 
-import { createactor } from './actorkernel.js';
-import { createApiConstants } from '../utils.js';
-import { enqueueDbStore, enqueueDbRestore, enqueueDbDelete } from './dbactor.js';
-import {
-  sendInstruction,
-  requestUnreadMessages,
-  sendResponse,
-  awaitResponse,
-  generateTag
-} from './mailactor.js';
-import {
-  createVerbosityConstants,
-  logdebug,
-  logwarn,
-  logerror,
-  loginfo,
-  logcritical
-} from '../verbosity.js';
 
 var apiVerbosityConstants = createVerbosityConstants();
 var apiState = Object.freeze({ level: apiVerbosityConstants.DEBUG });
 
-var MESSAGETYPES = Object.freeze({
-  API: 'api',
-  FETCH: 'fetch'
-});
-
-var MESSAGEINTERFACES = {};
-MESSAGEINTERFACES[MESSAGETYPES.API] = {
+var apiactorINTERFACES = {};
+apiactorINTERFACES[MESSAGETYPES.API] = {
   endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
 };
-MESSAGEINTERFACES[MESSAGETYPES.FETCH] = {
+apiactorINTERFACES[MESSAGETYPES.FETCH] = {
   endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
 };
-Object.freeze(MESSAGEINTERFACES);
+Object.freeze(apiactorINTERFACES);
 
 function createInitialApiWorldmap() {
   return {
@@ -123,10 +99,14 @@ var apibehavior = function(state, message) {
   return state;
 };
 
+Object.keys(apiactorINTERFACES).forEach(function(type) {
+  MESSAGEREGISTRY.register('apiactor', type, apiactorINTERFACES[type], apibehavior);
+});
+
 var APIACTOR = createactor(
   apibehavior,
   { worldmap: createInitialApiWorldmap(), verbosity: apiVerbosityConstants.DEBUG },
-  MESSAGEINTERFACES,
+  MESSAGEREGISTRY.getInterfaces('apiactor'),
   {
     actorName: 'apiactor',
     mailboxType: 'mail',
@@ -154,31 +134,23 @@ function startApiActor(options) {
 }
 
 function enqueueapi(endpoint, method, payload, options) {
-  const tag = generateTag();
+  var tag = generateTag();
   sendInstruction('apiactor', MESSAGETYPES.API, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},
     token: (options && options.token) || ''
-  }, tag, tag);
-  return awaitResponse(tag, tag);
+  }, tag, 'system');
+  return awaitResponse('system', tag);
 }
 
 function enqueuefetch(endpoint, method, payload, options) {
-  const tag = generateTag();
+  var tag = generateTag();
   sendInstruction('apiactor', MESSAGETYPES.FETCH, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},
     token: (options && options.token) || ''
-  }, tag, tag);
-  return awaitResponse(tag, tag);
+  }, tag, 'system');
+  return awaitResponse('system', tag);
 }
-
-export {
-  APIACTOR,
-  MESSAGETYPES,
-  startApiActor,
-  enqueueapi,
-  enqueuefetch
-};

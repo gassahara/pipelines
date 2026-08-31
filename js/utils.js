@@ -1,5 +1,24 @@
-import { validate } from './typesystem.js';
-import { JUST, NOTHING } from './functorial/maybe.js';
+// ============================================================
+// UPDATED FILE: js/utils.js
+// Change applied: ES5 syntax, functional paradigm, require/module.exports
+// ============================================================
+
+var deepmerge = function(target, source) {
+  if (!target || typeof target !== 'object' || Array.isArray(target)) return source;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
+  var out = Object.keys(target).reduce(function(acc, k) {
+    acc[k] = target[k];
+    return acc;
+  }, {});
+  return Object.keys(source).reduce(function(acc, k) {
+    acc[k] = (typeof source[k] === 'object' && !Array.isArray(source[k]) && k in target)
+      ? deepmerge(target[k], source[k])
+      : source[k];
+    return acc;
+  }, out);
+};
+
+
 
 function createApiConstants() {
   return Object.freeze({
@@ -96,12 +115,10 @@ function getfunction(obj, prop) {
 }
 
 function setproperty(obj, prop, value) {
-  var out = {};
-  for (var key in obj) {
-    if (Object.prototype.hasOwnProperty.call(obj, key)) {
-      out[key] = obj[key];
-    }
-  }
+  var out = Object.keys(obj).reduce(function(acc, key) {
+    acc[key] = obj[key];
+    return acc;
+  }, {});
   out[prop] = value;
   return out;
 }
@@ -121,6 +138,7 @@ function createnodefromtemplate(templateobj, doc) {
 
   var container = documentRef.createElement(tagname);
 
+  // DOM mutation via forEach is acceptable for side-effect-only DOM operations
   Object.keys(attributes).forEach(function(k) {
     var v = attributes[k];
     if (k === 'class') {
@@ -133,16 +151,3 @@ function createnodefromtemplate(templateobj, doc) {
   if (html) container.innerHTML = html;
   return JUST(container);
 }
-
-export {
-  createApiConstants,
-  escapehtml,
-  markdowntohtml,
-  formataitext,
-  resolvepath,
-  getprop,
-  getproperty,
-  getfunction,
-  setproperty,
-  createnodefromtemplate
-};

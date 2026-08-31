@@ -1,3 +1,10 @@
+// ============================================================
+// UPDATED FILE: js/factory/closureconsolidator.js
+// Change applied: ES5 syntax, functional loops (some/map), module.exports.
+// NOTE: generated-source strings contain literal 'const ' text — that is
+// DATA emitted into programSource, not ES6 syntax in this module.
+// ============================================================
+
 function structuralHash(value) {
   try {
     return JSON.stringify(value);
@@ -10,8 +17,8 @@ function collectBindings(closureSource) {
   var bindings = [];
   var lines = String(closureSource || '').split('\n');
 
-  for (var i = 0; i < lines.length; i++) {
-    var trimmed = lines[i].trim();
+  lines.some(function(line) {
+    var trimmed = line.trim();
 
     if (trimmed.indexOf('const ') === 0) {
       var rest = trimmed.slice(6);
@@ -25,24 +32,27 @@ function collectBindings(closureSource) {
           bindings.push({ name: name, literal: literal });
         }
       }
-    } else if (
+      return false;
+    }
+
+    if (
       trimmed.indexOf('function') === 0 ||
       trimmed.indexOf('return') === 0 ||
       trimmed.indexOf('}') === 0
     ) {
-      break;
+      return true;
     }
-  }
+    return false;
+  });
 
   return bindings;
 }
 
 function rewriteClosureWithShared(closureSource, sharedMap) {
   var lines = String(closureSource || '').split('\n');
-  var out = [];
 
-  for (var i = 0; i < lines.length; i++) {
-    var trimmed = lines[i].trim();
+  var out = lines.map(function(line) {
+    var trimmed = line.trim();
 
     if (trimmed.indexOf('const ') === 0) {
       var rest = trimmed.slice(6);
@@ -53,14 +63,13 @@ function rewriteClosureWithShared(closureSource, sharedMap) {
         var literal = rest.slice(eq + 1).trim();
 
         if (sharedMap[literal] !== undefined) {
-          out.push(lines[i].replace(literal, sharedMap[literal]));
-          continue;
+          return line.replace(literal, sharedMap[literal]);
         }
       }
     }
 
-    out.push(lines[i]);
-  }
+    return line;
+  });
 
   return out.join('\n');
 }
@@ -115,5 +124,3 @@ function consolidateClosures(entries) {
     elementMap: elementMap
   };
 }
-
-export { consolidateClosures };

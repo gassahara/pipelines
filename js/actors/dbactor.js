@@ -1,36 +1,21 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied:
+// Change applied: ES5 syntax, no arrow functions, no const, module.exports
 //   P9: reset PAIRSTORE and pairCounter at start of
-//       optimizeSerializedDna to prevent cross‑call contamination
+//       optimizeSerializedDna to prevent cross-call contamination
 // ============================================================
 
-import { createactor } from './actorkernel.js';
-import {
-  createVerbosityConstants,
-  logdebug,
-  logwarn,
-  logerror,
-  loginfo,
-  logcritical
-} from '../verbosity.js';
 
 var dbVerbosityConstants = createVerbosityConstants();
 var dbState = Object.freeze({ level: dbVerbosityConstants.DEBUG });
 
-var DBMESSAGETYPES = Object.freeze({
-  STORE: 'store',
-  RESTORE: 'restore',
-  LIST: 'list',
-  DELETE: 'delete'
-});
 
-var MESSAGEINTERFACES = {};
-MESSAGEINTERFACES[DBMESSAGETYPES.STORE] = { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[DBMESSAGETYPES.RESTORE] = { key: 'string', resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[DBMESSAGETYPES.LIST] = { resolve: 'function?', reject: 'function?' };
-MESSAGEINTERFACES[DBMESSAGETYPES.DELETE] = { key: 'string', resolve: 'function?', reject: 'function?' };
-Object.freeze(MESSAGEINTERFACES);
+var dbactorINTERFACES = {};
+dbactorINTERFACES[MESSAGETYPES.STORE] = { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' };
+dbactorINTERFACES[MESSAGETYPES.RESTORE] = { key: 'string', resolve: 'function?', reject: 'function?' };
+dbactorINTERFACES[MESSAGETYPES.LIST] = { resolve: 'function?', reject: 'function?' };
+dbactorINTERFACES[MESSAGETYPES.DELETE] = { key: 'string', resolve: 'function?', reject: 'function?' };
+Object.freeze(dbactorINTERFACES);
 
 var ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
 var MAX_KEYS = 100;
@@ -62,24 +47,27 @@ function loadInitialState() {
   return { store: {}, verbosity: dbVerbosityConstants.DEBUG };
 }
 
+function persistAttempt(store, root, storage, attempt) {
+  if (attempt > 2) return false;
+  try {
+    storage.setItem(ROOT_KEY, JSON.stringify(root));
+    return true;
+  } catch (err) {
+    var keys = Object.keys(store);
+    if (!keys.length) return false;
+    var removeCount = Math.max(1, Math.floor(keys.length * 0.25));
+    keys.slice(0, removeCount).forEach(function(key) { delete store[key]; });
+    root.keys = store;
+    return persistAttempt(store, root, storage, attempt + 1);
+  }
+}
+
 function persist(store) {
   var root = { namespace: 'FRAMEWORK_DBACTOR_V1', updatedAt: Date.now(), keys: store };
   var storage = getStorage();
   if (!storage) return false;
 
-  for (var attempt = 0; attempt <= 2; attempt++) {
-    try {
-      storage.setItem(ROOT_KEY, JSON.stringify(root));
-      return true;
-    } catch (err) {
-      var keys = Object.keys(store);
-      if (!keys.length) return false;
-      var removeCount = Math.max(1, Math.floor(keys.length * 0.25));
-      for (var i = 0; i < removeCount; i++) delete store[keys[i]];
-      root.keys = store;
-    }
-  }
-  return false;
+  return persistAttempt(store, root, storage, 0);
 }
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
@@ -234,7 +222,7 @@ function deserializePairStore(json) {
 function measureLength(obj) { return JSON.stringify(obj).length; }
 
 function optimizeSerializedDna(jsonString) {
-  // P9: reset global pair store and counter to avoid cross‑call contamination
+  // P9: reset global pair store and counter to avoid cross-call contamination
   Object.keys(PAIRSTORE).forEach(function(key) { delete PAIRSTORE[key]; });
   pairCounter = 0;
 
@@ -358,7 +346,7 @@ var dbbehavior = function(state, message) {
   var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
 
   switch (message.type) {
-    case DBMESSAGETYPES.STORE: {
+    case MESSAGETYPES.STORE: {
       logdebug(dbState, '[DBACTOR]', 'action STORE key:', message.key);
       try {
         var serialized = JSON.stringify(message.value);
@@ -381,15 +369,15 @@ var dbbehavior = function(state, message) {
       resolve(persist(store));
       break;
     }
-    case DBMESSAGETYPES.RESTORE:
+    case MESSAGETYPES.RESTORE:
       logdebug(dbState, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
       resolve(store[message.key] !== undefined ? store[message.key] : null);
       break;
-    case DBMESSAGETYPES.LIST:
+    case MESSAGETYPES.LIST:
       logdebug(dbState, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
       resolve(Object.keys(store));
       break;
-    case DBMESSAGETYPES.DELETE: {
+    case MESSAGETYPES.DELETE: {
       logdebug(dbState, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
       resolve(persist(store));
@@ -404,10 +392,14 @@ var dbbehavior = function(state, message) {
   return { store: store, verbosity: v };
 };
 
+Object.keys(dbactorINTERFACES).forEach(function(type) {
+  MESSAGEREGISTRY.register('dbactor', type, dbactorINTERFACES[type], dbbehavior);
+});
+
 var DBACTOR = createactor(
   dbbehavior,
   loadInitialState(),
-  MESSAGEINTERFACES,
+  MESSAGEREGISTRY.getInterfaces('dbactor'),
   { actorName: 'dbactor', mailboxType: 'memory', verbosity: dbVerbosityConstants.DEBUG }
 );
 
@@ -437,25 +429,7 @@ var enqueue = function(type, payload) {
   });
 };
 
-var enqueueDbStore = function(key, value) { return enqueue(DBMESSAGETYPES.STORE, { key: key, value: value }); };
-var enqueueDbRestore = function(key) { return enqueue(DBMESSAGETYPES.RESTORE, { key: key }); };
-var enqueueDbList = function() { return enqueue(DBMESSAGETYPES.LIST); };
-var enqueueDbDelete = function(key) { return enqueue(DBMESSAGETYPES.DELETE, { key: key }); };
-
-export {
-  DBMESSAGETYPES,
-  DBACTOR,
-  startDbActor,
-  serializeDna,
-  deserializeDna,
-  consolidateGraph,
-  restoreGraph,
-  serializePairStore,
-  deserializePairStore,
-  optimizeSerializedDna,
-  deoptimizeSerializedDna,
-  enqueueDbStore,
-  enqueueDbRestore,
-  enqueueDbList,
-  enqueueDbDelete
-};
+var enqueueDbStore = function(key, value) { return enqueue(MESSAGETYPES.STORE, { key: key, value: value }); };
+var enqueueDbRestore = function(key) { return enqueue(MESSAGETYPES.RESTORE, { key: key }); };
+var enqueueDbList = function() { return enqueue(MESSAGETYPES.LIST); };
+var enqueueDbDelete = function(key) { return enqueue(MESSAGETYPES.DELETE, { key: key }); };

@@ -1,28 +1,35 @@
-import { DOMQUERYMESSAGES, DOMQUERYSETTERS } from './actors/renderactor.js';
+// ============================================================
+// UPDATED FILE: js/typesystem.js
+// Change applied: ES5 syntax, module.exports, object-based registry
+// (no Map), Number.isInteger → Math.floor(v)===v, validateschema
+// converted from async/await to promise-chain CPS, DOMQUERY
+// constants imported from leaf domqueryconstants.js (interface →
+// interface; NO renderactor import per P-8).
+// P3: all for/while loops → map/reduce/forEach (functional-recursive).
+// ============================================================
+
 
 function extractstagesblocks(pipeline) {
   if (pipeline.elements) {
-    var stages = [];
-    var blocks = [];
     var elements = pipeline.elements || [];
-    for (var i = 0; i < elements.length; i++) {
-      var el = elements[i];
+    var result = elements.reduce(function(acc, el) {
       if (el.element === 'STAGE') {
-        stages.push({
+        acc.stages.push({
           id: el.id,
           control: el.control || null,
           blocks: (el.elements || []).filter(function(e) { return e.element === 'BLOCK'; })
         });
       } else if (el.element === 'BLOCK') {
-        blocks.push(el);
+        acc.blocks.push(el);
       }
-    }
-    return { stages: stages, blocks: blocks };
+      return acc;
+    }, { stages: [], blocks: [] });
+    return result;
   }
   return { stages: pipeline.stages || [], blocks: [] };
 }
 
-export var TYPESCHEMA = {
+var TYPESCHEMA = {
   agent: { dna: { type: 'object', required: true }, pipeline: { type: 'function', required: true } },
   oracledna: { identity: { type: 'object', required: true }, pipeline: { type: 'object', required: true }, presentation: { type: 'object', required: false } },
   layoutcomponent: { key: { type: 'string', required: true }, parent: { type: 'string' }, id: { type: 'string' }, datapath: { type: 'string' } },
@@ -35,12 +42,10 @@ export var TYPESCHEMA = {
   blockcontract: { id: { type: 'string', required: true }, type: { type: 'string', required: true }, reads: { type: 'array' }, ref: { type: 'string' }, schemaref: { type: 'string' }, responseadapterref: { type: 'string' }, paramsfrom: { type: 'string' }, resultto: { type: 'string' }, datalabel: { type: 'string' }, targetlabel: { type: 'string' }, stylizer: { type: 'function' }, output: { type: 'string' } }
 };
 
-export function validateFields(value, fieldSpecs) {
+function validateFields(value, fieldSpecs) {
   if (value == null) return ['VALUE IS NULL OR UNDEFINED'];
-  var errors = [];
   var keys = Object.keys(fieldSpecs || {});
-  for (var i = 0; i < keys.length; i++) {
-    var key = keys[i];
+  return keys.reduce(function(errors, key) {
     var rules = fieldSpecs[key];
     var propvalue = value[key];
     if (rules.required && propvalue == null) {
@@ -51,11 +56,11 @@ export function validateFields(value, fieldSpecs) {
         errors.push('PROPERTY "' + key + '" MUST BE OF TYPE ' + rules.type + ' (GOT ' + actual + ')');
       }
     }
-  }
-  return errors;
+    return errors;
+  }, []);
 }
 
-export var validate = function(value, schemaname) {
+var validate = function(value, schemaname) {
   var schema = TYPESCHEMA[schemaname];
   if (!schema) return { tag: 'success' };
   var errors = validateFields(value, schema);
@@ -64,12 +69,11 @@ export var validate = function(value, schemaname) {
     : { tag: 'success' };
 };
 
-export var validatecall = function(schema, fn, functionname) {
+var validatecall = function(schema, fn, functionname) {
   if (functionname === undefined) functionname = 'anonymous';
   return function() {
     var args = arguments;
-    for (var i = 0; i < schema.length; i++) {
-      var rule = schema[i];
+    schema.forEach(function(rule, i) {
       var arg = args[i];
       if (rule.required && arg == null) {
         throw new Error('[TYPESYSTEM] REQUIRED ARGUMENT "' + rule.name + '" IS MISSING IN ' + functionname + '.');
@@ -80,44 +84,45 @@ export var validatecall = function(schema, fn, functionname) {
           throw new Error('[TYPESYSTEM] ARGUMENT "' + rule.name + '" IN ' + functionname + ' MUST BE OF TYPE ' + rule.type + ' (GOT ' + actual + ').');
         }
       }
-    }
+    });
     return fn.apply(null, args);
   };
 };
 
-export async function validateschema(value, schema, context, registry, strict) {
-  if (context === undefined) context = 'stream';
-  if (registry === undefined) registry = new Map();
-  if (strict === undefined) strict = false;
-
+// validateschema — ES5 promise-chain CPS (was async/await recursive).
+function validateschemaInner(value, schema, context, registry, strict) {
   var errors = [];
-  var curr = typeof schema === 'string' ? registry.get(schema) : schema;
-  if (curr && curr.schemaref) curr = registry.get(curr.schemaref);
-  if (!curr) return errors;
+  var curr = typeof schema === 'string' ? registry[schema] : schema;
+  if (curr && curr.schemaref) curr = registry[curr.schemaref];
+  if (!curr) return Promise.resolve(errors);
 
   if (curr.type && curr.type !== 'any') {
     var actualType = Array.isArray(value) ? 'array' : typeof value;
-    if (actualType !== curr.type && !(curr.type === 'integer' && actualType === 'number' && Number.isInteger(value))) {
-      return [context + ': TYPE MISMATCH. EXPECTED ' + curr.type + ', GOT ' + actualType];
+    if (actualType !== curr.type && !(curr.type === 'integer' && actualType === 'number' && Math.floor(value) === value)) {
+      return Promise.resolve([context + ': TYPE MISMATCH. EXPECTED ' + curr.type + ', GOT ' + actualType]);
     }
   }
 
   if (curr.oneof) {
     var branches = [];
-    for (var oi = 0; oi < curr.oneof.length; oi++) {
+    var oi = 0;
+    var nextOneOf = function() {
+      if (oi >= curr.oneof.length) {
+        var branchText = branches.map(function(b) {
+          return '  · ' + b.label + ': ' + b.errs.join('; ') + '\n';
+        }).join('');
+        return Promise.resolve([context + ': NO MATCHING VARIANT IN ONEOF.\n' + branchText]);
+      }
       var s = curr.oneof[oi];
-      var label = s.required ? 'variant with keys [' + s.required.join(', ') + ']' : 'variant ' + oi;
-      var errs = await validateschema(value, s, context + '<oneOf:' + oi + '>', registry, strict);
-      branches.push({ label: label, errs: errs });
-    }
-    for (var bi = 0; bi < branches.length; bi++) {
-      if (branches[bi].errs.length === 0) return [];
-    }
-    var branchText = '';
-    for (var bj = 0; bj < branches.length; bj++) {
-      branchText += '  · ' + branches[bj].label + ': ' + branches[bj].errs.join('; ') + '\n';
-    }
-    return [context + ': NO MATCHING VARIANT IN ONEOF.\n' + branchText];
+      oi += 1;
+      var label = s.required ? 'variant with keys [' + s.required.join(', ') + ']' : 'variant ' + (oi - 1);
+      return validateschemaInner(value, s, context + '<oneOf:' + (oi - 1) + '>', registry, strict).then(function(errs) {
+        if (errs.length === 0) return [];
+        branches.push({ label: label, errs: errs });
+        return nextOneOf();
+      });
+    };
+    return nextOneOf();
   }
 
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -126,50 +131,74 @@ export async function validateschema(value, schema, context, registry, strict) {
       var required = curr.required || [];
       var optional = curr.optional || [];
       var propertyKeys = Object.keys(curr.properties || {});
-      for (var ai = 0; ai < required.length; ai++) allowedMap[required[ai]] = true;
-      for (var oi2 = 0; oi2 < optional.length; oi2++) allowedMap[optional[oi2]] = true;
-      for (var pi = 0; pi < propertyKeys.length; pi++) allowedMap[propertyKeys[pi]] = true;
+      required.forEach(function(r) { allowedMap[r] = true; });
+      optional.forEach(function(o) { allowedMap[o] = true; });
+      propertyKeys.forEach(function(pk) { allowedMap[pk] = true; });
 
       var valueKeys = Object.keys(value);
-      for (var vi = 0; vi < valueKeys.length; vi++) {
-        if (!allowedMap[valueKeys[vi]]) errors.push(context + ': UNEXPECTED PROPERTY "' + valueKeys[vi] + '"');
-      }
+      valueKeys.forEach(function(vk) {
+        if (!allowedMap[vk]) errors.push(context + ': UNEXPECTED PROPERTY "' + vk + '"');
+      });
     }
 
     var req = curr.required || [];
-    for (var ri = 0; ri < req.length; ri++) {
-      if (!(req[ri] in value)) errors.push(context + ': MISSING REQUIRED PROPERTY "' + req[ri] + '"');
-    }
+    req.forEach(function(r) {
+      if (!(r in value)) errors.push(context + ': MISSING REQUIRED PROPERTY "' + r + '"');
+    });
 
     if (curr.properties) {
       var keys = Object.keys(value);
-      for (var ki = 0; ki < keys.length; ki++) {
+      var ki = 0;
+      var nextProperty = function() {
+        if (ki >= keys.length) return Promise.resolve(errors);
         var k = keys[ki];
+        ki += 1;
         if (curr.properties[k]) {
-          var childErrors = await validateschema(value[k], curr.properties[k], context + '.' + k, registry, strict);
-          for (var ci = 0; ci < childErrors.length; ci++) errors.push(childErrors[ci]);
+          return validateschemaInner(value[k], curr.properties[k], context + '.' + k, registry, strict).then(function(childErrors) {
+            childErrors.forEach(function(ce) { errors.push(ce); });
+            return nextProperty();
+          });
         }
-      }
+        return nextProperty();
+      };
+      return nextProperty();
     }
   }
 
   if (curr.items && Array.isArray(value)) {
-    for (var ii = 0; ii < value.length; ii++) {
-      var itemErrors = await validateschema(value[ii], curr.items, context + '[' + ii + ']', registry, strict);
-      for (var ie = 0; ie < itemErrors.length; ie++) errors.push(itemErrors[ie]);
-    }
+    var ii = 0;
+    var nextItem = function() {
+      if (ii >= value.length) return Promise.resolve(errors);
+      var item = value[ii];
+      ii += 1;
+      return validateschemaInner(item, curr.items, context + '[' + (ii - 1) + ']', registry, strict).then(function(itemErrors) {
+        itemErrors.forEach(function(ie) { errors.push(ie); });
+        return nextItem();
+      });
+    };
+    return nextItem();
   }
 
   var validators = curr.validators || [];
-  for (var vi2 = 0; vi2 < validators.length; vi2++) {
+  var vi2 = 0;
+  var nextValidator = function() {
+    if (vi2 >= validators.length) return Promise.resolve(errors);
     var verrors = validators[vi2](value, context);
-    for (var ve = 0; ve < verrors.length; ve++) errors.push(verrors[ve]);
-  }
-
-  return errors;
+    vi2 += 1;
+    verrors.forEach(function(ve) { errors.push(ve); });
+    return nextValidator();
+  };
+  return nextValidator();
 }
 
-export function validateformalblock(block) {
+function validateschema(value, schema, context, registry, strict) {
+  if (context === undefined) context = 'stream';
+  if (registry === undefined) registry = {};
+  if (strict === undefined) strict = false;
+  return validateschemaInner(value, schema, context, registry, strict);
+}
+
+function validateformalblock(block) {
   var errors = [];
   if (!Array.isArray(block.reads)) errors.push('FORMAL: block "' + block.id + '" missing reads[]');
   if (!Array.isArray(block.writes)) errors.push('FORMAL: block "' + block.id + '" missing writes[]');
@@ -179,8 +208,7 @@ export function validateformalblock(block) {
   return errors;
 }
 
-export function validatestageflow(stages) {
-  var contracts = [];
+function validatestageflow(stages) {
   var cumulativewrites = {};
 
   var ambientKeys = [
@@ -188,39 +216,32 @@ export function validatestageflow(stages) {
     'spawnagent', 'updateworldmap', 'getworldmap', 'openapischemas', 'validateschema',
     'schemaadapter', 'createnodefromtemplate', 'authsessionaccesstoken', 'agents', 'rituals'
   ];
-  for (var ai = 0; ai < ambientKeys.length; ai++) {
-    cumulativewrites[ambientKeys[ai]] = true;
-  }
+  ambientKeys.forEach(function(k) {
+    cumulativewrites[k] = true;
+  });
 
-  for (var si = 0; si < stages.length; si++) {
-    var stage = stages[si];
+  var contracts = stages.map(function(stage) {
     var stagereads = {};
     var stagewrites = {};
     var blocks = stage.blocks || [];
 
-    for (var bi = 0; bi < blocks.length; bi++) {
-      var b = blocks[bi];
-
+    blocks.forEach(function(b) {
       var inputs = b.inputs || [];
-      for (var ii = 0; ii < inputs.length; ii++) {
-        stagereads[inputs[ii]] = true;
-      }
+      inputs.forEach(function(inp) { stagereads[inp] = true; });
 
       var outputKeys = Object.keys(b.outputs || {});
-      for (var oi = 0; oi < outputKeys.length; oi++) {
-        var key = outputKeys[oi];
+      outputKeys.forEach(function(key) {
         stagewrites[key] = true;
         cumulativewrites[key] = true;
-      }
-    }
+      });
+    });
 
     var readKeys = Object.keys(stagereads);
-    var missing = [];
-    for (var ri = 0; ri < readKeys.length; ri++) {
-      if (!cumulativewrites[readKeys[ri]]) missing.push(readKeys[ri]);
-    }
+    var missing = readKeys.filter(function(rk) {
+      return !cumulativewrites[rk];
+    });
 
-    contracts.push({
+    return {
       stageid: stage.id,
       stagereads: readKeys,
       stagewrites: Object.keys(stagewrites),
@@ -228,13 +249,13 @@ export function validatestageflow(stages) {
       cumulativewrites: Object.keys(cumulativewrites),
       missingkeys: missing,
       resolved: missing.length === 0
-    });
-  }
+    };
+  });
 
   return contracts;
 }
 
-export var validatemonadalgebra = function(name, impl) {
+var validatemonadalgebra = function(name, impl) {
   return {
     type: name,
     hasunit: typeof impl.of === 'function' || typeof impl.pure === 'function' || typeof impl.JUST === 'function',
@@ -244,18 +265,17 @@ export var validatemonadalgebra = function(name, impl) {
   };
 };
 
-export function validateblockio(block, cumulativewrites) {
+function validateblockio(block, cumulativewrites) {
   var reads = block.reads || [];
-  var errors = [];
-  for (var i = 0; i < reads.length; i++) {
-    if (!cumulativewrites[reads[i]]) {
-      errors.push('BLOCK IO: block "' + block.id + '" reads "' + reads[i] + '" but it has not been written yet');
+  return reads.reduce(function(errors, readkey) {
+    if (!cumulativewrites[readkey]) {
+      errors.push('BLOCK IO: block "' + block.id + '" reads "' + readkey + '" but it has not been written yet');
     }
-  }
-  return errors;
+    return errors;
+  }, []);
 }
 
-export function validateblockfnio(block) {
+function validateblockfnio(block) {
   if (block.type !== 'fn' || !block.fn || !block.signature) return [];
   var pCount = block.fn.length;
   var inputs = block.signature.inputs || [];
@@ -265,26 +285,24 @@ export function validateblockfnio(block) {
   return [];
 }
 
-export function validatecontainerrefs(pipeline) {
+function validatecontainerrefs(pipeline) {
   var errors = [];
   var refsproduced = {};
   var extracted = extractstagesblocks(pipeline);
 
-  for (var si = 0; si < extracted.stages.length; si++) {
-    var blocks = extracted.stages[si].blocks || [];
-    for (var bi = 0; bi < blocks.length; bi++) {
-      var b = blocks[bi];
+  extracted.stages.forEach(function(stage) {
+    var blocks = stage.blocks || [];
+    blocks.forEach(function(b) {
       if (b.type === 'writer' || b.type === 'fn') {
         var outputs = Object.keys((b.signature && b.signature.outputs) || {});
-        for (var oi = 0; oi < outputs.length; oi++) refsproduced[outputs[oi]] = true;
+        outputs.forEach(function(o) { refsproduced[o] = true; });
       }
-    }
-  }
+    });
+  });
 
-  for (var sj = 0; sj < extracted.stages.length; sj++) {
-    var blocks2 = extracted.stages[sj].blocks || [];
-    for (var bj = 0; bj < blocks2.length; bj++) {
-      var block = blocks2[bj];
+  extracted.stages.forEach(function(stage) {
+    var blocks2 = stage.blocks || [];
+    blocks2.forEach(function(block) {
       if (block.type === 'spawn') {
         if (block.container && !refsproduced[block.container]) errors.push('SPAWN: block "' + block.id + '" references unproduced container "' + block.container + '"');
         if (!block.dna && !block.dnaref) errors.push('SPAWN: block "' + block.id + '" must have dna or dnaref');
@@ -292,30 +310,29 @@ export function validatecontainerrefs(pipeline) {
           errors.push('SPAWN: block "' + block.id + '" eventTarget dnaref requires attr or key');
         }
       }
-    }
-  }
+    });
+  });
   return errors;
 }
 
-export function validatespawncontracts(pipeline) {
-  var errors = [];
+function validatespawncontracts(pipeline) {
   var extracted = extractstagesblocks(pipeline);
-  for (var si = 0; si < extracted.stages.length; si++) {
-    var blocks = extracted.stages[si].blocks || [];
-    for (var bi = 0; bi < blocks.length; bi++) {
-      var b = blocks[bi];
+  var errors = extracted.stages.reduce(function(acc, stage) {
+    var blocks = stage.blocks || [];
+    blocks.forEach(function(b) {
       if (b.type === 'spawn') {
-        if (!b.dna && !b.dnaref) errors.push('SPAWN CONTRACT: block "' + b.id + '" requires dna or dnaref');
-        if (b.dna && b.dnaref) errors.push('SPAWN CONTRACT: block "' + b.id + '" has both dna and dnaref');
-        if (b.container && typeof b.container !== 'string') errors.push('SPAWN CONTRACT: block "' + b.id + '" container must be a string');
+        if (!b.dna && !b.dnaref) acc.push('SPAWN CONTRACT: block "' + b.id + '" requires dna or dnaref');
+        if (b.dna && b.dnaref) acc.push('SPAWN CONTRACT: block "' + b.id + '" has both dna and dnaref');
+        if (b.container && typeof b.container !== 'string') acc.push('SPAWN CONTRACT: block "' + b.id + '" container must be a string');
       }
-    }
-  }
+    });
+    return acc;
+  }, []);
   return errors;
 }
 
 // P17: Align with blockcompiler supported types. Remove 'spawn' from valid list.
-export function validateblocktype(block) {
+function validateblocktype(block) {
   var valid = ['fn', 'api', 'fetch', 'writer', 'domquery', 'io', 'crypto', 'wait', 'executionquery', 'storequery'];
   if (!block.type || valid.indexOf(block.type) === -1) {
     return ['BLOCK TYPE: block "' + block.id + '" invalid type: ' + block.type];
@@ -323,7 +340,7 @@ export function validateblocktype(block) {
   return [];
 }
 
-export function validatedomqueryblock(block) {
+function validatedomqueryblock(block) {
   if (block.type !== 'domquery') return [];
   var command = block.command || {};
   var cmd = command.COMMAND;
@@ -341,7 +358,7 @@ export function validatedomqueryblock(block) {
   return [];
 }
 
-export function validateexecutionqueryblock(block) {
+function validateexecutionqueryblock(block) {
   if (block.type !== 'executionquery') return [];
   var command = block.command || {};
   var cmd = command.COMMAND;
@@ -351,7 +368,7 @@ export function validateexecutionqueryblock(block) {
   return [];
 }
 
-export function validatestorequeryblock(block) {
+function validatestorequeryblock(block) {
   if (block.type !== 'storequery') return [];
   var command = block.command || {};
   var cmd = command.COMMAND;
@@ -359,7 +376,7 @@ export function validatestorequeryblock(block) {
   return [];
 }
 
-export function validateblockproperties(block) {
+function validateblockproperties(block) {
   if (block.type === 'domquery' && (!block.command || !block.command.properties || typeof block.command.properties !== 'object')) {
     return ['DOMQUERY: block "' + block.id + '" requires object command.properties'];
   }

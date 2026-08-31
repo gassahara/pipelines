@@ -1,5 +1,9 @@
 // ============================================================
-// NEW FILE: js/actors/mailactor.js
+// UPDATED FILE: js/actors/mailactor.js
+// Change applied: ES5 syntax, no arrow functions, no const, no async/await syntax,
+// module.exports. Top-level await removed (CJS): actor starts with synchronous
+// initial state; persisted state is restored asynchronously after load and merged
+// into the live actor state (preserves persistence semantics).
 // Purpose: dedicated message broker for all actor communication.
 // Mail Actor persists its message queues via DB Actor storage
 // (enqueueDbStore / enqueueDbRestore), presenting a clean
@@ -10,49 +14,29 @@
 // carry result under payload.result.
 // ============================================================
 
-import { createactor } from './actorkernel.js';
-import {
-  enqueueDbStore,
-  enqueueDbRestore,
-  enqueueDbDelete
-} from './dbactor.js';
-import {
-  createVerbosityConstants,
-  logdebug,
-  logwarn,
-  logerror,
-  loginfo,
-  logcritical
-} from '../verbosity.js';
 
 var mailVerbosityConstants = createVerbosityConstants();
 var mailState = Object.freeze({ level: mailVerbosityConstants.DEBUG });
 
-var MAILMESSAGETYPES = Object.freeze({
-  SEND: 'send',
-  POLL: 'poll',
-  ACK: 'ack'
-});
-
-var MESSAGEINTERFACES = {};
-MESSAGEINTERFACES[MAILMESSAGETYPES.SEND] = {
+var mailactorINTERFACES = {};
+mailactorINTERFACES[MESSAGETYPES.SEND] = {
   recipient: 'string',
   message: 'object',
   resolve: 'function?',
   reject: 'function?'
 };
-MESSAGEINTERFACES[MAILMESSAGETYPES.POLL] = {
+mailactorINTERFACES[MESSAGETYPES.POLL] = {
   recipient: 'string',
   resolve: 'function',
   reject: 'function?'
 };
-MESSAGEINTERFACES[MAILMESSAGETYPES.ACK] = {
+mailactorINTERFACES[MESSAGETYPES.ACK] = {
   recipient: 'string',
   ids: 'array',
   resolve: 'function?',
   reject: 'function?'
 };
-Object.freeze(MESSAGEINTERFACES);
+Object.freeze(mailactorINTERFACES);
 
 function createInitialMailState() {
   return {
@@ -68,16 +52,16 @@ function persistMailState(state) {
   });
 }
 
-async function loadInitialMailState() {
-  try {
-    var saved = await enqueueDbRestore('actor:state:mail');
+function loadInitialMailState() {
+  return enqueueDbRestore('actor:state:mail').then(function(saved) {
     if (saved && typeof saved === 'object' && saved.queues) {
       return saved;
     }
-  } catch (err) {
+    return createInitialMailState();
+  }).catch(function(err) {
     logwarn(mailState, '[MAILACTOR]', 'state restore failed:', err);
-  }
-  return createInitialMailState();
+    return createInitialMailState();
+  });
 }
 
 var mailbehavior = function(state, message) {
@@ -89,7 +73,7 @@ var mailbehavior = function(state, message) {
   if (!state.queues) state.queues = {};
   if (!state.nextId) state.nextId = 1;
 
-  if (message.type === MAILMESSAGETYPES.SEND) {
+  if (message.type === MESSAGETYPES.SEND) {
     var recipient = message.recipient;
     if (!recipient || typeof recipient !== 'string') {
       if (typeof message.reject === 'function') message.reject(new Error('[MAILACTOR] recipient required'));
@@ -112,7 +96,7 @@ var mailbehavior = function(state, message) {
     return state;
   }
 
-  if (message.type === MAILMESSAGETYPES.POLL) {
+  if (message.type === MESSAGETYPES.POLL) {
     var pollRecipient = message.recipient;
     if (!pollRecipient || typeof pollRecipient !== 'string') {
       if (typeof message.reject === 'function') message.reject(new Error('[MAILACTOR] recipient required'));
@@ -126,7 +110,7 @@ var mailbehavior = function(state, message) {
     return state;
   }
 
-  if (message.type === MAILMESSAGETYPES.ACK) {
+  if (message.type === MESSAGETYPES.ACK) {
     var ackRecipient = message.recipient;
     var ackIds = message.ids || [];
     var ackQueue = state.queues[ackRecipient] || [];
@@ -141,17 +125,35 @@ var mailbehavior = function(state, message) {
   return state;
 };
 
-var initialMailState = await loadInitialMailState();
+// CJS: no top-level await. Start with synchronous fresh state, then merge
+// persisted state asynchronously once restored.
+var initialMailState = createInitialMailState();
+Object.keys(mailactorINTERFACES).forEach(function(type) {
+  MESSAGEREGISTRY.register('mailactor', type, mailactorINTERFACES[type], mailbehavior);
+});
+
 var MAILACTOR = createactor(
   mailbehavior,
   initialMailState,
-  MESSAGEINTERFACES,
+  MESSAGEREGISTRY.getInterfaces('mailactor'),
   {
     actorName: 'mailactor',
     mailboxType: 'memory',   // Mail Actor itself uses memory to avoid recursion
     verbosity: mailVerbosityConstants.DEBUG
   }
 );
+
+loadInitialMailState().then(function(saved) {
+  var current = MAILACTOR.getstate();
+  if (saved && saved.queues) {
+    var keys = Object.keys(saved.queues);
+    keys.forEach(function(key) {
+      current.queues[key] = saved.queues[key];
+    });
+    if (saved.nextId) current.nextId = saved.nextId;
+    logdebug(mailState, '[MAILACTOR]', 'restored persisted mail state, recipients:', keys.length);
+  }
+});
 
 function startMailActor(options) {
   if (options !== undefined) {
@@ -188,7 +190,7 @@ function sendInstruction(recipient, type, payload, tag, sender) {
 
   return new Promise(function(resolve, reject) {
     MAILACTOR.send({
-      type: MAILMESSAGETYPES.SEND,
+      type: MESSAGETYPES.SEND,
       recipient: recipient,
       message: flatMessage,
       resolve: resolve,
@@ -201,7 +203,7 @@ function sendInstruction(recipient, type, payload, tag, sender) {
 function requestUnreadMessages(recipient) {
   return new Promise(function(resolve, reject) {
     MAILACTOR.send({
-      type: MAILMESSAGETYPES.POLL,
+      type: MESSAGETYPES.POLL,
       recipient: recipient,
       resolve: resolve,
       reject: reject
@@ -216,29 +218,33 @@ function sendResponse(recipient, tag, result, sender) {
 }
 
 // awaitResponse(recipient, tag, timeout) – caller polls until response with matching tag arrives.
-async function awaitResponse(recipient, tag, timeout) {
+// ES5: promise chain + setTimeout recursion instead of async/await while-loop.
+function awaitResponse(recipient, tag, timeout) {
   if (timeout === undefined) timeout = 30000;
   var start = Date.now();
-  while (Date.now() - start < timeout) {
-    var envelopes = await requestUnreadMessages(recipient);
-    for (var i = 0; i < envelopes.length; i++) {
-      var env = envelopes[i];
-      if (env.tag === tag && env.payload && env.payload.type === 'response') {
-        return env.payload.payload ? env.payload.payload.result : env.payload.result;
-      }
-    }
-    await new Promise(function(resolve) { setTimeout(resolve, 25); });
-  }
-  throw new Error('[awaitResponse] timeout waiting for tag: ' + tag);
-}
 
-export {
-  MAILACTOR,
-  MAILMESSAGETYPES,
-  startMailActor,
-  sendInstruction,
-  requestUnreadMessages,
-  sendResponse,
-  awaitResponse,
-  generateTag
-};
+  function attempt(resolve, reject) {
+    requestUnreadMessages(recipient).then(function(envelopes) {
+      var found = envelopes.filter(function(env) {
+        return env.tag === tag && env.payload && env.payload.type === 'response';
+      }).reduce(function(acc, env) {
+        return acc !== null ? acc : (env.payload.payload ? env.payload.payload.result : env.payload.result);
+      }, null);
+      if (found !== null) {
+        resolve(found);
+        return;
+      }
+      if (Date.now() - start >= timeout) {
+        reject(new Error('[awaitResponse] timeout waiting for tag: ' + tag));
+        return;
+      }
+      setTimeout(function() { attempt(resolve, reject); }, 25);
+    }).catch(function(err) {
+      reject(err);
+    });
+  }
+
+  return new Promise(function(resolve, reject) {
+    attempt(resolve, reject);
+  });
+}

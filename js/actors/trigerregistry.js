@@ -67,11 +67,3 @@ function revalidateAll(registry, doc) {
 function getTriggerMap(registry) {
   return registry.map;
 }
-
-export {
-  createTriggerRegistry,
-  registerTrigger,
-  unregisterTrigger,
-  revalidateAll,
-  getTriggerMap
-};

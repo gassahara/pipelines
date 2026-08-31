@@ -15,9 +15,3 @@ function getRenderActor(registry) {
   }
   return registry.renderActor;
 }
-
-export {
-  createActorRegistry,
-  setRenderActor,
-  getRenderActor
-};

@@ -36,11 +36,12 @@ function incrementReceived(gc, id, count) {
 }
 
 function collectEnded(gc) {
-  Object.keys(gc.objects).forEach(function(id) {
-    if (gc.objects[id].status === 'ENDED') {
-      delete gc.objects[id];
+  gc.objects = Object.keys(gc.objects).reduce(function(acc, id) {
+    if (gc.objects[id].status !== 'ENDED') {
+      acc[id] = gc.objects[id];
     }
-  });
+    return acc;
+  }, {});
 }
 
 function listObjects(gc, status) {
@@ -50,13 +51,3 @@ function listObjects(gc, status) {
     return gc.objects[id];
   });
 }
-
-export {
-  createGarbageCollector,
-  registerObject,
-  updateStatus,
-  incrementSent,
-  incrementReceived,
-  collectEnded,
-  listObjects
-};

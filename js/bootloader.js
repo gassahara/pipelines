@@ -1,0 +1,119 @@
+// ============================================================
+// PROGRAM: js/bootloader.js
+// BOOT LOADER — global-vars architecture.
+// Loads ALL pipeline programs as plain browser scripts in
+// dependency order, running existence tests BEFORE importing
+// each next program (user directive). Actor programs also get
+// per-type registration assertions against the MESSAGE registry.
+// - PIPELINES_MANIFEST: 31 entries, topological order
+// - runPipelineBoot(loadProgram, report): injectable loader (Node testable)
+// - bootPipeline(): DOM glue (script injection) for the browser
+// ============================================================
+
+var PIPELINES_MANIFEST = [
+  { src: 'js/messageregistry.js', provides: ['MESSAGEREGISTRY', 'MESSAGETYPES'] },
+  { src: 'js/verbosity.js', provides: ['createVerbosityConstants', 'createVerbosityFunctions', 'getverbosity', 'setverbosity', 'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'] },
+  { src: 'js/functorial/maybe.js', provides: ['JUST', 'NOTHING', 'of', 'fromnullable', 'getorelselazy', 'MAYBEALGEBRA'] },
+  { src: 'js/evalstack.js', provides: ['createevalstack', 'EVALSTACK', 'frames', 'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack', 'currentcontinuation', 'chaincontinuations'] },
+  { src: 'js/factory/callwithstack.js', provides: ['callwithstack', 'runwithstack'] },
+  { src: 'js/factory/colorutils.js', provides: ['ColorCore', 'ColorHarmony', 'ColorContrast'] },
+  { src: 'js/factory/closureconsolidator.js', provides: ['consolidateClosures'] },
+  { src: 'js/factory/freevarparser.js', provides: ['detectFreeIdentifiers', 'isIdentifierStart', 'isIdentifierPart', 'containsIdentifier', 'findMatchingParen', 'findBodyBrace'] },
+  { src: 'js/factory/domqueryconstants.js', provides: ['DOMQUERYGETTERS', 'DOMQUERYSETTERS', 'DOMQUERYMESSAGES'] },
+  { src: 'js/actors/actorgc.js', provides: ['createGarbageCollector', 'registerObject', 'updateStatus', 'incrementSent', 'incrementReceived', 'collectEnded', 'listObjects'] },
+  { src: 'js/actors/actorregistry.js', provides: ['createActorRegistry', 'setRenderActor', 'getRenderActor'] },
+  { src: 'js/actors/trigerregistry.js', provides: ['createTriggerRegistry', 'registerTrigger', 'unregisterTrigger', 'revalidateAll', 'getTriggerMap'] },
+  { src: 'js/factory/layoutdirectives.js', provides: ['createLayoutDirectives'] },
+  { src: 'js/fundamental/domref.js', provides: ['GETRAWELEMENT', 'CREATEDOMREF', 'REMOVEREF', 'ISVALIDDOMREF'] },
+  { src: 'js/typesystem.js', provides: ['TYPESCHEMA', 'validateFields', 'validate', 'validatecall', 'validateschema', 'validateformalblock', 'validatestageflow', 'validatemonadalgebra', 'validateblockio', 'validateblockfnio', 'validatecontainerrefs', 'validatespawncontracts', 'validateblocktype', 'validatedomqueryblock', 'validateexecutionqueryblock', 'validatestorequeryblock', 'validateblockproperties'] },
+  { src: 'js/factory/stylizerutilities.js', provides: ['StylizerCore', 'StylizerRewrite', 'StylizerVerify'] },
+  { src: 'js/factory/dnaserializer.js', provides: ['createDnaSerializerConstants', 'validaterevivablefunctionblock', 'validaterevivableobject', 'resolveFromBriefcase', 'prepareFunctionForSerialization', 'serializeSelfContainedClosure'] },
+  { src: 'js/debugformatter.js', provides: ['formatdebugtrace'] },
+  { src: 'js/actors/actorkernel.js', provides: ['createactor', 'createMessageValidator', 'pingActor', 'getActorRegistry'] },
+  { src: 'js/utils.js', provides: ['createApiConstants', 'escapehtml', 'markdowntohtml', 'formataitext', 'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty', 'createnodefromtemplate', 'deepmerge'] },
+  { src: 'js/actors/dbactor.js', provides: ['DBACTOR', 'startDbActor', 'serializeDna', 'deserializeDna', 'consolidateGraph', 'restoreGraph', 'serializePairStore', 'deserializePairStore', 'optimizeSerializedDna', 'deoptimizeSerializedDna', 'enqueueDbStore', 'enqueueDbRestore', 'enqueueDbList', 'enqueueDbDelete'], owner: 'dbactor', types: ['store', 'restore', 'list', 'delete'] },
+  { src: 'js/actors/mailactor.js', provides: ['MAILACTOR', 'startMailActor', 'sendInstruction', 'requestUnreadMessages', 'sendResponse', 'awaitResponse', 'generateTag'], owner: 'mailactor', types: ['send', 'poll', 'ack'] },
+  { src: 'js/actors/worldmapactor.js', provides: ['sendworldmappatch', 'updateworldmapfn', 'observeworldmap', 'unobserveworldmap', 'getworldmap', 'startWorldmapActor'], owner: 'worldmapactor', types: ['update', 'update_fn', 'observe', 'unobserve', 'get_worldmap'] },
+  { src: 'js/actors/apiactor.js', provides: ['APIACTOR', 'startApiActor', 'enqueueapi', 'enqueuefetch'], owner: 'apiactor', types: ['api', 'fetch'] },
+  { src: 'js/actors/debugactor.js', provides: ['startDebugActor', 'enqueueDebugPing', 'enqueueDebugRecover'], owner: 'debugactor', types: ['init_overlay', 'show', 'hide', 'recover', 'ping'] },
+  { src: 'js/actors/executionactor.js', provides: ['EXECUTIONACTOR', 'enqueueExecutionPipelineLoaded', 'enqueueExecutionSubmit', 'enqueueExecutionAwaitTask', 'enqueueExecutionGetTasks', 'enqueueExecutionGetTaskStatus', 'enqueueExecutionCancelTask', 'enqueueExecutionStopTask', 'enqueueExecutionGetStatus', 'enqueueExecutionEnvUpdated', 'enqueueExecutionCccAbort', 'enqueueExecutionCccContinue', 'enqueueExecutionCccRetry', 'enqueueExecutionRegisterPipeline', 'enqueueExecutionRecover', 'enqueueExecutionPing', 'startExecutionActor', 'ensureExecutionActorReady'], owner: 'executionactor', types: ['pipeline_loaded', 'env_updated', 'get_status', 'execute_element', 'await_task', 'get_tasks', 'get_task_status', 'cancel_task', 'stop_task', 'ccc_abort', 'ccc_continue', 'ccc_retry', 'task_settled', 'recover', 'register_pipeline', 'ping'] },
+  { src: 'js/context.js', provides: ['createinitialworldmap', 'updateworldmap', 'observeworldmap', 'select'] },
+  { src: 'js/actors/renderactor.js', provides: ['RENDERACTOR', 'enqueuerender', 'enqueueclear', 'enqueuehtml', 'enqueueremove', 'enqueuestyles', 'enqueuesetattr', 'enqueuetoggleclass', 'enqueuecreateelement', 'enqueuecreatecontainer', 'enqueuecreatefromhtml', 'enqueuegethtml', 'enqueuegetvalue', 'enqueuegetstyle', 'enqueuegetposition', 'enqueuesethtml', 'enqueuesetposition', 'enqueuesetstyle', 'enqueuesetvalue', 'enqueueproperty', 'enqueuegetlayout', 'enqueuetlayout', 'enqueuegetviewport', 'enqueuegetscreen', 'enqueuematchmedia', 'enqueueRenderRegisterTrigger', 'enqueueRenderRegisterTriggerExpectation', 'enqueueRenderRevalidateTriggers', 'enqueueRenderPing', 'enqueueRenderGetBodyHtml', 'enqueueRenderRestoreBodyHtml', 'enqueueRenderRecover', 'enqueueRenderCrypto', 'startRenderActor', 'expectelement', 'handlefilereaderrequest'], owner: 'renderactor', types: ['render', 'clear', 'html', 'remove', 'setstyles', 'setattr', 'toggleclass', 'crypto', 'geolocation', 'persistence', 'createelement', 'createcontainer', 'createfromhtml', 'property', 'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout', 'sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'getviewport', 'getscreen', 'matchmedia', 'get_body_html', 'restore_body_html', 'recover', 'ping', 'register_trigger', 'register_trigger_expectation', 'revalidate_triggers'] },
+  { src: 'js/factory/blockcompiler.js', provides: ['loadPipeline', 'compileStage', 'compileStageRequestToElements', 'orchestrateStage', 'validatePipelineBriefcase'] },
+  { src: 'js/actors/hypervisoractor.js', provides: ['HYPERVISOR', 'startHypervisorActor', 'bootActors', 'activateManagedActors', 'recoverHypervisorState', 'enqueueHypervisorLoad', 'enqueueHypervisorSave', 'enqueueHypervisorGetEnv', 'enqueueHypervisorSetEnv', 'enqueueHypervisorGetLatestEnv', 'enqueueHypervisorGetRenderHtml', 'enqueueHypervisorSetRenderHtml', 'enqueueHypervisorGetExecutionStack', 'enqueueHypervisorSetExecutionStack', 'enqueueHypervisorGetRoute', 'enqueueHypervisorSetRoute', 'enqueueHypervisorGetActivePipelines', 'enqueueHypervisorRegisterPipeline', 'enqueueHypervisorUnregisterPipeline', 'enqueueHypervisorSetProgram', 'enqueueHypervisorGetProgram', 'enqueueHypervisorMarkBoot', 'enqueueHypervisorSetStageDescriptor', 'enqueueHypervisorGetTriggerRecipientStatus', 'enqueueHypervisorTrigger', 'enqueueHypervisorPing', 'enqueueHypervisorActivateActors', 'enqueueHypervisorBootPipeline', 'enqueueHypervisorStageCompleted'], owner: 'hypervisoractor', types: ['load', 'save', 'get_env', 'set_env', 'get_latest_env', 'get_render_html', 'set_render_html', 'get_execution_stack', 'set_execution_stack', 'get_route', 'set_route', 'get_active_pipelines', 'register_pipeline', 'unregister_pipeline', 'set_program', 'get_program', 'mark_boot', 'set_stage_descriptor', 'get_trigger_recipient_status', 'trigger_event', 'ping', 'recover', 'activate_actors', 'boot_pipeline', 'compile_stage', 'stage_completed'] }
+];
+
+function getRoot() {
+  return (typeof window !== 'undefined') ? window : globalThis;
+}
+
+function checkExistence(entry) {
+  var root = getRoot();
+  var missing = [];
+  entry.provides.forEach(function(name) {
+    if (typeof root[name] === 'undefined') missing.push(name);
+  });
+  return { ok: missing.length === 0, missing: missing };
+}
+
+function checkRegistration(entry) {
+  if (!entry.owner) return { ok: true, missing: [] };
+  var missing = [];
+  entry.types.forEach(function(type) {
+    if (typeof MESSAGEREGISTRY.getHandler(entry.owner, type) !== 'function') missing.push(type);
+  });
+  return { ok: missing.length === 0, missing: missing };
+}
+
+function runPipelineBoot(loadProgram, report, manifest) {
+  var list = manifest || PIPELINES_MANIFEST;
+  var index = 0;
+  function next() {
+    if (index >= list.length) {
+      report({ ok: true, failures: [], loaded: list.length });
+      return;
+    }
+    var entry = list[index];
+    loadProgram(entry, function(err) {
+      if (err) {
+        report({ ok: false, failures: [{ src: entry.src, error: err }], loaded: index });
+        return;
+      }
+      var exists = checkExistence(entry);
+      if (!exists.ok) {
+        report({ ok: false, failures: [{ src: entry.src, missingGlobals: exists.missing }], loaded: index });
+        return;
+      }
+      var registered = checkRegistration(entry);
+      if (!registered.ok) {
+        report({ ok: false, failures: [{ src: entry.src, missingTypes: registered.missing }], loaded: index });
+        return;
+      }
+      index = index + 1;
+      next();
+    });
+  }
+  next();
+}
+
+var PIPELINES_BASE = (typeof document !== 'undefined' && document.currentScript && document.currentScript.src)
+  ? document.currentScript.src.slice(0, document.currentScript.src.lastIndexOf('/') + 1)
+  : '';
+
+function bootPipeline(onDone) {
+  function loadScript(entry, done) {
+    var s = document.createElement('script');
+    s.src = PIPELINES_BASE + entry.src;
+    s.onload = function() { done(null); };
+    s.onerror = function() { done(new Error('failed to load ' + entry.src)); };
+    document.head.appendChild(s);
+  }
+  runPipelineBoot(loadScript, function(result) {
+    if (result.ok) {
+      console.log('[BOOTLOADER] all ' + result.loaded + ' programs loaded, existence tests passed');
+    } else {
+      console.error('[BOOTLOADER] BOOT FAILED after ' + result.loaded + ' programs:', JSON.stringify(result.failures));
+    }
+    if (typeof onDone === 'function') onDone(result);
+  });
+}

@@ -1,11 +1,11 @@
-import {
-  detectFreeIdentifiers,
-  isIdentifierStart,
-  isIdentifierPart,
-  containsIdentifier,
-  findMatchingParen,
-  findBodyBrace
-} from './freevarparser.js';
+// ============================================================
+// UPDATED FILE: js/factory/dnaserializer.js
+// Change applied: ES5 module conversion — imports → require,
+// export → module.exports. Body already ES5 (var/function,
+// forEach/map functional style); whitespace-skip loops and
+// resolveFromBriefcase recursion are ES5-legal, retained.
+// ============================================================
+
 
 function createDnaSerializerConstants() {
   return Object.freeze({
@@ -13,30 +13,46 @@ function createDnaSerializerConstants() {
   });
 }
 
+// skipSpaces — recursive whitespace scanner (functional-recursive P3).
+function skipSpaces(source, i, len) {
+  if (i < len && source[i] === ' ') return skipSpaces(source, i + 1, len);
+  return i;
+}
+
+// skipIdentifierPart — recursive identifier-part scanner.
+function skipIdentifierPart(source, i, len) {
+  if (i < len && isIdentifierPart(source[i])) return skipIdentifierPart(source, i + 1, len);
+  return i;
+}
+
+// readIdentifier — collects identifier chars; returns { word, end }.
+function readIdentifier(source, i, len) {
+  function scan(pos, word) {
+    if (pos < len && isIdentifierPart(source[pos])) return scan(pos + 1, word + source[pos]);
+    return { word: word, end: pos };
+  }
+  return scan(i, '');
+}
+
 function rewriteFunctionSource(source, destructure) {
-  var i = 0;
   var len = source.length;
 
-  while (i < len && source[i] === ' ') i++;
+  var i = skipSpaces(source, 0, len);
   if (source.slice(i, i + 5) === 'async') {
     i += 5;
-    while (i < len && source[i] === ' ') i++;
+    i = skipSpaces(source, i, len);
   }
 
   var start = i;
-  var nextWord = '';
-  var j = i;
-  while (j < len && (isIdentifierPart(source[j]))) {
-    nextWord += source[j];
-    j++;
-  }
+  var idResult = readIdentifier(source, i, len);
+  var nextWord = idResult.word;
+  var j = idResult.end;
 
   if (nextWord === 'function') {
-    i = j;
-    while (i < len && source[i] === ' ') i++;
+    i = skipSpaces(source, j, len);
     if (isIdentifierStart(source[i])) {
-      while (i < len && isIdentifierPart(source[i])) i++;
-      while (i < len && source[i] === ' ') i++;
+      i = skipIdentifierPart(source, i, len);
+      i = skipSpaces(source, i, len);
     }
     if (source[i] !== '(') throw new Error('[dnaserializer] invalid function signature');
     var openParen = i;
@@ -69,8 +85,7 @@ function rewriteFunctionSource(source, destructure) {
     var arrowIndex = newSource2.indexOf('=>', newCloseParen2 + 1);
     if (arrowIndex === -1) throw new Error('[dnaserializer] arrow not found');
 
-    var afterArrow = arrowIndex + 2;
-    while (afterArrow < newSource2.length && newSource2[afterArrow] === ' ') afterArrow++;
+    var afterArrow = skipSpaces(newSource2, arrowIndex + 2, newSource2.length);
     if (newSource2[afterArrow] !== '{') {
       if (destructure) {
         var exprBody = newSource2.slice(afterArrow);
@@ -85,9 +100,9 @@ function rewriteFunctionSource(source, destructure) {
 
   if (isIdentifierStart(source[i])) {
     var identStart = i;
-    while (i < len && isIdentifierPart(source[i])) i++;
+    i = skipIdentifierPart(source, i, len);
     var ident = source.slice(identStart, i);
-    while (i < len && source[i] === ' ') i++;
+    i = skipSpaces(source, i, len);
     if (source.slice(i, i + 2) !== '=>') return source;
 
     var newParams3 = '(' + ident + ', __deps) =>';
@@ -98,8 +113,7 @@ function rewriteFunctionSource(source, destructure) {
     var arrowPos3 = newSource3.indexOf('=>');
     if (arrowPos3 === -1) return source;
 
-    var afterArrow3 = arrowPos3 + 2;
-    while (afterArrow3 < newSource3.length && newSource3[afterArrow3] === ' ') afterArrow3++;
+    var afterArrow3 = skipSpaces(newSource3, arrowPos3 + 2, newSource3.length);
     if (newSource3[afterArrow3] !== '{') {
       if (destructure) {
         var exprBody3 = newSource3.slice(afterArrow3);
@@ -175,15 +189,16 @@ function resolveFromBriefcase(id, container) {
   }
 
   var values = Object.keys(container).map(function(k) { return container[k]; });
-  for (var i = 0; i < values.length; i++) {
+  function scan(i) {
+    if (i >= values.length) return { found: false, value: undefined };
     var value = values[i];
     if (value && typeof value === 'object') {
       var result = resolveFromBriefcase(id, value);
       if (result.found) return result;
     }
+    return scan(i + 1);
   }
-
-  return { found: false, value: undefined };
+  return scan(0);
 }
 
 function prepareFunctionForSerialization(fn, env, briefcase) {
@@ -268,8 +283,7 @@ function serializeSelfContainedClosure(fn, actualArgs, capturedEnv) {
     var afterArrowMaybe = closeParen + 1;
     var arrowIdx = src.indexOf('=>', afterArrowMaybe);
     if (arrowIdx === -1) return { __fn__: true, source: '(' + src + ')' };
-    var afterArrow = arrowIdx + 2;
-    while (afterArrow < src.length && src[afterArrow] === ' ') afterArrow++;
+    var afterArrow = skipSpaces(src, arrowIdx + 2, src.length);
     var expr = src.slice(afterArrow);
     var zeroArgSource = '(function() {\n' + bindingLines + '\n  return (' + expr + ');\n})';
     return { __fn__: true, source: zeroArgSource };
@@ -298,12 +312,3 @@ function prepareDnaForSerialization(node, env, briefcase) {
   }
   return node;
 }
-
-export {
-  createDnaSerializerConstants,
-  validaterevivablefunctionblock,
-  validaterevivableobject,
-  resolveFromBriefcase,
-  prepareFunctionForSerialization,
-  serializeSelfContainedClosure
-};

@@ -1,22 +1,20 @@
 // ============================================================
 // UPDATED FILE: js/factory/stylizerutilities.js
-// Change applied:
-//   P10: fix checkSpacing recursion to visit all children
+// Change applied: ES5 module conversion (imports → require,
+// export → module.exports). Body already ES5 (var/function) with
+// injected-parameter method style — portable surface per P-6.
+// DOMParser impurity isolated here (Kleisli verdict).
 // ============================================================
 
-import {
-  createVerbosityConstants,
-  logdebug,
-  logwarn,
-  logerror,
-  loginfo,
-  logcritical
-} from '../verbosity.js';
-import {
-  ColorCore,
-  ColorHarmony,
-  ColorContrast
-} from './colorutils.js';
+
+// scanNumberEnd — scan digits and '.' from index i; returns end index.
+// Shared by parseLength (functional-recursive).
+function scanNumberEnd(str, i) {
+  if (i >= str.length) return i;
+  var c = str.charAt(i);
+  if ((c >= '0' && c <= '9') || c === '.') return scanNumberEnd(str, i + 1);
+  return i;
+}
 
 var defaultVerbosityState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
@@ -48,43 +46,38 @@ var StylizerCore = {
 
   camelToKebab: function(str) {
     if (typeof str !== 'string') return str;
-    var out = '';
-    for (var i = 0; i < str.length; i++) {
-      var ch = str.charAt(i);
+    return str.split('').reduce(function(out, ch) {
       if (ch >= 'A' && ch <= 'Z') {
-        out += '-' + ch.toLowerCase();
-      } else {
-        out += ch;
+        return out + '-' + ch.toLowerCase();
       }
-    }
-    return out;
+      return out + ch;
+    }, '');
   },
 
   kebabToCamel: function(str) {
     if (typeof str !== 'string') return str;
-    var out = '';
-    for (var i = 0; i < str.length; i++) {
+    function scan(i, out) {
+      if (i >= str.length) return out;
       var ch = str.charAt(i);
       if (ch === '-' && i + 1 < str.length) {
         var next = str.charAt(i + 1);
         if (next >= 'a' && next <= 'z') {
-          out += next.toUpperCase();
-          i += 1;
-          continue;
+          return scan(i + 2, out + next.toUpperCase());
         }
       }
-      out += ch;
+      return scan(i + 1, out + ch);
     }
-    return out;
+    return scan(0, '');
   },
 
   tokenizeWhitespace: function(str) {
     var s = String(str);
-    var tokens = [];
-    var current = '';
-    var i = 0;
 
-    while (i < s.length) {
+    function scan(i, current, tokens) {
+      if (i >= s.length) {
+        if (current !== '') tokens.push(current);
+        return tokens;
+      }
       var ch = s.charAt(i);
 
       if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' ||
@@ -93,16 +86,12 @@ var StylizerCore = {
           tokens.push(current);
           current = '';
         }
-        i += 1;
-      } else {
-        current += ch;
-        i += 1;
+        return scan(i + 1, current, tokens);
       }
+      return scan(i + 1, current + ch, tokens);
     }
 
-    if (current !== '') tokens.push(current);
-
-    return tokens;
+    return scan(0, '', []);
   },
 
   parseLength: function(value, referencePx) {
@@ -136,14 +125,10 @@ var StylizerCore = {
     if (str.charAt(i) === '+' || str.charAt(i) === '-') i += 1;
 
     var start = i;
-    while (i < str.length) {
-      var c = str.charAt(i);
-      if ((c >= '0' && c <= '9') || c === '.') i += 1;
-      else break;
-    }
+    var end = scanNumberEnd(str, i);
 
-    var numStr = str.slice(start, i);
-    var unit = str.slice(i).toLowerCase();
+    var numStr = str.slice(start, end);
+    var unit = str.slice(end).toLowerCase();
     var num = parseFloat(numStr);
 
     var factor = LENGTH_FACTORS[unit];
@@ -190,23 +175,19 @@ var StylizerCore = {
     if (filterFn === undefined) filterFn = null;
 
     function getAncestors(el) {
-      var acc = [];
-      var p = el.parentNode;
-      while (p && p.nodeType === 1) {
-        acc.push(p);
-        p = p.parentNode;
+      function climb(p, acc) {
+        if (!p || p.nodeType !== 1) return acc;
+        return climb(p.parentNode, acc.concat([p]));
       }
-      return acc;
+      return climb(el.parentNode, []);
     }
 
     function getSiblings(el, dir) {
-      var acc = [];
-      var s = el[dir];
-      while (s) {
-        if (s.nodeType === 1) acc.push(s);
-        s = s[dir];
+      function walk(s, acc) {
+        if (!s) return acc;
+        return walk(s[dir], s.nodeType === 1 ? acc.concat([s]) : acc);
       }
-      return acc;
+      return walk(el[dir], []);
     }
 
     function getDepth(ancestor, descendant) {
@@ -368,10 +349,8 @@ var StylizerCore = {
   },
 
   getPropsFromMap: function(propsMap, el, StylizerCore) {
-    for (var i = 0; i < propsMap.length; i++) {
-      if (propsMap[i].element === el) return propsMap[i].props;
-    }
-    return null;
+    var entry = propsMap.filter(function(item) { return item.element === el; })[0];
+    return entry ? entry.props : null;
   },
 
   computeIntrinsicSize: function(node, propertyMap, inheritedProps, StylizerCore) {
@@ -468,19 +447,24 @@ var StylizerCore = {
 
       var fSize = 16;
       var isNowrap = false;
-      var p = node.parentElement;
 
-      while (p && p.style) {
+      function climb(p, size, nowrap) {
+        if (!p || !p.style) return { size: size, nowrap: nowrap };
         if (p.style.fontSize) {
           var raw = p.style.fontSize;
-          fSize = (raw.indexOf('rem') !== -1 || raw.indexOf('em') !== -1)
-            ? parseFloat(raw) * 16
-            : parseFloat(raw);
-          break;
+          return {
+            size: (raw.indexOf('rem') !== -1 || raw.indexOf('em') !== -1)
+              ? parseFloat(raw) * 16
+              : parseFloat(raw),
+            nowrap: nowrap
+          };
         }
-        if (p.style.whiteSpace === 'nowrap') isNowrap = true;
-        p = p.parentElement;
+        return climb(p.parentElement, size, nowrap || p.style.whiteSpace === 'nowrap');
       }
+
+      var resolved = climb(node.parentElement, fSize, isNowrap);
+      fSize = resolved.size;
+      isNowrap = resolved.nowrap;
 
       var charPx = fSize * 0.6;
       if (isNowrap) return txt.length * charPx;
@@ -516,21 +500,21 @@ var StylizerCore = {
     }
 
     function findHexColor(str) {
-      for (var i = 0; i < str.length; i++) {
-        if (str.charAt(i) !== '#') continue;
-
-        var count = 0;
-        var j = i + 1;
-        while (j < str.length && isHexDigit(str.charAt(j))) {
-          count += 1;
-          j += 1;
-        }
-
-        if (count === 3 || count === 6) {
-          return str.slice(i, j);
-        }
+      function scanHex(j, count) {
+        if (j < str.length && isHexDigit(str.charAt(j))) return scanHex(j + 1, count + 1);
+        return { j: j, count: count };
       }
-      return null;
+      function scan(i) {
+        if (i >= str.length) return null;
+        if (str.charAt(i) === '#') {
+          var res = scanHex(i + 1, 0);
+          if (res.count === 3 || res.count === 6) {
+            return str.slice(i, res.j);
+          }
+        }
+        return scan(i + 1);
+      }
+      return scan(0);
     }
 
     function findRgbColor(str) {
@@ -552,14 +536,14 @@ var StylizerCore = {
       return findHexColor(bg) || findRgbColor(bg) || null;
     }
 
-    var curr = el;
-    while (curr && curr.nodeType === 1) {
+    function climbBg(curr) {
+      if (!curr || curr.nodeType !== 1) return '';
       var bg = extractBgFromShorthand(curr);
       if (bg) return bg;
-      curr = curr.parentNode;
+      return climbBg(curr.parentNode);
     }
 
-    return '';
+    return climbBg(el);
   },
 
   debug: function() {
@@ -606,11 +590,9 @@ var StylizerRewrite = {
             el.style[prop] = rule.style[prop];
           });
         } else if (rule.path && Array.isArray(rule.path)) {
-          var currentNodes = [el];
-          var matched = true;
-
-          for (var p = 0; p < rule.path.length; p++) {
-            var step = rule.path[p];
+          function walkPath(stepIndex, currentNodes) {
+            if (stepIndex >= rule.path.length) return currentNodes;
+            var step = rule.path[stepIndex];
             var nextNodes = [];
 
             currentNodes.forEach(function(node) {
@@ -618,15 +600,12 @@ var StylizerRewrite = {
               matches.forEach(function(m) { if (nextNodes.indexOf(m) === -1) nextNodes.push(m); });
             });
 
-            if (!nextNodes.length) {
-              matched = false;
-              break;
-            }
-
-            currentNodes = nextNodes;
+            if (!nextNodes.length) return [];
+            return walkPath(stepIndex + 1, nextNodes);
           }
 
-          if (matched && currentNodes.indexOf(el) !== -1) {
+          var pathResult = walkPath(0, [el]);
+          if (pathResult.indexOf(el) !== -1) {
             Object.keys(rule.style || {}).forEach(function(prop) {
               el.style[prop] = rule.style[prop];
             });
@@ -675,17 +654,19 @@ var StylizerRewrite = {
 
     var map = {};
 
-    if (refRoot.style.length) map['root'] = {};
-    for (var i = 0; i < refRoot.style.length; i++) {
-      map['root'][refRoot.style[i]] = refRoot.style[refRoot.style[i]];
+    if (refRoot.style.length) {
+      map['root'] = Array.prototype.slice.call(refRoot.style).reduce(function(acc, prop) {
+        acc[prop] = refRoot.style[prop];
+        return acc;
+      }, {});
     }
 
     Array.prototype.slice.call(refRoot.children).forEach(function(el) {
       var tag = el.tagName.toLowerCase();
-      var s = {};
-      for (var j = 0; j < el.style.length; j++) {
-        s[el.style[j]] = el.style[el.style[j]];
-      }
+      var s = Array.prototype.slice.call(el.style).reduce(function(acc, prop) {
+        acc[prop] = el.style[prop];
+        return acc;
+      }, {});
 
       if (!map[tag]) map[tag] = {};
       Object.keys(s).forEach(function(prop) {
@@ -704,12 +685,13 @@ var StylizerRewrite = {
     function walk(el) {
       Array.prototype.slice.call(el.children).forEach(function(child) {
         if (child.style) {
-          for (var i = child.style.length - 1; i >= 0; i--) {
-            var prop = child.style[i];
+          var styleProps = Array.prototype.slice.call(child.style);
+          styleProps.reduceRight(function(_, prop) {
             if (safeProps.indexOf(prop) !== -1 && el.style[prop] === child.style[prop]) {
               child.style.removeProperty(prop);
             }
-          }
+            return null;
+          }, null);
         }
         walk(child);
       });
@@ -725,19 +707,24 @@ var StylizerRewrite = {
     var colend = Math.max(1, Math.min(Math.ceil(((pos.clientx || 0) + (pos.width || cellw)) / cellw), gridcols));
     var rowend = Math.max(1, Math.min(Math.ceil(((pos.clienty || 0) + (pos.height || cellh)) / cellh), gridcols));
 
-    var sumh = 0, sums = 0, suml = 0, count = 0;
-
-    for (var r = rowstart; r < rowend; r++) {
-      for (var c = colstart; c < colend; c++) {
+    function rowsRange(r, acc) {
+      if (r >= rowend) return acc;
+      function colsRange(c, inner) {
+        if (c >= colend) return inner;
         var idx = r * gridcols + c;
         if (idx < tilecols.length) {
-          sumh += tilecols[idx].h;
-          sums += tilecols[idx].s;
-          suml += tilecols[idx].l;
-          count++;
+          inner.sumh += tilecols[idx].h;
+          inner.sums += tilecols[idx].s;
+          inner.suml += tilecols[idx].l;
+          inner.count++;
         }
+        return colsRange(c + 1, inner);
       }
+      return rowsRange(r + 1, colsRange(colstart, acc));
     }
+
+    var totals = rowsRange(rowstart, { sumh: 0, sums: 0, suml: 0, count: 0 });
+    var sumh = totals.sumh, sums = totals.sums, suml = totals.suml, count = totals.count;
 
     var avgh = count ? (sumh / count) % 360 : 0;
     var avgs = count ? sums / count : 50;
@@ -781,7 +768,8 @@ var StylizerRewrite = {
       return 0.7;
     }
 
-    for (var iter = 0; iter < maxIterations; iter++) {
+    function runIteration(iter) {
+      if (iter >= maxIterations) return;
       var anyCorrection = false;
 
       goals.forEach(function(goal) {
@@ -905,8 +893,10 @@ var StylizerRewrite = {
         }
       });
 
-      if (!anyCorrection) break;
+      if (anyCorrection) runIteration(iter + 1);
     }
+
+    runIteration(0);
 
     return { html: doc.body.innerHTML, rules: allRules };
   }
@@ -1052,7 +1042,8 @@ var StylizerVerify = {
       var children = Array.prototype.slice.call(parent.children);
 
       // First check gaps between adjacent children
-      for (var i = 0; i < children.length - 1; i++) {
+      function checkAdjacent(i) {
+        if (i >= children.length - 1) return;
         var a = children[i];
         var b = children[i + 1];
         var gap = (parseFloat(a.style.marginBottom) || 0) + (parseFloat(b.style.marginTop) || 0);
@@ -1064,12 +1055,14 @@ var StylizerVerify = {
             gap: gap
           });
         }
+        checkAdjacent(i + 1);
       }
+      checkAdjacent(0);
 
       // Recurse into every child, not just the second of each pair
-      for (var j = 0; j < children.length; j++) {
-        walk(children[j]);
-      }
+      children.forEach(function(child) {
+        walk(child);
+      });
     }
 
     walk(doc.body);
@@ -1077,15 +1070,13 @@ var StylizerVerify = {
   },
 
   checkOverlap: function(html, StylizerCore) {
-    var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
     var pos = Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       return el.style && ['absolute', 'fixed'].indexOf(el.style.position) !== -1;
     });
 
-    for (var i = 0; i < pos.length; i++) {
-      for (var j = i + 1; j < pos.length; j++) {
-        var a = pos[i], b = pos[j];
+    var violations = pos.reduce(function(acc, a, i) {
+      return pos.slice(i + 1).reduce(function(innerAcc, b) {
         var aT = parseFloat(a.style.top) || 0, aL = parseFloat(a.style.left) || 0,
             aW = parseFloat(a.style.width) || 0, aH = parseFloat(a.style.height) || 0;
         var bT = parseFloat(b.style.top) || 0, bL = parseFloat(b.style.left) || 0,
@@ -1094,13 +1085,14 @@ var StylizerVerify = {
         if (aW && aH && bW && bH &&
             aL < bL + bW && aL + aW > bL &&
             aT < bT + bH && aT + aH > bT) {
-          violations.push({
+          return innerAcc.concat([{
             elementA: a.tagName + (a.id ? '#' + a.id : ''),
             elementB: b.tagName + (b.id ? '#' + b.id : '')
-          });
+          }]);
         }
-      }
-    }
+        return innerAcc;
+      }, acc);
+    }, []);
 
     return violations;
   },
@@ -1259,10 +1251,4 @@ var StylizerVerify = {
 
     return result;
   }
-};
-
-export {
-  StylizerCore,
-  StylizerRewrite,
-  StylizerVerify
 };

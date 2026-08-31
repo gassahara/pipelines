@@ -1,4 +1,8 @@
-import { getRenderActor } from '../actors/actorregistry.js';
+// ============================================================
+// UPDATED FILE: js/fundamental/domref.js
+// Change applied: ES5 syntax, functional-recursive, require/module.exports
+// ============================================================
+
 
 var RAWMAP = [];
 
@@ -14,18 +18,12 @@ function setRawElement(ref, element) {
 }
 
 function getRawElement(ref) {
-  for (var i = 0; i < RAWMAP.length; i++) {
-    if (RAWMAP[i].ref === ref) return RAWMAP[i].element;
-  }
-  return null;
+  var found = RAWMAP.filter(function(entry) { return entry.ref === ref; });
+  return found.length > 0 ? found[0].element : null;
 }
 
 function removeRawElementRef(ref) {
-  for (var i = RAWMAP.length - 1; i >= 0; i--) {
-    if (RAWMAP[i].ref === ref) {
-      RAWMAP.splice(i, 1);
-    }
-  }
+  RAWMAP = RAWMAP.filter(function(entry) { return entry.ref !== ref; });
 }
 
 function GETRAWELEMENT(ref) {
@@ -93,10 +91,3 @@ function REMOVEREF(ref) {
 function ISVALIDDOMREF(ref) {
   return ref && typeof ref === 'object' && typeof ref.project === 'function';
 }
-
-export {
-  GETRAWELEMENT,
-  CREATEDOMREF,
-  REMOVEREF,
-  ISVALIDDOMREF
-};

@@ -1,39 +1,50 @@
+// ============================================================
+// UPDATED FILE: js/factory/callwithstack.js
+// Change applied: ES5 syntax, no arrow functions, no const, module.exports
+// Promise retained per blueprint §2 (callwithstack contract requires promise return)
+// ============================================================
+
 function safeshallowclone(obj) {
     if (obj == null || typeof obj !== 'object') return obj;
     try { return JSON.parse(JSON.stringify(obj)); }
-    catch {
-        const clone = {};
-        for (const key of Object.keys(obj)) {
-            const val = obj[key];
+    catch (e) {
+        var clone = {};
+        var keys = Object.keys(obj);
+        keys.forEach(function(key) {
+            var val = obj[key];
             if (typeof val === 'function') clone[key] = '[FUNCTION]';
             else if (typeof HTMLElement !== 'undefined' && (val instanceof HTMLElement || val instanceof Node)) clone[key] = '[DOM_NODE]';
             else if (typeof val === 'object' && val !== null) {
                 try { JSON.stringify(val); clone[key] = safeshallowclone(val); }
-                catch { clone[key] = '[NON_SERIALIZABLE]'; }
+                catch (e2) { clone[key] = '[NON_SERIALIZABLE]'; }
             } else clone[key] = val;
-        }
+        });
         return clone;
     }
 }
 
 function applyccc(fn, typecheck) {
     if (!typecheck) return fn;
-    const { argrules, resultrule } = typecheck;
-    return (...args) => {
-        if (argrules) argrules.forEach((rule, i) => {
-            if (rule && !rule(args[i])) {
-                const err = new Error(`[CCC:TYPE_VIOLATION] argument ${i} failed type check`);
-                err.diagnostic = { typecheck: 'arg', index: i, value: args[i], rule: rule.name || 'custom' };
-                throw err;
-            }
-        });
-        const result = fn(...args);
+    var argrules = typecheck.argrules;
+    var resultrule = typecheck.resultrule;
+    return function() {
+        var args = Array.prototype.slice.call(arguments);
+        if (argrules) {
+            argrules.forEach(function(rule, ri) {
+                if (rule && !rule(args[ri])) {
+                    var err = new Error('[CCC:TYPE_VIOLATION] argument ' + ri + ' failed type check');
+                    err.diagnostic = { typecheck: 'arg', index: ri, value: args[ri], rule: rule.name || 'custom' };
+                    throw err;
+                }
+            });
+        }
+        var result = fn.apply(null, args);
         if (!resultrule) return result;
-        const check = (v) => {
+        var check = function(v) {
             if (!resultrule(v)) {
-                const err = new Error('[CCC:TYPE_VIOLATION] return value failed type check');
-                err.diagnostic = { typecheck: 'result', value: v, rule: resultrule.name || 'custom' };
-                throw err;
+                var err2 = new Error('[CCC:TYPE_VIOLATION] return value failed type check');
+                err2.diagnostic = { typecheck: 'result', value: v, rule: resultrule.name || 'custom' };
+                throw err2;
             }
             return v;
         };
@@ -41,30 +52,53 @@ function applyccc(fn, typecheck) {
     };
 }
 
-export function callwithstack(evalstack, label, type, fn, args, options = {}) {
-    if (label?.startsWith('fn:') && !options.typecheck) {
-        options = { ...options, typecheck: { resultrule: (v) => v != null && typeof v === 'object' && !Array.isArray(v) } };
+function callwithstack(evalstack, label, type, fn, args, options) {
+    if (options === undefined) options = {};
+    if (label && label.indexOf('fn:') === 0 && !options.typecheck) {
+        var merged = {};
+        var optkeys = Object.keys(options);
+        optkeys.forEach(function(k) { merged[k] = options[k]; });
+        merged.typecheck = { resultrule: function(v) { return v != null && typeof v === 'object' && !Array.isArray(v); } };
+        options = merged;
     }
-    const { thenfn, catchfn, errk, context, capturecontinuation = true, typecheck } = options;
-    const wrappedfn = applyccc(fn, typecheck);
-    const captured = capturecontinuation
-        ? { fn: wrappedfn, args, label, type, options: { ...options, capturecontinuation: false }, pipestatesnapshot: safeshallowclone(context?.pipestate), envsnapshot: safeshallowclone(context?.env) }
-        : null;
+    var thenfn = options.thenfn;
+    var catchfn = options.catchfn;
+    var errk = options.errk;
+    var context = options.context;
+    var capturecontinuation = options.capturecontinuation !== undefined ? options.capturecontinuation : true;
+    var typecheck = options.typecheck;
+    var wrappedfn = applyccc(fn, typecheck);
+    var captured = null;
+    if (capturecontinuation) {
+        var capturedoptions = {};
+        var ckeys = Object.keys(options);
+        ckeys.forEach(function(k) { capturedoptions[k] = options[k]; });
+        capturedoptions.capturecontinuation = false;
+        captured = {
+            fn: wrappedfn,
+            args: args,
+            label: label,
+            type: type,
+            options: capturedoptions,
+            pipestatesnapshot: safeshallowclone(context && context.pipestate),
+            envsnapshot: safeshallowclone(context && context.env)
+        };
+    }
 
-    let k;
-    const promise = new Promise((resolve, reject) => {
+    var k;
+    var promise = new Promise(function(resolve, reject) {
         k = resolve;
-        const meta = { label };
-        if (context?.callerid) meta.callerid = context.callerid;
-        evalstack.pushframe(wrappedfn, args, context?.pipestate, k, meta);
+        var meta = { label: label };
+        if (context && context.callerid) meta.callerid = context.callerid;
+        evalstack.pushframe(wrappedfn, args, context && context.pipestate, k, meta);
 
-        const onsuccess = (result) => {
+        var onsuccess = function(result) {
             evalstack.popframe();
             if (captured && result && typeof result === 'object' && !Array.isArray(result)) result.continuation = captured;
             if (thenfn) thenfn(result, context);
             k(result);
         };
-        const onfailure = (err) => {
+        var onfailure = function(err) {
             if (!err.diagnostic) err.diagnostic = {};
             if (!err.diagnostic.debugtrace) err.diagnostic.debugtrace = evalstack.snapshot();
             if (captured && !err.diagnostic.continuation) err.diagnostic.continuation = captured;
@@ -72,17 +106,17 @@ export function callwithstack(evalstack, label, type, fn, args, options = {}) {
             if (catchfn) catchfn(err, context);
             if (typeof errk === 'function') {
                 try {
-                    const r = errk(err);
+                    var r = errk(err);
                     if (r && typeof r.then === 'function') { r.then(k); return; }
                     k(r); return;
-                } catch {}
+                } catch (e3) {}
             }
             reject(err);
         };
 
         try {
-            if (type === 'sync') { onsuccess(wrappedfn(...args)); return; }
-            const p = wrappedfn(...args);
+            if (type === 'sync') { onsuccess(wrappedfn.apply(null, args)); return; }
+            var p = wrappedfn.apply(null, args);
             if (!p || typeof p.then !== 'function') { onsuccess(p); return; }
             p.then(onsuccess).catch(onfailure);
         } catch (err) { onfailure(err); }
@@ -91,4 +125,4 @@ export function callwithstack(evalstack, label, type, fn, args, options = {}) {
     return promise;
 }
 
-export function runwithstack(p) { return p; }
+function runwithstack(p) { return p; }
