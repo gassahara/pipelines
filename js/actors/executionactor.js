@@ -3,6 +3,7 @@
 // Change applied: DIRECT DISPATCH REFACTOR
 //   - No mailTransport, no pollInterval (consumer registration in kernel)
 //   - enqueueExecution* functions fire-and-forget, accept responseSpec
+//   - runElementTask no longer returns a Promise; fire-and-forget task settle
 // ============================================================
 
 
@@ -378,12 +379,13 @@ function runElementTask(taskid, descriptor) {
     return Promise.resolve(descriptor.executor(executionContext));
   }
 
-  return runWithProgram().then(function(result) {
+  // Fire-and-forget: run task, then send TASK_SETTLED without returning a Promise
+  runWithProgram().then(function(result) {
     logdebug(executionState, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
-    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor');
+    sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor');
   }).catch(function(err) {
     logerror(executionState, '[EXECUTIONACTOR]', 'runElementTask failed:', taskid, descriptor.elementid, err);
-    return sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor');
+    sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor');
   });
 }
 
