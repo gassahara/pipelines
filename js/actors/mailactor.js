@@ -1,20 +1,24 @@
 // ============================================================
 // UPDATED FILE: js/actors/mailactor.js
-// Change applied: DIRECT DISPATCH REFACTOR
-// - No polling, no POLL message type
-// - Global consumer registries (ACTORCONSUMERS, RESPONSECONSUMERS)
-// - sendInstruction fire-and-forget with responseSpec
-// - sendResponse triggers response consumer via mail actor
-// - persist before/after state-changing actions
+// Change applied: FINAL SWEEP
+//   - Removed local MESSAGEREGISTRY.register loop
+//   - createactor receives mailactorINTERFACES directly
+//   - No polling; no POLL message type
+//   - Global consumer registries (ACTORCONSUMERS, RESPONSECONSUMERS, EXPECTATIONS)
+//   - sendInstruction fire-and-forget with responseSpec
+//   - sendResponse sends response message with type from responseSpec
+//   - Response matching by tag and expectation.responseType
+//   - Persist before/after state-changing actions
 // ============================================================
+
 
 var mailVerbosityConstants = createVerbosityConstants();
 var mailState = Object.freeze({ level: mailVerbosityConstants.DEBUG });
 
 // Global registries
-var ACTORCONSUMERS = {}; // key: actorName + ':' + messageType -> function(message)
-var RESPONSECONSUMERS = {}; // key: responseType -> function(response, tag)
-var EXPECTATIONS = {}; // key: tag -> { responseType: string }
+var ACTORCONSUMERS = {};          // key: actorName + ':' + messageType -> function(message)
+var RESPONSECONSUMERS = {};       // key: responseType -> function(result, tag)
+var EXPECTATIONS = {};            // key: tag -> { responseType: string }
 
 var mailactorINTERFACES = {};
 mailactorINTERFACES[MESSAGETYPES.SEND] = {
@@ -68,29 +72,27 @@ var mailbehavior = function(state, message) {
 
     var recipient = message.recipient;
     if (!recipient || typeof recipient !== 'string') {
-      if (typeof message.reject === 'function') message.reject(new Error('[MAILACTOR] recipient required'));
       return state;
     }
     if (!state.queues[recipient]) state.queues[recipient] = [];
+    var flatMessage = message.message;
     var envelope = {
       id: 'mail_' + (state.nextId++),
       recipient: recipient,
-      sender: (message.message && message.message.sender) || 'system',
-      tag: (message.message && message.message.tag) || null,
+      sender: (flatMessage && flatMessage.sender) || 'system',
+      tag: (flatMessage && flatMessage.tag) || null,
       unread: true,
       timestamp: Date.now(),
-      payload: message.message
+      payload: flatMessage
     };
     state.queues[recipient].push(envelope);
     // Post-action persist
     persistMailState(state);
 
     // DIRECT DISPATCH: invoke consumer for recipient and message type
-    var flatMessage = message.message;
     var consumerKey = recipient + ':' + flatMessage.type;
     var consumer = ACTORCONSUMERS[consumerKey];
     if (consumer) {
-      // Call asynchronously to avoid blocking mail actor
       setTimeout(function() { consumer(flatMessage); }, 0);
     }
 
@@ -117,32 +119,30 @@ var mailbehavior = function(state, message) {
     return state;
   }
 
-  // Response message handling (type 'response')
-  if (flatMessage && flatMessage.type === 'response') {
-    var tag = flatMessage.tag;
-    if (tag && EXPECTATIONS[tag]) {
-      var expectation = EXPECTATIONS[tag];
-      var responseConsumer = RESPONSECONSUMERS[expectation.responseType];
-      if (responseConsumer) {
-        // Invoke response consumer asynchronously
-        setTimeout(function() { responseConsumer(flatMessage.result, tag); }, 0);
-      }
-      delete EXPECTATIONS[tag];
+  // Response handling: for any message with a tag that has an expectation
+  // (this branch is reached when a message is sent via sendInstruction and
+  //  has type that is not SEND/ACK, e.g., a response message from an actor)
+  if (message && message.tag && EXPECTATIONS[message.tag]) {
+    var expectation = EXPECTATIONS[message.tag];
+    var responseConsumer = RESPONSECONSUMERS[expectation.responseType];
+    if (responseConsumer) {
+      var result = (message && message.result !== undefined) ? message.result : message;
+      setTimeout(function() { responseConsumer(result, message.tag); }, 0);
     }
+    delete EXPECTATIONS[message.tag];
   }
 
   return state;
 };
 
 var initialMailState = createInitialMailState();
-Object.keys(mailactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('mailactor', type, mailactorINTERFACES[type], mailbehavior);
-});
+
+// NOTE: No MESSAGEREGISTRY.register here. Centralized in registerconsumers.js.
 
 var MAILACTOR = createactor(
   mailbehavior,
   initialMailState,
-  MESSAGEREGISTRY.getInterfaces('mailactor'),
+  mailactorINTERFACES,
   {
     actorName: 'mailactor',
     mailboxType: 'memory',
@@ -201,7 +201,8 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec) {
   });
 }
 
-// sendResponse sends a response message; mail actor activates response consumer
-function sendResponse(recipient, tag, result, sender) {
-  sendInstruction(recipient, 'response', { result: result }, tag, sender);
+// sendResponse sends a response message with type determined by the original expectation.
+function sendResponse(recipient, tag, result, sender, responseType) {
+  var type = responseType || MESSAGETYPES.RESPONSE;
+  sendInstruction(recipient, type, { result: result }, tag, sender);
 }

@@ -1,7 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/worldmapactor.js
-// Change applied: DIRECT DISPATCH REFACTOR
-//   - No mailTransport, no pollInterval (consumer registration in kernel)
+// Change applied: FINAL SWEEP
+//   - No self-registration (moved to registerconsumers.js)
+//   - createactor receives worldmapactorINTERFACES directly
 //   - sendworldmappatch/updateworldmapfn/observeworldmap/unobserveworldmap/getworldmap
 //     fire-and-forget, accept optional responseSpec
 // ============================================================
@@ -74,14 +75,12 @@ var worldmapbehavior = function(state, message) {
   return state;
 };
 
-Object.keys(worldmapactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('worldmapactor', type, worldmapactorINTERFACES[type], worldmapbehavior);
-});
+// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
 
 var WORLDMAPACTOR = createactor(
   worldmapbehavior,
   { worldmap: {}, observers: [], verbosity: worldmapVerbosityConstants.DEBUG },
-  MESSAGEREGISTRY.getInterfaces('worldmapactor'),
+  worldmapactorINTERFACES,
   {
     actorName: 'worldmapactor',
     mailboxType: 'mail',

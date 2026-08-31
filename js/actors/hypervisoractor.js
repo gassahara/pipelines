@@ -1,8 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/hypervisoractor.js
-// Change applied: DIRECT DISPATCH REFACTOR
-//   - No mailTransport, no pollInterval (consumer registration in kernel)
-//   - Directly calls compileStageRequestToElements and orchestrateStage
+// Change applied: FINAL SWEEP
+//   - No self-registration (moved to registerconsumers.js)
+//   - createactor receives hypervisoractorINTERFACES directly
+//   - Removed self-messages (COMPILE_STAGE, REGISTER_PIPELINE, STAGE_COMPLETED next stage)
+//     by directly calling internal functions
 //   - enqueueHypervisor* functions fire-and-forget, accept responseSpec
 // ============================================================
 
@@ -109,6 +111,61 @@ function executeStage(descriptor, env, mode, eventPayload) {
   });
 }
 
+// Directly register pipeline without self-message
+function registerHypervisorPipeline(state, pipelineId) {
+  if (!state.activePipelines) state.activePipelines = [];
+  if (state.activePipelines.indexOf(pipelineId) === -1) {
+    state.activePipelines.push(pipelineId);
+    persistHypervisorState(state);
+  }
+}
+
+// Directly compile and orchestrate a stage
+function compileAndOrchestrate(state, message) {
+  var result = compileStageRequestToElements(message.pipeline, message.stageIndex, message.stagePath, message.briefcase, message.env || {}, message.options || {});
+  return orchestrateStage(result.stage, result.elementFunctions, message.pipelineId, message.env || {}, message.stagePath || [], message.options || {}, result.nextStageMessage).then(function() {
+    return { started: true };
+  }).catch(function(err) {
+    return { error: err.message };
+  });
+}
+
+// Directly handle stage completed without self-message
+function handleStageCompleted(state, message) {
+  var key = message.pipelineId + ':' + message.stageId;
+  loginfo(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
+  if (message.env !== undefined && message.env !== null) {
+    if (!state.envByPipeline) state.envByPipeline = {};
+    if (!state.envByPipeline[message.pipelineId]) state.envByPipeline[message.pipelineId] = {};
+    state.envByPipeline[message.pipelineId].__root__ = { __root__: { env: message.env, updatedAt: Date.now() } };
+    persistHypervisorState(state);
+  }
+  var nextMsg = message.nextStageMessage || (state.nextStageMessages ? state.nextStageMessages[key] : null);
+  if (nextMsg) {
+    if (state.nextStageMessages && state.nextStageMessages[key]) delete state.nextStageMessages[key];
+    if (!nextMsg.env) {
+      var rootEntry = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
+      nextMsg.env = rootEntry ? rootEntry.env : (message.env || {});
+    }
+    // Directly compile and orchestrate next stage
+    var nextResult = compileStageRequestToElements(nextMsg.pipeline, nextMsg.stageIndex, nextMsg.stagePath, nextMsg.briefcase, nextMsg.env, nextMsg.options);
+    orchestrateStage(nextResult.stage, nextResult.elementFunctions, nextMsg.pipelineId, nextMsg.env || {}, nextMsg.stagePath || [], nextMsg.options || {}, nextResult.nextStageMessage).then(function() {
+      // Next stage will send its own stage_completed
+    }).catch(function(err) {
+      logwarn(hypervisorState, '[HYPERVISOR]', 'next stage orchestration failed:', err);
+    });
+  } else {
+    if (state.activePipelines) {
+      state.activePipelines = state.activePipelines.filter(function(id) { return id !== message.pipelineId; });
+      persistHypervisorState(state);
+    }
+    // Pipeline booted: send response to original boot_pipeline tag
+    if (message.sender && message.tag) {
+      sendResponse(message.sender, message.tag, { pipelineId: message.pipelineId }, 'hypervisoractor');
+    }
+  }
+}
+
 var hypervisorbehavior = function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : hypervisorVerbosityConstants.DEBUG;
   hypervisorState = Object.freeze({ level: v });
@@ -168,11 +225,7 @@ var hypervisorbehavior = function(state, message) {
     case MESSAGETYPES.GET_ACTIVE_PIPELINES:
       return (state.activePipelines || []).slice();
     case MESSAGETYPES.REGISTER_PIPELINE:
-      if (!state.activePipelines) state.activePipelines = [];
-      if (state.activePipelines.indexOf(message.pipelineId) === -1) {
-        state.activePipelines.push(message.pipelineId);
-        persistHypervisorState(state);
-      }
+      registerHypervisorPipeline(state, message.pipelineId);
       return true;
     case MESSAGETYPES.UNREGISTER_PIPELINE:
       if (!state.activePipelines) state.activePipelines = [];
@@ -265,11 +318,12 @@ var hypervisorbehavior = function(state, message) {
       state.loadedPipelines[message.pipelineId] = { pipeline: message.pipeline, accessors: message.accessors || null, sinks: message.sinks || [], options: bootOptions };
       var savedRoot = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
       var initialEnv = savedRoot ? savedRoot.env : (bootOptions.baseEnv || {});
+      // Directly register pipeline and execution actor notifications (no self-message)
+      registerHypervisorPipeline(state, message.pipelineId);
       sendInstruction('executionactor', 'pipeline_loaded', { pipelineid: message.pipelineId, env: {} }, null, 'hypervisoractor');
-      sendInstruction('hypervisoractor', MESSAGETYPES.REGISTER_PIPELINE, { pipelineId: message.pipelineId }, null, 'hypervisoractor');
       sendInstruction('executionactor', 'register_pipeline', { pipelineid: message.pipelineId, dna: null, env: {} }, null, 'hypervisoractor');
       var firstStage = message.firstStage || { stageIndex: 0, stagePath: [], briefcase: pipelineBriefcase };
-      // Directly compile and orchestrate first stage (no self-message)
+      // Directly compile and orchestrate first stage
       var compileResult = compileStageRequestToElements(message.pipeline, firstStage.stageIndex, firstStage.stagePath || [], firstStage.briefcase || pipelineBriefcase, initialEnv, bootOptions);
       orchestrateStage(compileResult.stage, compileResult.elementFunctions, message.pipelineId, initialEnv, firstStage.stagePath || [], bootOptions, compileResult.nextStageMessage).then(function() {
         // Stage completion handled by orchestrateStage sending stage_completed message
@@ -280,46 +334,10 @@ var hypervisorbehavior = function(state, message) {
     }
     case MESSAGETYPES.COMPILE_STAGE: {
       logdebug(hypervisorState, '[HYPERVISOR]', 'action COMPILE_STAGE:', message.pipelineId, 'stageIndex:', message.stageIndex);
-      var result = compileStageRequestToElements(message.pipeline, message.stageIndex, message.stagePath, message.briefcase, message.env || {}, message.options || {});
-      return orchestrateStage(result.stage, result.elementFunctions, message.pipelineId, message.env || {}, message.stagePath || [], message.options || {}, result.nextStageMessage).then(function() {
-        return { started: true };
-      }).catch(function(err) {
-        return { error: err.message };
-      });
+      return compileAndOrchestrate(state, message);
     }
     case MESSAGETYPES.STAGE_COMPLETED: {
-      var key = message.pipelineId + ':' + message.stageId;
-      loginfo(hypervisorState, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
-      if (message.env !== undefined && message.env !== null) {
-        if (!state.envByPipeline) state.envByPipeline = {};
-        if (!state.envByPipeline[message.pipelineId]) state.envByPipeline[message.pipelineId] = {};
-        state.envByPipeline[message.pipelineId].__root__ = { __root__: { env: message.env, updatedAt: Date.now() } };
-        persistHypervisorState(state);
-      }
-      var nextMsg = message.nextStageMessage || (state.nextStageMessages ? state.nextStageMessages[key] : null);
-      if (nextMsg) {
-        if (state.nextStageMessages && state.nextStageMessages[key]) delete state.nextStageMessages[key];
-        if (!nextMsg.env) {
-          var rootEntry = state.envByPipeline && state.envByPipeline[message.pipelineId] && state.envByPipeline[message.pipelineId].__root__ && state.envByPipeline[message.pipelineId].__root__.__root__;
-          nextMsg.env = rootEntry ? rootEntry.env : (message.env || {});
-        }
-        // Directly compile and orchestrate next stage (no self-message)
-        var nextResult = compileStageRequestToElements(nextMsg.pipeline, nextMsg.stageIndex, nextMsg.stagePath, nextMsg.briefcase, nextMsg.env, nextMsg.options);
-        orchestrateStage(nextResult.stage, nextResult.elementFunctions, nextMsg.pipelineId, nextMsg.env || {}, nextMsg.stagePath || [], nextMsg.options || {}, nextResult.nextStageMessage).then(function() {
-          // Next stage will send its own stage_completed
-        }).catch(function(err) {
-          logwarn(hypervisorState, '[HYPERVISOR]', 'next stage orchestration failed:', err);
-        });
-      } else {
-        if (state.activePipelines) {
-          state.activePipelines = state.activePipelines.filter(function(id) { return id !== message.pipelineId; });
-          persistHypervisorState(state);
-        }
-        // Pipeline booted: send response to original boot_pipeline tag
-        if (message.sender && message.tag) {
-          sendResponse(message.sender, message.tag, { pipelineId: message.pipelineId }, 'hypervisoractor');
-        }
-      }
+      handleStageCompleted(state, message);
       return true;
     }
     default:
@@ -328,79 +346,7 @@ var hypervisorbehavior = function(state, message) {
   }
 };
 
-// No renderactor import (cycle): renderActorReady injected via options.
-Object.keys(hypervisoractorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('hypervisoractor', type, hypervisoractorINTERFACES[type], hypervisorbehavior);
-});
-
-function activateManagedActors(options) {
-  if (options === undefined) options = {};
-  var verbosity = (options.verbosity !== undefined) ? options.verbosity : (typeof options === 'number' ? options : getverbosity(hypervisorState));
-  var renderActorReady = options.renderActorReady || null;
-  var chain = Promise.resolve(true);
-  if (typeof renderActorReady === 'function') {
-    chain = chain.then(function() { return renderActorReady({ verbosity: verbosity }); });
-  }
-  chain = chain.then(function() { return ensureExecutionActorReady({ verbosity: verbosity }); });
-  chain = chain.then(function() { return startDebugActor({ verbosity: verbosity }); });
-  return chain.then(function() { return true; });
-}
-
-// Local mail-based renderactor ping (no renderactor module import).
-function enqueueRenderPing(responseSpec) {
-  var tag = generateTag();
-  sendInstruction('renderactor', 'ping', {}, tag, 'system', responseSpec);
-}
-
-// No renderactor import: renderActorStart injected via options (bootstrap).
-function bootActors(options) {
-  if (options === undefined) options = {};
-  var verbosity = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : (options && options.verbosityLevel !== undefined ? options.verbosityLevel : hypervisorVerbosityConstants.DEBUG));
-  var renderActorStart = options.renderActorStart || null;
-  loginfo(hypervisorState, '[HYPERVISOR]', 'bootActors starting with verbosity:', verbosity);
-  return Promise.resolve(startDbActor({ verbosity: verbosity })).then(function() {
-    return startApiActor({ verbosity: verbosity });
-  }).then(function() {
-    return startWorldmapActor({ verbosity: verbosity });
-  }).then(function() {
-    if (typeof renderActorStart === 'function') return renderActorStart({ verbosity: verbosity });
-    return undefined;
-  }).then(function() {
-    return startExecutionActor({ verbosity: verbosity });
-  }).then(function() {
-    return startDebugActor({ verbosity: verbosity });
-  }).then(function() {
-    return startHypervisorActor({ verbosity: verbosity });
-  }).then(function() {
-    var actorStatuses = {};
-    var allAlive = true;
-    actorStatuses.dbactor = true;
-    actorStatuses.apiactor = true;
-    actorStatuses.worldmapactor = true;
-    actorStatuses.hypervisoractor = true;
-
-    function pingStatus(key, pingFn) {
-      return Promise.resolve(pingFn()).then(function() {
-        actorStatuses[key] = true;
-      }).catch(function() {
-        actorStatuses[key] = false;
-      });
-    }
-
-    return pingStatus('renderactor', enqueueRenderPing).then(function() {
-      return pingStatus('executionactor', enqueueExecutionPing);
-    }).then(function() {
-      return pingStatus('debugactor', enqueueDebugPing);
-    }).then(function() {
-      Object.keys(actorStatuses).forEach(function(k) {
-        if (!actorStatuses[k]) allAlive = false;
-      });
-      return { success: allAlive, status: allAlive ? 'BOOTED' : 'PARTIAL', actors: actorStatuses, timestamp: Date.now(), verbosity: verbosity };
-    });
-  });
-}
-
-var hypervisorMailboxStore = null;
+// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
 
 var HYPERVISOR = null;
 var hypervisorStartPromise = null;
@@ -419,7 +365,7 @@ function startHypervisorActor(options) {
     hypervisorStartPromise = recoverHypervisorState(verbosity).then(function(initial) {
       if (HYPERVISOR) return HYPERVISOR;
       initial.verbosity = verbosity;
-      HYPERVISOR = createactor(hypervisorbehavior, initial, MESSAGEREGISTRY.getInterfaces('hypervisoractor'), {
+      HYPERVISOR = createactor(hypervisorbehavior, initial, hypervisoractorINTERFACES, {
         actorName: 'hypervisoractor',
         mailboxType: 'mail',
         verbosity: verbosity

@@ -8,6 +8,8 @@
 // ('recover' x4, 'ping' x4, 'register_pipeline' x2) — REASONED_ITER4 proof 5.
 // A bare-type-keyed registry would silently overwrite. Each actor registers
 // its own types at load: MESSAGEREGISTRY.register(owner, type, iface, handler).
+// CENTRALIZATION: registration now occurs ONLY in registerconsumers.js,
+// not inside actor files.
 // ============================================================
 
 var MESSAGETYPES = Object.freeze({
@@ -49,9 +51,8 @@ var MESSAGETYPES = Object.freeze({
   // apiactor (2)
   API: 'api',
   FETCH: 'fetch',
-  // mailactor (3)
+  // mailactor (2) — POLL removed
   SEND: 'send',
-  POLL: 'poll',
   ACK: 'ack',
   // dbactor (4)
   STORE: 'store',
@@ -106,7 +107,15 @@ var MESSAGETYPES = Object.freeze({
   UPDATE_FN: 'update_fn',
   OBSERVE: 'observe',
   UNOBSERVE: 'unobserve',
-  GET_WORLDMAP: 'get_worldmap'
+  GET_WORLDMAP: 'get_worldmap',
+  // response types (NEW)
+  RESPONSE: 'response',
+  API_RESULT: 'api_result',
+  FETCH_RESULT: 'fetch_result',
+  TASK_RESULT: 'task_result',
+  PIPELINE_BOOTED: 'pipeline_booted',
+  DOM_RESULT: 'dom_result',
+  STAGE_COMPLETED_ACK: 'stage_completed_ack'
 });
 
 var MESSAGEREGISTRY_STORE = {};

@@ -1,8 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: DIRECT DISPATCH REFACTOR
-//   - No mailTransport, no pollInterval (consumer registration in kernel)
-//   - enqueue* functions fire-and-forget, accept responseSpec
+// Change applied: FINAL SWEEP
+//   - No self-registration (moved to registerconsumers.js)
+//   - createactor receives renderactorINTERFACES directly
+//   - enqueue* functions fire-and-forget, accept optional responseSpec
 //   - enqueuesetlayout typo corrected
 // ============================================================
 
@@ -88,7 +89,6 @@ function createTriggerProducerConsumer(msg) {
   };
 }
 
-// scheduleGcCycle — throttled GC pass: collects ENDED gc objects.
 function scheduleGcCycle(state) {
   if (!state) return;
   if (state._triggerGcScheduled) return;
@@ -101,8 +101,6 @@ function scheduleGcCycle(state) {
   }, 0);
 }
 
-// ensureTriggerObserver — delegated DOM listener forwarding matching dom-event
-// triggers to hypervisoractor via sendInstruction (mail pattern).
 function ensureTriggerObserver(state) {
   if (!state || state._triggerObserverInstalled) return;
   if (typeof document === 'undefined') return;
@@ -376,8 +374,6 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
 };
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) { scheduleGcCycle(state); return true; };
 
-// renderbehavior — plain function returning handler result (promise or value);
-// kernel's processMessage handles both (awaits promises, sends result as response).
 var renderbehavior = function(state, message) {
   var v = state && state.verbosity !== undefined ? state.verbosity : renderVerbosityConstants.DEBUG;
   renderState = Object.freeze({ level: v });
@@ -441,14 +437,12 @@ renderactorINTERFACES[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = { pipelineId:
 renderactorINTERFACES[MESSAGETYPES.REVALIDATE_TRIGGERS] = {};
 Object.freeze(renderactorINTERFACES);
 
-Object.keys(renderactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('renderactor', type, renderactorINTERFACES[type], renderbehavior);
-});
+// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
 
 var RENDERACTOR = createactor(
   renderbehavior,
   renderInitialState,
-  MESSAGEREGISTRY.getInterfaces('renderactor'),
+  renderactorINTERFACES,
   {
     actorName: 'renderactor',
     mailboxType: 'mail',
@@ -470,7 +464,6 @@ function createEnqueuer(type, idRequired, extraPayloadFn) {
       var extra = extraPayloadFn(rest);
       Object.keys(extra).forEach(function(key) { payload[key] = extra[key]; });
     }
-    // last argument may be responseSpec
     var responseSpec = undefined;
     if (arguments.length > 0) {
       var lastArg = arguments[arguments.length - 1];
@@ -551,7 +544,6 @@ var startRenderActor = function(options) {
   }
   return RENDERACTOR;
 };
-
 
 var expectelement = function(id, timeout) {
   if (timeout === undefined) timeout = 30000;

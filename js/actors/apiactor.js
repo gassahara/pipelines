@@ -1,8 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Change applied: DIRECT DISPATCH REFACTOR
-//   - No mailTransport, no pollInterval (consumer registration in kernel)
+// Change applied: FINAL SWEEP
+//   - No self-registration (moved to registerconsumers.js)
+//   - createactor receives apiactorINTERFACES directly
 //   - enqueueapi/enqueuefetch fire-and-forget, accept responseSpec
+//   - apibehavior uses message.responseSpec.responseType when sending response
 // ============================================================
 
 
@@ -75,30 +77,31 @@ var apibehavior = function(state, message) {
       if (!isTextual) {
         return response.json().then(function(data) {
           logdebug(apiState, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
-          sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor');
+          var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
+          sendInstruction(message.sender, responseType, { result: { status: status, data: data } }, message.tag, 'apiactor');
         });
       }
       return response.text().then(function(data) {
         logdebug(apiState, '[APIACTOR]', 'action text response received for:', message.endpoint);
-        sendResponse(message.sender, message.tag, { status: status, data: data }, 'apiactor');
+        var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
+        sendInstruction(message.sender, responseType, { result: { status: status, data: data } }, message.tag, 'apiactor');
       });
     }).catch(function(err) {
       logerror(apiState, '[APIACTOR]', 'action request error for:', message.endpoint, err);
-      sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'apiactor');
+      var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
+      sendInstruction(message.sender, responseType, { result: { error: err.message || String(err) } }, message.tag, 'apiactor');
     });
   }
 
   return state;
 };
 
-Object.keys(apiactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('apiactor', type, apiactorINTERFACES[type], apibehavior);
-});
+// NOTE: No MESSAGEREGISTRY.register here. Registration is centralized in registerconsumers.js.
 
 var APIACTOR = createactor(
   apibehavior,
   { worldmap: createInitialApiWorldmap(), verbosity: apiVerbosityConstants.DEBUG },
-  MESSAGEREGISTRY.getInterfaces('apiactor'),
+  apiactorINTERFACES,
   {
     actorName: 'apiactor',
     mailboxType: 'mail',

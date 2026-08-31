@@ -1,9 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Change applied: DIRECT DISPATCH REFACTOR
-//   - No mailTransport, no pollInterval (consumer registration in kernel)
+// Change applied: FINAL SWEEP
+//   - No self-registration (moved to registerconsumers.js)
+//   - createactor receives executionactorINTERFACES directly
+//   - Removed self-message in runElementTask: now uses internal settleTask
 //   - enqueueExecution* functions fire-and-forget, accept responseSpec
-//   - runElementTask no longer returns a Promise; fire-and-forget task settle
 // ============================================================
 
 
@@ -321,7 +322,6 @@ var executionbehavior = function(state, message) {
   }
 };
 
-// Top-level await removed: sync default state + fire-and-forget restore-merge.
 function createInitialExecutionState() {
   return {
     pipelines: {},
@@ -352,6 +352,28 @@ function restoreExecutionStateInto(actor) {
   });
 }
 
+// Internal task settlement: direct call, no self-message
+function settleTask(taskid, status, result, error) {
+  var currentActorState = EXECUTIONACTOR ? EXECUTIONACTOR.getstate() : null;
+  if (!currentActorState || !currentActorState.tasks) return;
+  var task = currentActorState.tasks[taskid];
+  if (!task) return;
+  task.status = status;
+  task.result = result || null;
+  task.error = error || null;
+  var consumers = task.consumers || [];
+  if (status === 'EXECUTED') {
+    consumers.forEach(function(consumer) {
+      sendResponse(consumer.sender, consumer.tag, result || {}, 'executionactor');
+    });
+  } else if (status === 'FAILED') {
+    consumers.forEach(function(consumer) {
+      sendResponse(consumer.sender, consumer.tag, { error: error ? error.message : 'task failed' }, 'executionactor');
+    });
+  }
+  task.consumers = [];
+}
+
 function runElementTask(taskid, descriptor) {
   var executionContext = {
     env: descriptor.env,
@@ -379,25 +401,22 @@ function runElementTask(taskid, descriptor) {
     return Promise.resolve(descriptor.executor(executionContext));
   }
 
-  // Fire-and-forget: run task, then send TASK_SETTLED without returning a Promise
   runWithProgram().then(function(result) {
     logdebug(executionState, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
-    sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'EXECUTED', result: result || {} }, null, 'executionactor');
+    settleTask(taskid, 'EXECUTED', result || {});
   }).catch(function(err) {
     logerror(executionState, '[EXECUTIONACTOR]', 'runElementTask failed:', taskid, descriptor.elementid, err);
-    sendInstruction('executionactor', MESSAGETYPES.TASK_SETTLED, { taskid: taskid, status: 'FAILED', error: err, result: false }, null, 'executionactor');
+    settleTask(taskid, 'FAILED', null, err);
   });
 }
 
 var executionInitialState = createInitialExecutionState();
-Object.keys(executionactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('executionactor', type, executionactorINTERFACES[type], executionbehavior);
-});
+// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
 
 var EXECUTIONACTOR = createactor(
   executionbehavior,
   executionInitialState,
-  MESSAGEREGISTRY.getInterfaces('executionactor'),
+  executionactorINTERFACES,
   {
     actorName: 'executionactor',
     mailboxType: 'mail',

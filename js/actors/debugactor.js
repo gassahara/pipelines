@@ -1,7 +1,8 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Change applied: DIRECT DISPATCH REFACTOR
-//   - No mailTransport, no pollInterval (consumer registration in kernel)
+// Change applied: FINAL SWEEP
+//   - No self-registration (moved to registerconsumers.js)
+//   - createactor receives debugactorINTERFACES directly
 //   - enqueueDebugPing/enqueueDebugRecover fire-and-forget, accept responseSpec
 // ============================================================
 
@@ -87,7 +88,8 @@ var debugbehavior = function(state, message) {
   if (message.type === MESSAGETYPES.PING) {
     logdebug(debugState, '[DEBUGACTOR]', 'action PING');
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, true, 'debugactor');
+      var responseTypePing = (message.responseSpec && message.responseSpec.responseType) || 'response';
+      sendInstruction(message.sender, responseTypePing, { result: true }, message.tag, 'debugactor');
     }
     return state;
   }
@@ -106,7 +108,7 @@ var debugbehavior = function(state, message) {
         sendInstruction('debugactor', MESSAGETYPES.SHOW, {
           error: e.error || e,
           continuation: null
-        }, null, 'window').catch(function(err) { logwarn(debugState, '[DEBUGACTOR]', err); });
+        }, null, 'window');
       });
 
       window.addEventListener('unhandledrejection', function(e) {
@@ -116,7 +118,7 @@ var debugbehavior = function(state, message) {
           sendInstruction('debugactor', MESSAGETYPES.SHOW, {
             error: e.reason,
             continuation: e.reason.diagnostic.continuation || null
-          }, null, 'window').catch(function(err) { logwarn(debugState, '[DEBUGACTOR]', err); });
+          }, null, 'window');
         }
       });
     }
@@ -124,7 +126,8 @@ var debugbehavior = function(state, message) {
     state.worldmap.overlayVisible = false;
     persistDebugWorldmap(state);
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, true, 'debugactor');
+      var responseTypeInit = (message.responseSpec && message.responseSpec.responseType) || 'response';
+      sendInstruction(message.sender, responseTypeInit, { result: true }, message.tag, 'debugactor');
     }
     return state;
   }
@@ -140,7 +143,8 @@ var debugbehavior = function(state, message) {
     state.worldmap.cccState.currentContinuation = null;
     persistDebugWorldmap(state);
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, state, 'debugactor');
+      var responseTypeHide = (message.responseSpec && message.responseSpec.responseType) || 'response';
+      sendInstruction(message.sender, responseTypeHide, { result: state }, message.tag, 'debugactor');
     }
     return state;
   }
@@ -171,9 +175,7 @@ var debugbehavior = function(state, message) {
           path: ctx.path,
           elementid: ctx.elementid,
           continuation: message.continuation
-        }, null, 'debugactor').catch(function(e) {
-          logwarn(debugState, '[DEBUGACTOR]', 'RETRY failed:', e);
-        });
+        }, null, 'debugactor');
       }));
 
       actions.appendChild(btn('CONTINUE', 'background:#4488ff;color:#fff;', function() {
@@ -185,9 +187,7 @@ var debugbehavior = function(state, message) {
           path: ctx.path,
           elementid: ctx.elementid,
           continuation: message.continuation
-        }, null, 'debugactor').catch(function(e) {
-          logwarn(debugState, '[DEBUGACTOR]', 'CONTINUE failed:', e);
-        });
+        }, null, 'debugactor');
       }));
     }
 
@@ -203,9 +203,7 @@ var debugbehavior = function(state, message) {
         path: abortCtx.path,
         elementid: abortCtx.elementid,
         continuation: message.continuation
-      }, null, 'debugactor').catch(function(e) {
-        logwarn(debugState, '[DEBUGACTOR]', 'ABORT failed:', e);
-      });
+      }, null, 'debugactor');
     }));
 
     overlay.appendChild(actions);
@@ -216,7 +214,8 @@ var debugbehavior = function(state, message) {
     persistDebugWorldmap(state);
 
     if (message.sender && message.tag) {
-      sendResponse(message.sender, message.tag, state, 'debugactor');
+      var responseTypeShow = (message.responseSpec && message.responseSpec.responseType) || 'response';
+      sendInstruction(message.sender, responseTypeShow, { result: state }, message.tag, 'debugactor');
     }
     return state;
   }
@@ -241,14 +240,16 @@ var debugbehavior = function(state, message) {
       }
       logdebug(debugState, '[DEBUGACTOR]', 'debug recovery completed');
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, state, 'debugactor');
+        var responseTypeRecover = (message.responseSpec && message.responseSpec.responseType) || 'response';
+        sendInstruction(message.sender, responseTypeRecover, { result: state }, message.tag, 'debugactor');
       }
     }).catch(function(e) {
       logwarn(debugState, '[DEBUGACTOR]', 'state restore failed:', e);
       state.worldmap = createInitialDebugWorldmap();
       persistDebugWorldmap(state);
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, state, 'debugactor');
+        var responseTypeErr = (message.responseSpec && message.responseSpec.responseType) || 'response';
+        sendInstruction(message.sender, responseTypeErr, { result: state }, message.tag, 'debugactor');
       }
     });
     return state;
@@ -257,9 +258,7 @@ var debugbehavior = function(state, message) {
   return state;
 };
 
-Object.keys(debugactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('debugactor', type, debugactorINTERFACES[type], debugbehavior);
-});
+// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
 
 var DEBUGACTOR = createactor(
   debugbehavior,
@@ -269,7 +268,7 @@ var DEBUGACTOR = createactor(
     worldmap: createInitialDebugWorldmap(),
     verbosity: debugVerbosityConstants.DEBUG
   },
-  MESSAGEREGISTRY.getInterfaces('debugactor'),
+  debugactorINTERFACES,
   {
     actorName: 'debugactor',
     mailboxType: 'mail',

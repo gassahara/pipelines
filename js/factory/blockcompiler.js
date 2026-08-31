@@ -1,13 +1,19 @@
 // ============================================================
 // UPDATED FILE: js/factory/blockcompiler.js
-// Change applied: DIRECT DISPATCH REFACTOR (partial)
-//   - loadPipeline now fire-and-forget with responseSpec pipeline_booted
-//   - Registered response consumer for pipeline_booted (logging)
-//   - Orchestration still promise-based internally (will be converted later)
+// Change applied: FINAL SWEEP
+//   - Internal promises for async blocks (HTTP, DOMQUERY, EXECUTIONQUERY, STOREQUERY)
+//   - Response consumer functions defined globally for central registration
+//   - No .then on enqueue* fire-and-forget functions
 // ============================================================
 
 
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
+
+// Pending maps for response consumers
+var PENDING_HTTP = {};       // tag -> { resolve, env, sig, id, mapping }
+var PENDING_DOM = {};        // tag -> { resolve, env, sig, id }
+var PENDING_EXEC = {};       // tag -> { resolve, env, sig, id }
+var PENDING_STORE = {};      // tag -> { resolve, env, sig, id }
 
 function createBlockCompilerConstants() {
   return Object.freeze({
@@ -286,30 +292,24 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
       if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
     });
 
-    return callwithstack(
-      EVALSTACK, label, 'async-await',
-      function() {
-        if (isTextual) {
-          return enqueuefetch(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' }).then(function(apiresolve) {
-            return { status: apiresolve.status, data: apiresolve.data };
-          });
-        }
-        return enqueueapi(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' }).then(function(apiresolve) {
-          return { status: apiresolve.status, data: apiresolve.data };
-        });
-      },
-      [], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, label) }
-    ).then(function(rawresult) {
-      var result = rawresult.data;
-      if (merged.mapping && merged.mapping.response) {
-        if (rawresult && typeof rawresult === 'object' && !Array.isArray(rawresult)) {
-          result = buildResponse(merged.mapping.response, rawresult);
-        } else {
-          result = rawresult.data || rawresult;
-        }
+    var tag = generateTag();
+    var responseType = isTextual ? 'fetch_result' : 'api_result';
+
+    return new Promise(function(resolve, reject) {
+      PENDING_HTTP[tag] = {
+        env: env,
+        sig: sig,
+        id: id,
+        mapping: merged.mapping,
+        resolve: resolve,
+        reject: reject
+      };
+
+      if (isTextual) {
+        enqueuefetch(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' }, { responseType: responseType });
+      } else {
+        enqueueapi(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' }, { responseType: responseType });
       }
-      writeoutputs(sig, env, result, id);
-      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'http block completed:', id, 'status:', rawresult && rawresult.status);
     });
   };
   blockfn.id = id;
@@ -355,7 +355,11 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) throw new Error('[WRITER] Block "' + id + '" returned invalid result');
         var target = merged.targetlabel || env.approot;
         if (!target) throw new Error('[WRITER] missing targetlabel/approot');
-        return enqueuehtml(target, result.html, !merged.replace).then(function() {
+        var tag = generateTag();
+        return new Promise(function(resolve, reject) {
+          PENDING_DOM[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
+          enqueuehtml(target, result.html, !merged.replace, { responseType: 'dom_result' });
+        }).then(function() {
           if (result.id && Object.keys(sig.outputs || {}).length > 0) {
             return expectelement(result.id, result.timeout || 5000).then(function(domref) {
               env[Object.keys(sig.outputs)[0]] = result;
@@ -393,9 +397,10 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var cmd = merged.command && merged.command.COMMAND;
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
-      if (cmd === 'getviewport') return enqueuegetviewport().then(function(r) { return writeoutputs(sig, env, r, id); });
-      if (cmd === 'getscreen') return enqueuegetscreen().then(function(r) { return writeoutputs(sig, env, r, id); });
-      if (cmd === 'matchmedia') return enqueuematchmedia(props.query).then(function(r) { return writeoutputs(sig, env, r, id); });
+
+      // Special commands that are synchronous? Actually getviewport etc are now async with response consumers.
+      var tag = generateTag();
+      var responseType = 'dom_result';
       var handlerMap = {
         gethtml: enqueuegethtml, getvalue: enqueuegetvalue, getstyle: enqueuegetstyle,
         getposition: enqueuegetposition, getlayout: enqueuegetlayout, sethtml: enqueuesethtml,
@@ -404,15 +409,18 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       };
       var handler = handlerMap[cmd];
       if (!handler) throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
-      return callwithstack(EVALSTACK, 'domquery:' + cmd, 'async-await', function() {
+
+      return new Promise(function(resolve, reject) {
+        PENDING_DOM[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
+        if (cmd === 'getviewport') return enqueuegetviewport({ responseType: responseType });
+        if (cmd === 'getscreen') return enqueuegetscreen({ responseType: responseType });
+        if (cmd === 'matchmedia') return enqueuematchmedia(props.query, { responseType: responseType });
         if (DOMQUERYSETTERS.indexOf(cmd) !== -1) {
-          if (cmd === 'toggleclass') return handler(props.id, props.classname != null ? props.classname : props.value, props.force !== undefined ? props.force : false);
+          if (cmd === 'toggleclass') return handler(props.id, props.classname != null ? props.classname : props.value, props.force !== undefined ? props.force : false, { responseType: responseType });
           var val = sig.inputs && sig.inputs.length > 0 ? compilepathaccessor(props.value)(env) : props.value;
-          return handler(props.id, val);
+          return handler(props.id, val, { responseType: responseType });
         }
-        return handler(props.id);
-      }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'domquery:' + cmd) }).then(function(result) {
-        writeoutputs(sig, env, result, id);
+        return handler(props.id, { responseType: responseType });
       });
     };
     blockfn.id = id;
@@ -425,11 +433,10 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
-      return enqueueRenderCrypto(bytes).then(function(result) {
-        var out = {};
-        out[outputkey] = result;
-        writeoutputs(sig, env, out, id);
-        return {};
+      var tag = generateTag();
+      return new Promise(function(resolve, reject) {
+        PENDING_DOM[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
+        enqueueRenderCrypto(bytes, { responseType: 'dom_result' });
       });
     };
     blockfn.id = id;
@@ -451,30 +458,33 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var command = merged.command || {};
       var COMMAND = command.COMMAND;
       var args = command.args || {};
-      switch (COMMAND) {
-        case 'get':
-          return enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null).then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        case 'tasks':
-          return enqueueExecutionGetTasks(args).then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        case 'task_status':
-          return enqueueExecutionGetTaskStatus(args.taskid).then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        case 'await_task':
-          return enqueueExecutionAwaitTask(args.taskid).then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        case 'cancel_task':
-          return enqueueExecutionCancelTask(args.taskid).then(function() { return; });
-        case 'stop_task':
-          return enqueueExecutionStopTask(args.taskid).then(function() { return; });
-        default:
-          throw new Error('[executionquery] unknown command: ' + COMMAND);
-      }
+      var tag = generateTag();
+      var responseType = 'task_result';
+      return new Promise(function(resolve, reject) {
+        PENDING_EXEC[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
+        switch (COMMAND) {
+          case 'get':
+            enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null, { responseType: responseType });
+            break;
+          case 'tasks':
+            enqueueExecutionGetTasks(args, { responseType: responseType });
+            break;
+          case 'task_status':
+            enqueueExecutionGetTaskStatus(args.taskid, { responseType: responseType });
+            break;
+          case 'await_task':
+            enqueueExecutionAwaitTask(args.taskid, { responseType: responseType });
+            break;
+          case 'cancel_task':
+            enqueueExecutionCancelTask(args.taskid, { responseType: responseType });
+            break;
+          case 'stop_task':
+            enqueueExecutionStopTask(args.taskid, { responseType: responseType });
+            break;
+          default:
+            reject(new Error('[executionquery] unknown command: ' + COMMAND));
+        }
+      });
     };
     blockfn.id = id;
     return blockfn;
@@ -485,29 +495,30 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var command = merged.command || {};
       var COMMAND = command.COMMAND;
       var args = command.args || {};
-      switch (COMMAND) {
-        case 'store':
-          if (!args.key) throw new Error('[storequery] store requires key');
-          return enqueueDbStore(args.key, args.value !== undefined ? args.value : compilepathaccessor(args.value)(env)).then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        case 'restore':
-          if (!args.key) throw new Error('[storequery] restore requires key');
-          return enqueueDbRestore(args.key).then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        case 'list':
-          return enqueueDbList().then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        case 'delete':
-          if (!args.key) throw new Error('[storequery] delete requires key');
-          return enqueueDbDelete(args.key).then(function(result) {
-            writeoutputs(sig, env, { result: result }, id);
-          });
-        default:
-          throw new Error('[storequery] unknown command: ' + COMMAND);
-      }
+      var tag = generateTag();
+      var responseType = 'dom_result'; // or a specific store_result
+      return new Promise(function(resolve, reject) {
+        PENDING_STORE[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
+        switch (COMMAND) {
+          case 'store':
+            if (!args.key) return reject(new Error('[storequery] store requires key'));
+            enqueueDbStore(args.key, args.value !== undefined ? args.value : compilepathaccessor(args.value)(env), { responseType: responseType });
+            break;
+          case 'restore':
+            if (!args.key) return reject(new Error('[storequery] restore requires key'));
+            enqueueDbRestore(args.key, { responseType: responseType });
+            break;
+          case 'list':
+            enqueueDbList({ responseType: responseType });
+            break;
+          case 'delete':
+            if (!args.key) return reject(new Error('[storequery] delete requires key'));
+            enqueueDbDelete(args.key, { responseType: responseType });
+            break;
+          default:
+            reject(new Error('[storequery] unknown command: ' + COMMAND));
+        }
+      });
     };
     blockfn.id = id;
     return blockfn;
@@ -572,18 +583,11 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, o
 
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'PIPELINE boot request:', childEnv.pipelineid);
 
-    var bootPromise = enqueueHypervisorBootPipeline(bootMessage);
-    var outputkey = Object.keys(el.outputs || {})[0] || null;
-    if (outputkey) {
-      return bootPromise.then(function(bootResult) {
-        env[outputkey] = bootResult;
-        return bootResult;
-      }).catch(function(err) {
-        env[outputkey] = { status: 'failed', error: err && err.message ? err.message : String(err) };
-        throw err;
-      });
-    }
-    return bootPromise;
+    var tag = generateTag();
+    return new Promise(function(resolve, reject) {
+      PENDING_EXEC[tag] = { env: env, sig: { inputs: [], outputs: el.outputs || {} }, id: elementId, resolve: resolve, reject: reject };
+      enqueueHypervisorBootPipeline(bootMessage, { responseType: 'pipeline_booted' });
+    });
   };
   blockfn.id = elementId;
   blockfn.kind = 'pipeline';
@@ -724,8 +728,10 @@ function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, o
   }
 
   return runElement(0, env).then(function(finalEnv) {
-    return enqueueHypervisorStageCompleted(pipelineId, stage.id, nextStageMessage || null, finalEnv).then(function() {
-      return finalEnv;
+    var tag = generateTag();
+    return new Promise(function(resolve) {
+      PENDING_STORE[tag] = { env: env, sig: { inputs: [], outputs: {} }, id: stage.id, resolve: resolve };
+      enqueueHypervisorStageCompleted(pipelineId, stage.id, nextStageMessage || null, finalEnv, { responseType: 'stage_completed_ack' });
     });
   });
 }
@@ -740,6 +746,7 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
     briefcase: pipelineDefinition.briefcase || {}
   };
   var tag = generateTag();
+  PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
   sendInstruction('hypervisoractor', 'boot_pipeline', {
     pipeline: pipelineDefinition,
     accessors: options.accessors || null,
@@ -799,20 +806,22 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
     var closureSerialized = null;
     if (typeof compiledElement === 'function') closureSerialized = serializeSelfContainedClosure(compiledElement, inputargs, execEnv);
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'submitting element:', elementId);
-    return enqueueExecutionSubmit({
-      pipelineid: pipelineId,
-      path: path,
-      elementid: elementId,
-      env: execEnv,
-      signature: { inputs: blockInputs, outputs: blockOutputs },
-      executor: executor,
-      properties: elementDef || {},
-      serialized: closureSerialized,
-      origin: compiledElement.origin || null,
-      programRef: null,
-      elementId: elementId
-    }).then(function(submitted) {
-      return enqueueExecutionAwaitTask(submitted.taskid);
+    var tag = generateTag();
+    return new Promise(function(resolve, reject) {
+      PENDING_EXEC[tag] = { env: env, sig: { inputs: blockInputs, outputs: blockOutputs }, id: elementId, resolve: resolve, reject: reject };
+      enqueueExecutionSubmit({
+        pipelineid: pipelineId,
+        path: path,
+        elementid: elementId,
+        env: execEnv,
+        signature: { inputs: blockInputs, outputs: blockOutputs },
+        executor: executor,
+        properties: elementDef || {},
+        serialized: closureSerialized,
+        origin: compiledElement.origin || null,
+        programRef: null,
+        elementId: elementId
+      }, { responseType: 'task_result' });
     });
   }
   wrapper.id = elementId;
@@ -821,7 +830,74 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
   return wrapper;
 }
 
-// Response consumer for pipeline_booted
-RESPONSECONSUMERS['pipeline_booted'] = function(result, tag) {
-  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'pipeline booted:', result);
-};
+// ============================================================
+// Response consumer functions (for central registration)
+// ============================================================
+
+function blockcompilerApiResult(result, tag) {
+  var pending = PENDING_HTTP[tag];
+  if (!pending) return;
+  delete PENDING_HTTP[tag];
+  var rawresult = result && result.result ? result.result : result;
+  var finalResult = rawresult.data;
+  if (pending.mapping && pending.mapping.response) {
+    if (rawresult && typeof rawresult === 'object' && !Array.isArray(rawresult)) {
+      finalResult = buildResponse(pending.mapping.response, rawresult);
+    } else {
+      finalResult = rawresult.data || rawresult;
+    }
+  }
+  try {
+    writeoutputs(pending.sig, pending.env, finalResult, pending.id);
+    pending.resolve(finalResult);
+  } catch (err) {
+    pending.reject(err);
+  }
+}
+
+function blockcompilerFetchResult(result, tag) {
+  blockcompilerApiResult(result, tag);
+}
+
+function blockcompilerTaskResult(result, tag) {
+  var pending = PENDING_EXEC[tag];
+  if (!pending) return;
+  delete PENDING_EXEC[tag];
+  try {
+    writeoutputs(pending.sig, pending.env, result, pending.id);
+    pending.resolve(result);
+  } catch (err) {
+    pending.reject(err);
+  }
+}
+
+function blockcompilerPipelineBooted(result, tag) {
+  var pending = PENDING_EXEC[tag];
+  if (!pending) return;
+  delete PENDING_EXEC[tag];
+  try {
+    writeoutputs(pending.sig, pending.env, result, pending.id);
+    pending.resolve(result);
+  } catch (err) {
+    pending.reject(err);
+  }
+}
+
+function blockcompilerDomResult(result, tag) {
+  var pending = PENDING_DOM[tag];
+  if (!pending) return;
+  delete PENDING_DOM[tag];
+  try {
+    writeoutputs(pending.sig, pending.env, result, pending.id);
+    pending.resolve(result);
+  } catch (err) {
+    pending.reject(err);
+  }
+}
+
+function blockcompilerStageCompletedAck(result, tag) {
+  var pending = PENDING_STORE[tag];
+  if (!pending) return;
+  delete PENDING_STORE[tag];
+  pending.resolve(result);
+}

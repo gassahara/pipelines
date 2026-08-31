@@ -1,10 +1,11 @@
 // ============================================================
 // UPDATED FILE: js/actors/actorkernel.js
-// Change applied: DIRECT DISPATCH REFACTOR
-// - Mail actors no longer poll; register consumer in ACTORCONSUMERS
-// - send for mail actors throws error (use sendInstruction)
+// Change applied: FINAL DIRECT DISPATCH REFACTOR
+// - Removed mailTransport requirement for mailboxType 'mail'
+// - Removed auto-registration of ACTORCONSUMERS
+// - Added dispatch method to actor object
 // - waitforemptymailbox for mail actors resolves immediately
-// - memory/db mailbox logic retained for non-mail actors
+// - send for mail actors throws error
 // ============================================================
 
 
@@ -150,11 +151,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
   if (mailboxType === 'db' && options.mailboxStore) {
     mailbox = createDbMailbox(actorName, options.mailboxStore);
   } else if (mailboxType === 'mail') {
-    if (!options.mailTransport || typeof options.mailTransport.requestUnreadMessages !== 'function' ||
-        typeof options.mailTransport.sendInstruction !== 'function' ||
-        typeof options.mailTransport.sendResponse !== 'function') {
-      throw new Error('[createactor] mailboxType "mail" requires options.mailTransport with requestUnreadMessages, sendInstruction, sendResponse');
-    }
+    // Direct dispatch: no mailTransport needed; consumer registration happens centrally.
     mailbox = null;
   } else {
     mailbox = createMemoryMailbox();
@@ -297,21 +294,12 @@ function createactor(behavior, initialstate, messageInterface, options) {
   var actor = Object.freeze({
     send: send,
     getstate: getstate,
-    waitforemptymailbox: waitforemptymailbox
+    waitforemptymailbox: waitforemptymailbox,
+    dispatch: function(message) { return processMessage(message); }
   });
 
   if (options.actorName) {
     actorRegistry[options.actorName] = actor;
-  }
-
-  // DIRECT DISPATCH: for mail actors, register consumer for each message type
-  if (mailboxType === 'mail' && messageInterface) {
-    Object.keys(messageInterface).forEach(function(type) {
-      var consumerKey = actorName + ':' + type;
-      ACTORCONSUMERS[consumerKey] = function(message) {
-        return processMessage(message);
-      };
-    });
   }
 
   return actor;

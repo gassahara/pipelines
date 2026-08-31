@@ -1,8 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied: Minor update – no direct dispatch; retains memory mailbox.
-// No pollInterval, no mailTransport.
-// Other actors continue to use enqueueDb* for persistence via fire-and-forget.
+// Change applied: FINAL SWEEP
+//   - No self-registration (moved to registerconsumers.js)
+//   - createactor receives dbactorINTERFACES directly
+//   - retains memory mailbox for persistence
+//   - enqueueDb* functions remain fire-and-forget with callbacks
 // ============================================================
 
 
@@ -392,14 +394,12 @@ var dbbehavior = function(state, message) {
   return { store: store, verbosity: v };
 };
 
-Object.keys(dbactorINTERFACES).forEach(function(type) {
-  MESSAGEREGISTRY.register('dbactor', type, dbactorINTERFACES[type], dbbehavior);
-});
+// NOTE: No MESSAGEREGISTRY.register loop. Centralized in registerconsumers.js.
 
 var DBACTOR = createactor(
   dbbehavior,
   loadInitialState(),
-  MESSAGEREGISTRY.getInterfaces('dbactor'),
+  dbactorINTERFACES,
   { actorName: 'dbactor', mailboxType: 'memory', verbosity: dbVerbosityConstants.DEBUG }
 );
 
