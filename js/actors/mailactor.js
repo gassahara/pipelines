@@ -181,10 +181,12 @@ function sendInstruction(recipient, type, payload, tag, sender) {
   if (sender === undefined) sender = 'system';
 
   var flatMessage = { type: type, sender: sender, tag: tag };
-  // Flatten payload keys into the flat message
+  // Flatten payload keys into the flat message, but never override reserved keys
   if (payload && typeof payload === 'object') {
     Object.keys(payload).forEach(function(key) {
-      flatMessage[key] = payload[key];
+      if (key !== 'type' && key !== 'sender' && key !== 'tag') {
+        flatMessage[key] = payload[key];
+      }
     });
   }
 

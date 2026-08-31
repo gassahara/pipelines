@@ -6,7 +6,8 @@
 //   sendInstruction, requestUnreadMessages, sendResponse
 // - dedicated setInterval polling loop independent of ensureLoop
 // - pollInterval configurable (default 25ms)
-// - send for mail actors only sends via mailTransport, does not affect polling
+// - send for mail actors now throws error (prevent self-send)
+// - waitforemptymailbox for mail actors resolves immediately
 // - processMessage returns a promise chain; async keyword removed
 // - retained memory/db mailbox logic and drain fixes
 // ============================================================
@@ -271,11 +272,7 @@ function createactor(behavior, initialstate, messageInterface, options) {
     }
     logdebug({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'send message:', message.type);
     if (mailboxType === 'mail') {
-      options.mailTransport.sendInstruction(actorName, message.type, message.payload || message, null, 'system')
-        .catch(function(err) {
-          logerror({ level: currentstate.verbosity !== undefined ? currentstate.verbosity : initialVerbosity }, '[ACTOR:' + actorName + ']', 'sendInstruction failed:', err);
-        });
-      return;
+      throw new Error('[createactor] send() is not supported for mail actors; use sendInstruction directly.');
     }
     if (mailboxType === 'db') {
       mailbox.append(message).then(function() {
@@ -288,6 +285,9 @@ function createactor(behavior, initialstate, messageInterface, options) {
   };
 
   var waitforemptymailbox = function() {
+    if (mailboxType === 'mail') {
+      return Promise.resolve(currentstate);
+    }
     if (!running && (mailboxType === 'memory' ? mailbox.isEmpty() : false)) {
       return Promise.resolve(currentstate);
     }
