@@ -1,9 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Change applied: VALUE SET FORMAT FOR UPDATES
-//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
-//     instead of { patch: {...} }.
-//   - Stateless pure function; no interfaces, no createactor.
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - debugbehavior returns env unchanged after handling messages.
+//   - Uses ensureEnvSlice to initialize debug slice if missing.
+//   - Sends updates to worldmapactor via value set messages.
+//   - Responses sent via sendResponse, not by returning non-env.
 // ============================================================
 
 var debugVerbosityConstants = createVerbosityConstants();
@@ -46,17 +47,29 @@ function ensureOverlay(debugSlice) {
   return debugSlice.overlay;
 }
 
+function ensureDebugSlice(env) {
+  return ensureEnvSlice(env, 'debug', function() {
+    return {
+      overlay: null,
+      currentContinuation: null,
+      overlayVisible: false,
+      cccState: { currentContinuation: null },
+      globalListenersInstalled: false
+    };
+  });
+}
+
 // Pure behavior function: (env, message) -> env
 function debugbehavior(env, message) {
   logdebug(env, '[DEBUGACTOR]', 'behavior handling action:', message.type);
 
-  var debugSlice = env.debug;
+  var debugSlice = ensureDebugSlice(env);
 
   if (message.type === MESSAGETYPES.PING) {
     logdebug(env, '[DEBUGACTOR]', 'action PING');
     if (message.sender && message.tag) {
       var responseTypePing = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendInstruction(message.sender, responseTypePing, { result: true }, message.tag, 'debugactor');
+      sendResponse(message.sender, message.tag, true, 'debugactor', responseTypePing);
     }
     return env;
   }
@@ -89,23 +102,14 @@ function debugbehavior(env, message) {
       });
     }
 
-    // Update debug slice via worldmapactor using value set format
+    debugSlice.overlayVisible = false;
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      updates: [{
-        path: 'debug',
-        value: {
-          overlayVisible: false,
-          globalListenersInstalled: debugSlice.globalListenersInstalled,
-          overlay: debugSlice.overlay,
-          currentContinuation: debugSlice.currentContinuation,
-          cccState: debugSlice.cccState
-        }
-      }]
+      updates: [{ path: 'debug', value: debugSlice }]
     }, generateTag(), 'debugactor');
 
     if (message.sender && message.tag) {
       var responseTypeInit = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendInstruction(message.sender, responseTypeInit, { result: true }, message.tag, 'debugactor');
+      sendResponse(message.sender, message.tag, true, 'debugactor', responseTypeInit);
     }
     return env;
   }
@@ -116,22 +120,17 @@ function debugbehavior(env, message) {
       debugSlice.overlay.style.display = 'none';
       debugSlice.overlay.innerHTML = '';
     }
+    debugSlice.overlayVisible = false;
+    debugSlice.cccState.currentContinuation = null;
+    debugSlice.currentContinuation = null;
+
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      updates: [{
-        path: 'debug',
-        value: {
-          overlayVisible: false,
-          cccState: { currentContinuation: null },
-          currentContinuation: null,
-          overlay: debugSlice.overlay,
-          globalListenersInstalled: debugSlice.globalListenersInstalled
-        }
-      }]
+      updates: [{ path: 'debug', value: debugSlice }]
     }, generateTag(), 'debugactor');
 
     if (message.sender && message.tag) {
       var responseTypeHide = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendInstruction(message.sender, responseTypeHide, { result: env }, message.tag, 'debugactor');
+      sendResponse(message.sender, message.tag, env, 'debugactor', responseTypeHide);
     }
     return env;
   }
@@ -195,30 +194,25 @@ function debugbehavior(env, message) {
     overlay.appendChild(actions);
     overlay.style.display = 'flex';
 
+    debugSlice.overlayVisible = true;
+    debugSlice.cccState.currentContinuation = message.continuation || null;
+    debugSlice.currentContinuation = message.continuation || null;
+
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      updates: [{
-        path: 'debug',
-        value: {
-          overlayVisible: true,
-          cccState: { currentContinuation: message.continuation || null },
-          currentContinuation: message.continuation || null,
-          overlay: overlay,
-          globalListenersInstalled: debugSlice.globalListenersInstalled
-        }
-      }]
+      updates: [{ path: 'debug', value: debugSlice }]
     }, generateTag(), 'debugactor');
 
     if (message.sender && message.tag) {
       var responseTypeShow = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendInstruction(message.sender, responseTypeShow, { result: env }, message.tag, 'debugactor');
+      sendResponse(message.sender, message.tag, env, 'debugactor', responseTypeShow);
     }
     return env;
   }
 
   if (message.type === MESSAGETYPES.RECOVER) {
     logdebug(env, '[DEBUGACTOR]', 'action RECOVER debug state');
-    enqueueDbRestore('actor:state:debug').then(function(maybe) {
-      var newDebug = (maybe && maybe.tag === 'JUST') ? maybe.value : {
+    enqueueDbRestore('actor:state:debug').then(function(saved) {
+      var newDebug = (saved !== null && saved !== undefined) ? saved : {
         overlay: null,
         currentContinuation: null,
         overlayVisible: false,
@@ -230,13 +224,13 @@ function debugbehavior(env, message) {
       }, generateTag(), 'debugactor');
       if (message.sender && message.tag) {
         var responseTypeRecover = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        sendInstruction(message.sender, responseTypeRecover, { result: env }, message.tag, 'debugactor');
+        sendResponse(message.sender, message.tag, env, 'debugactor', responseTypeRecover);
       }
     }).catch(function(e) {
       logwarn(env, '[DEBUGACTOR]', 'state restore failed:', e);
       if (message.sender && message.tag) {
         var responseTypeErr = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        sendInstruction(message.sender, responseTypeErr, { result: env }, message.tag, 'debugactor');
+        sendResponse(message.sender, message.tag, env, 'debugactor', responseTypeErr);
       }
     });
     return env;

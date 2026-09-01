@@ -1,17 +1,17 @@
 // ============================================================
 // UPDATED FILE: js/actors/hypervisoractor.js
-// Change applied: LOCAL HYPERVISOR SLICE GUARD
-//   - Added ensureHypervisorSlice(env) to initialize env.hypervisor
-//     if absent, preventing hyperSlice undefined errors.
-//   - All other logic unchanged; stateless pure function.
-//   - Value set update format retained.
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - ensureHypervisorSlice(env) guard retained.
+//   - hypervisorbehavior returns env after processing.
+//   - Sends updates to worldmapactor via value set format.
+//   - Responses sent via sendResponse, not by returning non-env.
 // ============================================================
 
 var hypervisorVerbosityConstants = createVerbosityConstants();
 
 function ensureHypervisorSlice(env) {
-  if (!env.hypervisor) {
-    env.hypervisor = {
+  return ensureEnvSlice(env, 'hypervisor', function() {
+    return {
       boot: true,
       envByPipeline: {},
       renderHtml: '',
@@ -24,8 +24,7 @@ function ensureHypervisorSlice(env) {
       loadedPipelines: {},
       nextStageMessages: {}
     };
-  }
-  return env.hypervisor;
+  });
 }
 
 function createHypervisorErrorContext(label) {
@@ -300,9 +299,9 @@ function hypervisorbehavior(env, message) {
       if (message.sender && message.tag) sendResponse(message.sender, message.tag, true, 'hypervisoractor');
       return env;
     case MESSAGETYPES.RECOVER:
-      enqueueDbRestore('actor:state:hypervisor').then(function(maybe) {
-        if (maybe && maybe.tag === 'JUST') {
-          env.hypervisor = maybe.value;
+      enqueueDbRestore('actor:state:hypervisor').then(function(saved) {
+        if (saved !== null && saved !== undefined) {
+          env.hypervisor = saved;
         } else {
           env.hypervisor = {
             boot: true,

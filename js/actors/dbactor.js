@@ -1,10 +1,11 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied: MONADIC DB ACTOR
-//   - No callback resolve/reject; uses RIGHT/LEFT for mutations,
-//     Maybe (JUST/NOTHING) for restore.
-//   - dbbehavior remains pure; receives env and message, returns env.
-//   - DNA serialization utilities retained.
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - dbbehavior now returns env after every operation.
+//   - Operation results are delivered via resolve/reject callbacks
+//     attached to the message, not via monadic return values.
+//   - Uses ensureDbSlice to initialize env.db.store if missing.
+//   - No RIGHT/LEFT monadic return; no OOP-style state factory.
 // ============================================================
 
 var dbVerbosityConstants = createVerbosityConstants();
@@ -24,23 +25,10 @@ function getStorage() {
   return null;
 }
 
-function loadInitialState() {
-  try {
-    var storage = getStorage();
-    var raw = storage && storage.getItem(ROOT_KEY);
-    if (raw) {
-      var parsed = JSON.parse(raw);
-      var keys = parsed.keys || {};
-      logdebug(dbState, '[DBACTOR]', 'loadInitialState loaded', Object.keys(keys).length, 'keys');
-      return {
-        store: Object.keys(keys).reduce(function(acc, k) { acc[k] = keys[k]; return acc; }, {}),
-        verbosity: dbVerbosityConstants.DEBUG
-      };
-    }
-  } catch (err) {
-    logwarn(dbState, '[DBACTOR]', 'loadInitialState failed:', err);
-  }
-  return { store: {}, verbosity: dbVerbosityConstants.DEBUG };
+function ensureDbSlice(env) {
+  return ensureEnvSlice(env, 'db', function() {
+    return { store: {} };
+  });
 }
 
 function persistAttempt(store, root, storage, attempt) {
@@ -63,16 +51,6 @@ function persist(store) {
   var storage = getStorage();
   if (!storage) return false;
   return persistAttempt(store, root, storage, 0);
-}
-
-// ==================== MONADIC CONSTRUCTORS ====================
-
-function RIGHT(value) {
-  return { tag: 'RIGHT', value: value };
-}
-
-function LEFT(error) {
-  return { tag: 'LEFT', error: error };
 }
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
@@ -338,16 +316,16 @@ function deoptimizeSerializedDna(jsonString) {
   return finalResult;
 }
 
-// ==================== ACTOR BEHAVIOR (PURE FUNCTION, MONADIC) ====================
+// ==================== ACTOR BEHAVIOR (PURE FUNCTION, RETURNS ENV) ====================
 
 var dbbehavior = function(env, message) {
   logdebug(env, '[DBACTOR]', 'behavior handling action:', message.type);
 
-  if (!env.db || typeof env.db.store === 'undefined') {
-    // This should not happen if worldmapactor initialized env correctly.
-    env.db = { store: {} };
-  }
-  var store = env.db.store;
+  var dbSlice = ensureDbSlice(env);
+  var store = dbSlice.store;
+
+  var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
+  var reject = function(err) { if (typeof message.reject === 'function') message.reject(err); };
 
   switch (message.type) {
     case MESSAGETYPES.STORE: {
@@ -356,10 +334,12 @@ var dbbehavior = function(env, message) {
         var serialized = JSON.stringify(message.value);
         if (serialized.length > MAX_ENTRY_BYTES) {
           logwarn(env, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
-          return LEFT(new Error('value too large'));
+          reject(new Error('value too large'));
+          return env;
         }
       } catch (e) {
-        return LEFT(e);
+        reject(e);
+        return env;
       }
 
       var keys = Object.keys(store);
@@ -370,57 +350,58 @@ var dbbehavior = function(env, message) {
       store[message.key] = message.value;
       var persisted = persist(store);
       if (persisted) {
-        return RIGHT(store);
+        resolve(true);
       } else {
-        return LEFT(new Error('persist failed'));
+        reject(new Error('persist failed'));
       }
+      return env;
     }
     case MESSAGETYPES.RESTORE:
       logdebug(env, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
-      return store[message.key] !== undefined ? JUST(store[message.key]) : NOTHING();
+      resolve(store[message.key] !== undefined ? store[message.key] : null);
+      return env;
     case MESSAGETYPES.LIST:
       logdebug(env, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
-      return RIGHT(Object.keys(store));
+      resolve(Object.keys(store));
+      return env;
     case MESSAGETYPES.DELETE: {
       logdebug(env, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
       var persistedDel = persist(store);
-      return persistedDel ? RIGHT(store) : LEFT(new Error('persist failed'));
+      if (persistedDel) {
+        resolve(true);
+      } else {
+        reject(new Error('persist failed'));
+      }
+      return env;
     }
     default:
       logwarn(env, '[DBACTOR]', 'unknown action:', message.type);
-      return LEFT(new Error('unknown message type'));
+      reject(new Error('[DBACTOR] unknown message type'));
+      return env;
   }
 };
 
 // No registerActorState for dbactor; state lives in global ENV under env.db.
 // Dispatch uses dispatchToActor('dbactor', dbbehavior, message).
 
-// Monadic producers: return Promise of RIGHT/LEFT or Maybe.
-var enqueueDbStore = function(key, value) {
-  return Promise.resolve(dispatchToActor('dbactor', dbbehavior, {
-    type: MESSAGETYPES.STORE,
-    key: key,
-    value: value
-  }));
+var enqueue = function(type, payload) {
+  return new Promise(function(resolve, reject) {
+    var message = {};
+    if (payload) {
+      Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
+    }
+    message.type = type;
+    message.resolve = resolve;
+    message.reject = reject;
+    dispatchToActor('dbactor', dbbehavior, message);
+  });
 };
-var enqueueDbRestore = function(key) {
-  return Promise.resolve(dispatchToActor('dbactor', dbbehavior, {
-    type: MESSAGETYPES.RESTORE,
-    key: key
-  }));
-};
-var enqueueDbList = function() {
-  return Promise.resolve(dispatchToActor('dbactor', dbbehavior, {
-    type: MESSAGETYPES.LIST
-  }));
-};
-var enqueueDbDelete = function(key) {
-  return Promise.resolve(dispatchToActor('dbactor', dbbehavior, {
-    type: MESSAGETYPES.DELETE,
-    key: key
-  }));
-};
+
+var enqueueDbStore = function(key, value) { return enqueue(MESSAGETYPES.STORE, { key: key, value: value }); };
+var enqueueDbRestore = function(key) { return enqueue(MESSAGETYPES.RESTORE, { key: key }); };
+var enqueueDbList = function() { return enqueue(MESSAGETYPES.LIST); };
+var enqueueDbDelete = function(key) { return enqueue(MESSAGETYPES.DELETE, { key: key }); };
 
 function startDbActor(options) {
   if (options !== undefined) {

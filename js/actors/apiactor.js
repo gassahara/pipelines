@@ -1,9 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Change applied: VALUE SET FORMAT FOR UPDATES
-//   - Sends { updates: [{ path: 'api', value: updatedApi }] }
-//     instead of { patch: { api: updatedApi } }.
-//   - Stateless pure function; no interfaces, no createactor.
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - apibehavior returns env unchanged after sending updates via
+//     sendInstruction to worldmapactor (value set format).
+//   - No per-actor state globals; no createactor; no interfaces.
 // ============================================================
 
 // Pure behavior function: (env, message) -> env
@@ -22,9 +22,10 @@ function apibehavior(env, message) {
         token: message.token || '',
         timestamp: Date.now()
       },
-      requestCount: (env.api.requestCount || 0) + 1
+      requestCount: (env.api && env.api.requestCount || 0) + 1
     };
 
+    // Send update to worldmapactor via message
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
       updates: [{ path: 'api', value: updatedApi }]
     }, generateTag(), 'apiactor');

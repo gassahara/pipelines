@@ -1,11 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Change applied: VALUE SET FORMAT FOR UPDATES
-//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
-//     instead of { patch: {...} }.
-//   - Stateless pure function; no interfaces, no createactor.
-//   - State slice is env.execution; mutations are made on the slice,
-//     then sent as updates to worldmapactor.
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - executionbehavior returns env unchanged after processing.
+//   - Uses ensureEnvSlice to initialize execution slice if missing.
+//   - Sends updates to worldmapactor via value set messages.
+//   - Responses sent via sendResponse, not by returning non-env.
 // ============================================================
 
 var executionVerbosityConstants = createVerbosityConstants();
@@ -31,6 +30,17 @@ function sanitizeForState(value, seen) {
   });
   seen.pop();
   return out;
+}
+
+function ensureExecutionSlice(env) {
+  return ensureEnvSlice(env, 'execution', function() {
+    return {
+      pipelines: {},
+      tasks: {},
+      taskCounter: 0,
+      htmlSnapshot: null
+    };
+  });
 }
 
 function nextTaskId(execSlice) {
@@ -108,7 +118,7 @@ function sendExecutionUpdate(execSlice) {
 function executionbehavior(env, message) {
   logdebug(env, '[EXECUTIONACTOR]', 'behavior handling action:', message.type);
 
-  var execSlice = env.execution;
+  var execSlice = ensureExecutionSlice(env);
 
   switch (message.type) {
     case MESSAGETYPES.PIPELINE_LOADED: {
@@ -261,9 +271,9 @@ function executionbehavior(env, message) {
       return env;
     }
     case MESSAGETYPES.RECOVER: {
-      enqueueDbRestore('actor:state:execution').then(function(maybe) {
-        if (maybe && maybe.tag === 'JUST') {
-          env.execution = maybe.value;
+      enqueueDbRestore('actor:state:execution').then(function(saved) {
+        if (saved !== null && saved !== undefined) {
+          env.execution = saved;
         } else {
           env.execution = {
             pipelines: {},

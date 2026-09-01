@@ -1,9 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/factory/blockcompiler.js
 // Change applied: PIPELINE LIBS DEPENDENCY INJECTION
-//   - loadPipeline now reads pipelineDefinition.libs and loads
-//     scripts sequentially before sending BOOT_PIPELINE.
-//   - Uses a new internal helper loadPipelineLibs.
+//   - loadPipeline reads pipelineDefinition.libs and loads scripts
+//     sequentially before sending BOOT_PIPELINE.
+//   - Reusable loadPipelineLibs helper.
+//   - No actor object construction; pure dispatch via sendInstruction.
 // ============================================================
 
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });

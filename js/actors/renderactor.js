@@ -1,15 +1,24 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: VALUE SET FORMAT FOR UPDATES
-//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
-//     instead of { patch: {...} }.
-//   - Response sending for handler results retained (P149).
-//   - Stateless pure function; no interfaces, no createactor.
-//   - State slice is env.render; mutations are made on the slice,
-//     then sent as updates to worldmapactor.
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - renderbehavior returns env after processing.
+//   - All handler results are transmitted via sendResponse, never
+//     by returning non-env from behavior.
+//   - Uses ensureEnvSlice to initialize render slice if missing.
+//   - Sends updates to worldmapactor via value set format.
 // ============================================================
 
 var renderVerbosityConstants = createVerbosityConstants();
+
+function ensureRenderSlice(env) {
+  return ensureEnvSlice(env, 'render', function() {
+    return {
+      html: '',
+      viewport: null,
+      actorRegistry: null
+    };
+  });
+}
 
 function createRenderErrorContext(label) {
   return function(err) {
@@ -292,11 +301,15 @@ HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(env, msg) {
 };
 HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
   return waitForDomReady().then(function() {
-    return enqueueDbRestore('actor:state:render').then(function(maybe) {
-      if (maybe && maybe.tag === 'JUST') {
-        env.render = maybe.value;
+    return enqueueDbRestore('actor:state:render').then(function(saved) {
+      if (saved !== null && saved !== undefined) {
+        env.render = saved;
       } else {
-        env.render = { html: '', viewport: null };
+        env.render = {
+          html: '',
+          viewport: null,
+          actorRegistry: null
+        };
       }
       scheduleGcCycle(env.render);
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
@@ -304,7 +317,11 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
       }, generateTag(), 'renderactor');
       return env;
     }).catch(function(e) {
-      env.render = { html: '', viewport: null };
+      env.render = {
+        html: '',
+        viewport: null,
+        actorRegistry: null
+      };
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'render', value: env.render }]
       }, generateTag(), 'renderactor');
@@ -341,7 +358,6 @@ HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(env, msg) {
   return true;
 };
 
-// Helper to send response if expected
 function respondIfNeeded(env, message, result) {
   if (message.sender && message.tag) {
     var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
@@ -352,6 +368,7 @@ function respondIfNeeded(env, message, result) {
 // Pure behavior function: (env, message) -> env
 function renderbehavior(env, message) {
   logdebug(env, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
+  var renderSlice = ensureRenderSlice(env);
   var handler = HANDLERS[message.type];
   if (handler) {
     var result = handler(env, message);

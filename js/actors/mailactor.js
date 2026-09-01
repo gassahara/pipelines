@@ -1,12 +1,10 @@
 // ============================================================
-// UPDATED FILE: js/mailactor.js
-// Change applied: NO POLLING, PURE FUNCTION MAIL BEHAVIOR
-//   - Removes actor object construction and polling loops.
-//   - Mail behavior is a pure function used by the runtime.
-//   - sendInstruction uses runtime dispatch to mailbehavior.
-//   - Global registries (ACTORCONSUMERS, RESPONSECONSUMERS, EXPECTATIONS).
-//   - sendResponse sends a response message with type from original
-//     expectation (responseSpec.responseType).
+// UPDATED FILE: js/actors/mailactor.js
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - mailbehavior now returns env after processing SEND/ACK.
+//   - No actor object construction; no polling; no registration.
+//   - Uses dispatchToActor wrapper for state management.
+//   - ACTORCONSUMERS, RESPONSECONSUMERS, EXPECTATIONS remain global.
 // ============================================================
 
 var mailVerbosityConstants = createVerbosityConstants();
@@ -17,24 +15,13 @@ var ACTORCONSUMERS = {};          // key: actorName + ':' + messageType -> behav
 var RESPONSECONSUMERS = {};       // key: responseType -> function(result, tag)
 var EXPECTATIONS = {};            // key: tag -> { responseType: string }
 
-function createInitialMailState() {
-  return {
-    queues: {},        // recipient -> array of envelopes (may be unused in direct dispatch)
-    nextId: 1
-  };
-}
-
 // Pure behavior for SEND and ACK messages.
-// In direct dispatch, queues are not used for polling; they remain for
-// optional persistence or auditing.
+// Returns env (or Promise<env>), never a non-env value.
 function mailbehavior(env, message) {
-  var v = env && env.verbosity !== undefined ? env.verbosity : mailVerbosityConstants.DEBUG;
-  mailState = Object.freeze({ level: v });
-
   logdebug(env, '[MAILACTOR]', 'behavior handling action:', message.type);
 
-  if (!env.mail) env.mail = createInitialMailState();
-  var mailSlice = env.mail;
+  // Ensure mail slice exists if needed (optional audit)
+  var mailSlice = ensureEnvSlice(env, 'mail', function() { return { queues: {}, nextId: 1 }; });
 
   if (message.type === MESSAGETYPES.SEND) {
     var recipient = message.recipient;
@@ -59,7 +46,8 @@ function mailbehavior(env, message) {
     var consumer = ACTORCONSUMERS[consumerKey];
     if (consumer) {
       // Consumer is a pure behavior function; runtime owns state.
-      // Use dispatchToActor, which passes the current ENV to the consumer.
+      // dispatchToActor will get current env, call consumer(env, flatMessage),
+      // and store returned env.
       dispatchToActor(recipient, consumer, flatMessage);
     }
 
@@ -95,13 +83,8 @@ function mailbehavior(env, message) {
   return env;
 }
 
-// Register initial state for mailactor within worldmapactor's ENV.
-// This is done by the boot process or by worldmapactor initialization,
-// not here, to avoid coupling. However, we provide a helper.
-function initializeMailInEnv(env) {
-  if (!env.mail) env.mail = createInitialMailState();
-  return env;
-}
+// No registration of mailactor state; worldmapactor owns ENV.
+// Dispatch uses dispatchToActor('mailactor', mailbehavior, message).
 
 function generateTag() {
   return 'tag_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
@@ -122,7 +105,6 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec) {
   }
   if (responseSpec) flatMessage.responseSpec = responseSpec;
 
-  // Dispatch SEND message to mailbehavior (pure function, ENV owned by worldmapactor).
   dispatchToActor('mailactor', mailbehavior, {
     type: MESSAGETYPES.SEND,
     recipient: recipient,
@@ -140,7 +122,6 @@ function startMailActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      mailState = Object.freeze({ level: lvl });
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;
     }

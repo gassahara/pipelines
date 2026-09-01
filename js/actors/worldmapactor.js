@@ -1,15 +1,17 @@
 // ============================================================
 // UPDATED FILE: js/actors/worldmapactor.js
-// Change applied: FUNCTIONAL ENV – NO INITIALIZATION
-//   - Initial state is {}; no createInitialEnv.
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - No createInitialEnv; initial state is {} (empty object).
 //   - recoverEnv returns saved ENV or {}.
 //   - startWorldmapActor returns a Promise that resolves after recovery.
 //   - Worldmapactor does not define or merge actor slices.
+//   - Behavior returns env, compatible with immutable dispatch wrapper.
 // ============================================================
 
 var worldmapVerbosityConstants = createVerbosityConstants();
 var worldmapState = Object.freeze({ level: worldmapVerbosityConstants.DEBUG });
 
+// Immutable path setter and value set application remain.
 function setInPath(obj, path, value) {
   var keys = path.split('.');
   if (keys.length === 0) return value;
@@ -30,9 +32,9 @@ function applyValueSet(env, updates) {
 
 function persistEnv(env) {
   logdebug(env, '[WORLDMAPACTOR]', 'persistEnv saving ENV to db');
-  enqueueDbStore('actor:state:env', env).then(function(either) {
-    if (either.tag === 'LEFT') {
-      logwarn(env, '[WORLDMAPACTOR]', 'state persist failed:', either.error);
+  enqueueDbStore('actor:state:env', env).then(function(success) {
+    if (success === false) {
+      logwarn(env, '[WORLDMAPACTOR]', 'state persist failed');
     }
   }).catch(function(e) {
     logwarn(env, '[WORLDMAPACTOR]', 'state persist failed:', e);
@@ -41,10 +43,10 @@ function persistEnv(env) {
 
 function recoverEnv() {
   logdebug({}, '[WORLDMAPACTOR]', 'recoverEnv start');
-  return enqueueDbRestore('actor:state:env').then(function(maybe) {
-    if (maybe && maybe.tag === 'JUST') {
-      loginfo(maybe.value, '[WORLDMAPACTOR]', 'recoverEnv restored ENV');
-      return maybe.value;
+  return enqueueDbRestore('actor:state:env').then(function(saved) {
+    if (saved !== null && saved !== undefined) {
+      loginfo(saved, '[WORLDMAPACTOR]', 'recoverEnv restored ENV');
+      return saved;
     }
     loginfo({}, '[WORLDMAPACTOR]', 'recoverEnv no saved ENV, using empty container');
     return {};

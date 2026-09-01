@@ -1,12 +1,11 @@
 // ============================================================
-// UPDATED FILE: js/actorkernel.js
-// Change applied: GLOBAL ENV RUNTIME (worldmapactor owns ENV)
-//   - Removes actor object construction entirely.
-//   - Runtime holds only the global ENV object, managed by worldmapactor.
-//   - dispatchToActor retrieves ENV from worldmapactor, calls pure
-//     behavior(env, message), and stores the returned ENV back to
-//     worldmapactor state.
-//   - createMessageValidator retained for message validation.
+// UPDATED FILE: js/actors/actorkernel.js
+// Change applied: IMMUTABLE DISPATCH REFACTOR
+//   - Added pure dispatchImmutable(env, actorName, behavior, message)
+//   - dispatchToActor is now a wrapper that reads current ENV,
+//     calls dispatchImmutable, then stores returned ENV.
+//   - Added ensureEnvSlice(env, sliceName, defaultFactory) helper.
+//   - No internal global mutations inside pure transformer.
 // ============================================================
 
 var kernelVerbosityConstants = createVerbosityConstants();
@@ -26,23 +25,38 @@ function setActorState(actorName, nextState) {
   actorStateRegistry[actorName] = nextState;
 }
 
-// Dispatch a message to a pure behavior function.
-// The global ENV is retrieved from worldmapactor and passed as first argument.
-// The behavior returns the updated ENV, which is stored back to worldmapactor.
-function dispatchToActor(actorName, behavior, message) {
-  var env = getActorState('worldmapactor');
-  if (env === undefined) {
-    throw new Error('[dispatchToActor] worldmapactor state (ENV) is not registered');
-  }
+// Pure immutable transformer: (env, actorName, behavior, message) -> env | Promise<env>
+function dispatchImmutable(env, actorName, behavior, message) {
   var result = behavior(env, message);
   if (result && typeof result.then === 'function') {
-    return result.then(function(resolved) {
-      setActorState('worldmapactor', resolved);
-      return resolved;
+    return result;
+  }
+  return result;
+}
+
+// Wrapper that manages global state outside the pure core.
+function dispatchToActor(actorName, behavior, message) {
+  var currentEnv = getActorState('worldmapactor');
+  if (currentEnv === undefined) {
+    throw new Error('[dispatchToActor] worldmapactor state (ENV) is not registered');
+  }
+  var result = dispatchImmutable(currentEnv, actorName, behavior, message);
+  if (result && typeof result.then === 'function') {
+    return result.then(function(newEnv) {
+      setActorState('worldmapactor', newEnv);
+      return newEnv;
     });
   }
   setActorState('worldmapactor', result);
   return result;
+}
+
+// Helper for actors to ensure their slice exists.
+function ensureEnvSlice(env, sliceName, defaultFactory) {
+  if (!env[sliceName]) {
+    env[sliceName] = defaultFactory();
+  }
+  return env[sliceName];
 }
 
 function createMessageValidator(interfaceMap) {
