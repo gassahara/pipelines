@@ -1,11 +1,10 @@
 // ============================================================
 // UPDATED FILE: js/factory/blockcompiler.js
-// Change applied: FINAL SWEEP
-//   - Internal promises for async blocks (HTTP, DOMQUERY, EXECUTIONQUERY, STOREQUERY)
-//   - Response consumer functions defined globally for central registration
-//   - No .then on enqueue* fire-and-forget functions
+// Change applied: PIPELINE LIBS DEPENDENCY INJECTION
+//   - loadPipeline now reads pipelineDefinition.libs and loads
+//     scripts sequentially before sending BOOT_PIPELINE.
+//   - Uses a new internal helper loadPipelineLibs.
 // ============================================================
-
 
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
@@ -398,7 +397,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
 
-      // Special commands that are synchronous? Actually getviewport etc are now async with response consumers.
       var tag = generateTag();
       var responseType = 'dom_result';
       var handlerMap = {
@@ -496,7 +494,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var COMMAND = command.COMMAND;
       var args = command.args || {};
       var tag = generateTag();
-      var responseType = 'dom_result'; // or a specific store_result
+      var responseType = 'dom_result';
       return new Promise(function(resolve, reject) {
         PENDING_STORE[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
         switch (COMMAND) {
@@ -736,31 +734,59 @@ function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, o
   });
 }
 
+// NEW: load pipeline libs sequentially
+function loadPipelineLibs(libs, basePath, done) {
+  if (!libs || libs.length === 0) return done();
+  var index = 0;
+  function loadNext() {
+    if (index >= libs.length) return done();
+    var src = basePath + libs[index];
+    var s = document.createElement('script');
+    s.src = src;
+    s.onload = function() { index++; loadNext(); };
+    s.onerror = function() { done(new Error('failed to load ' + src)); };
+    document.head.appendChild(s);
+  }
+  loadNext();
+}
+
 function loadPipeline(pipelineDefinition, pipelineId, options) {
   if (options === undefined) options = {};
   var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
-  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
-  var firstStage = {
-    stageIndex: 0,
-    stagePath: [],
-    briefcase: pipelineDefinition.briefcase || {}
-  };
-  var tag = generateTag();
-  PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
-  sendInstruction('hypervisoractor', 'boot_pipeline', {
-    pipeline: pipelineDefinition,
-    accessors: options.accessors || null,
-    sinks: options.sinks || [],
-    pipelineId: id,
-    options: {
-      autorun: options.autorun !== false,
-      baseEnv: options.baseEnv || {},
-      updateworldmap: options.updateworldmap || null,
-      verbosity: options.verbosity
-    },
-    firstStage: firstStage
-  }, tag, 'blockcompiler', {
-    responseType: 'pipeline_booted'
+
+  // New: load pipeline libs before boot
+  var libs = pipelineDefinition.libs || [];
+  var basePath = options.pipelinesBase || PIPELINES_BASE || '';
+
+  loadPipelineLibs(libs, basePath, function(err) {
+    if (err) {
+      console.error('[BLOCKCOMPILER] loadPipeline failed to load libs:', err);
+      return;
+    }
+
+    loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
+    var firstStage = {
+      stageIndex: 0,
+      stagePath: [],
+      briefcase: pipelineDefinition.briefcase || {}
+    };
+    var tag = generateTag();
+    PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
+    sendInstruction('hypervisoractor', 'boot_pipeline', {
+      pipeline: pipelineDefinition,
+      accessors: options.accessors || null,
+      sinks: options.sinks || [],
+      pipelineId: id,
+      options: {
+        autorun: options.autorun !== false,
+        baseEnv: options.baseEnv || {},
+        updateworldmap: options.updateworldmap || null,
+        verbosity: options.verbosity
+      },
+      firstStage: firstStage
+    }, tag, 'blockcompiler', {
+      responseType: 'pipeline_booted'
+    });
   });
 }
 
