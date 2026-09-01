@@ -1,14 +1,12 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: P149 – RESPONSE SENDING FOR HANDLER RESULTS
-//   - renderbehavior now sends responses via sendResponse when
-//     handler result exists and sender/tag are present.
-//   - Handlers that return values (queries, creation) now
-//     resolve pending expectations in blockcompiler.
-//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
-//   - Behavior signature: renderbehavior(env, message) -> env
-//   - Uses env.render slice for render state; updates sent to
-//     worldmapactor via sendInstruction.
+// Change applied: VALUE SET FORMAT FOR UPDATES
+//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
+//     instead of { patch: {...} }.
+//   - Response sending for handler results retained (P149).
+//   - Stateless pure function; no interfaces, no createactor.
+//   - State slice is env.render; mutations are made on the slice,
+//     then sent as updates to worldmapactor.
 // ============================================================
 
 var renderVerbosityConstants = createVerbosityConstants();
@@ -294,21 +292,21 @@ HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(env, msg) {
 };
 HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
   return waitForDomReady().then(function() {
-    return enqueueDbRestore('actor:state:render').then(function(saved) {
-      if (saved) {
-        env.render = saved;
+    return enqueueDbRestore('actor:state:render').then(function(maybe) {
+      if (maybe && maybe.tag === 'JUST') {
+        env.render = maybe.value;
       } else {
         env.render = { html: '', viewport: null };
       }
       scheduleGcCycle(env.render);
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { render: env.render }
+        updates: [{ path: 'render', value: env.render }]
       }, generateTag(), 'renderactor');
       return env;
     }).catch(function(e) {
       env.render = { html: '', viewport: null };
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { render: env.render }
+        updates: [{ path: 'render', value: env.render }]
       }, generateTag(), 'renderactor');
       return env;
     });
@@ -334,7 +332,7 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(env, msg) {
   }
   scheduleGcCycle(env.render);
   sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-    patch: { render: env.render }
+    updates: [{ path: 'render', value: env.render }]
   }, generateTag(), 'renderactor');
   return true;
 };

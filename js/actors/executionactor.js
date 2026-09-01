@@ -1,14 +1,11 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
-//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
-//   - Behavior signature: executionbehavior(env, message) -> env
-//   - Uses env.execution slice for pipelines, tasks, taskCounter, etc.
-//   - When state changes, sends UPDATE message to worldmapactor via
-//     sendInstruction; does not return a modified env.
-//   - Task settlement is done directly by mutating env.execution in place
-//     and then sending an UPDATE message.
-//   - Producers enqueueExecution* remain.
+// Change applied: VALUE SET FORMAT FOR UPDATES
+//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
+//     instead of { patch: {...} }.
+//   - Stateless pure function; no interfaces, no createactor.
+//   - State slice is env.execution; mutations are made on the slice,
+//     then sent as updates to worldmapactor.
 // ============================================================
 
 var executionVerbosityConstants = createVerbosityConstants();
@@ -101,25 +98,17 @@ function ensurePipeline(execSlice, pipelineid) {
   return execSlice.pipelines[pipelineid];
 }
 
+function sendExecutionUpdate(execSlice) {
+  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+    updates: [{ path: 'execution', value: execSlice }]
+  }, generateTag(), 'executionactor');
+}
+
 // Pure behavior function: (env, message) -> env
 function executionbehavior(env, message) {
   logdebug(env, '[EXECUTIONACTOR]', 'behavior handling action:', message.type);
 
   var execSlice = env.execution;
-
-  var readOnly = [
-    MESSAGETYPES.GET_STATUS,
-    MESSAGETYPES.RECOVER,
-    MESSAGETYPES.AWAIT_TASK,
-    MESSAGETYPES.GET_TASKS,
-    MESSAGETYPES.GET_TASK_STATUS,
-    MESSAGETYPES.PING
-  ];
-
-  if (readOnly.indexOf(message.type) === -1) {
-    // For state-changing actions, send updates after processing.
-    // We don't persist in executionactor directly anymore.
-  }
 
   switch (message.type) {
     case MESSAGETYPES.PIPELINE_LOADED: {
@@ -127,17 +116,13 @@ function executionbehavior(env, message) {
       var pipeline = ensurePipeline(execSlice, message.pipelineid);
       if (message.env && Object.keys(message.env).length > 0) pipeline.env = message.env;
       pipeline.status = 'running';
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { execution: execSlice }
-      }, generateTag(), 'executionactor');
+      sendExecutionUpdate(execSlice);
       return env;
     }
     case MESSAGETYPES.ENV_UPDATED: {
       var p3 = ensurePipeline(execSlice, message.pipelineid);
       p3.env = sanitizeForState(message.env || {});
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { execution: execSlice }
-      }, generateTag(), 'executionactor');
+      sendExecutionUpdate(execSlice);
       return env;
     }
     case MESSAGETYPES.GET_STATUS: {
@@ -157,9 +142,7 @@ function executionbehavior(env, message) {
         programRef: message.programRef || null,
         origin: message.origin || null
       });
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { execution: execSlice }
-      }, generateTag(), 'executionactor');
+      sendExecutionUpdate(execSlice);
       runElementTask(task.taskid, message, env);
       return env;
     }
@@ -191,9 +174,7 @@ function executionbehavior(env, message) {
       } else {
         if (!awaitTask.consumers) awaitTask.consumers = [];
         awaitTask.consumers.push({ sender: message.sender, tag: message.tag });
-        sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-          patch: { execution: execSlice }
-        }, generateTag(), 'executionactor');
+        sendExecutionUpdate(execSlice);
       }
       return env;
     }
@@ -243,16 +224,12 @@ function executionbehavior(env, message) {
     }
     case MESSAGETYPES.CANCEL_TASK: {
       cancelTask(execSlice, message.taskid);
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { execution: execSlice }
-      }, generateTag(), 'executionactor');
+      sendExecutionUpdate(execSlice);
       return env;
     }
     case MESSAGETYPES.STOP_TASK: {
       stopTask(execSlice, message.taskid);
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { execution: execSlice }
-      }, generateTag(), 'executionactor');
+      sendExecutionUpdate(execSlice);
       return env;
     }
     case MESSAGETYPES.CCC_ABORT:
@@ -279,16 +256,14 @@ function executionbehavior(env, message) {
           });
         }
         task4.consumers = [];
-        sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-          patch: { execution: execSlice }
-        }, generateTag(), 'executionactor');
+        sendExecutionUpdate(execSlice);
       }
       return env;
     }
     case MESSAGETYPES.RECOVER: {
-      enqueueDbRestore('actor:state:execution').then(function(saved) {
-        if (saved) {
-          env.execution = saved;
+      enqueueDbRestore('actor:state:execution').then(function(maybe) {
+        if (maybe && maybe.tag === 'JUST') {
+          env.execution = maybe.value;
         } else {
           env.execution = {
             pipelines: {},
@@ -297,9 +272,7 @@ function executionbehavior(env, message) {
             htmlSnapshot: null
           };
         }
-        sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-          patch: { execution: env.execution }
-        }, generateTag(), 'executionactor');
+        sendExecutionUpdate(env.execution);
         if (message.sender && message.tag) sendResponse(message.sender, message.tag, env, 'executionactor');
       }).catch(function(e) {
         if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'executionactor');
@@ -311,9 +284,7 @@ function executionbehavior(env, message) {
       var p10 = ensurePipeline(execSlice, message.pipelineid);
       p10.usesElementSnapshots = true;
       if (message.env) p10.env = sanitizeForState(message.env);
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { execution: execSlice }
-      }, generateTag(), 'executionactor');
+      sendExecutionUpdate(execSlice);
       return env;
     }
     case MESSAGETYPES.PING: {
@@ -348,9 +319,7 @@ function settleTask(taskid, status, result, error, env) {
     });
   }
   task.consumers = [];
-  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-    patch: { execution: execSlice }
-  }, generateTag(), 'executionactor');
+  sendExecutionUpdate(execSlice);
 }
 
 function runElementTask(taskid, descriptor, env) {
@@ -454,7 +423,6 @@ function startExecutionActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      executionVerbosityConstants = Object.freeze({ level: lvl });
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;
     }

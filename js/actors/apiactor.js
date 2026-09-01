@@ -1,13 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
-//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
-//   - Behavior signature: apibehavior(env, message) -> env
-//   - Uses env.api slice for lastRequest/requestCount.
-//   - When it needs to update env.api, sends an UPDATE message to
-//     worldmapactor via sendInstruction.
-//   - Does NOT return a modified env; returns env unchanged.
-//   - Producers enqueueapi/enqueuefetch remain.
+// Change applied: VALUE SET FORMAT FOR UPDATES
+//   - Sends { updates: [{ path: 'api', value: updatedApi }] }
+//     instead of { patch: { api: updatedApi } }.
+//   - Stateless pure function; no interfaces, no createactor.
 // ============================================================
 
 // Pure behavior function: (env, message) -> env
@@ -17,7 +13,6 @@ function apibehavior(env, message) {
   if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
     logdebug(env, '[APIACTOR]', 'action:', message.type, 'method:', message.method, 'endpoint:', message.endpoint);
 
-    // Prepare updated api slice
     var updatedApi = {
       lastRequest: {
         type: message.type,
@@ -30,10 +25,10 @@ function apibehavior(env, message) {
       requestCount: (env.api.requestCount || 0) + 1
     };
 
-    // Send update to worldmapactor (message-based, no direct mutation)
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      patch: { api: updatedApi }
+      updates: [{ path: 'api', value: updatedApi }]
     }, generateTag(), 'apiactor');
+
     var apiConstants = createApiConstants();
     var url = apiConstants.APIBASE + '/' + message.endpoint;
     var isTextual = message.type === MESSAGETYPES.FETCH;
@@ -71,7 +66,6 @@ function apibehavior(env, message) {
     });
   }
 
-  // Return env unchanged; updates happen via worldmapactor message.
   return env;
 }
 

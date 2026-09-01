@@ -1,13 +1,11 @@
 // ============================================================
 // UPDATED FILE: js/actors/hypervisoractor.js
-// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
-//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
-//   - Behavior signature: hypervisorbehavior(env, message) -> env
-//   - Uses env.hypervisor slice for pipeline orchestration state.
-//   - When state changes, sends UPDATE message to worldmapactor via
-//     sendInstruction; does not return a modified env.
-//   - Direct helpers compileStageRequestToElements, orchestrateStage,
-//     etc. remain.
+// Change applied: VALUE SET FORMAT FOR UPDATES
+//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
+//     instead of { patch: {...} }.
+//   - Stateless pure function; no interfaces, no createactor.
+//   - State slice is env.hypervisor; mutations are made on the slice,
+//     then sent as updates to worldmapactor.
 // ============================================================
 
 var hypervisorVerbosityConstants = createVerbosityConstants();
@@ -26,7 +24,7 @@ function registerHypervisorPipeline(hyperSlice, pipelineId) {
   if (hyperSlice.activePipelines.indexOf(pipelineId) === -1) {
     hyperSlice.activePipelines.push(pipelineId);
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      patch: { hypervisor: hyperSlice }
+      updates: [{ path: 'hypervisor', value: hyperSlice }]
     }, generateTag(), 'hypervisoractor');
   }
 }
@@ -65,7 +63,7 @@ function handleStageCompleted(hyperSlice, message) {
       __root__: { env: message.env, updatedAt: Date.now() }
     };
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      patch: { hypervisor: hyperSlice }
+      updates: [{ path: 'hypervisor', value: hyperSlice }]
     }, generateTag(), 'hypervisoractor');
   }
   var nextMsg = message.nextStageMessage || (hyperSlice.nextStageMessages ? hyperSlice.nextStageMessages[key] : null);
@@ -102,7 +100,7 @@ function handleStageCompleted(hyperSlice, message) {
     if (hyperSlice.activePipelines) {
       hyperSlice.activePipelines = hyperSlice.activePipelines.filter(function(id) { return id !== message.pipelineId; });
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
     }
     if (message.sender && message.tag) {
@@ -122,7 +120,7 @@ function hypervisorbehavior(env, message) {
       return env;
     case MESSAGETYPES.SAVE:
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     case MESSAGETYPES.GET_ENV: {
@@ -143,7 +141,7 @@ function hypervisorbehavior(env, message) {
         hyperSlice.envByPipeline[message.pipelineId].__root__ = { __root__: { env: message.env || {}, updatedAt: Date.now() } };
       }
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     }
@@ -161,7 +159,7 @@ function hypervisorbehavior(env, message) {
     case MESSAGETYPES.SET_RENDER_HTML:
       hyperSlice.renderHtml = message.html || '';
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     case MESSAGETYPES.GET_EXECUTION_STACK:
@@ -170,7 +168,7 @@ function hypervisorbehavior(env, message) {
     case MESSAGETYPES.SET_EXECUTION_STACK:
       hyperSlice.executionStack = message.stack || [];
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     case MESSAGETYPES.GET_ROUTE:
@@ -180,7 +178,7 @@ function hypervisorbehavior(env, message) {
       if (!hyperSlice.routes) hyperSlice.routes = {};
       hyperSlice.routes[message.key] = message.route || null;
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     case MESSAGETYPES.GET_ACTIVE_PIPELINES:
@@ -198,14 +196,14 @@ function hypervisorbehavior(env, message) {
         });
       }
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     case MESSAGETYPES.SET_PROGRAM:
       if (!hyperSlice.programs) hyperSlice.programs = {};
       hyperSlice.programs[message.programKey] = message.programSource;
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     case MESSAGETYPES.GET_PROGRAM:
@@ -214,7 +212,7 @@ function hypervisorbehavior(env, message) {
     case MESSAGETYPES.MARK_BOOT:
       hyperSlice.boot = message.boot !== false;
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     case MESSAGETYPES.SET_STAGE_DESCRIPTOR: {
@@ -224,7 +222,7 @@ function hypervisorbehavior(env, message) {
       hyperSlice.stageDescriptors[key] = message.descriptor;
       hyperSlice.triggerRecipients[key] = true;
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       return env;
     }
@@ -248,7 +246,7 @@ function hypervisorbehavior(env, message) {
       }
       hyperSlice.routes['pipeline:' + pipelineId] = { stageId: stageId, stagePath: message.stagePath || [stageId] };
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       callwithstack(EVALSTACK, 'hypervisor-trigger:' + pipelineId + ':' + stageId, 'async-await', function() {
         var stage = {
@@ -273,7 +271,7 @@ function hypervisorbehavior(env, message) {
         if (!hyperSlice.envByPipeline[pipelineId]) hyperSlice.envByPipeline[pipelineId] = {};
         hyperSlice.envByPipeline[pipelineId].__root__ = { __root__: { env: updatedEnv, updatedAt: Date.now() } };
         sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-          patch: { hypervisor: hyperSlice }
+          updates: [{ path: 'hypervisor', value: hyperSlice }]
         }, generateTag(), 'hypervisoractor');
       }).catch(function(err) {
         logwarn(env, '[HYPERVISOR]', 'trigger failed:', err);
@@ -284,9 +282,9 @@ function hypervisorbehavior(env, message) {
       if (message.sender && message.tag) sendResponse(message.sender, message.tag, true, 'hypervisoractor');
       return env;
     case MESSAGETYPES.RECOVER:
-      enqueueDbRestore('actor:state:hypervisor').then(function(saved) {
-        if (saved && typeof saved === 'object') {
-          env.hypervisor = saved;
+      enqueueDbRestore('actor:state:hypervisor').then(function(maybe) {
+        if (maybe && maybe.tag === 'JUST') {
+          env.hypervisor = maybe.value;
         } else {
           env.hypervisor = {
             boot: true,
@@ -303,7 +301,7 @@ function hypervisorbehavior(env, message) {
           };
         }
         sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-          patch: { hypervisor: env.hypervisor }
+          updates: [{ path: 'hypervisor', value: env.hypervisor }]
         }, generateTag(), 'hypervisoractor');
         if (message.sender && message.tag) sendResponse(message.sender, message.tag, env, 'hypervisoractor');
       }).catch(function(e) {
@@ -311,7 +309,6 @@ function hypervisorbehavior(env, message) {
       });
       return env;
     case MESSAGETYPES.ACTIVATE_ACTORS:
-      // In pure function architecture, no actor activation is required.
       return env;
     case MESSAGETYPES.BOOT_PIPELINE: {
       var bootOptions = message.options || {};
@@ -354,7 +351,7 @@ function hypervisorbehavior(env, message) {
         logwarn(env, '[HYPERVISOR]', 'boot pipeline orchestration failed:', err);
       });
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { hypervisor: hyperSlice }
+        updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
       if (message.sender && message.tag) sendResponse(message.sender, message.tag, { started: true, pipelineId: message.pipelineId }, 'hypervisoractor');
       return env;

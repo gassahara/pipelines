@@ -1,13 +1,9 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
-//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
-//   - Behavior signature: debugbehavior(env, message) -> env
-//   - Uses env.debug slice for overlay state and currentContinuation.
-//   - When it needs to update env.debug, sends UPDATE message to
-//     worldmapactor via sendInstruction.
-//   - Does NOT return a modified env; returns env unchanged.
-//   - Producers enqueueDebugPing, enqueueDebugRecover remain.
+// Change applied: VALUE SET FORMAT FOR UPDATES
+//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
+//     instead of { patch: {...} }.
+//   - Stateless pure function; no interfaces, no createactor.
 // ============================================================
 
 var debugVerbosityConstants = createVerbosityConstants();
@@ -93,17 +89,18 @@ function debugbehavior(env, message) {
       });
     }
 
-    // Update debug slice via worldmapactor
+    // Update debug slice via worldmapactor using value set format
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      patch: {
-        debug: {
+      updates: [{
+        path: 'debug',
+        value: {
           overlayVisible: false,
           globalListenersInstalled: debugSlice.globalListenersInstalled,
           overlay: debugSlice.overlay,
           currentContinuation: debugSlice.currentContinuation,
           cccState: debugSlice.cccState
         }
-      }
+      }]
     }, generateTag(), 'debugactor');
 
     if (message.sender && message.tag) {
@@ -120,15 +117,16 @@ function debugbehavior(env, message) {
       debugSlice.overlay.innerHTML = '';
     }
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      patch: {
-        debug: {
+      updates: [{
+        path: 'debug',
+        value: {
           overlayVisible: false,
           cccState: { currentContinuation: null },
           currentContinuation: null,
           overlay: debugSlice.overlay,
           globalListenersInstalled: debugSlice.globalListenersInstalled
         }
-      }
+      }]
     }, generateTag(), 'debugactor');
 
     if (message.sender && message.tag) {
@@ -198,15 +196,16 @@ function debugbehavior(env, message) {
     overlay.style.display = 'flex';
 
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-      patch: {
-        debug: {
+      updates: [{
+        path: 'debug',
+        value: {
           overlayVisible: true,
           cccState: { currentContinuation: message.continuation || null },
           currentContinuation: message.continuation || null,
           overlay: overlay,
           globalListenersInstalled: debugSlice.globalListenersInstalled
         }
-      }
+      }]
     }, generateTag(), 'debugactor');
 
     if (message.sender && message.tag) {
@@ -218,8 +217,8 @@ function debugbehavior(env, message) {
 
   if (message.type === MESSAGETYPES.RECOVER) {
     logdebug(env, '[DEBUGACTOR]', 'action RECOVER debug state');
-    enqueueDbRestore('actor:state:debug').then(function(saved) {
-      var newDebug = saved || {
+    enqueueDbRestore('actor:state:debug').then(function(maybe) {
+      var newDebug = (maybe && maybe.tag === 'JUST') ? maybe.value : {
         overlay: null,
         currentContinuation: null,
         overlayVisible: false,
@@ -227,7 +226,7 @@ function debugbehavior(env, message) {
         globalListenersInstalled: false
       };
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
-        patch: { debug: newDebug }
+        updates: [{ path: 'debug', value: newDebug }]
       }, generateTag(), 'debugactor');
       if (message.sender && message.tag) {
         var responseTypeRecover = (message.responseSpec && message.responseSpec.responseType) || 'response';
