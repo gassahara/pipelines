@@ -1,13 +1,14 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
+// Change applied: P149 – RESPONSE SENDING FOR HANDLER RESULTS
+//   - renderbehavior now sends responses via sendResponse when
+//     handler result exists and sender/tag are present.
+//   - Handlers that return values (queries, creation) now
+//     resolve pending expectations in blockcompiler.
 //   - No interface definitions, no MESSAGEREGISTRY, no createactor.
 //   - Behavior signature: renderbehavior(env, message) -> env
-//   - Uses env.render slice for HTML, viewport, etc.
-//   - When state changes, sends UPDATE message to worldmapactor via
-//     sendInstruction; does not return a modified env.
-//   - DOM side effects are isolated in handler functions, but state
-//     persistence still goes through worldmapactor.
+//   - Uses env.render slice for render state; updates sent to
+//     worldmapactor via sendInstruction.
 // ============================================================
 
 var renderVerbosityConstants = createVerbosityConstants();
@@ -125,11 +126,11 @@ HANDLERS[MESSAGETYPES.RENDER] = function(env, msg) {
   if (typeof msg.renderer === 'function') {
     try { msg.renderer(target, msg.data, msg.env || {}); } catch (err) { console.error('[RENDERACTOR] Renderer error:', err); throw err; }
   }
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.CLEAR] = function(env, msg) {
   withElement(msg.id, null, function(el) { el.innerHTML = ''; });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.HTML] = function(env, msg) {
   return waitForDomReady().then(function() {
@@ -137,26 +138,26 @@ HANDLERS[MESSAGETYPES.HTML] = function(env, msg) {
       if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
       else el.innerHTML = msg.markup;
     });
-    return env;
+    return true;
   });
 };
 HANDLERS[MESSAGETYPES.REMOVE] = function(env, msg) {
   withElement(msg.id, null, function(el) { el.remove(); });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.SETSTYLES] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) {
     Object.keys(msg.styles || {}).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
   });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.SETATTR] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.setAttribute(msg.name, msg.value); });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.classList.toggle(msg.classname, msg.force); });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.CRYPTO] = function(env, msg) {
   var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
@@ -252,24 +253,24 @@ HANDLERS[MESSAGETYPES.GETLAYOUT] = function(env, msg) {
 HANDLERS[MESSAGETYPES.SETHTML] = function(env, msg) {
   return waitForDomReady().then(function() {
     withElementRetry(msg.id, null, function(el) { el.innerHTML = msg.value; });
-    return env;
+    return true;
   });
 };
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.SETSTYLE] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.SETVALUE] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.value = msg.value; });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.SETLAYOUT] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el[prop] = msg.value[prop]; }); });
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(env, msg) {
   var doc = document.documentElement;
@@ -288,7 +289,7 @@ HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(env, msg) {
 HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(env, msg) {
   return waitForDomReady().then(function() {
     if (document.body) document.body.innerHTML = msg.html;
-    return env;
+    return true;
   });
 };
 HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
@@ -335,12 +336,20 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(env, msg) {
   sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
     patch: { render: env.render }
   }, generateTag(), 'renderactor');
-  return env;
+  return true;
 };
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(env, msg) {
   scheduleGcCycle(env.render);
-  return env;
+  return true;
 };
+
+// Helper to send response if expected
+function respondIfNeeded(env, message, result) {
+  if (message.sender && message.tag) {
+    var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
+    sendResponse(message.sender, message.tag, result, 'renderactor', responseType);
+  }
+}
 
 // Pure behavior function: (env, message) -> env
 function renderbehavior(env, message) {
@@ -349,9 +358,12 @@ function renderbehavior(env, message) {
   if (handler) {
     var result = handler(env, message);
     if (result && typeof result.then === 'function') {
-      return result.then(function() { return env; });
+      return result.then(function(res) {
+        respondIfNeeded(env, message, res);
+        return env;
+      });
     }
-    return env;
+    respondIfNeeded(env, message, result);
   }
   return env;
 }

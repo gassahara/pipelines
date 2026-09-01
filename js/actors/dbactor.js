@@ -1,12 +1,12 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED DISPATCH
-//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
-//   - Behavior signature: dbbehavior(env, message) -> env
-//   - Uses localStorage directly for persistence; does not mutate ENV.
-//   - Logging uses env (passed from dispatcher).
-//   - Producers enqueueDbStore/Restore/List/Delete use dispatchToActor.
-//   - DNA serialization utilities retained.
+// Change applied: P148 – ENV.DB INTEGRATION
+//   - dbbehavior now uses env.db.store as source of truth.
+//   - loadInitialState still exists for boot/backup, but no longer
+//     called on every message.
+//   - After each mutation, sends UPDATE to worldmapactor with
+//     patch { db: { store: store } }.
+//   - No message interface definitions, no MESSAGEREGISTRY, no createactor.
 // ============================================================
 
 var dbVerbosityConstants = createVerbosityConstants();
@@ -330,16 +330,23 @@ function deoptimizeSerializedDna(jsonString) {
   return finalResult;
 }
 
-// ==================== ACTOR BEHAVIOR (PURE FUNCTION) ====================
+// ==================== ACTOR BEHAVIOR (PURE FUNCTION, ENV.DB) ====================
 
 var dbbehavior = function(env, message) {
-  var v = env && env.verbosity !== undefined ? env.verbosity : dbVerbosityConstants.DEBUG;
-  dbState = Object.freeze({ level: v });
-
   logdebug(env, '[DBACTOR]', 'behavior handling action:', message.type);
 
-  var store = loadInitialState().store; // read fresh from localStorage
+  // Ensure env.db.store exists
+  if (!env.db || typeof env.db.store === 'undefined') {
+    env.db = { store: {} };
+  }
+  var store = env.db.store;
   var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
+
+  function updateEnvDb() {
+    sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+      patch: { db: { store: store } }
+    }, generateTag(), 'dbactor');
+  }
 
   switch (message.type) {
     case MESSAGETYPES.STORE: {
@@ -362,7 +369,9 @@ var dbbehavior = function(env, message) {
         if (oldest) delete store[oldest];
       }
       store[message.key] = message.value;
-      resolve(persist(store));
+      persist(store); // backup to localStorage
+      updateEnvDb();
+      resolve(true);
       break;
     }
     case MESSAGETYPES.RESTORE:
@@ -376,7 +385,9 @@ var dbbehavior = function(env, message) {
     case MESSAGETYPES.DELETE: {
       logdebug(env, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
-      resolve(persist(store));
+      persist(store);
+      updateEnvDb();
+      resolve(true);
       break;
     }
     default:
@@ -388,8 +399,8 @@ var dbbehavior = function(env, message) {
   return env;
 };
 
-// No registerActorState for dbactor; state is not part of global ENV.
-// Dispatch is done via dispatchToActor('dbactor', dbbehavior, message).
+// No registerActorState for dbactor; state lives in global ENV under env.db.
+// Dispatch uses dispatchToActor('dbactor', dbbehavior, message).
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {
@@ -413,7 +424,6 @@ function startDbActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      dbState = Object.freeze({ level: lvl });
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;
     }

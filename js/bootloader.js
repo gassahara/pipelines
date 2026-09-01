@@ -29,7 +29,7 @@ var PIPELINES_MANIFEST = [
   { src: 'debugformatter.js', provides: ['formatdebugtrace'] },
   { src: 'actors/actorkernel.js', provides: ['registerActorState', 'getActorState', 'setActorState', 'dispatchToActor', 'createMessageValidator', 'pingActor', 'getActorRegistry'] },
   { src: 'utils.js', provides: ['createApiConstants', 'escapehtml', 'markdowntohtml', 'formataitext', 'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty', 'createnodefromtemplate', 'deepmerge'] },
-  { src: 'actors/dbactor.js', provides: ['createInitialDbState', 'dbbehavior', 'serializeDna', 'deserializeDna', 'consolidateGraph', 'restoreGraph', 'serializePairStore', 'deserializePairStore', 'optimizeSerializedDna', 'deoptimizeSerializedDna', 'enqueueDbStore', 'enqueueDbRestore', 'enqueueDbList', 'enqueueDbDelete'], owner: 'dbactor', types: ['store', 'restore', 'list', 'delete'] },
+  { src: 'actors/dbactor.js', provides: ['dbbehavior', 'loadInitialState', 'serializeDna', 'deserializeDna', 'consolidateGraph', 'restoreGraph', 'serializePairStore', 'deserializePairStore', 'optimizeSerializedDna', 'deoptimizeSerializedDna', 'enqueueDbStore', 'enqueueDbRestore', 'enqueueDbList', 'enqueueDbDelete'], owner: 'dbactor', types: ['store', 'restore', 'list', 'delete'] },
   { src: 'actors/mailactor.js', provides: ['createInitialMailState', 'mailbehavior', 'sendInstruction', 'sendResponse', 'generateTag'], owner: 'mailactor', types: ['send', 'ack'] },
   { src: 'actors/worldmapactor.js', provides: ['createInitialEnv', 'worldmapbehavior', 'sendworldmappatch', 'updateworldmapfn', 'observeworldmap', 'unobserveworldmap', 'getworldmap', 'startWorldmapActor'], owner: 'worldmapactor', types: ['update', 'update_fn', 'observe', 'unobserve', 'get_worldmap'] },
   { src: 'actors/apiactor.js', provides: ['apibehavior', 'enqueueapi', 'enqueuefetch'], owner: 'apiactor', types: ['api', 'fetch'] },
@@ -66,8 +66,10 @@ function checkRegistration(entry) {
 
 function checkStateRegistration(entry) {
   if (!entry.owner) return { ok: true };
-  var state = getActorState(entry.owner);
-  return { ok: state !== undefined, missing: state === undefined ? entry.owner : null };
+  // Only worldmapactor owns the global ENV state.
+  if (entry.owner !== 'worldmapactor') return { ok: true };
+  var state = getActorState('worldmapactor');
+  return { ok: state !== undefined, missing: state === undefined ? 'worldmapactor' : null };
 }
 
 function runPipelineBoot(loadProgram, report, manifest) {
