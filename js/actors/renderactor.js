@@ -1,16 +1,16 @@
 // ============================================================
 // UPDATED FILE: js/actors/renderactor.js
-// Change applied: PURE FUNCTION REFACTOR
-//   - No message interface definitions.
-//   - No MESSAGEREGISTRY references.
-//   - No createactor object construction.
-//   - Exports only createInitialRenderState, renderbehavior, enqueue producers,
-//     and DOM helper functions.
-//   - Actor state owned by the runtime (actorkernel.js).
+// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
+//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
+//   - Behavior signature: renderbehavior(env, message) -> env
+//   - Uses env.render slice for HTML, viewport, etc.
+//   - When state changes, sends UPDATE message to worldmapactor via
+//     sendInstruction; does not return a modified env.
+//   - DOM side effects are isolated in handler functions, but state
+//     persistence still goes through worldmapactor.
 // ============================================================
 
 var renderVerbosityConstants = createVerbosityConstants();
-var renderState = Object.freeze({ level: renderVerbosityConstants.DEBUG });
 
 function createRenderErrorContext(label) {
   return function(err) {
@@ -19,30 +19,6 @@ function createRenderErrorContext(label) {
     err.diagnostic.renderstage = label;
     throw err;
   };
-}
-
-function createInitialRenderState() {
-  return {
-    actorRegistry: createActorRegistry(),
-    worldmap: { html: '', viewport: null },
-    _gc: createGarbageCollector(),
-    _triggerGcScheduled: false,
-    _gcCycleRunning: false,
-    _gcCycleQueued: false,
-    _triggerObserverInstalled: false,
-    verbosity: renderVerbosityConstants.DEBUG
-  };
-}
-
-function persistRenderWorldmap(state) {
-  if (!state || typeof state !== 'object') return;
-  if (!state.worldmap || typeof state.worldmap !== 'object') {
-    state.worldmap = { html: '', viewport: null };
-  }
-  state.worldmap.html = (typeof document !== 'undefined' && document.body) ? document.body.innerHTML : '';
-  enqueueDbStore('actor:state:render', state.worldmap).catch(function(e) {
-    logwarn(renderState, '[RENDERACTOR]', 'state persist failed:', e);
-  });
 }
 
 function withElement(id, reject, fn) {
@@ -99,35 +75,35 @@ function createTriggerProducerConsumer(msg) {
   };
 }
 
-function scheduleGcCycle(state) {
-  if (!state) return;
-  if (state._triggerGcScheduled) return;
-  state._triggerGcScheduled = true;
+function scheduleGcCycle(renderSlice) {
+  if (!renderSlice) return;
+  if (renderSlice._triggerGcScheduled) return;
+  renderSlice._triggerGcScheduled = true;
   setTimeout(function() {
-    state._triggerGcScheduled = false;
-    if (state._gc) {
-      collectEnded(state._gc);
+    renderSlice._triggerGcScheduled = false;
+    if (renderSlice._gc) {
+      collectEnded(renderSlice._gc);
     }
   }, 0);
 }
 
-function ensureTriggerObserver(state) {
-  if (!state || state._triggerObserverInstalled) return;
+function ensureTriggerObserver(renderSlice) {
+  if (!renderSlice || renderSlice._triggerObserverInstalled) return;
   if (typeof document === 'undefined') return;
-  state._triggerObserverInstalled = true;
+  renderSlice._triggerObserverInstalled = true;
 
   var handler = function(event) {
     var target = event.target;
     var targetId = target && target.id;
-    if (!targetId || !state._gc) return;
+    if (!targetId || !renderSlice._gc) return;
 
-    listObjects(state._gc).forEach(function(gcObj) {
+    listObjects(renderSlice._gc).forEach(function(gcObj) {
       var producer = gcObj.producer || {};
       if (producer.type !== 'dom-event') return;
       if (producer.id !== targetId) return;
       if (producer.event !== event.type) return;
 
-      incrementSent(state._gc, gcObj.id, 1);
+      incrementSent(renderSlice._gc, gcObj.id, 1);
 
       sendInstruction('hypervisoractor', 'trigger_event', {
         pipelineId: gcObj.consumer && gcObj.consumer.pipelineId,
@@ -144,63 +120,51 @@ function ensureTriggerObserver(state) {
 }
 
 var HANDLERS = {};
-HANDLERS[MESSAGETYPES.RENDER] = function(state, msg) {
+HANDLERS[MESSAGETYPES.RENDER] = function(env, msg) {
   var target = msg.id ? document.getElementById(msg.id) : null;
   if (typeof msg.renderer === 'function') {
     try { msg.renderer(target, msg.data, msg.env || {}); } catch (err) { console.error('[RENDERACTOR] Renderer error:', err); throw err; }
   }
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.CLEAR] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.CLEAR] = function(env, msg) {
   withElement(msg.id, null, function(el) { el.innerHTML = ''; });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.HTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.HTML] = function(env, msg) {
   return waitForDomReady().then(function() {
-    persistRenderWorldmap(state);
     withElementRetry(msg.id, null, function(el) {
       if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
       else el.innerHTML = msg.markup;
     });
-    persistRenderWorldmap(state);
-    return true;
+    return env;
   });
 };
-HANDLERS[MESSAGETYPES.REMOVE] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.REMOVE] = function(env, msg) {
   withElement(msg.id, null, function(el) { el.remove(); });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.SETSTYLES] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.SETSTYLES] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) {
     Object.keys(msg.styles || {}).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
   });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.SETATTR] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.SETATTR] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.setAttribute(msg.name, msg.value); });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.classList.toggle(msg.classname, msg.force); });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.CRYPTO] = function(state, msg) {
+HANDLERS[MESSAGETYPES.CRYPTO] = function(env, msg) {
   var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
   var array = new Uint8Array(msg.bytes);
   win.crypto.getRandomValues(array);
   return Array.prototype.slice.call(array);
 };
-HANDLERS[MESSAGETYPES.GEOLOCATION] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GEOLOCATION] = function(env, msg) {
   return new Promise(function(resolve, reject) {
     var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
     var geo = win.navigator && win.navigator.geolocation;
@@ -212,7 +176,7 @@ HANDLERS[MESSAGETYPES.GEOLOCATION] = function(state, msg) {
     );
   });
 };
-HANDLERS[MESSAGETYPES.PERSISTENCE] = function(state, msg) {
+HANDLERS[MESSAGETYPES.PERSISTENCE] = function(env, msg) {
   var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
   var storage = win.localStorage;
   if (!storage) return { error: 'localStorage unavailable' };
@@ -224,45 +188,42 @@ HANDLERS[MESSAGETYPES.PERSISTENCE] = function(state, msg) {
     else return { error: 'unknown persistence action: ' + msg.action };
   } catch (err) { return { error: err.message }; }
 };
-HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(env, msg) {
   try {
     var el = document.createElement(msg.tag);
     if (msg.props) Object.keys(msg.props).forEach(function(prop) { el[prop] = msg.props[prop]; });
-    return CREATEDOMREF(el, state.actorRegistry);
+    return CREATEDOMREF(el, env.render.actorRegistry);
   } catch (err) { return { error: err.message }; }
 };
-HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(state, msg) {
-  persistRenderWorldmap(state);
-  try { return CREATEDOMREF(document.createElement('div'), state.actorRegistry); } catch (err) { return { error: err.message }; }
+HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(env, msg) {
+  try { return CREATEDOMREF(document.createElement('div'), env.render.actorRegistry); } catch (err) { return { error: err.message }; }
 };
-HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(env, msg) {
   try {
     var wrapper = document.createElement('div');
     wrapper.innerHTML = msg.html;
     var child = wrapper.firstElementChild || wrapper;
-    return CREATEDOMREF(child, state.actorRegistry);
+    return CREATEDOMREF(child, env.render.actorRegistry);
   } catch (err) { return { error: err.message }; }
 };
-HANDLERS[MESSAGETYPES.PROPERTY] = function(state, msg) {
+HANDLERS[MESSAGETYPES.PROPERTY] = function(env, msg) {
   var el = document.getElementById(msg.id);
   if (!el) return { error: 'element not found: ' + msg.id };
   var fn = el[msg.name];
   if (typeof fn !== 'function') return { error: 'property "' + msg.name + '" is not a function' };
   try { return fn.apply(el, msg.arguments || []); } catch (e) { return { error: e.message }; }
 };
-HANDLERS[MESSAGETYPES.GETHTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GETHTML] = function(env, msg) {
   var el = document.getElementById(msg.id);
   if (!el) return { error: 'element not found: ' + msg.id };
   return { tag: el.tagName.toLowerCase(), innerHTML: el.innerHTML };
 };
-HANDLERS[MESSAGETYPES.GETVALUE] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GETVALUE] = function(env, msg) {
   var el = document.getElementById(msg.id);
   if (!el) return { error: 'element not found: ' + msg.id };
   return el.value;
 };
-HANDLERS[MESSAGETYPES.GETSTYLE] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GETSTYLE] = function(env, msg) {
   var el = document.getElementById(msg.id);
   if (!el) return { error: 'element not found: ' + msg.id };
   var computed = window.getComputedStyle(el);
@@ -272,13 +233,13 @@ HANDLERS[MESSAGETYPES.GETSTYLE] = function(state, msg) {
   }, {});
   return styleobj;
 };
-HANDLERS[MESSAGETYPES.GETPOSITION] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GETPOSITION] = function(env, msg) {
   var el = document.getElementById(msg.id);
   if (!el) return { error: 'element not found: ' + msg.id };
   var rect = el.getBoundingClientRect();
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
 };
-HANDLERS[MESSAGETYPES.GETLAYOUT] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GETLAYOUT] = function(env, msg) {
   var el = document.getElementById(msg.id);
   if (!el) return { error: 'element not found: ' + msg.id };
   return {
@@ -288,86 +249,77 @@ HANDLERS[MESSAGETYPES.GETLAYOUT] = function(state, msg) {
     clientWidth: el.clientWidth, clientHeight: el.clientHeight
   };
 };
-HANDLERS[MESSAGETYPES.SETHTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.SETHTML] = function(env, msg) {
   return waitForDomReady().then(function() {
-    persistRenderWorldmap(state);
     withElementRetry(msg.id, null, function(el) { el.innerHTML = msg.value; });
-    persistRenderWorldmap(state);
-    return true;
+    return env;
   });
 };
-HANDLERS[MESSAGETYPES.SETPOSITION] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.SETPOSITION] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.SETSTYLE] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.SETSTYLE] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.SETVALUE] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.SETVALUE] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.value = msg.value; });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.SETLAYOUT] = function(state, msg) {
-  persistRenderWorldmap(state);
+HANDLERS[MESSAGETYPES.SETLAYOUT] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el[prop] = msg.value[prop]; }); });
-  persistRenderWorldmap(state);
-  return true;
+  return env;
 };
-HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(env, msg) {
   var doc = document.documentElement;
   return { viewportWidth: doc.clientWidth, viewportHeight: doc.clientHeight };
 };
-HANDLERS[MESSAGETYPES.GETSCREEN] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GETSCREEN] = function(env, msg) {
   var scr = window.screen;
   return { screenWidth: scr.width, screenHeight: scr.height, availWidth: scr.availWidth, availHeight: scr.availHeight };
 };
-HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(state, msg) {
+HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(env, msg) {
   return { matches: window.matchMedia(msg.query).matches };
 };
-HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(env, msg) {
   return document.body ? document.body.innerHTML : '';
 };
-HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(state, msg) {
+HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(env, msg) {
   return waitForDomReady().then(function() {
-    persistRenderWorldmap(state);
     if (document.body) document.body.innerHTML = msg.html;
-    persistRenderWorldmap(state);
-    return true;
+    return env;
   });
 };
-HANDLERS[MESSAGETYPES.RECOVER] = function(state, msg) {
+HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
   return waitForDomReady().then(function() {
     return enqueueDbRestore('actor:state:render').then(function(saved) {
       if (saved) {
-        state.worldmap = saved;
-        if (document.body) document.body.innerHTML = saved.html;
+        env.render = saved;
       } else {
-        state.worldmap = { html: '', viewport: null };
-        persistRenderWorldmap(state);
+        env.render = { html: '', viewport: null };
       }
-      scheduleGcCycle(state);
+      scheduleGcCycle(env.render);
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { render: env.render }
+      }, generateTag(), 'renderactor');
+      return env;
     }).catch(function(e) {
-      state.worldmap = { html: '', viewport: null };
-      persistRenderWorldmap(state);
-    }).then(function() {
-      return state;
+      env.render = { html: '', viewport: null };
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { render: env.render }
+      }, generateTag(), 'renderactor');
+      return env;
     });
   });
 };
-HANDLERS[MESSAGETYPES.PING] = function(state, msg) { return true; };
-HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(state, msg) {
-  return HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION](state, msg);
+HANDLERS[MESSAGETYPES.PING] = function(env, msg) { return true; };
+HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(env, msg) {
+  return HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION](env, msg);
 };
-HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
+HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(env, msg) {
   var pc = createTriggerProducerConsumer(msg);
-  var existing = listObjects(state._gc).filter(function(obj) {
+  var existing = listObjects(env.render._gc).filter(function(obj) {
     return obj.producer.id === pc.producer.id && obj.producer.event === pc.producer.event &&
       obj.consumer.pipelineId === pc.consumer.pipelineId && obj.consumer.stageId === pc.consumer.stageId;
   })[0];
@@ -375,39 +327,34 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(state, msg) {
     existing.metadata = pc.metadata; existing.status = 'EXPECTING'; existing.sentCount = 0; existing.receivedCount = 1;
   } else {
     var gcObject = { producer: pc.producer, consumer: pc.consumer, metadata: pc.metadata, status: 'EXPECTING', sentCount: 0, receivedCount: 0 };
-    registerObject(state._gc, gcObject);
-    incrementReceived(state._gc, gcObject.id, 1);
-    ensureTriggerObserver(state);
+    registerObject(env.render._gc, gcObject);
+    incrementReceived(env.render._gc, gcObject.id, 1);
+    ensureTriggerObserver(env.render);
   }
-  scheduleGcCycle(state);
-  return true;
+  scheduleGcCycle(env.render);
+  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+    patch: { render: env.render }
+  }, generateTag(), 'renderactor');
+  return env;
 };
-HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(state, msg) { scheduleGcCycle(state); return true; };
+HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(env, msg) {
+  scheduleGcCycle(env.render);
+  return env;
+};
 
-// Pure behavior function: (state, message) -> state | Promise<state>
-function renderbehavior(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : renderVerbosityConstants.DEBUG;
-  renderState = Object.freeze({ level: v });
-  logdebug(renderState, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
+// Pure behavior function: (env, message) -> env
+function renderbehavior(env, message) {
+  logdebug(env, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
   var handler = HANDLERS[message.type];
   if (handler) {
-    var result = handler(state, message);
+    var result = handler(env, message);
     if (result && typeof result.then === 'function') {
-      return result.then(function() { return state; });
+      return result.then(function() { return env; });
     }
-    return state;
+    return env;
   }
-  return state;
+  return env;
 }
-
-// Register initial state with runtime.
-var renderInitialState = createInitialRenderState();
-registerActorState('renderactor', renderInitialState);
-renderInitialState.actorRegistry = setRenderActor(renderInitialState.actorRegistry, {
-  getstate: function() { return getActorState('renderactor'); },
-  dispatch: function(message) { return dispatchToActor('renderactor', renderbehavior, message); }
-});
-ensureTriggerObserver(renderInitialState);
 
 function createEnqueuer(type, idRequired, extraPayloadFn) {
   return function() {
@@ -492,13 +439,12 @@ var startRenderActor = function(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      renderState = Object.freeze({ level: lvl });
-      var renderStateObj = getActorState('renderactor');
-      if (renderStateObj) renderStateObj.verbosity = lvl;
+      var env = getActorState('worldmapactor');
+      if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('renderactor'); },
+    getstate: function() { return getActorState('worldmapactor'); },
     dispatch: function(message) { return dispatchToActor('renderactor', renderbehavior, message); }
   };
 };
@@ -507,12 +453,20 @@ var expectelement = function(id, timeout) {
   if (timeout === undefined) timeout = 30000;
   return new Promise(function(resolve, reject) {
     var existing = document.getElementById(id);
-    if (existing) return resolve(CREATEDOMREF(existing, renderInitialState.actorRegistry));
+    if (existing) {
+      var env = getActorState('worldmapactor');
+      return resolve(CREATEDOMREF(existing, env.render.actorRegistry));
+    }
     var observer = null;
     var timeoutid = setTimeout(function() { if (observer) observer.disconnect(); reject(new Error('[expectelement] element not found: ' + id)); }, timeout);
     observer = new MutationObserver(function() {
       var el = document.getElementById(id);
-      if (el) { clearTimeout(timeoutid); observer.disconnect(); resolve(CREATEDOMREF(el, renderInitialState.actorRegistry)); }
+      if (el) {
+        clearTimeout(timeoutid);
+        observer.disconnect();
+        var envNow = getActorState('worldmapactor');
+        resolve(CREATEDOMREF(el, envNow.render.actorRegistry));
+      }
     });
     observer.observe(document.body, { childList: true, subtree: true });
   });

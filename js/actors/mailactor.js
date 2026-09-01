@@ -1,10 +1,12 @@
 // ============================================================
 // UPDATED FILE: js/mailactor.js
-// Change applied: PURE FUNCTION RUNTIME INTEGRATION
-//   - Removes actor object construction; no MAILACTOR instance.
-//   - Mail behavior is a pure function used by runtime.
+// Change applied: NO POLLING, PURE FUNCTION MAIL BEHAVIOR
+//   - Removes actor object construction and polling loops.
+//   - Mail behavior is a pure function used by the runtime.
 //   - sendInstruction uses runtime dispatch to mailbehavior.
 //   - Global registries (ACTORCONSUMERS, RESPONSECONSUMERS, EXPECTATIONS).
+//   - sendResponse sends a response message with type from original
+//     expectation (responseSpec.responseType).
 // ============================================================
 
 var mailVerbosityConstants = createVerbosityConstants();
@@ -17,31 +19,32 @@ var EXPECTATIONS = {};            // key: tag -> { responseType: string }
 
 function createInitialMailState() {
   return {
-    queues: {},        // recipient -> array of envelopes
+    queues: {},        // recipient -> array of envelopes (may be unused in direct dispatch)
     nextId: 1
   };
 }
 
-// Pure behavior for SEND and ACK messages, used by the runtime.
-function mailbehavior(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : mailVerbosityConstants.DEBUG;
+// Pure behavior for SEND and ACK messages.
+// In direct dispatch, queues are not used for polling; they remain for
+// optional persistence or auditing.
+function mailbehavior(env, message) {
+  var v = env && env.verbosity !== undefined ? env.verbosity : mailVerbosityConstants.DEBUG;
   mailState = Object.freeze({ level: v });
 
-  logdebug(mailState, '[MAILACTOR]', 'behavior handling action:', message.type);
+  logdebug(env, '[MAILACTOR]', 'behavior handling action:', message.type);
 
-  if (!state.queues) state.queues = {};
-  if (!state.nextId) state.nextId = 1;
+  if (!env.mail) env.mail = createInitialMailState();
+  var mailSlice = env.mail;
 
   if (message.type === MESSAGETYPES.SEND) {
-    // Pre-action persist (optional; could call DB actor later)
     var recipient = message.recipient;
     if (!recipient || typeof recipient !== 'string') {
-      return state;
+      return env;
     }
-    if (!state.queues[recipient]) state.queues[recipient] = [];
+    if (!mailSlice.queues[recipient]) mailSlice.queues[recipient] = [];
     var flatMessage = message.message;
     var envelope = {
-      id: 'mail_' + (state.nextId++),
+      id: 'mail_' + (mailSlice.nextId++),
       recipient: recipient,
       sender: (flatMessage && flatMessage.sender) || 'system',
       tag: (flatMessage && flatMessage.tag) || null,
@@ -49,14 +52,14 @@ function mailbehavior(state, message) {
       timestamp: Date.now(),
       payload: flatMessage
     };
-    state.queues[recipient].push(envelope);
+    mailSlice.queues[recipient].push(envelope);
 
     // DIRECT DISPATCH: invoke consumer for recipient and message type
     var consumerKey = recipient + ':' + flatMessage.type;
     var consumer = ACTORCONSUMERS[consumerKey];
     if (consumer) {
       // Consumer is a pure behavior function; runtime owns state.
-      // Use dispatchToActor for proper state management.
+      // Use dispatchToActor, which passes the current ENV to the consumer.
       dispatchToActor(recipient, consumer, flatMessage);
     }
 
@@ -65,17 +68,17 @@ function mailbehavior(state, message) {
       EXPECTATIONS[flatMessage.tag] = flatMessage.responseSpec;
     }
 
-    return state;
+    return env;
   }
 
   if (message.type === MESSAGETYPES.ACK) {
     var ackRecipient = message.recipient;
     var ackIds = message.ids || [];
-    var ackQueue = state.queues[ackRecipient] || [];
+    var ackQueue = mailSlice.queues[ackRecipient] || [];
     ackQueue.forEach(function(m) {
       if (ackIds.indexOf(m.id) !== -1) m.unread = false;
     });
-    return state;
+    return env;
   }
 
   // Response handling: for any message with a tag that has an expectation
@@ -89,11 +92,16 @@ function mailbehavior(state, message) {
     delete EXPECTATIONS[message.tag];
   }
 
-  return state;
+  return env;
 }
 
-// Register initial mail state in runtime.
-registerActorState('mailactor', createInitialMailState());
+// Register initial state for mailactor within worldmapactor's ENV.
+// This is done by the boot process or by worldmapactor initialization,
+// not here, to avoid coupling. However, we provide a helper.
+function initializeMailInEnv(env) {
+  if (!env.mail) env.mail = createInitialMailState();
+  return env;
+}
 
 function generateTag() {
   return 'tag_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
@@ -114,7 +122,7 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec) {
   }
   if (responseSpec) flatMessage.responseSpec = responseSpec;
 
-  // Dispatch SEND message to mailbehavior (pure function, state owned by runtime).
+  // Dispatch SEND message to mailbehavior (pure function, ENV owned by worldmapactor).
   dispatchToActor('mailactor', mailbehavior, {
     type: MESSAGETYPES.SEND,
     recipient: recipient,
@@ -133,13 +141,12 @@ function startMailActor(options) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       mailState = Object.freeze({ level: lvl });
-      var mailStateObj = getActorState('mailactor');
-      if (mailStateObj) mailStateObj.verbosity = lvl;
+      var env = getActorState('worldmapactor');
+      if (env) env.verbosity = lvl;
     }
   }
-  // Return a minimal handle for compatibility.
   return {
-    getstate: function() { return getActorState('mailactor'); },
+    getstate: function() { return getActorState('worldmapactor'); },
     dispatch: function(message) { return dispatchToActor('mailactor', mailbehavior, message); }
   };
 }

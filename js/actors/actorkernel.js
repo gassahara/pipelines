@@ -1,15 +1,17 @@
 // ============================================================
 // UPDATED FILE: js/actorkernel.js
-// Change applied: RUNTIME STATE OWNERSHIP REFACTOR
-//   - Removes actor object construction as the primary pattern.
-//   - Introduces a pure state registry and dispatch helpers.
-//   - Keeps createactor as a compatibility shim (deprecated, unused by actors).
-//   - createMessageValidator, pingActor, getActorRegistry retained.
+// Change applied: GLOBAL ENV RUNTIME (worldmapactor owns ENV)
+//   - Removes actor object construction entirely.
+//   - Runtime holds only the global ENV object, managed by worldmapactor.
+//   - dispatchToActor retrieves ENV from worldmapactor, calls pure
+//     behavior(env, message), and stores the returned ENV back to
+//     worldmapactor state.
+//   - createMessageValidator retained for message validation.
 // ============================================================
 
 var kernelVerbosityConstants = createVerbosityConstants();
 
-// Pure state registry: maps actor name -> current state.
+// State registry now only holds worldmapactor's ENV.
 var actorStateRegistry = {};
 
 function registerActorState(actorName, initialState) {
@@ -25,18 +27,22 @@ function setActorState(actorName, nextState) {
 }
 
 // Dispatch a message to a pure behavior function.
-// The behavior function is provided externally (from ACTORCONSUMERS).
+// The global ENV is retrieved from worldmapactor and passed as first argument.
+// The behavior returns the updated ENV, which is stored back to worldmapactor.
 function dispatchToActor(actorName, behavior, message) {
-  var current = getActorState(actorName);
-  var next = behavior(current, message);
-  if (next && typeof next.then === 'function') {
-    return next.then(function(resolved) {
-      setActorState(actorName, resolved);
+  var env = getActorState('worldmapactor');
+  if (env === undefined) {
+    throw new Error('[dispatchToActor] worldmapactor state (ENV) is not registered');
+  }
+  var result = behavior(env, message);
+  if (result && typeof result.then === 'function') {
+    return result.then(function(resolved) {
+      setActorState('worldmapactor', resolved);
       return resolved;
     });
   }
-  setActorState(actorName, next);
-  return next;
+  setActorState('worldmapactor', result);
+  return result;
 }
 
 function createMessageValidator(interfaceMap) {
@@ -83,24 +89,6 @@ function createMessageValidator(interfaceMap) {
     }, null);
     if (invalid) return invalid;
     return { valid: true, error: null, type: type };
-  };
-}
-
-// Compatibility shim for createactor (deprecated).
-// Returns an object with dispatch/getstate/send, but actors no longer use this.
-function createactor(behavior, initialstate, messageInterface, options) {
-  if (options === undefined) options = {};
-  var actorName = options.actorName || 'anonymous';
-  registerActorState(actorName, initialstate || {});
-  return {
-    dispatch: function(message) {
-      return dispatchToActor(actorName, behavior, message);
-    },
-    getstate: function() { return getActorState(actorName); },
-    send: function(message) {
-      return dispatchToActor(actorName, behavior, message);
-    },
-    waitforemptymailbox: function() { return Promise.resolve(getActorState(actorName)); }
   };
 }
 

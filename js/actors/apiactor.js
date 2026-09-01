@@ -1,56 +1,39 @@
 // ============================================================
 // UPDATED FILE: js/actors/apiactor.js
-// Change applied: PURE FUNCTION REFACTOR
-//   - No message interface definitions.
-//   - No MESSAGEREGISTRY references.
-//   - No createactor object construction.
-//   - Exports only createInitialApiState, apibehavior, and enqueue producers.
-//   - Actor state is owned by the runtime (actorkernel.js).
+// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
+//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
+//   - Behavior signature: apibehavior(env, message) -> env
+//   - Uses env.api slice for lastRequest/requestCount.
+//   - When it needs to update env.api, sends an UPDATE message to
+//     worldmapactor via sendInstruction.
+//   - Does NOT return a modified env; returns env unchanged.
+//   - Producers enqueueapi/enqueuefetch remain.
 // ============================================================
 
-var apiVerbosityConstants = createVerbosityConstants();
-var apiState = Object.freeze({ level: apiVerbosityConstants.DEBUG });
-
-function createInitialApiState() {
-  return {
-    worldmap: {
-      lastRequest: null,
-      requestCount: 0
-    },
-    verbosity: apiVerbosityConstants.DEBUG
-  };
-}
-
-function persistApiWorldmap(state) {
-  logdebug(apiState, '[APIACTOR]', 'persistApiWorldmap saving state to db');
-  enqueueDbStore('actor:state:api', state.worldmap).catch(function(e) {
-    logwarn(apiState, '[APIACTOR]', 'state persist failed:', e);
-  });
-}
-
-// Pure behavior function: (state, message) -> state
-function apibehavior(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : apiVerbosityConstants.DEBUG;
-  apiState = Object.freeze({ level: v });
-
-  logdebug(apiState, '[APIACTOR]', 'behavior handling action:', message.type);
+// Pure behavior function: (env, message) -> env
+function apibehavior(env, message) {
+  logdebug(env, '[APIACTOR]', 'behavior handling action:', message.type);
 
   if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
-    logdebug(apiState, '[APIACTOR]', 'action:', message.type, 'method:', message.method, 'endpoint:', message.endpoint);
-    persistApiWorldmap(state);
+    logdebug(env, '[APIACTOR]', 'action:', message.type, 'method:', message.method, 'endpoint:', message.endpoint);
 
-    state.worldmap.lastRequest = {
-      type: message.type,
-      endpoint: message.endpoint,
-      method: message.method,
-      payload: message.payload || {},
-      token: message.token || '',
-      timestamp: Date.now()
+    // Prepare updated api slice
+    var updatedApi = {
+      lastRequest: {
+        type: message.type,
+        endpoint: message.endpoint,
+        method: message.method,
+        payload: message.payload || {},
+        token: message.token || '',
+        timestamp: Date.now()
+      },
+      requestCount: (env.api.requestCount || 0) + 1
     };
-    state.worldmap.requestCount = (state.worldmap.requestCount || 0) + 1;
 
-    persistApiWorldmap(state);
-
+    // Send update to worldmapactor (message-based, no direct mutation)
+    sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+      patch: { api: updatedApi }
+    }, generateTag(), 'apiactor');
     var apiConstants = createApiConstants();
     var url = apiConstants.APIBASE + '/' + message.endpoint;
     var isTextual = message.type === MESSAGETYPES.FETCH;
@@ -68,48 +51,28 @@ function apibehavior(state, message) {
 
     fetch(url, { method: method, headers: headers, body: body }).then(function(response) {
       var status = response.status;
-      logdebug(apiState, '[APIACTOR]', 'action response status:', status, 'for:', message.endpoint);
+      logdebug(env, '[APIACTOR]', 'action response status:', status, 'for:', message.endpoint);
       if (!isTextual) {
         return response.json().then(function(data) {
-          logdebug(apiState, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
+          logdebug(env, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
           var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
           sendInstruction(message.sender, responseType, { result: { status: status, data: data } }, message.tag, 'apiactor');
         });
       }
       return response.text().then(function(data) {
-        logdebug(apiState, '[APIACTOR]', 'action text response received for:', message.endpoint);
+        logdebug(env, '[APIACTOR]', 'action text response received for:', message.endpoint);
         var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
         sendInstruction(message.sender, responseType, { result: { status: status, data: data } }, message.tag, 'apiactor');
       });
     }).catch(function(err) {
-      logerror(apiState, '[APIACTOR]', 'action request error for:', message.endpoint, err);
+      logerror(env, '[APIACTOR]', 'action request error for:', message.endpoint, err);
       var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
       sendInstruction(message.sender, responseType, { result: { error: err.message || String(err) } }, message.tag, 'apiactor');
     });
   }
 
-  return state;
-}
-
-// Register initial state with runtime.
-registerActorState('apiactor', createInitialApiState());
-
-// Minimal handle for compatibility (stateless).
-var APIACTOR = {
-  getstate: function() { return getActorState('apiactor'); },
-  dispatch: function(message) { return dispatchToActor('apiactor', apibehavior, message); }
-};
-
-function startApiActor(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-    if (lvl !== undefined) {
-      apiState = Object.freeze({ level: lvl });
-      var apiStateObj = getActorState('apiactor');
-      if (apiStateObj) apiStateObj.verbosity = lvl;
-    }
-  }
-  return APIACTOR;
+  // Return env unchanged; updates happen via worldmapactor message.
+  return env;
 }
 
 function enqueueapi(endpoint, method, payload, options, responseSpec) {

@@ -3,11 +3,9 @@
 // BOOT LOADER — global-vars architecture.
 // Loads ALL pipeline programs as plain browser scripts in
 // dependency order, running existence tests BEFORE importing
-// each next program (user directive). Actor programs also get
-// per-type registration assertions against the MESSAGE registry.
-// - PIPELINES_MANIFEST: 31 entries, topological order
-// - runPipelineBoot(loadProgram, report): injectable loader (Node testable)
-// - bootPipeline(): DOM glue (script injection) for the browser
+// each next program. Actor programs now pure functions; no actor
+// objects exist. Registration checks are deferred until after
+// all scripts (including registerconsumers.js) are loaded.
 // ============================================================
 
 var PIPELINES_MANIFEST = [
@@ -29,18 +27,18 @@ var PIPELINES_MANIFEST = [
   { src: 'factory/stylizerutilities.js', provides: ['StylizerCore', 'StylizerRewrite', 'StylizerVerify'] },
   { src: 'factory/dnaserializer.js', provides: ['createDnaSerializerConstants', 'validaterevivablefunctionblock', 'validaterevivableobject', 'resolveFromBriefcase', 'prepareFunctionForSerialization', 'serializeSelfContainedClosure'] },
   { src: 'debugformatter.js', provides: ['formatdebugtrace'] },
-  { src: 'actors/actorkernel.js', provides: ['createactor', 'createMessageValidator', 'pingActor', 'getActorRegistry'] },
+  { src: 'actors/actorkernel.js', provides: ['registerActorState', 'getActorState', 'setActorState', 'dispatchToActor', 'createMessageValidator', 'pingActor', 'getActorRegistry'] },
   { src: 'utils.js', provides: ['createApiConstants', 'escapehtml', 'markdowntohtml', 'formataitext', 'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty', 'createnodefromtemplate', 'deepmerge'] },
-  { src: 'actors/dbactor.js', provides: ['DBACTOR', 'startDbActor', 'serializeDna', 'deserializeDna', 'consolidateGraph', 'restoreGraph', 'serializePairStore', 'deserializePairStore', 'optimizeSerializedDna', 'deoptimizeSerializedDna', 'enqueueDbStore', 'enqueueDbRestore', 'enqueueDbList', 'enqueueDbDelete'], owner: 'dbactor', types: ['store', 'restore', 'list', 'delete'] },
-  { src: 'actors/mailactor.js', provides: ['MAILACTOR', 'startMailActor', 'sendInstruction', 'sendResponse', 'generateTag'], owner: 'mailactor', types: ['send', 'ack'] },
-  { src: 'actors/worldmapactor.js', provides: ['sendworldmappatch', 'updateworldmapfn', 'observeworldmap', 'unobserveworldmap', 'getworldmap', 'startWorldmapActor'], owner: 'worldmapactor', types: ['update', 'update_fn', 'observe', 'unobserve', 'get_worldmap'] },
-  { src: 'actors/apiactor.js', provides: ['APIACTOR', 'startApiActor', 'enqueueapi', 'enqueuefetch'], owner: 'apiactor', types: ['api', 'fetch'] },
-  { src: 'actors/debugactor.js', provides: ['startDebugActor', 'enqueueDebugPing', 'enqueueDebugRecover'], owner: 'debugactor', types: ['init_overlay', 'show', 'hide', 'recover', 'ping'] },
-  { src: 'actors/executionactor.js', provides: ['EXECUTIONACTOR', 'enqueueExecutionPipelineLoaded', 'enqueueExecutionSubmit', 'enqueueExecutionAwaitTask', 'enqueueExecutionGetTasks', 'enqueueExecutionGetTaskStatus', 'enqueueExecutionCancelTask', 'enqueueExecutionStopTask', 'enqueueExecutionGetStatus', 'enqueueExecutionEnvUpdated', 'enqueueExecutionCccAbort', 'enqueueExecutionCccContinue', 'enqueueExecutionCccRetry', 'enqueueExecutionRegisterPipeline', 'enqueueExecutionRecover', 'enqueueExecutionPing', 'startExecutionActor', 'ensureExecutionActorReady'], owner: 'executionactor', types: ['pipeline_loaded', 'env_updated', 'get_status', 'execute_element', 'await_task', 'get_tasks', 'get_task_status', 'cancel_task', 'stop_task', 'ccc_abort', 'ccc_continue', 'ccc_retry', 'task_settled', 'recover', 'register_pipeline', 'ping'] },
+  { src: 'actors/dbactor.js', provides: ['createInitialDbState', 'dbbehavior', 'serializeDna', 'deserializeDna', 'consolidateGraph', 'restoreGraph', 'serializePairStore', 'deserializePairStore', 'optimizeSerializedDna', 'deoptimizeSerializedDna', 'enqueueDbStore', 'enqueueDbRestore', 'enqueueDbList', 'enqueueDbDelete'], owner: 'dbactor', types: ['store', 'restore', 'list', 'delete'] },
+  { src: 'actors/mailactor.js', provides: ['createInitialMailState', 'mailbehavior', 'sendInstruction', 'sendResponse', 'generateTag'], owner: 'mailactor', types: ['send', 'ack'] },
+  { src: 'actors/worldmapactor.js', provides: ['createInitialEnv', 'worldmapbehavior', 'sendworldmappatch', 'updateworldmapfn', 'observeworldmap', 'unobserveworldmap', 'getworldmap', 'startWorldmapActor'], owner: 'worldmapactor', types: ['update', 'update_fn', 'observe', 'unobserve', 'get_worldmap'] },
+  { src: 'actors/apiactor.js', provides: ['apibehavior', 'enqueueapi', 'enqueuefetch'], owner: 'apiactor', types: ['api', 'fetch'] },
+  { src: 'actors/debugactor.js', provides: ['debugbehavior', 'enqueueDebugPing', 'enqueueDebugRecover'], owner: 'debugactor', types: ['init_overlay', 'show', 'hide', 'recover', 'ping'] },
+  { src: 'actors/executionactor.js', provides: ['executionbehavior', 'enqueueExecutionPipelineLoaded', 'enqueueExecutionSubmit', 'enqueueExecutionAwaitTask', 'enqueueExecutionGetTasks', 'enqueueExecutionGetTaskStatus', 'enqueueExecutionCancelTask', 'enqueueExecutionStopTask', 'enqueueExecutionGetStatus', 'enqueueExecutionEnvUpdated', 'enqueueExecutionCccAbort', 'enqueueExecutionCccContinue', 'enqueueExecutionCccRetry', 'enqueueExecutionRegisterPipeline', 'enqueueExecutionRecover', 'enqueueExecutionPing'], owner: 'executionactor', types: ['pipeline_loaded', 'env_updated', 'get_status', 'execute_element', 'await_task', 'get_tasks', 'get_task_status', 'cancel_task', 'stop_task', 'ccc_abort', 'ccc_continue', 'ccc_retry', 'task_settled', 'recover', 'register_pipeline', 'ping'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'observeworldmap', 'select'] },
-  { src: 'actors/renderactor.js', provides: ['RENDERACTOR', 'enqueuerender', 'enqueueclear', 'enqueuehtml', 'enqueueremove', 'enqueuestyles', 'enqueuesetattr', 'enqueuetoggleclass', 'enqueuecreateelement', 'enqueuecreatecontainer', 'enqueuecreatefromhtml', 'enqueuegethtml', 'enqueuegetvalue', 'enqueuegetstyle', 'enqueuegetposition', 'enqueuesethtml', 'enqueuesetposition', 'enqueuesetstyle', 'enqueuesetvalue', 'enqueueproperty', 'enqueuegetlayout', 'enqueuesetlayout', 'enqueuegetviewport', 'enqueuegetscreen', 'enqueuematchmedia', 'enqueueRenderRegisterTrigger', 'enqueueRenderRegisterTriggerExpectation', 'enqueueRenderRevalidateTriggers', 'enqueueRenderPing', 'enqueueRenderGetBodyHtml', 'enqueueRenderRestoreBodyHtml', 'enqueueRenderRecover', 'enqueueRenderCrypto', 'startRenderActor', 'expectelement', 'handlefilereaderrequest'], owner: 'renderactor', types: ['render', 'clear', 'html', 'remove', 'setstyles', 'setattr', 'toggleclass', 'crypto', 'geolocation', 'persistence', 'createelement', 'createcontainer', 'createfromhtml', 'property', 'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout', 'sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'getviewport', 'getscreen', 'matchmedia', 'get_body_html', 'restore_body_html', 'recover', 'ping', 'register_trigger', 'register_trigger_expectation', 'revalidate_triggers'] },
+  { src: 'actors/renderactor.js', provides: ['renderbehavior', 'enqueuerender', 'enqueueclear', 'enqueuehtml', 'enqueueremove', 'enqueuestyles', 'enqueuesetattr', 'enqueuetoggleclass', 'enqueuecreateelement', 'enqueuecreatecontainer', 'enqueuecreatefromhtml', 'enqueuegethtml', 'enqueuegetvalue', 'enqueuegetstyle', 'enqueuegetposition', 'enqueuesethtml', 'enqueuesetposition', 'enqueuesetstyle', 'enqueuesetvalue', 'enqueueproperty', 'enqueuegetlayout', 'enqueuesetlayout', 'enqueuegetviewport', 'enqueuegetscreen', 'enqueuematchmedia', 'enqueueRenderRegisterTrigger', 'enqueueRenderRegisterTriggerExpectation', 'enqueueRenderRevalidateTriggers', 'enqueueRenderPing', 'enqueueRenderGetBodyHtml', 'enqueueRenderRestoreBodyHtml', 'enqueueRenderRecover', 'enqueueRenderCrypto', 'expectelement', 'handlefilereaderrequest'], owner: 'renderactor', types: ['render', 'clear', 'html', 'remove', 'setstyles', 'setattr', 'toggleclass', 'crypto', 'geolocation', 'persistence', 'createelement', 'createcontainer', 'createfromhtml', 'property', 'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout', 'sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'getviewport', 'getscreen', 'matchmedia', 'get_body_html', 'restore_body_html', 'recover', 'ping', 'register_trigger', 'register_trigger_expectation', 'revalidate_triggers'] },
   { src: 'factory/blockcompiler.js', provides: ['loadPipeline', 'compileStage', 'compileStageRequestToElements', 'orchestrateStage', 'validatePipelineBriefcase'] },
-  { src: 'actors/hypervisoractor.js', provides: ['HYPERVISOR', 'startHypervisorActor', 'bootActors', 'activateManagedActors', 'recoverHypervisorState', 'enqueueHypervisorLoad', 'enqueueHypervisorSave', 'enqueueHypervisorGetEnv', 'enqueueHypervisorSetEnv', 'enqueueHypervisorGetLatestEnv', 'enqueueHypervisorGetRenderHtml', 'enqueueHypervisorSetRenderHtml', 'enqueueHypervisorGetExecutionStack', 'enqueueHypervisorSetExecutionStack', 'enqueueHypervisorGetRoute', 'enqueueHypervisorSetRoute', 'enqueueHypervisorGetActivePipelines', 'enqueueHypervisorRegisterPipeline', 'enqueueHypervisorUnregisterPipeline', 'enqueueHypervisorSetProgram', 'enqueueHypervisorGetProgram', 'enqueueHypervisorMarkBoot', 'enqueueHypervisorSetStageDescriptor', 'enqueueHypervisorGetTriggerRecipientStatus', 'enqueueHypervisorTrigger', 'enqueueHypervisorPing', 'enqueueHypervisorActivateActors', 'enqueueHypervisorBootPipeline', 'enqueueHypervisorStageCompleted'], owner: 'hypervisoractor', types: ['load', 'save', 'get_env', 'set_env', 'get_latest_env', 'get_render_html', 'set_render_html', 'get_execution_stack', 'set_execution_stack', 'get_route', 'set_route', 'get_active_pipelines', 'register_pipeline', 'unregister_pipeline', 'set_program', 'get_program', 'mark_boot', 'set_stage_descriptor', 'get_trigger_recipient_status', 'trigger_event', 'ping', 'recover', 'activate_actors', 'boot_pipeline', 'compile_stage', 'stage_completed'] },
+  { src: 'actors/hypervisoractor.js', provides: ['hypervisorbehavior', 'enqueueHypervisorLoad', 'enqueueHypervisorSave', 'enqueueHypervisorGetEnv', 'enqueueHypervisorSetEnv', 'enqueueHypervisorGetLatestEnv', 'enqueueHypervisorGetRenderHtml', 'enqueueHypervisorSetRenderHtml', 'enqueueHypervisorGetExecutionStack', 'enqueueHypervisorSetExecutionStack', 'enqueueHypervisorGetRoute', 'enqueueHypervisorSetRoute', 'enqueueHypervisorGetActivePipelines', 'enqueueHypervisorRegisterPipeline', 'enqueueHypervisorUnregisterPipeline', 'enqueueHypervisorSetProgram', 'enqueueHypervisorGetProgram', 'enqueueHypervisorMarkBoot', 'enqueueHypervisorSetStageDescriptor', 'enqueueHypervisorGetTriggerRecipientStatus', 'enqueueHypervisorTrigger', 'enqueueHypervisorPing', 'enqueueHypervisorActivateActors', 'enqueueHypervisorBootPipeline', 'enqueueHypervisorStageCompleted'], owner: 'hypervisoractor', types: ['load', 'save', 'get_env', 'set_env', 'get_latest_env', 'get_render_html', 'set_render_html', 'get_execution_stack', 'set_execution_stack', 'get_route', 'set_route', 'get_active_pipelines', 'register_pipeline', 'unregister_pipeline', 'set_program', 'get_program', 'mark_boot', 'set_stage_descriptor', 'get_trigger_recipient_status', 'trigger_event', 'ping', 'recover', 'activate_actors', 'boot_pipeline', 'compile_stage', 'stage_completed'] },
   { src: 'registerconsumers.js', provides: ['REGISTERED_CONSUMERS'] }
 ];
 
@@ -66,6 +64,12 @@ function checkRegistration(entry) {
   return { ok: missing.length === 0, missing: missing };
 }
 
+function checkStateRegistration(entry) {
+  if (!entry.owner) return { ok: true };
+  var state = getActorState(entry.owner);
+  return { ok: state !== undefined, missing: state === undefined ? entry.owner : null };
+}
+
 function runPipelineBoot(loadProgram, report, manifest) {
   var list = manifest || PIPELINES_MANIFEST;
   var index = 0;
@@ -74,13 +78,17 @@ function runPipelineBoot(loadProgram, report, manifest) {
 
   function loadNext() {
     if (index >= entries.length) {
-      // All scripts loaded. Now perform final registration checks.
+      // All scripts loaded. Now perform final verification.
       var regFailures = [];
       entries.forEach(function(entry) {
         if (entry.owner) {
           var reg = checkRegistration(entry);
           if (!reg.ok) {
             regFailures.push({ src: entry.src, missingTypes: reg.missing });
+          }
+          var st = checkStateRegistration(entry);
+          if (!st.ok) {
+            regFailures.push({ src: entry.src, missingState: st.missing });
           }
         }
       });

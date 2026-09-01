@@ -1,37 +1,16 @@
 // ============================================================
 // UPDATED FILE: js/actors/debugactor.js
-// Change applied: PURE FUNCTION REFACTOR
-//   - No message interface definitions.
-//   - No MESSAGEREGISTRY references.
-//   - No createactor object construction.
-//   - Exports only createInitialDebugState, debugbehavior, enqueue producers.
-//   - Actor state owned by the runtime (actorkernel.js).
+// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
+//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
+//   - Behavior signature: debugbehavior(env, message) -> env
+//   - Uses env.debug slice for overlay state and currentContinuation.
+//   - When it needs to update env.debug, sends UPDATE message to
+//     worldmapactor via sendInstruction.
+//   - Does NOT return a modified env; returns env unchanged.
+//   - Producers enqueueDebugPing, enqueueDebugRecover remain.
 // ============================================================
 
 var debugVerbosityConstants = createVerbosityConstants();
-var debugState = Object.freeze({ level: debugVerbosityConstants.DEBUG });
-
-function createInitialDebugState() {
-  return {
-    overlay: null,
-    currentContinuation: null,
-    worldmap: {
-      overlayVisible: false,
-      cccState: {
-        currentContinuation: null
-      }
-    },
-    globalListenersInstalled: false,
-    verbosity: debugVerbosityConstants.DEBUG
-  };
-}
-
-function persistDebugWorldmap(state) {
-  logdebug(debugState, '[DEBUGACTOR]', 'persistDebugWorldmap saving state to db');
-  enqueueDbStore('actor:state:debug', state.worldmap).catch(function(e) {
-    logwarn(debugState, '[DEBUGACTOR]', 'state persist failed:', e);
-  });
-}
 
 function getctx(error, cont) {
   var env = (cont && cont.envsnapshot) ||
@@ -57,8 +36,8 @@ function btn(text, style, onclick) {
   return b;
 }
 
-function ensureOverlay(state) {
-  if (!state.overlay) {
+function ensureOverlay(debugSlice) {
+  if (!debugSlice.overlay) {
     var overlay = document.getElementById('debugoverlay');
     if (!overlay) {
       overlay = document.createElement('div');
@@ -66,45 +45,36 @@ function ensureOverlay(state) {
       overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.95);z-index:10000;display:none;flex-direction:column;';
       document.body.appendChild(overlay);
     }
-    state.overlay = overlay;
+    debugSlice.overlay = overlay;
   }
-  return state.overlay;
+  return debugSlice.overlay;
 }
 
-// Pure behavior function: (state, message) -> state
-function debugbehavior(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : debugVerbosityConstants.DEBUG;
-  debugState = Object.freeze({ level: v });
+// Pure behavior function: (env, message) -> env
+function debugbehavior(env, message) {
+  logdebug(env, '[DEBUGACTOR]', 'behavior handling action:', message.type);
 
-  logdebug(debugState, '[DEBUGACTOR]', 'behavior handling action:', message.type);
-
-  if (!state.worldmap) {
-    state.worldmap = {
-      overlayVisible: false,
-      cccState: { currentContinuation: null }
-    };
-  }
+  var debugSlice = env.debug;
 
   if (message.type === MESSAGETYPES.PING) {
-    logdebug(debugState, '[DEBUGACTOR]', 'action PING');
+    logdebug(env, '[DEBUGACTOR]', 'action PING');
     if (message.sender && message.tag) {
       var responseTypePing = (message.responseSpec && message.responseSpec.responseType) || 'response';
       sendInstruction(message.sender, responseTypePing, { result: true }, message.tag, 'debugactor');
     }
-    return state;
+    return env;
   }
 
   if (message.type === MESSAGETYPES.INIT_OVERLAY) {
-    logdebug(debugState, '[DEBUGACTOR]', 'action INIT_OVERLAY');
-    persistDebugWorldmap(state);
-    ensureOverlay(state);
+    logdebug(env, '[DEBUGACTOR]', 'action INIT_OVERLAY');
+    ensureOverlay(debugSlice);
 
-    if (!state.globalListenersInstalled) {
-      state.globalListenersInstalled = true;
+    if (!debugSlice.globalListenersInstalled) {
+      debugSlice.globalListenersInstalled = true;
 
       window.addEventListener('error', function(e) {
         e.preventDefault();
-        logwarn(debugState, '[DEBUGACTOR]', 'global window error captured:', e.error || e);
+        logwarn(env, '[DEBUGACTOR]', 'global window error captured:', e.error || e);
         sendInstruction('debugactor', MESSAGETYPES.SHOW, {
           error: e.error || e,
           continuation: null
@@ -114,7 +84,7 @@ function debugbehavior(state, message) {
       window.addEventListener('unhandledrejection', function(e) {
         if (e.reason && e.reason.diagnostic) {
           e.preventDefault();
-          logwarn(debugState, '[DEBUGACTOR]', 'global unhandled rejection captured:', e.reason);
+          logwarn(env, '[DEBUGACTOR]', 'global unhandled rejection captured:', e.reason);
           sendInstruction('debugactor', MESSAGETYPES.SHOW, {
             error: e.reason,
             continuation: e.reason.diagnostic.continuation || null
@@ -123,37 +93,55 @@ function debugbehavior(state, message) {
       });
     }
 
-    state.worldmap.overlayVisible = false;
-    persistDebugWorldmap(state);
+    // Update debug slice via worldmapactor
+    sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+      patch: {
+        debug: {
+          overlayVisible: false,
+          globalListenersInstalled: debugSlice.globalListenersInstalled,
+          overlay: debugSlice.overlay,
+          currentContinuation: debugSlice.currentContinuation,
+          cccState: debugSlice.cccState
+        }
+      }
+    }, generateTag(), 'debugactor');
+
     if (message.sender && message.tag) {
       var responseTypeInit = (message.responseSpec && message.responseSpec.responseType) || 'response';
       sendInstruction(message.sender, responseTypeInit, { result: true }, message.tag, 'debugactor');
     }
-    return state;
+    return env;
   }
 
   if (message.type === MESSAGETYPES.HIDE) {
-    logdebug(debugState, '[DEBUGACTOR]', 'action HIDE');
-    persistDebugWorldmap(state);
-    if (state.overlay) {
-      state.overlay.style.display = 'none';
-      state.overlay.innerHTML = '';
+    logdebug(env, '[DEBUGACTOR]', 'action HIDE');
+    if (debugSlice.overlay) {
+      debugSlice.overlay.style.display = 'none';
+      debugSlice.overlay.innerHTML = '';
     }
-    state.worldmap.overlayVisible = false;
-    state.worldmap.cccState.currentContinuation = null;
-    persistDebugWorldmap(state);
+    sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+      patch: {
+        debug: {
+          overlayVisible: false,
+          cccState: { currentContinuation: null },
+          currentContinuation: null,
+          overlay: debugSlice.overlay,
+          globalListenersInstalled: debugSlice.globalListenersInstalled
+        }
+      }
+    }, generateTag(), 'debugactor');
+
     if (message.sender && message.tag) {
       var responseTypeHide = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendInstruction(message.sender, responseTypeHide, { result: state }, message.tag, 'debugactor');
+      sendInstruction(message.sender, responseTypeHide, { result: env }, message.tag, 'debugactor');
     }
-    return state;
+    return env;
   }
 
   if (message.type === MESSAGETYPES.SHOW) {
-    loginfo(debugState, '[DEBUGACTOR]', 'action SHOW debug overlay');
-    logdebug(debugState, '[DEBUGACTOR]', 'action SHOW error:', message.error, 'continuation:', message.continuation);
-    persistDebugWorldmap(state);
-    var overlay = ensureOverlay(state);
+    loginfo(env, '[DEBUGACTOR]', 'action SHOW debug overlay');
+    logdebug(env, '[DEBUGACTOR]', 'action SHOW error:', message.error, 'continuation:', message.continuation);
+    var overlay = ensureOverlay(debugSlice);
 
     overlay.innerHTML = formatdebugtrace(
       message.error,
@@ -167,7 +155,7 @@ function debugbehavior(state, message) {
       var ctx = getctx(message.error, message.continuation);
 
       actions.appendChild(btn('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
-        logdebug(debugState, '[DEBUGACTOR]', 'Retrying stage:', ctx);
+        logdebug(env, '[DEBUGACTOR]', 'Retrying stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
         sendInstruction('executionactor', 'ccc_retry', {
@@ -179,7 +167,7 @@ function debugbehavior(state, message) {
       }));
 
       actions.appendChild(btn('CONTINUE', 'background:#4488ff;color:#fff;', function() {
-        logdebug(debugState, '[DEBUGACTOR]', 'Continuing stage:', ctx);
+        logdebug(env, '[DEBUGACTOR]', 'Continuing stage:', ctx);
         overlay.style.display = 'none';
         overlay.innerHTML = '';
         sendInstruction('executionactor', 'ccc_continue', {
@@ -195,7 +183,7 @@ function debugbehavior(state, message) {
       var abortCtx = message.continuation
         ? getctx(null, message.continuation)
         : { pipelineid: 'unknown_pipeline', path: ['unknown_stage', 'unknown_element'], elementid: 'unknown_element' };
-      logdebug(debugState, '[DEBUGACTOR]', 'Aborting stage:', abortCtx);
+      logdebug(env, '[DEBUGACTOR]', 'Aborting stage:', abortCtx);
       overlay.style.display = 'none';
       overlay.innerHTML = '';
       sendInstruction('executionactor', 'ccc_abort', {
@@ -209,80 +197,53 @@ function debugbehavior(state, message) {
     overlay.appendChild(actions);
     overlay.style.display = 'flex';
 
-    state.worldmap.overlayVisible = true;
-    state.worldmap.cccState.currentContinuation = message.continuation || null;
-    persistDebugWorldmap(state);
+    sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+      patch: {
+        debug: {
+          overlayVisible: true,
+          cccState: { currentContinuation: message.continuation || null },
+          currentContinuation: message.continuation || null,
+          overlay: overlay,
+          globalListenersInstalled: debugSlice.globalListenersInstalled
+        }
+      }
+    }, generateTag(), 'debugactor');
 
     if (message.sender && message.tag) {
       var responseTypeShow = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendInstruction(message.sender, responseTypeShow, { result: state }, message.tag, 'debugactor');
+      sendInstruction(message.sender, responseTypeShow, { result: env }, message.tag, 'debugactor');
     }
-    return state;
+    return env;
   }
 
   if (message.type === MESSAGETYPES.RECOVER) {
-    logdebug(debugState, '[DEBUGACTOR]', 'action RECOVER debug state');
+    logdebug(env, '[DEBUGACTOR]', 'action RECOVER debug state');
     enqueueDbRestore('actor:state:debug').then(function(saved) {
-      if (saved) {
-        state.worldmap = saved;
-        if (saved.overlayVisible) {
-          ensureOverlay(state);
-          state.overlay.style.display = 'flex';
-        } else if (state.overlay) {
-          state.overlay.style.display = 'none';
-        }
-        if (saved.cccState && saved.cccState.currentContinuation) {
-          state.currentContinuation = saved.cccState.currentContinuation;
-        }
-      } else {
-        state.worldmap = {
-          overlayVisible: false,
-          cccState: { currentContinuation: null }
-        };
-        persistDebugWorldmap(state);
-      }
-      logdebug(debugState, '[DEBUGACTOR]', 'debug recovery completed');
+      var newDebug = saved || {
+        overlay: null,
+        currentContinuation: null,
+        overlayVisible: false,
+        cccState: { currentContinuation: null },
+        globalListenersInstalled: false
+      };
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { debug: newDebug }
+      }, generateTag(), 'debugactor');
       if (message.sender && message.tag) {
         var responseTypeRecover = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        sendInstruction(message.sender, responseTypeRecover, { result: state }, message.tag, 'debugactor');
+        sendInstruction(message.sender, responseTypeRecover, { result: env }, message.tag, 'debugactor');
       }
     }).catch(function(e) {
-      logwarn(debugState, '[DEBUGACTOR]', 'state restore failed:', e);
-      state.worldmap = {
-        overlayVisible: false,
-        cccState: { currentContinuation: null }
-      };
-      persistDebugWorldmap(state);
+      logwarn(env, '[DEBUGACTOR]', 'state restore failed:', e);
       if (message.sender && message.tag) {
         var responseTypeErr = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        sendInstruction(message.sender, responseTypeErr, { result: state }, message.tag, 'debugactor');
+        sendInstruction(message.sender, responseTypeErr, { result: env }, message.tag, 'debugactor');
       }
     });
-    return state;
+    return env;
   }
 
-  return state;
-}
-
-// Register initial state with runtime.
-registerActorState('debugactor', createInitialDebugState());
-
-// Compatibility handle (stateless) for external access.
-var DEBUGACTOR = {
-  getstate: function() { return getActorState('debugactor'); },
-  dispatch: function(message) { return dispatchToActor('debugactor', debugbehavior, message); }
-};
-
-function startDebugActor(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-    if (lvl !== undefined) {
-      debugState = Object.freeze({ level: lvl });
-      var debugStateObj = getActorState('debugactor');
-      if (debugStateObj) debugStateObj.verbosity = lvl;
-    }
-  }
-  return DEBUGACTOR;
+  return env;
 }
 
 function enqueueDebugPing(responseSpec) {

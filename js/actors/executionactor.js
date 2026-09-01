@@ -1,16 +1,17 @@
 // ============================================================
 // UPDATED FILE: js/actors/executionactor.js
-// Change applied: PURE FUNCTION REFACTOR
-//   - No message interface definitions.
-//   - No MESSAGEREGISTRY references.
-//   - No createactor object construction.
-//   - Exports only createInitialExecutionState, executionbehavior,
-//     enqueue producers, and task helpers.
-//   - Actor state owned by the runtime (actorkernel.js).
+// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED UPDATES
+//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
+//   - Behavior signature: executionbehavior(env, message) -> env
+//   - Uses env.execution slice for pipelines, tasks, taskCounter, etc.
+//   - When state changes, sends UPDATE message to worldmapactor via
+//     sendInstruction; does not return a modified env.
+//   - Task settlement is done directly by mutating env.execution in place
+//     and then sending an UPDATE message.
+//   - Producers enqueueExecution* remain.
 // ============================================================
 
 var executionVerbosityConstants = createVerbosityConstants();
-var executionState = Object.freeze({ level: executionVerbosityConstants.DEBUG });
 
 function sanitizeForState(value, seen) {
   if (value === null || value === undefined) return value;
@@ -35,44 +36,13 @@ function sanitizeForState(value, seen) {
   return out;
 }
 
-function createInitialExecutionState() {
-  return {
-    pipelines: {},
-    htmlSnapshot: null,
-    tasks: {},
-    taskCounter: 0,
-    worldmap: {
-      pipelines: {},
-      tasks: {},
-      htmlSnapshot: null,
-      taskCounter: 0
-    },
-    debugState: { currentContinuation: null },
-    verbosity: executionVerbosityConstants.DEBUG
-  };
+function nextTaskId(execSlice) {
+  execSlice.taskCounter = (execSlice.taskCounter || 0) + 1;
+  return 'task_' + Date.now() + '_' + execSlice.taskCounter + '_' + Math.random().toString(36).slice(2, 8);
 }
 
-function persistExecutionWorldmap(state) {
-  logdebug(executionState, '[EXECUTIONACTOR]', 'persistExecutionWorldmap saving combined state to db');
-  var persistable = {
-    pipelines: state.pipelines || {},
-    tasks: state.tasks || {},
-    taskCounter: state.taskCounter || 0,
-    htmlSnapshot: state.htmlSnapshot || null,
-    worldmap: state.worldmap || {}
-  };
-  enqueueDbStore('actor:state:execution', persistable).catch(function(e) {
-    logwarn(executionState, '[EXECUTIONACTOR]', 'state persist failed:', e);
-  });
-}
-
-function nextTaskId(state) {
-  state.taskCounter = (state.taskCounter || 0) + 1;
-  return 'task_' + Date.now() + '_' + state.taskCounter + '_' + Math.random().toString(36).slice(2, 8);
-}
-
-function makeTask(state, descriptor) {
-  var taskid = nextTaskId(state);
+function makeTask(execSlice, descriptor) {
+  var taskid = nextTaskId(execSlice);
   var task = {
     taskid: taskid,
     kind: 'element',
@@ -88,17 +58,17 @@ function makeTask(state, descriptor) {
     result: null,
     error: null
   };
-  state.tasks[taskid] = task;
-  logdebug(executionState, '[EXECUTIONACTOR]', 'makeTask created element task:', taskid, 'pipelineid:', task.pipelineid, 'elementid:', task.elementid);
+  execSlice.tasks[taskid] = task;
+  logdebug(execSlice, '[EXECUTIONACTOR]', 'makeTask created element task:', taskid, 'pipelineid:', task.pipelineid, 'elementid:', task.elementid);
   return task;
 }
 
-function cancelTask(state, taskid) {
-  var task = state.tasks[taskid];
+function cancelTask(execSlice, taskid) {
+  var task = execSlice.tasks[taskid];
   if (!task) return;
-  logdebug(executionState, '[EXECUTIONACTOR]', 'cancelTask cancelling task:', taskid);
+  logdebug(execSlice, '[EXECUTIONACTOR]', 'cancelTask cancelling task:', taskid);
   task.status = 'CANCELLED';
-  (task.childTaskIds || []).forEach(function(childId) { cancelTask(state, childId); });
+  (task.childTaskIds || []).forEach(function(childId) { cancelTask(execSlice, childId); });
   var err = { error: 'Task cancelled: ' + taskid };
   (task.consumers || []).forEach(function(consumer) {
     sendResponse(consumer.sender, consumer.tag, err, 'executionactor');
@@ -106,10 +76,10 @@ function cancelTask(state, taskid) {
   task.consumers = [];
 }
 
-function stopTask(state, taskid) {
-  var task = state.tasks[taskid];
+function stopTask(execSlice, taskid) {
+  var task = execSlice.tasks[taskid];
   if (!task) return;
-  logdebug(executionState, '[EXECUTIONACTOR]', 'stopTask stopping task:', taskid);
+  logdebug(execSlice, '[EXECUTIONACTOR]', 'stopTask stopping task:', taskid);
   task.status = 'STOPPED';
   var err = { error: 'Task stopped: ' + taskid };
   (task.consumers || []).forEach(function(consumer) {
@@ -118,25 +88,24 @@ function stopTask(state, taskid) {
   task.consumers = [];
 }
 
-function ensurePipeline(state, pipelineid) {
-  if (!state.pipelines[pipelineid]) {
-    logdebug(executionState, '[EXECUTIONACTOR]', 'ensurePipeline initializing pipeline tracking for:', pipelineid);
-    state.pipelines[pipelineid] = {
+function ensurePipeline(execSlice, pipelineid) {
+  if (!execSlice.pipelines[pipelineid]) {
+    logdebug(execSlice, '[EXECUTIONACTOR]', 'ensurePipeline initializing pipeline tracking for:', pipelineid);
+    execSlice.pipelines[pipelineid] = {
       status: 'running',
       env: {},
       dna: null,
       usesElementSnapshots: false
     };
   }
-  return state.pipelines[pipelineid];
+  return execSlice.pipelines[pipelineid];
 }
 
-// Pure behavior function: (state, message) -> state
-function executionbehavior(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : executionVerbosityConstants.DEBUG;
-  executionState = Object.freeze({ level: v });
+// Pure behavior function: (env, message) -> env
+function executionbehavior(env, message) {
+  logdebug(env, '[EXECUTIONACTOR]', 'behavior handling action:', message.type);
 
-  logdebug(executionState, '[EXECUTIONACTOR]', 'behavior handling action:', message.type);
+  var execSlice = env.execution;
 
   var readOnly = [
     MESSAGETYPES.GET_STATUS,
@@ -148,34 +117,39 @@ function executionbehavior(state, message) {
   ];
 
   if (readOnly.indexOf(message.type) === -1) {
-    persistExecutionWorldmap(state);
+    // For state-changing actions, send updates after processing.
+    // We don't persist in executionactor directly anymore.
   }
-
-  var nextState = state;
 
   switch (message.type) {
     case MESSAGETYPES.PIPELINE_LOADED: {
-      loginfo(executionState, '[EXECUTIONACTOR]', 'action PIPELINE_LOADED:', message.pipelineid);
-      var pipeline = ensurePipeline(nextState, message.pipelineid);
+      loginfo(env, '[EXECUTIONACTOR]', 'action PIPELINE_LOADED:', message.pipelineid);
+      var pipeline = ensurePipeline(execSlice, message.pipelineid);
       if (message.env && Object.keys(message.env).length > 0) pipeline.env = message.env;
       pipeline.status = 'running';
-      return nextState;
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { execution: execSlice }
+      }, generateTag(), 'executionactor');
+      return env;
     }
     case MESSAGETYPES.ENV_UPDATED: {
-      var p3 = ensurePipeline(nextState, message.pipelineid);
+      var p3 = ensurePipeline(execSlice, message.pipelineid);
       p3.env = sanitizeForState(message.env || {});
-      return nextState;
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { execution: execSlice }
+      }, generateTag(), 'executionactor');
+      return env;
     }
     case MESSAGETYPES.GET_STATUS: {
-      var status = message.pipelineid ? (nextState.pipelines[message.pipelineid] || null) : nextState.pipelines;
+      var status = message.pipelineid ? (execSlice.pipelines[message.pipelineid] || null) : execSlice.pipelines;
       if (message.sender && message.tag) {
         sendResponse(message.sender, message.tag, status, 'executionactor');
       }
-      return nextState;
+      return env;
     }
     case MESSAGETYPES.EXECUTE_ELEMENT: {
-      logdebug(executionState, '[EXECUTIONACTOR]', 'action EXECUTE_ELEMENT element:', message.elementid, 'pipeline:', message.pipelineid, 'path:', message.path);
-      var task = makeTask(nextState, {
+      logdebug(env, '[EXECUTIONACTOR]', 'action EXECUTE_ELEMENT element:', message.elementid, 'pipeline:', message.pipelineid, 'path:', message.path);
+      var task = makeTask(execSlice, {
         kind: 'element',
         pipelineid: message.pipelineid,
         elementid: message.elementid,
@@ -183,17 +157,20 @@ function executionbehavior(state, message) {
         programRef: message.programRef || null,
         origin: message.origin || null
       });
-      runElementTask(task.taskid, message);
-      return nextState;
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { execution: execSlice }
+      }, generateTag(), 'executionactor');
+      runElementTask(task.taskid, message, env);
+      return env;
     }
     case MESSAGETYPES.AWAIT_TASK: {
-      logdebug(executionState, '[EXECUTIONACTOR]', 'action AWAIT_TASK task:', message.taskid);
-      var awaitTask = nextState.tasks[message.taskid];
+      logdebug(env, '[EXECUTIONACTOR]', 'action AWAIT_TASK task:', message.taskid);
+      var awaitTask = execSlice.tasks[message.taskid];
       if (!awaitTask) {
         if (message.sender && message.tag) {
           sendResponse(message.sender, message.tag, { error: '[EXECUTIONACTOR] unknown task: ' + message.taskid }, 'executionactor');
         }
-        return nextState;
+        return env;
       }
       if (awaitTask.status === 'EXECUTED') {
         if (message.sender && message.tag) {
@@ -214,13 +191,16 @@ function executionbehavior(state, message) {
       } else {
         if (!awaitTask.consumers) awaitTask.consumers = [];
         awaitTask.consumers.push({ sender: message.sender, tag: message.tag });
+        sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+          patch: { execution: execSlice }
+        }, generateTag(), 'executionactor');
       }
-      return nextState;
+      return env;
     }
     case MESSAGETYPES.GET_TASKS: {
       var result = [];
-      Object.keys(nextState.tasks).forEach(function(tid) {
-        var t = nextState.tasks[tid];
+      Object.keys(execSlice.tasks).forEach(function(tid) {
+        var t = execSlice.tasks[tid];
         if (message.pipelineid && t.pipelineid !== message.pipelineid) return;
         if (message.elementid && t.elementid !== message.elementid) return;
         if (message.kind && t.kind !== message.kind) return;
@@ -240,10 +220,10 @@ function executionbehavior(state, message) {
       if (message.sender && message.tag) {
         sendResponse(message.sender, message.tag, result, 'executionactor');
       }
-      return nextState;
+      return env;
     }
     case MESSAGETYPES.GET_TASK_STATUS: {
-      var t2 = nextState.tasks[message.taskid];
+      var t2 = execSlice.tasks[message.taskid];
       var statusResult = t2 ? {
         taskid: t2.taskid,
         kind: t2.kind,
@@ -259,24 +239,30 @@ function executionbehavior(state, message) {
       if (message.sender && message.tag) {
         sendResponse(message.sender, message.tag, statusResult, 'executionactor');
       }
-      return nextState;
+      return env;
     }
     case MESSAGETYPES.CANCEL_TASK: {
-      cancelTask(nextState, message.taskid);
-      return nextState;
+      cancelTask(execSlice, message.taskid);
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { execution: execSlice }
+      }, generateTag(), 'executionactor');
+      return env;
     }
     case MESSAGETYPES.STOP_TASK: {
-      stopTask(nextState, message.taskid);
-      return nextState;
+      stopTask(execSlice, message.taskid);
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { execution: execSlice }
+      }, generateTag(), 'executionactor');
+      return env;
     }
     case MESSAGETYPES.CCC_ABORT:
     case MESSAGETYPES.CCC_CONTINUE:
     case MESSAGETYPES.CCC_RETRY: {
-      return nextState;
+      return env;
     }
     case MESSAGETYPES.TASK_SETTLED: {
-      logdebug(executionState, '[EXECUTIONACTOR]', 'action TASK_SETTLED task:', message.taskid, 'status:', message.status);
-      var task4 = nextState.tasks[message.taskid];
+      logdebug(env, '[EXECUTIONACTOR]', 'action TASK_SETTLED task:', message.taskid, 'status:', message.status);
+      var task4 = execSlice.tasks[message.taskid];
       if (task4) {
         task4.status = message.status;
         task4.result = message.result || null;
@@ -293,55 +279,60 @@ function executionbehavior(state, message) {
           });
         }
         task4.consumers = [];
+        sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+          patch: { execution: execSlice }
+        }, generateTag(), 'executionactor');
       }
-      return nextState;
+      return env;
     }
     case MESSAGETYPES.RECOVER: {
       enqueueDbRestore('actor:state:execution').then(function(saved) {
         if (saved) {
-          nextState.worldmap = saved.worldmap || saved;
-          nextState.pipelines = saved.pipelines || {};
-          nextState.tasks = saved.tasks || {};
-          nextState.htmlSnapshot = saved.htmlSnapshot || null;
-          nextState.taskCounter = saved.taskCounter || 0;
+          env.execution = saved;
         } else {
-          nextState.worldmap = createInitialExecutionState().worldmap;
-          nextState.pipelines = {};
-          nextState.tasks = {};
-          nextState.htmlSnapshot = null;
-          nextState.taskCounter = 0;
+          env.execution = {
+            pipelines: {},
+            tasks: {},
+            taskCounter: 0,
+            htmlSnapshot: null
+          };
         }
-        if (message.sender && message.tag) sendResponse(message.sender, message.tag, nextState, 'executionactor');
+        sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+          patch: { execution: env.execution }
+        }, generateTag(), 'executionactor');
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, env, 'executionactor');
       }).catch(function(e) {
         if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'executionactor');
       });
-      return nextState;
+      return env;
     }
     case MESSAGETYPES.REGISTER_PIPELINE: {
-      logdebug(executionState, '[EXECUTIONACTOR]', 'action REGISTER_PIPELINE:', message.pipelineid);
-      var p10 = ensurePipeline(nextState, message.pipelineid);
+      logdebug(env, '[EXECUTIONACTOR]', 'action REGISTER_PIPELINE:', message.pipelineid);
+      var p10 = ensurePipeline(execSlice, message.pipelineid);
       p10.usesElementSnapshots = true;
       if (message.env) p10.env = sanitizeForState(message.env);
-      return nextState;
+      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+        patch: { execution: execSlice }
+      }, generateTag(), 'executionactor');
+      return env;
     }
     case MESSAGETYPES.PING: {
       if (message.sender && message.tag) {
         sendResponse(message.sender, message.tag, true, 'executionactor');
       }
-      return nextState;
+      return env;
     }
     default: {
-      logwarn(executionState, '[EXECUTIONACTOR]', 'unknown message type:', message.type);
-      return nextState;
+      logwarn(env, '[EXECUTIONACTOR]', 'unknown message type:', message.type);
+      return env;
     }
   }
 }
 
-// Internal task settlement: direct call, no self-message
-function settleTask(taskid, status, result, error) {
-  var currentActorState = getActorState('executionactor');
-  if (!currentActorState || !currentActorState.tasks) return;
-  var task = currentActorState.tasks[taskid];
+// Internal task settlement: direct call, then update worldmapactor.
+function settleTask(taskid, status, result, error, env) {
+  var execSlice = env.execution;
+  var task = execSlice.tasks[taskid];
   if (!task) return;
   task.status = status;
   task.result = result || null;
@@ -357,9 +348,12 @@ function settleTask(taskid, status, result, error) {
     });
   }
   task.consumers = [];
+  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+    patch: { execution: execSlice }
+  }, generateTag(), 'executionactor');
 }
 
-function runElementTask(taskid, descriptor) {
+function runElementTask(taskid, descriptor, env) {
   var executionContext = {
     env: descriptor.env,
     inputs: descriptor.signature && descriptor.signature.inputs ? descriptor.signature.inputs : [],
@@ -375,34 +369,25 @@ function runElementTask(taskid, descriptor) {
           return Promise.resolve(program[descriptor.elementid]()).then(function(r) {
             return r;
           }).catch(function(err) {
-            logwarn(executionState, '[EXECUTIONACTOR]', 'program restoration failed:', err);
+            logwarn(env, '[EXECUTIONACTOR]', 'program restoration failed:', err);
             return descriptor.executor(executionContext);
           });
         }
       } catch (err) {
-        logwarn(executionState, '[EXECUTIONACTOR]', 'program restoration failed:', err);
+        logwarn(env, '[EXECUTIONACTOR]', 'program restoration failed:', err);
       }
     }
     return Promise.resolve(descriptor.executor(executionContext));
   }
 
   runWithProgram().then(function(result) {
-    logdebug(executionState, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
-    settleTask(taskid, 'EXECUTED', result || {});
+    logdebug(env, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
+    settleTask(taskid, 'EXECUTED', result || {}, null, env);
   }).catch(function(err) {
-    logerror(executionState, '[EXECUTIONACTOR]', 'runElementTask failed:', taskid, descriptor.elementid, err);
-    settleTask(taskid, 'FAILED', null, err);
+    logerror(env, '[EXECUTIONACTOR]', 'runElementTask failed:', taskid, descriptor.elementid, err);
+    settleTask(taskid, 'FAILED', null, err, env);
   });
 }
-
-// Register initial state with runtime.
-registerActorState('executionactor', createInitialExecutionState());
-
-// Compatibility handle (stateless) for enqueue producers.
-var EXECUTIONACTOR = {
-  getstate: function() { return getActorState('executionactor'); },
-  dispatch: function(message) { return dispatchToActor('executionactor', executionbehavior, message); }
-};
 
 function enqueueExecutionPipelineLoaded(pipelineid, env, responseSpec) {
   var tag = generateTag();
@@ -469,12 +454,15 @@ function startExecutionActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      executionState = Object.freeze({ level: lvl });
-      var execStateObj = getActorState('executionactor');
-      if (execStateObj) execStateObj.verbosity = lvl;
+      executionVerbosityConstants = Object.freeze({ level: lvl });
+      var env = getActorState('worldmapactor');
+      if (env) env.verbosity = lvl;
     }
   }
-  return EXECUTIONACTOR;
+  return {
+    getstate: function() { return getActorState('worldmapactor'); },
+    dispatch: function(message) { return dispatchToActor('executionactor', executionbehavior, message); }
+  };
 }
 
 function ensureExecutionActorReady(options) {

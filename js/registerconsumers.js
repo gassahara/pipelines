@@ -317,13 +317,9 @@ MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.RESTORE, { key: 'string', resol
 MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.LIST, { resolve: 'function?', reject: 'function?' }, dbbehavior);
 MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.DELETE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
 
-// mailactor (used for message routing, not registered as consumer? Interfaces registered)
-MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.SEND, {
-  recipient: 'string', message: 'object'
-}, mailbehavior);
-MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.ACK, {
-  recipient: 'string', ids: 'array'
-}, mailbehavior);
+// mailactor (used for message routing)
+MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.SEND, { recipient: 'string', message: 'object' }, mailbehavior);
+MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.ACK, { recipient: 'string', ids: 'array' }, mailbehavior);
 
 // ------------------------------------------------------------------
 // 2. Register response consumers

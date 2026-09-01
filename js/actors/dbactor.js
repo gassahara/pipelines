@@ -1,12 +1,12 @@
 // ============================================================
 // UPDATED FILE: js/actors/dbactor.js
-// Change applied: PURE FUNCTION REFACTOR
-//   - No message interface definitions.
-//   - No MESSAGEREGISTRY references.
-//   - No createactor object construction.
-//   - Exports only createInitialDbState, dbbehavior, enqueue producers,
-//     and DNA serialization utilities.
-//   - Actor state owned by the runtime (actorkernel.js).
+// Change applied: STATELESS PURE FUNCTION + MESSAGE-BASED DISPATCH
+//   - No interface definitions, no MESSAGEREGISTRY, no createactor.
+//   - Behavior signature: dbbehavior(env, message) -> env
+//   - Uses localStorage directly for persistence; does not mutate ENV.
+//   - Logging uses env (passed from dispatcher).
+//   - Producers enqueueDbStore/Restore/List/Delete use dispatchToActor.
+//   - DNA serialization utilities retained.
 // ============================================================
 
 var dbVerbosityConstants = createVerbosityConstants();
@@ -26,13 +26,6 @@ function getStorage() {
   return null;
 }
 
-function createInitialDbState() {
-  return {
-    store: {},
-    verbosity: dbVerbosityConstants.DEBUG
-  };
-}
-
 function loadInitialState() {
   try {
     var storage = getStorage();
@@ -49,7 +42,7 @@ function loadInitialState() {
   } catch (err) {
     logwarn(dbState, '[DBACTOR]', 'loadInitialState failed:', err);
   }
-  return createInitialDbState();
+  return { store: {}, verbosity: dbVerbosityConstants.DEBUG };
 }
 
 function persistAttempt(store, root, storage, attempt) {
@@ -339,28 +332,28 @@ function deoptimizeSerializedDna(jsonString) {
 
 // ==================== ACTOR BEHAVIOR (PURE FUNCTION) ====================
 
-var dbbehavior = function(state, message) {
-  var v = state && state.verbosity !== undefined ? state.verbosity : dbVerbosityConstants.DEBUG;
+var dbbehavior = function(env, message) {
+  var v = env && env.verbosity !== undefined ? env.verbosity : dbVerbosityConstants.DEBUG;
   dbState = Object.freeze({ level: v });
 
-  logdebug(dbState, '[DBACTOR]', 'behavior handling action:', message.type);
+  logdebug(env, '[DBACTOR]', 'behavior handling action:', message.type);
 
-  var store = Object.keys(state.store || {}).reduce(function(acc, k) { acc[k] = state.store[k]; return acc; }, {});
+  var store = loadInitialState().store; // read fresh from localStorage
   var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
 
   switch (message.type) {
     case MESSAGETYPES.STORE: {
-      logdebug(dbState, '[DBACTOR]', 'action STORE key:', message.key);
+      logdebug(env, '[DBACTOR]', 'action STORE key:', message.key);
       try {
         var serialized = JSON.stringify(message.value);
         if (serialized.length > MAX_ENTRY_BYTES) {
-          logwarn(dbState, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
+          logwarn(env, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
           resolve(false);
-          return state;
+          return env;
         }
       } catch (e) {
         resolve(false);
-        return state;
+        return env;
       }
 
       var keys = Object.keys(store);
@@ -373,37 +366,30 @@ var dbbehavior = function(state, message) {
       break;
     }
     case MESSAGETYPES.RESTORE:
-      logdebug(dbState, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
+      logdebug(env, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
       resolve(store[message.key] !== undefined ? store[message.key] : null);
       break;
     case MESSAGETYPES.LIST:
-      logdebug(dbState, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
+      logdebug(env, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
       resolve(Object.keys(store));
       break;
     case MESSAGETYPES.DELETE: {
-      logdebug(dbState, '[DBACTOR]', 'action DELETE key:', message.key);
+      logdebug(env, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
       resolve(persist(store));
       break;
     }
     default:
-      logwarn(dbState, '[DBACTOR]', 'unknown action:', message.type);
+      logwarn(env, '[DBACTOR]', 'unknown action:', message.type);
       if (typeof message.reject === 'function') message.reject(new Error('[DBACTOR] unknown message type'));
       break;
   }
 
-  return { store: store, verbosity: v };
+  return env;
 };
 
-// Register initial state with runtime.
-registerActorState('dbactor', loadInitialState());
-
-// Compatibility handle (stateless) for enqueue producers.
-var DBACTOR = {
-  send: function(message) {
-    return dispatchToActor('dbactor', dbbehavior, message);
-  }
-};
+// No registerActorState for dbactor; state is not part of global ENV.
+// Dispatch is done via dispatchToActor('dbactor', dbbehavior, message).
 
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {
@@ -414,7 +400,7 @@ var enqueue = function(type, payload) {
     message.type = type;
     message.resolve = resolve;
     message.reject = reject;
-    DBACTOR.send(message);
+    dispatchToActor('dbactor', dbbehavior, message);
   });
 };
 
@@ -428,9 +414,12 @@ function startDbActor(options) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       dbState = Object.freeze({ level: lvl });
-      var dbStateObj = getActorState('dbactor');
-      if (dbStateObj) dbStateObj.verbosity = lvl;
+      var env = getActorState('worldmapactor');
+      if (env) env.verbosity = lvl;
     }
   }
-  return DBACTOR;
+  return {
+    getstate: function() { return getActorState('worldmapactor'); },
+    dispatch: function(message) { return dispatchToActor('dbactor', dbbehavior, message); }
+  };
 }
