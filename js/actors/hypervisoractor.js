@@ -1,14 +1,32 @@
 // ============================================================
 // UPDATED FILE: js/actors/hypervisoractor.js
-// Change applied: VALUE SET FORMAT FOR UPDATES
-//   - All worldmapactor UPDATE messages now use { updates: [{ path, value }] }
-//     instead of { patch: {...} }.
-//   - Stateless pure function; no interfaces, no createactor.
-//   - State slice is env.hypervisor; mutations are made on the slice,
-//     then sent as updates to worldmapactor.
+// Change applied: LOCAL HYPERVISOR SLICE GUARD
+//   - Added ensureHypervisorSlice(env) to initialize env.hypervisor
+//     if absent, preventing hyperSlice undefined errors.
+//   - All other logic unchanged; stateless pure function.
+//   - Value set update format retained.
 // ============================================================
 
 var hypervisorVerbosityConstants = createVerbosityConstants();
+
+function ensureHypervisorSlice(env) {
+  if (!env.hypervisor) {
+    env.hypervisor = {
+      boot: true,
+      envByPipeline: {},
+      renderHtml: '',
+      executionStack: [],
+      routes: {},
+      activePipelines: [],
+      programs: {},
+      stageDescriptors: {},
+      triggerRecipients: {},
+      loadedPipelines: {},
+      nextStageMessages: {}
+    };
+  }
+  return env.hypervisor;
+}
 
 function createHypervisorErrorContext(label) {
   return function(err) {
@@ -113,7 +131,7 @@ function handleStageCompleted(hyperSlice, message) {
 function hypervisorbehavior(env, message) {
   logdebug(env, '[HYPERVISOR]', 'behavior handling action:', message.type);
 
-  var hyperSlice = env.hypervisor;
+  var hyperSlice = ensureHypervisorSlice(env);
 
   switch (message.type) {
     case MESSAGETYPES.LOAD:

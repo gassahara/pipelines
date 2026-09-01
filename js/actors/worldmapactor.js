@@ -1,67 +1,15 @@
 // ============================================================
 // UPDATED FILE: js/actors/worldmapactor.js
-// Change applied: IMMUTABLE PATH-BASED UPDATES + MONADIC PERSISTENCE
-//   - deepmerge removed; replaced by setInPath and applyValueSet.
-//   - UPDATE message expects { updates: [{path, value}] }.
-//   - persistEnv and recoverEnv use monadic dbactor operations
-//     (RIGHT/LEFT for store, JUST/NOTHING for restore).
-//   - No mutation of env; every update returns new object.
+// Change applied: FUNCTIONAL ENV – NO INITIALIZATION
+//   - Initial state is {}; no createInitialEnv.
+//   - recoverEnv returns saved ENV or {}.
+//   - startWorldmapActor returns a Promise that resolves after recovery.
+//   - Worldmapactor does not define or merge actor slices.
 // ============================================================
 
 var worldmapVerbosityConstants = createVerbosityConstants();
 var worldmapState = Object.freeze({ level: worldmapVerbosityConstants.DEBUG });
 
-function createInitialEnv() {
-  return {
-    verbosity: worldmapVerbosityConstants.DEBUG,
-    api: {
-      lastRequest: null,
-      requestCount: 0
-    },
-    db: {
-      store: {}
-    },
-    render: {
-      html: '',
-      viewport: null,
-      actorRegistry: null
-    },
-    execution: {
-      pipelines: {},
-      tasks: {},
-      taskCounter: 0,
-      htmlSnapshot: null
-    },
-    hypervisor: {
-      boot: true,
-      envByPipeline: {},
-      renderHtml: '',
-      executionStack: [],
-      routes: {},
-      activePipelines: [],
-      programs: {},
-      stageDescriptors: {},
-      triggerRecipients: {},
-      loadedPipelines: {},
-      nextStageMessages: {}
-    },
-    debug: {
-      overlay: null,
-      currentContinuation: null,
-      overlayVisible: false,
-      cccState: { currentContinuation: null },
-      globalListenersInstalled: false
-    },
-    worldmap: {},
-    mail: {
-      queues: {},
-      nextId: 1
-    },
-    observers: []
-  };
-}
-
-// Immutable path setter: setInPath(obj, 'a.b.c', value)
 function setInPath(obj, path, value) {
   var keys = path.split('.');
   if (keys.length === 0) return value;
@@ -82,9 +30,7 @@ function applyValueSet(env, updates) {
 
 function persistEnv(env) {
   logdebug(env, '[WORLDMAPACTOR]', 'persistEnv saving ENV to db');
-  var result = enqueueDbStore('actor:state:env', env);
-  // Monadic result: RIGHT if success, LEFT if error.
-  result.then(function(either) {
+  enqueueDbStore('actor:state:env', env).then(function(either) {
     if (either.tag === 'LEFT') {
       logwarn(env, '[WORLDMAPACTOR]', 'state persist failed:', either.error);
     }
@@ -93,17 +39,15 @@ function persistEnv(env) {
   });
 }
 
-function recoverEnv(initialEnv) {
-  logdebug(initialEnv, '[WORLDMAPACTOR]', 'recoverEnv start');
+function recoverEnv() {
+  logdebug({}, '[WORLDMAPACTOR]', 'recoverEnv start');
   return enqueueDbRestore('actor:state:env').then(function(maybe) {
-    if (maybe.tag === 'JUST') {
+    if (maybe && maybe.tag === 'JUST') {
       loginfo(maybe.value, '[WORLDMAPACTOR]', 'recoverEnv restored ENV');
       return maybe.value;
     }
-    var initial = initialEnv || createInitialEnv();
-    return enqueueDbStore('actor:state:env', initial).then(function(either) {
-      return initial;
-    });
+    loginfo({}, '[WORLDMAPACTOR]', 'recoverEnv no saved ENV, using empty container');
+    return {};
   });
 }
 
@@ -154,8 +98,8 @@ function worldmapbehavior(env, message) {
   }
 }
 
-// Register initial state with runtime. This is the only actor state.
-registerActorState('worldmapactor', createInitialEnv());
+// Initial state is empty object; actors own their slices.
+registerActorState('worldmapactor', {});
 
 function startWorldmapActor(options) {
   if (options !== undefined) {
@@ -164,28 +108,22 @@ function startWorldmapActor(options) {
       worldmapState = Object.freeze({ level: lvl });
       var envForVerbosity = getActorState('worldmapactor');
       if (envForVerbosity) {
-        // Use immutable set
         setActorState('worldmapactor', setInPath(envForVerbosity, 'verbosity', lvl));
       }
     }
   }
-  var currentEnv = getActorState('worldmapactor');
-  if (currentEnv) {
-    recoverEnv(currentEnv).then(function(saved) {
-      setActorState('worldmapactor', saved);
-    }).catch(function(err) {
-      logwarn(currentEnv, '[WORLDMAPACTOR]', 'state restore failed:', err);
-    });
-  }
-  return {
-    getstate: function() { return getActorState('worldmapactor'); },
-    dispatch: function(message) { return dispatchToActor('worldmapactor', worldmapbehavior, message); }
-  };
+  var currentEnv = getActorState('worldmapactor') || {};
+  // Return promise that resolves after recovery and state set.
+  return recoverEnv().then(function(saved) {
+    setActorState('worldmapactor', saved);
+    return saved;
+  }).catch(function(err) {
+    logwarn(currentEnv, '[WORLDMAPACTOR]', 'state restore failed:', err);
+    return currentEnv;
+  });
 }
 
 function sendworldmappatch(patch, responseSpec) {
-  // Backward-compatible: convert patch to updates by flattening one level?
-  // Better: expects updates array now.
   if (patch && patch.updates) {
     var tag = generateTag();
     sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, { updates: patch.updates }, tag, 'system', responseSpec);
