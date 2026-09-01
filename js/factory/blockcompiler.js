@@ -1,13 +1,7 @@
-// ============================================================
-// UPDATED FILE: js/factory/blockcompiler.js
-// Change applied: PIPELINE LIBS DEPENDENCY INJECTION
-//   - loadPipeline reads pipelineDefinition.libs and loads scripts
-//     sequentially before sending BOOT_PIPELINE.
-//   - Reusable loadPipelineLibs helper.
-//   - No actor object construction; pure dispatch via sendInstruction.
-// ============================================================
-
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
+
+// Frontend base path for pipeline programs.
+var FRONTEND_BASE = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
 
 // Pending maps for response consumers
 var PENDING_HTTP = {};       // tag -> { resolve, env, sig, id, mapping }
@@ -735,8 +729,7 @@ function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, o
   });
 }
 
-// NEW: load pipeline libs sequentially
-function loadPipelineLibs(libs, basePath, done) {
+function loadFrameworkLibs(libs, basePath, done) {
   if (!libs || libs.length === 0) return done();
   var index = 0;
   function loadNext() {
@@ -745,7 +738,25 @@ function loadPipelineLibs(libs, basePath, done) {
     var s = document.createElement('script');
     s.src = src;
     s.onload = function() { index++; loadNext(); };
-    s.onerror = function() { done(new Error('failed to load ' + src)); };
+    s.onerror = function() { done(new Error('failed to load framework lib ' + src)); };
+    document.head.appendChild(s);
+  }
+  loadNext();
+}
+
+function loadFrontendPrograms(programs, basePath, done) {
+  if (!programs || programs.length === 0) return done();
+  var index = 0;
+  function loadNext() {
+    if (index >= programs.length) return done();
+    var src = basePath + programs[index];
+    var s = document.createElement('script');
+    s.src = src;
+    s.onload = function() {
+      index++;
+      loadNext();
+    };
+    s.onerror = function() { done(new Error('failed to load frontend program ' + src)); };
     document.head.appendChild(s);
   }
   loadNext();
@@ -755,38 +766,47 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
   if (options === undefined) options = {};
   var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
 
-  // New: load pipeline libs before boot
   var libs = pipelineDefinition.libs || [];
-  var basePath = options.pipelinesBase || PIPELINES_BASE || '';
+  var programs = pipelineDefinition.programs || [];
+  var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
+  var frontendBase = options.frontendBase || FRONTEND_BASE;
 
-  loadPipelineLibs(libs, basePath, function(err) {
+  // Load framework libs first
+  loadFrameworkLibs(libs, frameworkBase, function(err) {
     if (err) {
-      console.error('[BLOCKCOMPILER] loadPipeline failed to load libs:', err);
+      console.error('[BLOCKCOMPILER] loadPipeline failed to load framework libs:', err);
       return;
     }
+    // Then load frontend programs
+    loadFrontendPrograms(programs, frontendBase, function(err2) {
+      if (err2) {
+        console.error('[BLOCKCOMPILER] loadPipeline failed to load frontend programs:', err2);
+        return;
+      }
 
-    loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
-    var firstStage = {
-      stageIndex: 0,
-      stagePath: [],
-      briefcase: pipelineDefinition.briefcase || {}
-    };
-    var tag = generateTag();
-    PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
-    sendInstruction('hypervisoractor', 'boot_pipeline', {
-      pipeline: pipelineDefinition,
-      accessors: options.accessors || null,
-      sinks: options.sinks || [],
-      pipelineId: id,
-      options: {
-        autorun: options.autorun !== false,
-        baseEnv: options.baseEnv || {},
-        updateworldmap: options.updateworldmap || null,
-        verbosity: options.verbosity
-      },
-      firstStage: firstStage
-    }, tag, 'blockcompiler', {
-      responseType: 'pipeline_booted'
+      loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
+      var firstStage = {
+        stageIndex: 0,
+        stagePath: [],
+        briefcase: pipelineDefinition.briefcase || {}
+      };
+      var tag = generateTag();
+      PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
+      sendInstruction('hypervisoractor', 'boot_pipeline', {
+        pipeline: pipelineDefinition,
+        accessors: options.accessors || null,
+        sinks: options.sinks || [],
+        pipelineId: id,
+        options: {
+          autorun: options.autorun !== false,
+          baseEnv: options.baseEnv || {},
+          updateworldmap: options.updateworldmap || null,
+          verbosity: options.verbosity
+        },
+        firstStage: firstStage
+      }, tag, 'blockcompiler', {
+        responseType: 'pipeline_booted'
+      });
     });
   });
 }
