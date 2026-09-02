@@ -3,6 +3,9 @@ var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG
 // Frontend base path for pipeline programs.
 var FRONTEND_BASE = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
 
+// Default witness timeout (ms)
+var WITNESS_TIMEOUT = 5000;
+
 // Pending maps for response consumers
 var PENDING_HTTP = {};       // tag -> { resolve, env, sig, id, mapping }
 var PENDING_DOM = {};        // tag -> { resolve, env, sig, id }
@@ -774,35 +777,73 @@ function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, o
   });
 }
 
-// Separate loaders for framework libs and frontend programs.
-function loadFrameworkLibs(libs, basePath, done) {
-  if (!libs || libs.length === 0) return done();
-  var index = 0;
-  function loadNext() {
-    if (index >= libs.length) return done();
-    var src = basePath + libs[index];
-    var s = document.createElement('script');
-    s.src = src;
-    s.onload = function() { index++; loadNext(); };
-    s.onerror = function() { done(new Error('failed to load framework lib ' + src)); };
-    document.head.appendChild(s);
-  }
-  loadNext();
+// WITNESS AWAIT
+function waitForWitness(entry, timeout) {
+  return new Promise(function(resolve, reject) {
+    var start = Date.now();
+    function check() {
+      if (!entry.provides || entry.provides.length === 0) {
+        return resolve();
+      }
+      var allDefined = entry.provides.every(function(name) {
+        return typeof window[name] !== 'undefined';
+      });
+      if (allDefined) return resolve();
+      if (Date.now() - start > timeout) {
+        return reject(new Error('timeout waiting for witness from ' + entry.src));
+      }
+      setTimeout(check, 10);
+    }
+    check();
+  });
 }
 
-function loadFrontendPrograms(programs, basePath, done) {
-  if (!programs || programs.length === 0) return done();
+function loadScriptWithWitness(entry, basePath, timeout) {
+  return new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = basePath + entry.src;
+    s.onload = function() {
+      waitForWitness(entry, timeout).then(resolve).catch(reject);
+    };
+    s.onerror = function() {
+      reject(new Error('failed to load ' + entry.src));
+    };
+    document.head.appendChild(s);
+  });
+}
+
+// Promise-based sequential loader with witness
+function loadScriptsSequentially(entries, basePath, timeout) {
+  if (!entries || entries.length === 0) return Promise.resolve();
   var index = 0;
   function loadNext() {
-    if (index >= programs.length) return done();
-    var src = basePath + programs[index];
-    var s = document.createElement('script');
-    s.src = src;
-    s.onload = function() { index++; loadNext(); };
-    s.onerror = function() { done(new Error('failed to load frontend program ' + src)); };
-    document.head.appendChild(s);
+    if (index >= entries.length) return Promise.resolve();
+    var entry = entries[index];
+    return loadScriptWithWitness(entry, basePath, timeout).then(function() {
+      index++;
+      return loadNext();
+    });
   }
-  loadNext();
+  return loadNext();
+}
+
+function loadFrameworkLibs(libs, basePath, timeout) {
+  if (typeof timeout === 'undefined') timeout = WITNESS_TIMEOUT;
+  // libs entries may be strings; normalize to { src, provides: null }
+  var normalized = libs.map(function(lib) {
+    if (typeof lib === 'string') return { src: lib, provides: null };
+    return lib;
+  });
+  return loadScriptsSequentially(normalized, basePath, timeout);
+}
+
+function loadFrontendPrograms(programs, basePath, timeout) {
+  if (typeof timeout === 'undefined') timeout = WITNESS_TIMEOUT;
+  var normalized = programs.map(function(prog) {
+    if (typeof prog === 'string') return { src: prog, provides: null };
+    return prog;
+  });
+  return loadScriptsSequentially(normalized, basePath, timeout);
 }
 
 // NEW: compile stage from DNA envelope
@@ -815,7 +856,7 @@ function blockcompilerCompileStageFromDna(dnaEnvelope, stageIndex, stagePath, br
   return orchestrateStage(compiled.stage, compiled.elementFunctions, dnaEnvelope.pipelineId, env || {}, stagePath || [], options || {}, compiled.nextStageMessage);
 }
 
-function loadPipeline(pipelineDefinition, pipelineId, options) {
+async function loadPipeline(pipelineDefinition, pipelineId, options) {
   if (options === undefined) options = {};
   var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
 
@@ -823,50 +864,47 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
   var programs = pipelineDefinition.programs || [];
   var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
   var frontendBase = options.frontendBase || FRONTEND_BASE;
+  var witnessTimeout = options.witnessTimeout || WITNESS_TIMEOUT;
 
-  loadFrameworkLibs(libs, frameworkBase, function(err) {
-    if (err) {
-      console.error('[BLOCKCOMPILER] loadPipeline failed to load framework libs:', err);
-      return;
-    }
-    loadFrontendPrograms(programs, frontendBase, function(err2) {
-      if (err2) {
-        console.error('[BLOCKCOMPILER] loadPipeline failed to load frontend programs:', err2);
-        return;
-      }
+  try {
+    await loadFrameworkLibs(libs, frameworkBase, witnessTimeout);
+    await loadFrontendPrograms(programs, frontendBase, witnessTimeout);
+  } catch (err) {
+    console.error('[BLOCKCOMPILER] loadPipeline failed to load dependencies:', err);
+    return;
+  }
 
-      // Create DNA envelope
-      var dnaEnvelope = {
-        pipelineId: id,
-        definition: pipelineDefinition,
-        loadedAt: Date.now()
-      };
+  // Build DNA envelope (optional dependencies map not yet populated;
+  // witness ensured globals are defined)
+  var dnaEnvelope = {
+    pipelineId: id,
+    definition: pipelineDefinition,
+    loadedAt: Date.now()
+  };
 
-      loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
-      var firstStage = {
-        stageIndex: 0,
-        stagePath: [],
-        briefcase: pipelineDefinition.pipeline && pipelineDefinition.pipeline.briefcase ? pipelineDefinition.pipeline.briefcase : {}
-      };
-      var tag = generateTag();
-      PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
-      sendInstruction('hypervisoractor', 'boot_pipeline', {
-        pipelineId: id,
-        dna: dnaEnvelope,
-        stageIndex: 0,
-        accessors: options.accessors || null,
-        sinks: options.sinks || [],
-        options: {
-          autorun: options.autorun !== false,
-          baseEnv: options.baseEnv || {},
-          updateworldmap: options.updateworldmap || null,
-          verbosity: options.verbosity
-        },
-        firstStage: firstStage
-      }, tag, 'blockcompiler', {
-        responseType: 'pipeline_booted'
-      });
-    });
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
+  var firstStage = {
+    stageIndex: 0,
+    stagePath: [],
+    briefcase: pipelineDefinition.pipeline && pipelineDefinition.pipeline.briefcase ? pipelineDefinition.pipeline.briefcase : {}
+  };
+  var tag = generateTag();
+  PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
+  sendInstruction('hypervisoractor', 'boot_pipeline', {
+    pipelineId: id,
+    dna: dnaEnvelope,
+    stageIndex: 0,
+    accessors: options.accessors || null,
+    sinks: options.sinks || [],
+    options: {
+      autorun: options.autorun !== false,
+      baseEnv: options.baseEnv || {},
+      updateworldmap: options.updateworldmap || null,
+      verbosity: options.verbosity
+    },
+    firstStage: firstStage
+  }, tag, 'blockcompiler', {
+    responseType: 'pipeline_booted'
   });
 }
 
