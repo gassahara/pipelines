@@ -1,12 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/actors/executionactor.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR
-//   - executionbehavior returns env unchanged after processing.
-//   - Uses ensureEnvSlice to initialize execution slice if missing.
-//   - Sends updates to worldmapactor via value set messages.
-//   - Responses sent via sendResponse, not by returning non-env.
-// ============================================================
-
 var executionVerbosityConstants = createVerbosityConstants();
 
 function sanitizeForState(value, seen) {
@@ -312,6 +303,7 @@ function executionbehavior(env, message) {
 
 // Internal task settlement: direct call, then update worldmapactor.
 function settleTask(taskid, status, result, error, env) {
+  logdebug(env, '[EXECUTIONACTOR]', 'settleTask task:', taskid, 'status:', status, 'pipeline:', (env.execution && env.execution.tasks && env.execution.tasks[taskid] ? env.execution.tasks[taskid].pipelineid : 'unknown'));
   var execSlice = env.execution;
   var task = execSlice.tasks[taskid];
   if (!task) return;
@@ -319,17 +311,32 @@ function settleTask(taskid, status, result, error, env) {
   task.result = result || null;
   task.error = error || null;
   var consumers = task.consumers || [];
+
+  var responsePayload;
   if (status === 'EXECUTED') {
+    responsePayload = {
+      taskid: taskid,
+      pipelineid: task.pipelineid,
+      elementid: task.elementid,
+      result: result || {}
+    };
     consumers.forEach(function(consumer) {
-      sendResponse(consumer.sender, consumer.tag, result || {}, 'executionactor');
+      sendResponse(consumer.sender, consumer.tag, responsePayload, 'executionactor', MESSAGETYPES.TASK_RESULT);
     });
   } else if (status === 'FAILED') {
+    responsePayload = {
+      taskid: taskid,
+      pipelineid: task.pipelineid,
+      elementid: task.elementid,
+      error: error ? error.message : 'task failed'
+    };
     consumers.forEach(function(consumer) {
-      sendResponse(consumer.sender, consumer.tag, { error: error ? error.message : 'task failed' }, 'executionactor');
+      sendResponse(consumer.sender, consumer.tag, responsePayload, 'executionactor', MESSAGETYPES.TASK_RESULT);
     });
   }
   task.consumers = [];
   sendExecutionUpdate(execSlice);
+  logdebug(env, '[EXECUTIONACTOR]', 'settleTask completed:', taskid, 'consumers notified:', consumers.length);
 }
 
 function runElementTask(taskid, descriptor, env) {
@@ -339,6 +346,8 @@ function runElementTask(taskid, descriptor, env) {
     outputs: descriptor.signature && descriptor.signature.outputs ? descriptor.signature.outputs : {},
     properties: descriptor.properties || {}
   };
+
+  logdebug(env, '[EXECUTIONACTOR]', 'runElementTask start:', taskid, descriptor.elementid, 'pipeline:', descriptor.pipelineid);
 
   function runWithProgram() {
     if (descriptor.programRef && descriptor.programSource) {
