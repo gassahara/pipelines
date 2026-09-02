@@ -7,10 +7,10 @@ var FRONTEND_BASE = (typeof window !== 'undefined') ? window.location.origin + '
 var WITNESS_TIMEOUT = 5000;
 
 // Pending maps for response consumers
-var PENDING_HTTP = {};       // tag -> { resolve, env, sig, id, mapping }
-var PENDING_DOM = {};        // tag -> { resolve, env, sig, id }
-var PENDING_EXEC = {};       // tag -> { resolve, env, sig, id }
-var PENDING_STORE = {};      // tag -> { resolve, env, sig, id }
+var PENDING_HTTP = {};
+var PENDING_DOM = {};
+var PENDING_EXEC = {};
+var PENDING_STORE = {};
 
 function createBlockCompilerConstants() {
   return Object.freeze({
@@ -117,6 +117,7 @@ function buildproperties(merged, inherited) {
 
 // Resolve array of dependency names into an object of functions.
 function resolveDepsArray(depsArray) {
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'resolveDepsArray:', depsArray);
   var depsObj = {};
   (depsArray || []).forEach(function(name) {
     if (typeof window[name] !== 'undefined') {
@@ -128,11 +129,11 @@ function resolveDepsArray(depsArray) {
   return depsObj;
 }
 
-// Resolve a dot-separated path string against the global object.
-function resolvePipelinePath(path) {
+// Resolve a dot-separated path string against a dependencies registry.
+function resolvePipelinePath(path, dependencies) {
   if (typeof path !== 'string') return path;
   var parts = path.split('.');
-  var value = window;
+  var value = dependencies;
   for (var i = 0; i < parts.length; i++) {
     if (value === undefined || value === null) return undefined;
     value = value[parts[i]];
@@ -140,10 +141,12 @@ function resolvePipelinePath(path) {
   return value;
 }
 
-function buildBlockProperties(merged, inherited, io, env) {
+function buildBlockProperties(merged, inherited, io, env, dependencies) {
   if (inherited === undefined) inherited = {};
   if (io === undefined) io = { inputs: [], outputs: {} };
   if (env === undefined) env = {};
+
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'buildBlockProperties for block:', merged.id, 'type:', merged.type);
 
   var properties = buildproperties(merged, inherited);
   var inputsObj = {};
@@ -155,10 +158,21 @@ function buildBlockProperties(merged, inherited, io, env) {
   properties.inputs = inputsObj;
   properties.outputs = io.outputs || {};
 
-  // Handle deps: if array of strings, resolve from window; if object, use as-is.
   if (merged && merged.deps) {
     if (Array.isArray(merged.deps)) {
-      properties.deps = resolveDepsArray(merged.deps);
+      // Use dependencies registry if provided, else fallback to window
+      var depsMap = dependencies || window;
+      var resolvedDeps = {};
+      merged.deps.forEach(function(name) {
+        if (typeof depsMap[name] !== 'undefined') {
+          resolvedDeps[name] = depsMap[name];
+        } else if (typeof window[name] !== 'undefined') {
+          resolvedDeps[name] = window[name];
+        } else {
+          logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'buildBlockProperties: missing dep:', name);
+        }
+      });
+      properties.deps = resolvedDeps;
     } else {
       properties.deps = merged.deps;
     }
@@ -212,14 +226,7 @@ function createBlockAnalyzer(rules) {
         if (rule.custom && !rule.custom(value, block)) errors.push(rule.message);
       }
     });
-    return {
-      valid: errors.length === 0,
-      errors: errors,
-      warnings: [],
-      dependencies: [],
-      outputs: block.outputs ? block.outputs : {},
-      contracts: []
-    };
+    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
   };
 }
 
@@ -327,15 +334,7 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
     var responseType = isTextual ? 'fetch_result' : 'api_result';
 
     return new Promise(function(resolve, reject) {
-      PENDING_HTTP[tag] = {
-        env: env,
-        sig: sig,
-        id: id,
-        mapping: merged.mapping,
-        resolve: resolve,
-        reject: reject
-      };
-
+      PENDING_HTTP[tag] = { env: env, sig: sig, id: id, mapping: merged.mapping, resolve: resolve, reject: reject };
       if (isTextual) {
         enqueuefetch(endpoint, merged.method, payload, { token: env.authsessionaccesstoken || '' }, { responseType: responseType });
       } else {
@@ -350,13 +349,12 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
 function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
   var compilers = {};
   compilers[BLOCKTYPES.FN] = function(merged, id, sig, inheritedProperties) {
-    if (inheritedProperties === undefined) inheritedProperties = {};
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling FN block:', id);
     var blockfn = function(env) {
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing FN block:', id);
       var fn = merged.fn;
       if (!fn) throw new Error('fn block must have a function: ' + id);
-      var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env, merged.deps);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       var fnargs = [properties].concat(inputargs);
       return callwithstack(EVALSTACK, 'fn:' + (merged.ref || id), 'async-await', function() {
@@ -374,13 +372,12 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
   compilers[BLOCKTYPES.FETCH] = function(merged, id, sig) { return compileHttpBlock(merged, id, sig, true, options); };
 
   compilers[BLOCKTYPES.WRITER] = function(merged, id, sig, inheritedProperties) {
-    if (inheritedProperties === undefined) inheritedProperties = {};
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
     var blockfn = function(env) {
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
       var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
-      var properties = buildBlockProperties(merged, inheritedProperties, sig, env);
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env, merged.deps);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       return Promise.resolve(fn(properties, inputargs)).then(function(result) {
         if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) throw new Error('[WRITER] Block "' + id + '" returned invalid result');
@@ -428,7 +425,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var cmd = merged.command && merged.command.COMMAND;
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
-
       var tag = generateTag();
       var responseType = 'dom_result';
       var handlerMap = {
@@ -439,7 +435,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       };
       var handler = handlerMap[cmd];
       if (!handler) throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
-
       return new Promise(function(resolve, reject) {
         PENDING_DOM[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
         if (cmd === 'getviewport') return enqueuegetviewport({ responseType: responseType });
@@ -493,26 +488,13 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       return new Promise(function(resolve, reject) {
         PENDING_EXEC[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
         switch (COMMAND) {
-          case 'get':
-            enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null, { responseType: responseType });
-            break;
-          case 'tasks':
-            enqueueExecutionGetTasks(args, { responseType: responseType });
-            break;
-          case 'task_status':
-            enqueueExecutionGetTaskStatus(args.taskid, { responseType: responseType });
-            break;
-          case 'await_task':
-            enqueueExecutionAwaitTask(args.taskid, { responseType: responseType });
-            break;
-          case 'cancel_task':
-            enqueueExecutionCancelTask(args.taskid, { responseType: responseType });
-            break;
-          case 'stop_task':
-            enqueueExecutionStopTask(args.taskid, { responseType: responseType });
-            break;
-          default:
-            reject(new Error('[executionquery] unknown command: ' + COMMAND));
+          case 'get': enqueueExecutionGetStatus(args.pipelineid || env.pipelineid || null, { responseType: responseType }); break;
+          case 'tasks': enqueueExecutionGetTasks(args, { responseType: responseType }); break;
+          case 'task_status': enqueueExecutionGetTaskStatus(args.taskid, { responseType: responseType }); break;
+          case 'await_task': enqueueExecutionAwaitTask(args.taskid, { responseType: responseType }); break;
+          case 'cancel_task': enqueueExecutionCancelTask(args.taskid, { responseType: responseType }); break;
+          case 'stop_task': enqueueExecutionStopTask(args.taskid, { responseType: responseType }); break;
+          default: reject(new Error('[executionquery] unknown command: ' + COMMAND));
         }
       });
     };
@@ -532,21 +514,15 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         switch (COMMAND) {
           case 'store':
             if (!args.key) return reject(new Error('[storequery] store requires key'));
-            enqueueDbStore(args.key, args.value !== undefined ? args.value : compilepathaccessor(args.value)(env), { responseType: responseType });
-            break;
+            enqueueDbStore(args.key, args.value !== undefined ? args.value : compilepathaccessor(args.value)(env), { responseType: responseType }); break;
           case 'restore':
             if (!args.key) return reject(new Error('[storequery] restore requires key'));
-            enqueueDbRestore(args.key, { responseType: responseType });
-            break;
-          case 'list':
-            enqueueDbList({ responseType: responseType });
-            break;
+            enqueueDbRestore(args.key, { responseType: responseType }); break;
+          case 'list': enqueueDbList({ responseType: responseType }); break;
           case 'delete':
             if (!args.key) return reject(new Error('[storequery] delete requires key'));
-            enqueueDbDelete(args.key, { responseType: responseType });
-            break;
-          default:
-            reject(new Error('[storequery] unknown command: ' + COMMAND));
+            enqueueDbDelete(args.key, { responseType: responseType }); break;
+          default: reject(new Error('[storequery] unknown command: ' + COMMAND));
         }
       });
     };
@@ -586,13 +562,18 @@ function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants
 
 function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, options) {
   var elementId = el.id || 'pipeline_unknown';
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipelineElement:', elementId, 'pipeline:', el.pipeline);
 
-  // RESOLVE STRING PIPELINE PATH
+  // RESOLVE STRING PIPELINE PATH using dependencies registry if available
   if (typeof el.pipeline === 'string') {
-    var resolved = resolvePipelinePath(el.pipeline);
+    // dependencies registry passed via options.dependencies
+    var dependencies = (options && options.dependencies) || window;
+    var resolved = resolvePipelinePath(el.pipeline, dependencies);
     if (resolved && resolved.pipeline) {
       el.pipeline = resolved.pipeline;
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'resolved pipeline path:', el.pipeline, 'to', typeof resolved);
     } else {
+      logerror(blockCompilerState, '[BLOCKCOMPILER]', 'failed to resolve pipeline path:', el.pipeline);
       throw new Error('[processPipelineElement] failed to resolve pipeline path: ' + el.pipeline);
     }
   }
@@ -710,6 +691,7 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
 
 function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcase, env, options) {
   if (options === undefined) options = {};
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compileStageRequestToElements: stageIndex', stageIndex, 'pipeline has elements?', !!pipeline.elements);
   var constants = createBlockCompilerConstants();
   var BLOCKTYPES = constants.BLOCKTYPES;
   var INHERITEDKEYS = constants.INHERITEDKEYS;
@@ -754,9 +736,7 @@ function compileStageRequestToElements(pipeline, stageIndex, stagePath, briefcas
 
 function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, options, nextStageMessage) {
   function runElement(index, currentEnv) {
-    if (index >= elementFunctions.length) {
-      return Promise.resolve(currentEnv);
-    }
+    if (index >= elementFunctions.length) return Promise.resolve(currentEnv);
     var elementFn = elementFunctions[index];
     if (elementFn.asyncStage === true) {
       elementFn(currentEnv);
@@ -782,16 +762,12 @@ function waitForWitness(entry, timeout) {
   return new Promise(function(resolve, reject) {
     var start = Date.now();
     function check() {
-      if (!entry.provides || entry.provides.length === 0) {
-        return resolve();
-      }
+      if (!entry.provides || entry.provides.length === 0) return resolve();
       var allDefined = entry.provides.every(function(name) {
         return typeof window[name] !== 'undefined';
       });
       if (allDefined) return resolve();
-      if (Date.now() - start > timeout) {
-        return reject(new Error('timeout waiting for witness from ' + entry.src));
-      }
+      if (Date.now() - start > timeout) return reject(new Error('timeout waiting for witness from ' + entry.src));
       setTimeout(check, 10);
     }
     check();
@@ -803,23 +779,29 @@ function loadScriptWithWitness(entry, basePath, timeout) {
     var s = document.createElement('script');
     s.src = basePath + entry.src;
     s.onload = function() {
-      waitForWitness(entry, timeout).then(resolve).catch(reject);
+      // Defer to allow top-level execution to finish
+      setTimeout(function() {
+        if (entry.provides && entry.provides.length > 0) {
+          waitForWitness(entry, timeout).then(resolve).catch(reject);
+        } else {
+          resolve();
+        }
+      }, 0);
     };
-    s.onerror = function() {
-      reject(new Error('failed to load ' + entry.src));
-    };
+    s.onerror = function() { reject(new Error('failed to load ' + entry.src)); };
     document.head.appendChild(s);
   });
 }
 
-// Promise-based sequential loader with witness
 function loadScriptsSequentially(entries, basePath, timeout) {
   if (!entries || entries.length === 0) return Promise.resolve();
   var index = 0;
   function loadNext() {
     if (index >= entries.length) return Promise.resolve();
     var entry = entries[index];
+    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'loading script:', entry.src);
     return loadScriptWithWitness(entry, basePath, timeout).then(function() {
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'script loaded:', entry.src);
       index++;
       return loadNext();
     });
@@ -827,38 +809,56 @@ function loadScriptsSequentially(entries, basePath, timeout) {
   return loadNext();
 }
 
+function normalizeEntries(entries) {
+  return (entries || []).map(function(entry) {
+    if (typeof entry === 'string') return { src: entry, provides: null };
+    return entry;
+  });
+}
+
 function loadFrameworkLibs(libs, basePath, timeout) {
   if (typeof timeout === 'undefined') timeout = WITNESS_TIMEOUT;
-  // libs entries may be strings; normalize to { src, provides: null }
-  var normalized = libs.map(function(lib) {
-    if (typeof lib === 'string') return { src: lib, provides: null };
-    return lib;
-  });
+  var normalized = normalizeEntries(libs);
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loading framework libs:', normalized.length);
   return loadScriptsSequentially(normalized, basePath, timeout);
 }
 
 function loadFrontendPrograms(programs, basePath, timeout) {
   if (typeof timeout === 'undefined') timeout = WITNESS_TIMEOUT;
-  var normalized = programs.map(function(prog) {
-    if (typeof prog === 'string') return { src: prog, provides: null };
-    return prog;
-  });
+  var normalized = normalizeEntries(programs);
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loading frontend programs:', normalized.length);
   return loadScriptsSequentially(normalized, basePath, timeout);
 }
 
-// NEW: compile stage from DNA envelope
+function buildDependenciesRegistry(entries) {
+  var registry = {};
+  (entries || []).forEach(function(entry) {
+    (entry.provides || []).forEach(function(name) {
+      if (typeof window[name] !== 'undefined') {
+        registry[name] = window[name];
+      }
+    });
+  });
+  return registry;
+}
+
 function blockcompilerCompileStageFromDna(dnaEnvelope, stageIndex, stagePath, briefcase, env, options) {
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'blockcompilerCompileStageFromDna:', dnaEnvelope.pipelineId, 'stageIndex', stageIndex);
   if (!dnaEnvelope || !dnaEnvelope.definition || !dnaEnvelope.definition.pipeline) {
     throw new Error('[blockcompilerCompileStageFromDna] invalid DNA envelope');
   }
   var pipeline = dnaEnvelope.definition.pipeline;
-  var compiled = compileStageRequestToElements(pipeline, stageIndex, stagePath || [], briefcase || {}, env || {}, options || {});
-  return orchestrateStage(compiled.stage, compiled.elementFunctions, dnaEnvelope.pipelineId, env || {}, stagePath || [], options || {}, compiled.nextStageMessage);
+  // Pass dependencies registry via options
+  options = options || {};
+  options.dependencies = dnaEnvelope.dependencies || {};
+  var compiled = compileStageRequestToElements(pipeline, stageIndex, stagePath || [], briefcase || {}, env || {}, options);
+  return orchestrateStage(compiled.stage, compiled.elementFunctions, dnaEnvelope.pipelineId, env || {}, stagePath || [], options, compiled.nextStageMessage);
 }
 
 async function loadPipeline(pipelineDefinition, pipelineId, options) {
   if (options === undefined) options = {};
   var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline start for pipeline:', id);
 
   var libs = pipelineDefinition.libs || [];
   var programs = pipelineDefinition.programs || [];
@@ -870,19 +870,22 @@ async function loadPipeline(pipelineDefinition, pipelineId, options) {
     await loadFrameworkLibs(libs, frameworkBase, witnessTimeout);
     await loadFrontendPrograms(programs, frontendBase, witnessTimeout);
   } catch (err) {
-    console.error('[BLOCKCOMPILER] loadPipeline failed to load dependencies:', err);
+    logerror(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline failed to load dependencies:', err);
     return;
   }
 
-  // Build DNA envelope (optional dependencies map not yet populated;
-  // witness ensured globals are defined)
+  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'all dependencies loaded for pipeline:', id);
+
+  // Build DNA envelope
   var dnaEnvelope = {
     pipelineId: id,
     definition: pipelineDefinition,
+    dependencies: buildDependenciesRegistry(programs),
     loadedAt: Date.now()
   };
 
-  loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'DNA envelope dependencies:', Object.keys(dnaEnvelope.dependencies));
+
   var firstStage = {
     stageIndex: 0,
     stagePath: [],
@@ -915,9 +918,7 @@ function compileStage(stageDef, briefcase, pipelineId, stagePath, fullPipeline, 
 
 function validatePipelineBriefcase(briefcase) {
   var errors = [];
-  if (briefcase === undefined || briefcase === null) {
-    return { valid: true, errors: [] };
-  }
+  if (briefcase === undefined || briefcase === null) return { valid: true, errors: [] };
   if (typeof briefcase !== 'object') {
     errors.push('[validatePipelineBriefcase] briefcase must be an object');
     return { valid: false, errors: errors };
@@ -929,10 +930,7 @@ function validatePipelineBriefcase(briefcase) {
   } catch (err) {
     errors.push('[validatePipelineBriefcase] validation error: ' + err.message);
   }
-  return {
-    valid: errors.length === 0,
-    errors: errors
-  };
+  return { valid: errors.length === 0, errors: errors };
 }
 
 function createPersistentElementWrapper(compiledElement, elementDef, stagePath, pipelineId, options) {
