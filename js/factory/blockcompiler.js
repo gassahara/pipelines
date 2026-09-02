@@ -1,19 +1,5 @@
-// ============================================================
-// UPDATED FILE: js/factory/blockcompiler.js
-// Change applied: SERIALIZATION-FRIENDLY DEPS
-//   - Removed briefcase merging from buildBlockProperties.
-//   - buildBlockProperties now includes block.deps in properties.
-//   - processNestedStage and compileStageRequestToElements no longer
-//     propagate briefcase.
-//   - Separate loaders retained (libs/programs).
-// ============================================================
-
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
-
-// Frontend base path for pipeline programs.
 var FRONTEND_BASE = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
-
-// Pending maps for response consumers
 var PENDING_HTTP = {};       // tag -> { resolve, env, sig, id, mapping }
 var PENDING_DOM = {};        // tag -> { resolve, env, sig, id }
 var PENDING_EXEC = {};       // tag -> { resolve, env, sig, id }
@@ -122,6 +108,19 @@ function buildproperties(merged, inherited) {
   }, cloneObject(inherited));
 }
 
+// Resolve array of dependency names into an object of functions.
+function resolveDepsArray(depsArray) {
+  var depsObj = {};
+  (depsArray || []).forEach(function(name) {
+    if (typeof window[name] !== 'undefined') {
+      depsObj[name] = window[name];
+    } else {
+      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'resolveDepsArray: missing global for deps name:', name);
+    }
+  });
+  return depsObj;
+}
+
 function buildBlockProperties(merged, inherited, io, env) {
   if (inherited === undefined) inherited = {};
   if (io === undefined) io = { inputs: [], outputs: {} };
@@ -137,9 +136,13 @@ function buildBlockProperties(merged, inherited, io, env) {
   properties.inputs = inputsObj;
   properties.outputs = io.outputs || {};
 
-  // NEW: include block.deps in properties
+  // Handle deps: if array of strings, resolve from window; if object, use as-is.
   if (merged && merged.deps) {
-    properties.deps = merged.deps;
+    if (Array.isArray(merged.deps)) {
+      properties.deps = resolveDepsArray(merged.deps);
+    } else {
+      properties.deps = merged.deps;
+    }
   }
 
   return properties;
@@ -744,8 +747,7 @@ function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, o
   });
 }
 
-// Loaders remain unchanged (loadFrameworkLibs, loadFrontendPrograms, loadPipeline)
-
+// Separate loaders for framework libs and frontend programs.
 function loadFrameworkLibs(libs, basePath, done) {
   if (!libs || libs.length === 0) return done();
   var index = 0;
@@ -889,7 +891,7 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
   return wrapper;
 }
 
-// Response consumer functions unchanged
+// Response consumer functions (for central registration)
 function blockcompilerApiResult(result, tag) {
   var pending = PENDING_HTTP[tag];
   if (!pending) return;
