@@ -114,7 +114,6 @@ function mailbehavior(env, message) {
       delete EXPECTATIONS[message.tag];
     } else {
       // No registered consumer; leave message in mailbox for non-actor
-      // Update expectation status if it exists
       if (expectation) {
         expectation.status = 'RESOLVED';
         expectation.resolvedAt = Date.now();
@@ -204,7 +203,6 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
 // sendResponse sends a response message with type determined by original expectation.
 function sendResponse(recipient, tag, result, sender, responseType) {
   var type = responseType || MESSAGETYPES.RESPONSE;
-  // If responseType not registered but recipient is non-actor, still send to mailbox
   var payload = { result: result };
   sendInstruction(recipient, type, payload, tag, sender, undefined, null);
 }

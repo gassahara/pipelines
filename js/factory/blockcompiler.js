@@ -7,6 +7,7 @@
 //   - createPersistentElementWrapper uses mailbox waitFor instead of PENDING_EXEC.
 //   - sendInstruction calls include context for traceability.
 //   - Enhanced logging with pipelineId/stagePath/elementId.
+//   - resolveStageFromPath starts at dnaEnvelope root (P12).
 // ============================================================
 
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
@@ -146,9 +147,9 @@ function resolvePipelinePath(path, dependencies) {
   return value;
 }
 
+// P12: Corrected to start traversal at dnaEnvelope root.
 function resolveStageFromPath(dnaEnvelope, stagePath) {
-  var pipeline = dnaEnvelope.definition.pipeline;
-  var current = pipeline;
+  var current = dnaEnvelope;
   for (var i = 0; i < stagePath.length; i++) {
     if (current == null) return undefined;
     current = current[stagePath[i]];
@@ -648,63 +649,6 @@ function processPipelineElement(el, dnaEnvelope, stagePath, inheritedBriefcase, 
     if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
     if (childOptions.verbosity === undefined && options && options.verbosity !== undefined) childOptions.verbosity = options.verbosity;
 
-    // Build inner DNA envelope
-    var innerDnaEnvelope = {
-      pipelineId: childEnv.pipelineid,
-      definition: { pipeline: resolvedPipeline },
-      dependencies: (options && options.dependencies) || {}
-    };
-
-    var bootMessage = {
-      dna: innerDnaEnvelope,
-      accessors: el.accessors || null,
-      sinks: el.sinks || [],
-      pipelineId: childEnv.pipelineid,
-      options: childOptions
-    };
-
-    logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'PIPELINE boot request:', childEnv.pipelineid);
-
-    var tag = generateTag();
-    var responseType = 'pipeline_booted';
-    return waitForMailbox({ tag: tag, recipient: 'hypervisoractor' }, WITNESS_TIMEOUT)
-      .then(function(response) {
-        // response is the mailbox message; extract result
-        var result = response.payload && response.payload.result ? response.payload.result : response.payload;
-        writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
-        return result;
-      })
-      .catch(function(err) {
-        logerror(blockCompilerState, '[BLOCKCOMPILER]', 'nested pipeline boot failed:', elementId, err);
-        throw err;
-      });
-
-    // Actually we need to send the boot message; the waitFor should be after sending.
-    // But we need to send first. We'll reorder: sendInstruction first, then waitForMailbox.
-    // For simplicity, we'll send the boot message here and then return the waitFor promise.
-    // Move the sendInstruction before waitFor.
-  };
-
-  // We need to capture the tag and send before returning promise.
-  // We'll restructure blockfn: create tag, sendInstruction, then waitForMailbox.
-  // Let's rewrite blockfn more cleanly:
-  blockfn = function(env) {
-    var parentEnv = env;
-    var childEnv = cloneObject(parentEnv);
-    childEnv.containerid = el.container || null;
-    childEnv.pipelineid = el.pipelineIdOverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline_' + elementId;
-
-    var inputkeys = el.inputs || [];
-    inputkeys.forEach(function(key) {
-      childEnv[key] = compilepathaccessor(key)(parentEnv);
-    });
-
-    var childOptions = el.options || {};
-    if (childOptions.autorun === undefined) childOptions.autorun = true;
-    if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
-    if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
-    if (childOptions.verbosity === undefined && options && options.verbosity !== undefined) childOptions.verbosity = options.verbosity;
-
     var innerDnaEnvelope = {
       pipelineId: childEnv.pipelineid,
       definition: { pipeline: resolvedPipeline },
@@ -982,13 +926,12 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   options = options || {};
   options.pipelineId = dnaEnvelope.pipelineId;
   options.dependencies = dnaEnvelope.dependencies || {};
-  // FIX: resolve from DNA's pipeline, not from envelope directly.
   var stage = resolveStageFromPath(dnaEnvelope, stagePath);
   if (!stage || stage.element !== 'STAGE') {
     throw new Error('[blockcompilerCompileStage] stage not found at path: ' + JSON.stringify(stagePath));
   }
   var pipeline = dnaEnvelope.definition.pipeline;
-  var stageIndex = stagePath[stagePath.length - 1]; // last element is index
+  var stageIndex = stagePath[stagePath.length - 1];
   var compiled = compileStageRequestToElements(dnaEnvelope, stageIndex, stagePath.slice(0, -1), {}, env || {}, options);
   return orchestrateStage(compiled.stage, compiled.elementFunctions, dnaEnvelope.pipelineId, env || {}, stagePath.slice(0, -1), options, compiled.nextStageMessage);
 }
@@ -1004,7 +947,6 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
   var frontendBase = options.frontendBase || FRONTEND_BASE;
   var witnessTimeout = options.witnessTimeout || WITNESS_TIMEOUT;
 
-  // Convert to promise chain to avoid async/await (ES5)
   return loadFrameworkLibs(libs, frameworkBase, witnessTimeout)
     .then(function() {
       return loadFrontendPrograms(programs, frontendBase, witnessTimeout);
@@ -1103,7 +1045,6 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
       programRef: null,
       elementId: elementId
     };
-    // Use mailbox waitFor instead of PENDING_EXEC
     sendInstruction('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler', { responseType: 'task_result' }, {
       pipelineId: pipelineId,
       stagePath: stagePath,
@@ -1112,7 +1053,6 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
     return waitForMailbox({ tag: tag, sender: 'executionactor' }, WITNESS_TIMEOUT)
       .then(function(mailboxMessage) {
         var response = mailboxMessage.payload && mailboxMessage.payload.result ? mailboxMessage.payload.result : mailboxMessage.payload;
-        // response is the payload sent by executionactor, which is { taskid, pipelineid, elementid, result } or { error }
         if (response && response.error) {
           throw new Error(response.error);
         }

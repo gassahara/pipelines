@@ -1,3 +1,14 @@
+// ============================================================
+// UPDATED FILE: js/actors/executionactor.js
+// Change applied: IMMUTABLE DISPATCH REFACTOR + RESPONSE HARDENING
+//   - executionbehavior returns env unchanged after processing.
+//   - Uses ensureEnvSlice to initialize execution slice if missing.
+//   - Sends updates to worldmapactor via value set messages.
+//   - Responses sent via sendResponse, not by returning non-env.
+//   - settleTask now sends MESSAGETYPES.TASK_RESULT with metadata.
+//   - Added enhanced logging for task lifecycle.
+// ============================================================
+
 var executionVerbosityConstants = createVerbosityConstants();
 
 function sanitizeForState(value, seen) {
