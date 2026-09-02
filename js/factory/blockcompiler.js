@@ -160,7 +160,6 @@ function buildBlockProperties(merged, inherited, io, env, dependencies) {
 
   if (merged && merged.deps) {
     if (Array.isArray(merged.deps)) {
-      // Use dependencies registry if provided, else fallback to window
       var depsMap = dependencies || window;
       var resolvedDeps = {};
       merged.deps.forEach(function(name) {
@@ -566,12 +565,12 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, o
 
   // RESOLVE STRING PIPELINE PATH using dependencies registry if available
   if (typeof el.pipeline === 'string') {
-    // dependencies registry passed via options.dependencies
     var dependencies = (options && options.dependencies) || window;
     var resolved = resolvePipelinePath(el.pipeline, dependencies);
-    if (resolved && resolved.pipeline) {
-      el.pipeline = resolved.pipeline;
-      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'resolved pipeline path:', el.pipeline, 'to', typeof resolved);
+    // Correct: use resolved object directly; it should have elements.
+    if (resolved && resolved.elements) {
+      el.pipeline = resolved;
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'resolved pipeline path:', el.pipeline, 'to inner pipeline with elements');
     } else {
       logerror(blockCompilerState, '[BLOCKCOMPILER]', 'failed to resolve pipeline path:', el.pipeline);
       throw new Error('[processPipelineElement] failed to resolve pipeline path: ' + el.pipeline);
@@ -779,7 +778,6 @@ function loadScriptWithWitness(entry, basePath, timeout) {
     var s = document.createElement('script');
     s.src = basePath + entry.src;
     s.onload = function() {
-      // Defer to allow top-level execution to finish
       setTimeout(function() {
         if (entry.provides && entry.provides.length > 0) {
           waitForWitness(entry, timeout).then(resolve).catch(reject);
@@ -836,9 +834,12 @@ function buildDependenciesRegistry(entries) {
     (entry.provides || []).forEach(function(name) {
       if (typeof window[name] !== 'undefined') {
         registry[name] = window[name];
+      } else {
+        logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'buildDependenciesRegistry: missing global:', name);
       }
     });
   });
+  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'dependencies registry keys:', Object.keys(registry));
   return registry;
 }
 
@@ -848,7 +849,6 @@ function blockcompilerCompileStageFromDna(dnaEnvelope, stageIndex, stagePath, br
     throw new Error('[blockcompilerCompileStageFromDna] invalid DNA envelope');
   }
   var pipeline = dnaEnvelope.definition.pipeline;
-  // Pass dependencies registry via options
   options = options || {};
   options.dependencies = dnaEnvelope.dependencies || {};
   var compiled = compileStageRequestToElements(pipeline, stageIndex, stagePath || [], briefcase || {}, env || {}, options);
@@ -876,7 +876,6 @@ async function loadPipeline(pipelineDefinition, pipelineId, options) {
 
   loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'all dependencies loaded for pipeline:', id);
 
-  // Build DNA envelope
   var dnaEnvelope = {
     pipelineId: id,
     definition: pipelineDefinition,
