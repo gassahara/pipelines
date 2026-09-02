@@ -424,28 +424,31 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var cmd = merged.command && merged.command.COMMAND;
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
-      var tag = generateTag();
       var responseType = 'dom_result';
+
+      // UNIFORM HANDLER MAP – every command is a function(props, spec)
       var handlerMap = {
-        gethtml: enqueuegethtml, getvalue: enqueuegetvalue, getstyle: enqueuegetstyle,
-        getposition: enqueuegetposition, getlayout: enqueuegetlayout, sethtml: enqueuesethtml,
-        setposition: enqueuesetposition, setstyle: enqueuesetstyle, setvalue: enqueuesetvalue,
-        setlayout: enqueuesetlayout, toggleclass: enqueuetoggleclass, property: enqueueproperty
+        gethtml: function(props, spec) { return enqueuegethtml(props.id, spec); },
+        getvalue: function(props, spec) { return enqueuegetvalue(props.id, spec); },
+        getstyle: function(props, spec) { return enqueuegetstyle(props.id, spec); },
+        getposition: function(props, spec) { return enqueuegetposition(props.id, spec); },
+        getlayout: function(props, spec) { return enqueuegetlayout(props.id, spec); },
+        sethtml: function(props, spec) { return enqueuesethtml(props.id, props.value, spec); },
+        setposition: function(props, spec) { return enqueuesetposition(props.id, props.value, spec); },
+        setstyle: function(props, spec) { return enqueuesetstyle(props.id, props.value, spec); },
+        setvalue: function(props, spec) { return enqueuesetvalue(props.id, props.value, spec); },
+        setlayout: function(props, spec) { return enqueuesetlayout(props.id, props.value, spec); },
+        toggleclass: function(props, spec) { return enqueuetoggleclass(props.id, props.classname != null ? props.classname : props.value, props.force !== undefined ? props.force : false, spec); },
+        property: function(props, spec) { return enqueueproperty(props.id, props.name, props.arguments, spec); },
+        getviewport: function(props, spec) { return enqueuegetviewport(spec); },
+        getscreen: function(props, spec) { return enqueuegetscreen(spec); },
+        matchmedia: function(props, spec) { return enqueuematchmedia(props.query, spec); }
       };
+
       var handler = handlerMap[cmd];
       if (!handler) throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
-      return new Promise(function(resolve, reject) {
-        PENDING_DOM[tag] = { env: env, sig: sig, id: id, resolve: resolve, reject: reject };
-        if (cmd === 'getviewport') return enqueuegetviewport({ responseType: responseType });
-        if (cmd === 'getscreen') return enqueuegetscreen({ responseType: responseType });
-        if (cmd === 'matchmedia') return enqueuematchmedia(props.query, { responseType: responseType });
-        if (DOMQUERYSETTERS.indexOf(cmd) !== -1) {
-          if (cmd === 'toggleclass') return handler(props.id, props.classname != null ? props.classname : props.value, props.force !== undefined ? props.force : false, { responseType: responseType });
-          var val = sig.inputs && sig.inputs.length > 0 ? compilepathaccessor(props.value)(env) : props.value;
-          return handler(props.id, val, { responseType: responseType });
-        }
-        return handler(props.id, { responseType: responseType });
-      });
+
+      return handler(props, { responseType: responseType });
     };
     blockfn.id = id;
     return blockfn;
@@ -563,11 +566,9 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, o
   var elementId = el.id || 'pipeline_unknown';
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipelineElement:', elementId, 'pipeline:', el.pipeline);
 
-  // RESOLVE STRING PIPELINE PATH using dependencies registry if available
   if (typeof el.pipeline === 'string') {
     var dependencies = (options && options.dependencies) || window;
     var resolved = resolvePipelinePath(el.pipeline, dependencies);
-    // Correct: use resolved object directly; it should have elements.
     if (resolved && resolved.elements) {
       el.pipeline = resolved;
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'resolved pipeline path:', el.pipeline, 'to inner pipeline with elements');
