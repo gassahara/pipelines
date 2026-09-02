@@ -1,9 +1,12 @@
 // ============================================================
 // UPDATED FILE: js/factory/dnaserializer.js
-// Change applied: ES5 module conversion — imports → require,
-// export → module.exports. Body already ES5 (var/function,
-// forEach/map functional style); whitespace-skip loops and
-// resolveFromBriefcase recursion are ES5-legal, retained.
+// Change applied: SERIALIZATION-FRIENDLY DEPS
+//   - serializeSelfContainedClosure now captures dependencies from
+//     the block's `deps` object when serializing.
+//   - prepareFunctionForSerialization and prepareDnaForSerialization
+//     now accept an optional `deps` object and use it to resolve
+//     free identifiers.
+//   - No functional changes to other parts.
 // ============================================================
 
 
@@ -201,18 +204,30 @@ function resolveFromBriefcase(id, container) {
   return scan(0);
 }
 
-function prepareFunctionForSerialization(fn, env, briefcase) {
+function prepareFunctionForSerialization(fn, env, briefcase, deps) {
+  if (deps === undefined) deps = briefcase;
   var source = fn.toString();
   var freeIds = detectFreeIdentifiers(source);
-  var deps = {};
+  var resolvedDeps = {};
   var missing = [];
 
   freeIds.forEach(function(id) {
-    var resolved = resolveFromBriefcase(id, briefcase);
+    var resolved = resolveFromBriefcase(id, deps);
     if (resolved.found) {
-      deps[id] = resolved.value;
+      resolvedDeps[id] = resolved.value;
+    } else if (deps !== briefcase) {
+      // fallback to briefcase if not found in deps
+      var fb = resolveFromBriefcase(id, briefcase);
+      if (fb.found) {
+        resolvedDeps[id] = fb.value;
+      } else if (env && env[id] !== undefined) {
+        resolvedDeps[id] = env[id];
+        if (briefcase) briefcase[id] = env[id];
+      } else {
+        missing.push(id);
+      }
     } else if (env && env[id] !== undefined) {
-      deps[id] = env[id];
+      resolvedDeps[id] = env[id];
       if (briefcase) briefcase[id] = env[id];
     } else {
       missing.push(id);
@@ -220,14 +235,14 @@ function prepareFunctionForSerialization(fn, env, briefcase) {
   });
 
   if (missing.length > 0) {
-    throw new Error('[prepareDnaForSerialization] Missing dependencies for function ' + (fn.name || '<anonymous>') + ': ' + missing.join(', ') + '. Add them to the briefcase.');
+    throw new Error('[prepareDnaForSerialization] Missing dependencies for function ' + (fn.name || '<anonymous>') + ': ' + missing.join(', ') + '. Add them to the briefcase or deps.');
   }
 
-  var depKeys = Object.keys(deps);
+  var depKeys = Object.keys(resolvedDeps);
   var destructure = depKeys.length ? '\n    const { ' + depKeys.join(', ') + ' } = __deps;' : '';
   var rewritten = depKeys.length ? rewriteFunctionSource(source, destructure) : source;
 
-  return { __fn__: true, source: rewritten, deps: deps };
+  return { __fn__: true, source: rewritten, deps: resolvedDeps };
 }
 
 function safeLiteral(value) {
@@ -241,7 +256,7 @@ function safeLiteral(value) {
   }
 }
 
-function serializeSelfContainedClosure(fn, actualArgs, capturedEnv) {
+function serializeSelfContainedClosure(fn, actualArgs, capturedEnv, deps) {
   if (typeof fn !== 'function') return null;
 
   var src = fn.toString();
@@ -254,7 +269,10 @@ function serializeSelfContainedClosure(fn, actualArgs, capturedEnv) {
   var order = [];
 
   freeIds.forEach(function(id) {
-    if (capturedEnv && capturedEnv[id] !== undefined) {
+    if (deps && deps[id] !== undefined) {
+      bindings[id] = deps[id];
+      order.push(id);
+    } else if (capturedEnv && capturedEnv[id] !== undefined) {
       bindings[id] = capturedEnv[id];
       order.push(id);
     }
@@ -296,17 +314,17 @@ function serializeSelfContainedClosure(fn, actualArgs, capturedEnv) {
   return { __fn__: true, source: zeroArgSource };
 }
 
-function prepareDnaForSerialization(node, env, briefcase) {
+function prepareDnaForSerialization(node, env, briefcase, deps) {
   if (typeof node === 'function') {
-    return prepareFunctionForSerialization(node, env, briefcase);
+    return prepareFunctionForSerialization(node, env, briefcase, deps);
   }
   if (Array.isArray(node)) {
-    return node.map(function(item) { return prepareDnaForSerialization(item, env, briefcase); });
+    return node.map(function(item) { return prepareDnaForSerialization(item, env, briefcase, deps); });
   }
   if (node && typeof node === 'object') {
     var out = {};
     Object.keys(node).forEach(function(key) {
-      out[key] = prepareDnaForSerialization(node[key], env, briefcase);
+      out[key] = prepareDnaForSerialization(node[key], env, briefcase, deps);
     });
     return out;
   }

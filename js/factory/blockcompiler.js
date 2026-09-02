@@ -1,3 +1,13 @@
+// ============================================================
+// UPDATED FILE: js/factory/blockcompiler.js
+// Change applied: SERIALIZATION-FRIENDLY DEPS
+//   - Removed briefcase merging from buildBlockProperties.
+//   - buildBlockProperties now includes block.deps in properties.
+//   - processNestedStage and compileStageRequestToElements no longer
+//     propagate briefcase.
+//   - Separate loaders retained (libs/programs).
+// ============================================================
+
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
 // Frontend base path for pipeline programs.
@@ -126,6 +136,11 @@ function buildBlockProperties(merged, inherited, io, env) {
 
   properties.inputs = inputsObj;
   properties.outputs = io.outputs || {};
+
+  // NEW: include block.deps in properties
+  if (merged && merged.deps) {
+    properties.deps = merged.deps;
+  }
 
   return properties;
 }
@@ -729,6 +744,8 @@ function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, o
   });
 }
 
+// Loaders remain unchanged (loadFrameworkLibs, loadFrontendPrograms, loadPipeline)
+
 function loadFrameworkLibs(libs, basePath, done) {
   if (!libs || libs.length === 0) return done();
   var index = 0;
@@ -752,10 +769,7 @@ function loadFrontendPrograms(programs, basePath, done) {
     var src = basePath + programs[index];
     var s = document.createElement('script');
     s.src = src;
-    s.onload = function() {
-      index++;
-      loadNext();
-    };
+    s.onload = function() { index++; loadNext(); };
     s.onerror = function() { done(new Error('failed to load frontend program ' + src)); };
     document.head.appendChild(s);
   }
@@ -771,13 +785,11 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
   var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
   var frontendBase = options.frontendBase || FRONTEND_BASE;
 
-  // Load framework libs first
   loadFrameworkLibs(libs, frameworkBase, function(err) {
     if (err) {
       console.error('[BLOCKCOMPILER] loadPipeline failed to load framework libs:', err);
       return;
     }
-    // Then load frontend programs
     loadFrontendPrograms(programs, frontendBase, function(err2) {
       if (err2) {
         console.error('[BLOCKCOMPILER] loadPipeline failed to load frontend programs:', err2);
@@ -877,10 +889,7 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
   return wrapper;
 }
 
-// ============================================================
-// Response consumer functions (for central registration)
-// ============================================================
-
+// Response consumer functions unchanged
 function blockcompilerApiResult(result, tag) {
   var pending = PENDING_HTTP[tag];
   if (!pending) return;
