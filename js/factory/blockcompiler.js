@@ -149,7 +149,7 @@ function resolvePipelinePath(path, dependencies) {
 
 // P12: Corrected to start traversal at dnaEnvelope root.
 function resolveStageFromPath(dnaEnvelope, stagePath) {
-    var current = dnaEnvelope;
+    var current = dnaEnvelope.definition;
     console.log(typeof current, {dnaEnvelope});
   for (var i = 0; i < stagePath.length; i++) {
     if (current == null) return undefined;
