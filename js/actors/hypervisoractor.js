@@ -1,10 +1,11 @@
 // ============================================================
 // UPDATED FILE: js/actors/hypervisoractor.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR
-//   - ensureHypervisorSlice(env) guard retained.
-//   - hypervisorbehavior returns env after processing.
-//   - Sends updates to worldmapactor via value set format.
-//   - Responses sent via sendResponse, not by returning non-env.
+// Change applied: DNA ENVELOPE ENCAPSULATION
+//   - BOOT_PIPELINE stores message.dna in hyperSlice.loadedPipelines.
+//   - Does not inspect dna.definition.pipeline; delegates compilation
+//     to blockcompilerCompileStageFromDna.
+//   - handleStageCompleted also delegates next stage via stored dna.
+//   - Hypervisor remains DNA-agnostic.
 // ============================================================
 
 var hypervisorVerbosityConstants = createVerbosityConstants();
@@ -46,28 +47,13 @@ function registerHypervisorPipeline(hyperSlice, pipelineId) {
   }
 }
 
-function compileAndOrchestrate(hyperSlice, message) {
-  var result = compileStageRequestToElements(
-    message.pipeline,
-    message.stageIndex,
-    message.stagePath,
-    message.briefcase,
-    message.env || {},
-    message.options || {}
-  );
-  return orchestrateStage(
-    result.stage,
-    result.elementFunctions,
-    message.pipelineId,
-    message.env || {},
-    message.stagePath || [],
-    message.options || {},
-    result.nextStageMessage
-  ).then(function() {
-    return { started: true };
-  }).catch(function(err) {
-    return { error: err.message };
-  });
+// New helper: compile stage using DNA envelope stored in hyperSlice.
+function compileStageFromStoredDna(hyperSlice, pipelineId, stageIndex, stagePath, briefcase, env, options) {
+  var entry = hyperSlice.loadedPipelines && hyperSlice.loadedPipelines[pipelineId];
+  if (!entry || !entry.dna) {
+    return Promise.resolve({ error: 'missing DNA for pipeline: ' + pipelineId });
+  }
+  return blockcompilerCompileStageFromDna(entry.dna, stageIndex, stagePath || [], briefcase || {}, env || {}, options || {});
 }
 
 function handleStageCompleted(hyperSlice, message) {
@@ -83,31 +69,19 @@ function handleStageCompleted(hyperSlice, message) {
       updates: [{ path: 'hypervisor', value: hyperSlice }]
     }, generateTag(), 'hypervisoractor');
   }
+
   var nextMsg = message.nextStageMessage || (hyperSlice.nextStageMessages ? hyperSlice.nextStageMessages[key] : null);
   if (nextMsg) {
     if (hyperSlice.nextStageMessages && hyperSlice.nextStageMessages[key]) delete hyperSlice.nextStageMessages[key];
-    if (!nextMsg.env) {
-      var rootEntry = hyperSlice.envByPipeline && hyperSlice.envByPipeline[message.pipelineId] &&
-        hyperSlice.envByPipeline[message.pipelineId].__root__ &&
-        hyperSlice.envByPipeline[message.pipelineId].__root__.__root__;
-      nextMsg.env = rootEntry ? rootEntry.env : (message.env || {});
-    }
-    var nextResult = compileStageRequestToElements(
-      nextMsg.pipeline,
+    // Delegate next stage to blockcompiler using stored DNA
+    compileStageFromStoredDna(
+      hyperSlice,
+      nextMsg.pipelineId || message.pipelineId,
       nextMsg.stageIndex,
-      nextMsg.stagePath,
-      nextMsg.briefcase,
-      nextMsg.env,
-      nextMsg.options
-    );
-    orchestrateStage(
-      nextResult.stage,
-      nextResult.elementFunctions,
-      nextMsg.pipelineId,
-      nextMsg.env || {},
       nextMsg.stagePath || [],
-      nextMsg.options || {},
-      nextResult.nextStageMessage
+      nextMsg.briefcase || {},
+      nextMsg.env || message.env || {},
+      nextMsg.options || {}
     ).then(function() {
       // Next stage will send its own stage_completed
     }).catch(function(err) {
@@ -300,7 +274,7 @@ function hypervisorbehavior(env, message) {
       return env;
     case MESSAGETYPES.RECOVER:
       enqueueDbRestore('actor:state:hypervisor').then(function(saved) {
-        if (saved !== null && saved !== undefined) {
+        if (saved && typeof saved === 'object') {
           env.hypervisor = saved;
         } else {
           env.hypervisor = {
@@ -331,52 +305,65 @@ function hypervisorbehavior(env, message) {
       var bootOptions = message.options || {};
       if (bootOptions.autorun === undefined) bootOptions.autorun = true;
       if (bootOptions.verbosity === undefined && env.verbosity !== undefined) bootOptions.verbosity = env.verbosity;
-      var pipelineBriefcase = message.pipeline && message.pipeline.briefcase ? message.pipeline.briefcase : {};
-      var briefcaseCheck = validatePipelineBriefcase(pipelineBriefcase);
-      var briefcaseErrors = Array.isArray(briefcaseCheck) ? briefcaseCheck : (briefcaseCheck.errors || []);
-      var briefcaseValid = Array.isArray(briefcaseCheck) ? briefcaseCheck.length === 0 : Boolean(briefcaseCheck.valid);
-      if (!briefcaseValid) {
-        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: '[HYPERVISOR] briefcase validation failed: ' + briefcaseErrors.join(', ') }, 'hypervisoractor');
+
+      var pipelineId = message.pipelineId;
+      var dnaEnvelope = message.dna;
+
+      if (!dnaEnvelope || !dnaEnvelope.definition) {
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: '[HYPERVISOR] missing DNA envelope' }, 'hypervisoractor');
         return env;
       }
+
       hyperSlice.loadedPipelines = hyperSlice.loadedPipelines || {};
-      hyperSlice.loadedPipelines[message.pipelineId] = { pipeline: message.pipeline, accessors: message.accessors || null, sinks: message.sinks || [], options: bootOptions };
-      var savedRoot = hyperSlice.envByPipeline && hyperSlice.envByPipeline[message.pipelineId] &&
-        hyperSlice.envByPipeline[message.pipelineId].__root__ && hyperSlice.envByPipeline[message.pipelineId].__root__.__root__;
-      var initialEnv = savedRoot ? savedRoot.env : (bootOptions.baseEnv || {});
-      registerHypervisorPipeline(hyperSlice, message.pipelineId);
-      sendInstruction('executionactor', 'pipeline_loaded', { pipelineid: message.pipelineId, env: {} }, null, 'hypervisoractor');
-      sendInstruction('executionactor', 'register_pipeline', { pipelineid: message.pipelineId, dna: null, env: {} }, null, 'hypervisoractor');
-      var firstStage = message.firstStage || { stageIndex: 0, stagePath: [], briefcase: pipelineBriefcase };
-      var compileResult = compileStageRequestToElements(
-        message.pipeline,
+      hyperSlice.loadedPipelines[pipelineId] = {
+        dna: dnaEnvelope,
+        options: bootOptions,
+        accessors: message.accessors || null,
+        sinks: message.sinks || []
+      };
+
+      registerHypervisorPipeline(hyperSlice, pipelineId);
+      sendInstruction('executionactor', 'pipeline_loaded', { pipelineid: pipelineId, env: {} }, null, 'hypervisoractor');
+      sendInstruction('executionactor', 'register_pipeline', { pipelineid: pipelineId, dna: null, env: {} }, null, 'hypervisoractor');
+
+      var firstStage = message.firstStage || { stageIndex: 0, stagePath: [], briefcase: {} };
+      // Delegate compilation to blockcompiler using stored DNA
+      compileStageFromStoredDna(
+        hyperSlice,
+        pipelineId,
         firstStage.stageIndex,
         firstStage.stagePath || [],
-        firstStage.briefcase || pipelineBriefcase,
-        initialEnv,
+        firstStage.briefcase || {},
+        bootOptions.baseEnv || {},
         bootOptions
-      );
-      orchestrateStage(
-        compileResult.stage,
-        compileResult.elementFunctions,
-        message.pipelineId,
-        initialEnv,
-        firstStage.stagePath || [],
-        bootOptions,
-        compileResult.nextStageMessage
-      ).then(function() {}).catch(function(err) {
+      ).then(function() {
+        // Stage completion will be handled by orchestrateStage
+      }).catch(function(err) {
         logwarn(env, '[HYPERVISOR]', 'boot pipeline orchestration failed:', err);
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'hypervisoractor');
       });
+
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
-      if (message.sender && message.tag) sendResponse(message.sender, message.tag, { started: true, pipelineId: message.pipelineId }, 'hypervisoractor');
+
+      if (message.sender && message.tag) sendResponse(message.sender, message.tag, { started: true, pipelineId: pipelineId }, 'hypervisoractor');
       return env;
     }
     case MESSAGETYPES.COMPILE_STAGE: {
       logdebug(env, '[HYPERVISOR]', 'action COMPILE_STAGE:', message.pipelineId, 'stageIndex:', message.stageIndex);
-      compileAndOrchestrate(hyperSlice, message).then(function(res) {
+      compileStageFromStoredDna(
+        hyperSlice,
+        message.pipelineId,
+        message.stageIndex,
+        message.stagePath || [],
+        message.briefcase || {},
+        message.env || {},
+        message.options || {}
+      ).then(function(res) {
         if (message.sender && message.tag) sendResponse(message.sender, message.tag, res, 'hypervisoractor');
+      }).catch(function(err) {
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'hypervisoractor');
       });
       return env;
     }

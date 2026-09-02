@@ -1,13 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/factory/blockcompiler.js
-// Change applied: STRING PATH RESOLUTION FOR NESTED PIPELINES
-//   - Added resolvePipelinePath(path) to resolve dot-separated
-//     global paths.
-//   - processPipelineElement uses it when el.pipeline is a string.
-//   - loadPipeline still loads libs/programs first.
-//   - deps resolution remains unchanged (array of strings).
-// ============================================================
-
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
 // Frontend base path for pipeline programs.
@@ -594,7 +584,7 @@ function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants
 function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, options) {
   var elementId = el.id || 'pipeline_unknown';
 
-  // RESOLVE STRING PIPELINE PATH (new)
+  // RESOLVE STRING PIPELINE PATH
   if (typeof el.pipeline === 'string') {
     var resolved = resolvePipelinePath(el.pipeline);
     if (resolved && resolved.pipeline) {
@@ -815,6 +805,16 @@ function loadFrontendPrograms(programs, basePath, done) {
   loadNext();
 }
 
+// NEW: compile stage from DNA envelope
+function blockcompilerCompileStageFromDna(dnaEnvelope, stageIndex, stagePath, briefcase, env, options) {
+  if (!dnaEnvelope || !dnaEnvelope.definition || !dnaEnvelope.definition.pipeline) {
+    throw new Error('[blockcompilerCompileStageFromDna] invalid DNA envelope');
+  }
+  var pipeline = dnaEnvelope.definition.pipeline;
+  var compiled = compileStageRequestToElements(pipeline, stageIndex, stagePath || [], briefcase || {}, env || {}, options || {});
+  return orchestrateStage(compiled.stage, compiled.elementFunctions, dnaEnvelope.pipelineId, env || {}, stagePath || [], options || {}, compiled.nextStageMessage);
+}
+
 function loadPipeline(pipelineDefinition, pipelineId, options) {
   if (options === undefined) options = {};
   var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
@@ -835,19 +835,27 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
         return;
       }
 
+      // Create DNA envelope
+      var dnaEnvelope = {
+        pipelineId: id,
+        definition: pipelineDefinition,
+        loadedAt: Date.now()
+      };
+
       loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline request for pipeline:', id);
       var firstStage = {
         stageIndex: 0,
         stagePath: [],
-        briefcase: pipelineDefinition.briefcase || {}
+        briefcase: pipelineDefinition.pipeline && pipelineDefinition.pipeline.briefcase ? pipelineDefinition.pipeline.briefcase : {}
       };
       var tag = generateTag();
       PENDING_EXEC[tag] = { env: {}, sig: { inputs: [], outputs: {} }, id: id, resolve: function() {}, reject: function(err) { console.error(err); } };
       sendInstruction('hypervisoractor', 'boot_pipeline', {
-        pipeline: pipelineDefinition,
+        pipelineId: id,
+        dna: dnaEnvelope,
+        stageIndex: 0,
         accessors: options.accessors || null,
         sinks: options.sinks || [],
-        pipelineId: id,
         options: {
           autorun: options.autorun !== false,
           baseEnv: options.baseEnv || {},
