@@ -1,5 +1,19 @@
+// ============================================================
+// UPDATED FILE: js/factory/blockcompiler.js
+// Change applied: STRING PATH RESOLUTION FOR NESTED PIPELINES
+//   - Added resolvePipelinePath(path) to resolve dot-separated
+//     global paths.
+//   - processPipelineElement uses it when el.pipeline is a string.
+//   - loadPipeline still loads libs/programs first.
+//   - deps resolution remains unchanged (array of strings).
+// ============================================================
+
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
+
+// Frontend base path for pipeline programs.
 var FRONTEND_BASE = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
+
+// Pending maps for response consumers
 var PENDING_HTTP = {};       // tag -> { resolve, env, sig, id, mapping }
 var PENDING_DOM = {};        // tag -> { resolve, env, sig, id }
 var PENDING_EXEC = {};       // tag -> { resolve, env, sig, id }
@@ -119,6 +133,18 @@ function resolveDepsArray(depsArray) {
     }
   });
   return depsObj;
+}
+
+// Resolve a dot-separated path string against the global object.
+function resolvePipelinePath(path) {
+  if (typeof path !== 'string') return path;
+  var parts = path.split('.');
+  var value = window;
+  for (var i = 0; i < parts.length; i++) {
+    if (value === undefined || value === null) return undefined;
+    value = value[parts[i]];
+  }
+  return value;
 }
 
 function buildBlockProperties(merged, inherited, io, env) {
@@ -567,6 +593,17 @@ function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants
 
 function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, options) {
   var elementId = el.id || 'pipeline_unknown';
+
+  // RESOLVE STRING PIPELINE PATH (new)
+  if (typeof el.pipeline === 'string') {
+    var resolved = resolvePipelinePath(el.pipeline);
+    if (resolved && resolved.pipeline) {
+      el.pipeline = resolved.pipeline;
+    } else {
+      throw new Error('[processPipelineElement] failed to resolve pipeline path: ' + el.pipeline);
+    }
+  }
+
   var blockfn = function(env) {
     var parentEnv = env;
     var childEnv = cloneObject(parentEnv);
