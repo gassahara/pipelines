@@ -1,13 +1,3 @@
-// ============================================================
-// PROGRAM: bootloader.js
-// BOOT LOADER — global-vars architecture.
-// Loads ALL pipeline programs as plain browser scripts in
-// dependency order, running existence tests BEFORE importing
-// each next program. Actor programs now pure functions; no actor
-// objects exist. Registration checks are deferred until after
-// all scripts (including registerconsumers.js) are loaded.
-// ============================================================
-
 var PIPELINES_MANIFEST = [
   { src: 'messageregistry.js', provides: ['MESSAGEREGISTRY', 'MESSAGETYPES'] },
   { src: 'verbosity.js', provides: ['createVerbosityConstants', 'createVerbosityFunctions', 'getverbosity', 'setverbosity', 'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'] },
@@ -37,7 +27,7 @@ var PIPELINES_MANIFEST = [
   { src: 'actors/executionactor.js', provides: ['executionbehavior', 'enqueueExecutionPipelineLoaded', 'enqueueExecutionSubmit', 'enqueueExecutionAwaitTask', 'enqueueExecutionGetTasks', 'enqueueExecutionGetTaskStatus', 'enqueueExecutionCancelTask', 'enqueueExecutionStopTask', 'enqueueExecutionGetStatus', 'enqueueExecutionEnvUpdated', 'enqueueExecutionCccAbort', 'enqueueExecutionCccContinue', 'enqueueExecutionCccRetry', 'enqueueExecutionRegisterPipeline', 'enqueueExecutionRecover', 'enqueueExecutionPing', 'startExecutionActor', 'ensureExecutionActorReady'], owner: 'executionactor', types: ['pipeline_loaded', 'env_updated', 'get_status', 'execute_element', 'await_task', 'get_tasks', 'get_task_status', 'cancel_task', 'stop_task', 'ccc_abort', 'ccc_continue', 'ccc_retry', 'task_settled', 'recover', 'register_pipeline', 'ping'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'observeworldmap', 'select'] },
   { src: 'actors/renderactor.js', provides: ['renderbehavior', 'enqueuerender', 'enqueueclear', 'enqueuehtml', 'enqueueremove', 'enqueuestyles', 'enqueuesetattr', 'enqueuetoggleclass', 'enqueuecreateelement', 'enqueuecreatecontainer', 'enqueuecreatefromhtml', 'enqueuegethtml', 'enqueuegetvalue', 'enqueuegetstyle', 'enqueuegetposition', 'enqueuesethtml', 'enqueuesetposition', 'enqueuesetstyle', 'enqueuesetvalue', 'enqueueproperty', 'enqueuegetlayout', 'enqueuesetlayout', 'enqueuegetviewport', 'enqueuegetscreen', 'enqueuematchmedia', 'enqueueRenderRegisterTrigger', 'enqueueRenderRegisterTriggerExpectation', 'enqueueRenderRevalidateTriggers', 'enqueueRenderPing', 'enqueueRenderGetBodyHtml', 'enqueueRenderRestoreBodyHtml', 'enqueueRenderRecover', 'enqueueRenderCrypto', 'startRenderActor', 'expectelement', 'handlefilereaderrequest'], owner: 'renderactor', types: ['render', 'clear', 'html', 'remove', 'setstyles', 'setattr', 'toggleclass', 'crypto', 'geolocation', 'persistence', 'createelement', 'createcontainer', 'createfromhtml', 'property', 'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout', 'sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'getviewport', 'getscreen', 'matchmedia', 'get_body_html', 'restore_body_html', 'recover', 'ping', 'register_trigger', 'register_trigger_expectation', 'revalidate_triggers'] },
-  { src: 'factory/blockcompiler.js', provides: ['loadPipeline', 'compileStage', 'compileStageRequestToElements', 'orchestrateStage', 'validatePipelineBriefcase', 'blockcompilerApiResult', 'blockcompilerFetchResult', 'blockcompilerTaskResult', 'blockcompilerPipelineBooted', 'blockcompilerDomResult', 'blockcompilerStageCompletedAck'] },
+  { src: 'factory/blockcompiler.js', provides: ['loadPipeline', 'compileStage', 'resolveNextElement', 'orchestrateStage', 'validatePipelineBriefcase', 'blockcompilerApiResult', 'blockcompilerFetchResult', 'blockcompilerTaskResult', 'blockcompilerPipelineBooted', 'blockcompilerDomResult', 'blockcompilerStageCompletedAck'] },
   { src: 'actors/hypervisoractor.js', provides: ['hypervisorbehavior', 'enqueueHypervisorLoad', 'enqueueHypervisorSave', 'enqueueHypervisorGetEnv', 'enqueueHypervisorSetEnv', 'enqueueHypervisorGetLatestEnv', 'enqueueHypervisorGetRenderHtml', 'enqueueHypervisorSetRenderHtml', 'enqueueHypervisorGetExecutionStack', 'enqueueHypervisorSetExecutionStack', 'enqueueHypervisorGetRoute', 'enqueueHypervisorSetRoute', 'enqueueHypervisorGetActivePipelines', 'enqueueHypervisorRegisterPipeline', 'enqueueHypervisorUnregisterPipeline', 'enqueueHypervisorSetProgram', 'enqueueHypervisorGetProgram', 'enqueueHypervisorMarkBoot', 'enqueueHypervisorSetStageDescriptor', 'enqueueHypervisorGetTriggerRecipientStatus', 'enqueueHypervisorTrigger', 'enqueueHypervisorPing', 'enqueueHypervisorActivateActors', 'enqueueHypervisorBootPipeline', 'enqueueHypervisorStageCompleted', 'startHypervisorActor'], owner: 'hypervisoractor', types: ['load', 'save', 'get_env', 'set_env', 'get_latest_env', 'get_render_html', 'set_render_html', 'get_execution_stack', 'set_execution_stack', 'get_route', 'set_route', 'get_active_pipelines', 'register_pipeline', 'unregister_pipeline', 'set_program', 'get_program', 'mark_boot', 'set_stage_descriptor', 'get_trigger_recipient_status', 'trigger_event', 'ping', 'recover', 'activate_actors', 'boot_pipeline', 'compile_stage', 'stage_completed'] },
   { src: 'registerconsumers.js', provides: ['REGISTERED_CONSUMERS'] }
 ];
@@ -66,7 +56,6 @@ function checkRegistration(entry) {
 
 function checkStateRegistration(entry) {
   if (!entry.owner) return { ok: true };
-  // Only worldmapactor owns the global ENV state.
   if (entry.owner !== 'worldmapactor') return { ok: true };
   var state = getActorState('worldmapactor');
   return { ok: state !== undefined, missing: state === undefined ? 'worldmapactor' : null };
@@ -80,7 +69,6 @@ function runPipelineBoot(loadProgram, report, manifest) {
 
   function loadNext() {
     if (index >= entries.length) {
-      // All scripts loaded. Now perform final verification.
       var regFailures = [];
       entries.forEach(function(entry) {
         if (entry.owner) {

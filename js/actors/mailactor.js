@@ -7,8 +7,8 @@ var RESPONSECONSUMERS = {};       // key: responseType -> function(result, tag)
 var EXPECTATIONS = {};            // key: tag -> structured expectation object
 var MAILBOX = [];                 // all messages, request and response
 
-var EXPECTATION_TIMEOUT = 20000;  // 30 seconds default
-var POLL_INTERVAL = 150;           // milliseconds between mailbox polls
+var EXPECTATION_TIMEOUT = 30000;  // 30 seconds default
+var POLL_INTERVAL = 50;           // milliseconds between mailbox polls
 var MAILBOX_RESPONSE_TYPE = 'mailbox_response'; // generic fallback for missing response type
 
 // Pure behavior for SEND and ACK messages.

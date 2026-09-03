@@ -1,14 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/actors/hypervisoractor.js
-// Change applied: FULL STAGE PATH DELEGATION
-//   - BOOT_PIPELINE stores DNA envelope; calls blockcompiler with
-//     message.stagePath (full path array).
-//   - handleStageCompleted computes next stage full path from
-//     nextStageMessage.stageIndex (temporary until blockcompiler
-//     nextStageMessage carries full path).
-//   - Hypervisor remains DNA-agnostic.
-// ============================================================
-
 var hypervisorVerbosityConstants = createVerbosityConstants();
 
 function ensureHypervisorSlice(env) {
@@ -74,8 +63,13 @@ function handleStageCompleted(hyperSlice, message) {
   var nextMsg = message.nextStageMessage || (hyperSlice.nextStageMessages ? hyperSlice.nextStageMessages[key] : null);
   if (nextMsg) {
     if (hyperSlice.nextStageMessages && hyperSlice.nextStageMessages[key]) delete hyperSlice.nextStageMessages[key];
-    // Convert stageIndex to full stage path (temporary until blockcompiler carries full path)
-    var nextStagePath = ['pipeline', 'elements', nextMsg.stageIndex];
+    // P22: prefer explicit stagePath from blockcompiler's nextStageMessage
+    var nextStagePath;
+    if (nextMsg.stagePath && Array.isArray(nextMsg.stagePath) && nextMsg.stagePath.length > 0) {
+      nextStagePath = nextMsg.stagePath;
+    } else {
+      nextStagePath = ['pipeline', 'elements', nextMsg.stageIndex];
+    }
     compileStageFromStoredDna(
       hyperSlice,
       nextMsg.pipelineId || message.pipelineId,
@@ -247,15 +241,8 @@ function hypervisorbehavior(env, message) {
         };
         var stagePath = descriptor.stagePath || [stage.id];
         var options = descriptor.options || {};
-        var compiled = compileStageRequestToElements(
-          { elements: [stage] },
-          0,
-          stagePath,
-          {},
-          envForTrigger,
-          options
-        );
-        return orchestrateStage(compiled.stage, compiled.elementFunctions, descriptor.pipelineId, envForTrigger, stagePath, options, null)
+        var dependencies = (descriptor.options && descriptor.options.dependencies) || {};
+        return orchestrateStage(stage, descriptor.pipelineId, dependencies, envForTrigger, stagePath, options, null)
           .then(function(finalEnv) { return { env: finalEnv }; });
       }, [envForTrigger], { context: { env: envForTrigger }, capturecontinuation: true, errk: createHypervisorErrorContext('trigger') }).then(function(result) {
         var updatedEnv = result && result.env ? result.env : envForTrigger;
