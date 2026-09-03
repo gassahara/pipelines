@@ -4,7 +4,9 @@
 //   - compileStageRequestToElements accepts dnaEnvelope, not raw pipeline.
 //   - All process* functions receive dnaEnvelope.
 //   - processPipelineElement builds proper DNA envelope for nested boot.
-//   - createPersistentElementWrapper uses mailbox waitFor instead of PENDING_EXEC.
+//   - createPersistentElementWrapper uses mailbox waitFor, and now wraps
+//     the full element execution + wait in callwithstack (P14) so any
+//     failure is captured by CCC.
 //   - sendInstruction calls include context for traceability.
 //   - Enhanced logging with pipelineId/stagePath/elementId.
 //   - resolveStageFromPath starts at dnaEnvelope root (P12).
@@ -149,8 +151,7 @@ function resolvePipelinePath(path, dependencies) {
 
 // P12: Corrected to start traversal at dnaEnvelope root.
 function resolveStageFromPath(dnaEnvelope, stagePath) {
-    var current = dnaEnvelope.definition;
-    console.log(typeof current, {dnaEnvelope});
+  var current = dnaEnvelope;
   for (var i = 0; i < stagePath.length; i++) {
     if (current == null) return undefined;
     current = current[stagePath[i]];
@@ -1017,6 +1018,7 @@ function validatePipelineBriefcase(briefcase) {
   };
 }
 
+// P14: Wrap full element execution + mailbox wait in callwithstack.
 function createPersistentElementWrapper(compiledElement, elementDef, stagePath, pipelineId, options) {
   var elementId = elementDef.id || compiledElement.id || 'element_unknown';
   function wrapper(env) {
@@ -1046,26 +1048,33 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
       programRef: null,
       elementId: elementId
     };
-    sendInstruction('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler', { responseType: 'task_result' }, {
-      pipelineId: pipelineId,
-      stagePath: stagePath,
-      elementId: elementId
-    });
-    return waitForMailbox({ tag: tag, sender: 'executionactor' }, WITNESS_TIMEOUT)
-      .then(function(mailboxMessage) {
-        var response = mailboxMessage.payload && mailboxMessage.payload.result ? mailboxMessage.payload.result : mailboxMessage.payload;
-        if (response && response.error) {
-          throw new Error(response.error);
-        }
-        var result = response && response.result !== undefined ? response.result : response;
-        writeoutputs({ inputs: blockInputs, outputs: blockOutputs }, execEnv, result, elementId);
-        logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'element completed:', elementId, 'pipeline:', pipelineId);
-        return result;
-      })
-      .catch(function(err) {
-        logerror(blockCompilerState, '[BLOCKCOMPILER]', 'element failed:', elementId, 'pipeline:', pipelineId, err);
-        throw err;
-      });
+
+    return callwithstack(
+      EVALSTACK,
+      'element:' + elementId,
+      'async-await',
+      function() {
+        sendInstruction('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler', { responseType: 'task_result' }, {
+          pipelineId: pipelineId,
+          stagePath: stagePath,
+          elementId: elementId
+        });
+
+        return waitForMailbox({ tag: tag, sender: 'executionactor' }, WITNESS_TIMEOUT)
+          .then(function(mailboxMessage) {
+            var response = mailboxMessage.payload && mailboxMessage.payload.result ? mailboxMessage.payload.result : mailboxMessage.payload;
+            if (response && response.error) {
+              throw new Error(response.error);
+            }
+            var result = response && response.result !== undefined ? response.result : response;
+            writeoutputs({ inputs: blockInputs, outputs: blockOutputs }, execEnv, result, elementId);
+            logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'element completed:', elementId, 'pipeline:', pipelineId);
+            return result;
+          });
+      },
+      [execEnv],
+      { context: { env: execEnv, pipestate: execEnv.pipestate }, capturecontinuation: true, errk: createerrorcontext(elementId, 'element') }
+    );
   }
   wrapper.id = elementId;
   wrapper.kind = 'element';

@@ -1,14 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/actors/executionactor.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR + RESPONSE HARDENING
-//   - executionbehavior returns env unchanged after processing.
-//   - Uses ensureEnvSlice to initialize execution slice if missing.
-//   - Sends updates to worldmapactor via value set messages.
-//   - Responses sent via sendResponse, not by returning non-env.
-//   - settleTask now sends MESSAGETYPES.TASK_RESULT with metadata.
-//   - Added enhanced logging for task lifecycle.
-// ============================================================
-
 var executionVerbosityConstants = createVerbosityConstants();
 
 function sanitizeForState(value, seen) {
@@ -154,6 +143,12 @@ function executionbehavior(env, message) {
         programRef: message.programRef || null,
         origin: message.origin || null
       });
+      // P13: Register requester as consumer so settleTask can respond.
+      if (message.sender && message.tag) {
+        task.consumers = task.consumers || [];
+        task.consumers.push({ sender: message.sender, tag: message.tag });
+        logdebug(env, '[EXECUTIONACTOR]', 'registered consumer for task:', task.taskid, 'sender:', message.sender, 'tag:', message.tag);
+      }
       sendExecutionUpdate(execSlice);
       runElementTask(task.taskid, message, env);
       return env;
