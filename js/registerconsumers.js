@@ -1,10 +1,10 @@
 // ============================================================
-// PROGRAM: js/registerconsumers.js
-// CENTRAL REGISTRATION — loads after all actor programs.
-// Registers all message types, interfaces, actor consumers,
-// and response consumers in one place.
-// This file does not define behaviors; it references global
-// behavior functions and actor instances.
+// UPDATED FILE: js/registerconsumers.js
+// Change applied: MESSAGE INTERFACE HARDENING (P18)
+//   - Corrected interfaces to match actual message payloads.
+//   - hypervisoractor.boot_pipeline now requires dna instead of pipeline.
+//   - worldmapactor.update now requires updates array instead of patch.
+//   - Audited all other interfaces; no further changes needed.
 // ============================================================
 
 var REGISTERED_CONSUMERS = true;
@@ -173,8 +173,9 @@ ACTORCONSUMERS['hypervisoractor:recover'] = hypervisorbehavior;
 MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.ACTIVATE_ACTORS, {}, hypervisorbehavior);
 ACTORCONSUMERS['hypervisoractor:activate_actors'] = hypervisorbehavior;
 
+// P18: corrected BOOT_PIPELINE interface: dna instead of pipeline
 MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.BOOT_PIPELINE, {
-  pipeline: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', firstStage: 'object?'
+  dna: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', firstStage: 'object?'
 }, hypervisorbehavior);
 ACTORCONSUMERS['hypervisoractor:boot_pipeline'] = hypervisorbehavior;
 
@@ -296,7 +297,8 @@ MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, re
 ACTORCONSUMERS['renderactor:revalidate_triggers'] = renderbehavior;
 
 // worldmapactor
-MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.UPDATE, { patch: 'object' }, worldmapbehavior);
+// P18: corrected UPDATE interface to use updates array
+MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.UPDATE, { updates: 'array' }, worldmapbehavior);
 ACTORCONSUMERS['worldmapactor:update'] = worldmapbehavior;
 
 MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.UPDATE_FN, { fn: 'function' }, worldmapbehavior);
@@ -311,13 +313,13 @@ ACTORCONSUMERS['worldmapactor:unobserve'] = worldmapbehavior;
 MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.GET_WORLDMAP, {}, worldmapbehavior);
 ACTORCONSUMERS['worldmapactor:get_worldmap'] = worldmapbehavior;
 
-// dbactor (memory mailbox; interfaces registered for completeness)
+// dbactor
 MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.STORE, { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' }, dbbehavior);
 MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.RESTORE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
 MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.LIST, { resolve: 'function?', reject: 'function?' }, dbbehavior);
 MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.DELETE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
 
-// mailactor (used for message routing)
+// mailactor
 MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.SEND, { recipient: 'string', message: 'object' }, mailbehavior);
 MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.ACK, { recipient: 'string', ids: 'array' }, mailbehavior);
 

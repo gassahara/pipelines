@@ -586,14 +586,13 @@ function compileblock(block, inheritedBriefcase, constants, options) {
   return compiler(block, block.id, blockIo, inheritedBriefcase);
 }
 
-// Process element receives pipelineId and dependencies, not dnaEnvelope.
-function processNode(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
-  if (node.element === 'BLOCK') return processElement(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options);
-  if (node.element === 'PIPELINE') return processPipelineElement(node, pipelineId, stagePath, inheritedBriefcase, dependencies, options);
-  if (node.element === 'STAGE') return processNestedStage(node, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options);
-  throw new Error('unexpected nested element type: ' + node.element);
+// Resolve next element from stage by index (P26)
+function resolveNextElement(stage, index) {
+  if (!stage || !stage.elements || index >= stage.elements.length) return null;
+  return stage.elements[index];
 }
 
+// Process element receives full path context for tracing (P19)
 function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
   var fn = compileblock(el, inheritedBriefcase, constants, options);
   fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
@@ -601,6 +600,7 @@ function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants
   return createPersistentElementWrapper(fn, el, stagePath, pipelineId, options);
 }
 
+// P23: Wrap nested PIPELINE boot in callwithstack.
 function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, dependencies, options) {
   var elementId = el.id || 'pipeline_unknown';
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipelineElement:', elementId, 'pipeline:', el.pipeline);
@@ -651,28 +651,34 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
 
     var tag = generateTag();
     var responseType = 'pipeline_booted';
-    sendInstruction('hypervisoractor', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'blockcompiler', { responseType: responseType }, {
-      pipelineId: pipelineId,
-      stagePath: stagePath,
-      elementId: elementId
-    });
+    return callwithstack(
+      EVALSTACK,
+      'pipeline:' + elementId,
+      'async-await',
+      function() {
+        sendInstruction('hypervisoractor', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'blockcompiler', { responseType: responseType }, {
+          pipelineId: pipelineId,
+          stagePath: stagePath,
+          elementId: elementId
+        });
 
-    return waitForMailbox({ tag: tag, sender: 'hypervisoractor' }, WITNESS_TIMEOUT)
-      .then(function(response) {
-        var result = response.payload && response.payload.result ? response.payload.result : response.payload;
-        writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
-        return result;
-      })
-      .catch(function(err) {
-        logerror(blockCompilerState, '[BLOCKCOMPILER]', 'nested pipeline boot failed:', elementId, err);
-        throw err;
-      });
+        return waitForMailbox({ tag: tag, sender: 'hypervisoractor' }, WITNESS_TIMEOUT)
+          .then(function(response) {
+            var result = response.payload && response.payload.result ? response.payload.result : response.payload;
+            writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
+            return result;
+          });
+      },
+      [parentEnv],
+      { context: { env: parentEnv, pipestate: parentEnv.pipestate }, capturecontinuation: true, errk: createerrorcontext(elementId, 'pipeline') }
+    );
   };
   blockfn.id = elementId;
   blockfn.kind = 'pipeline';
   return blockfn;
 }
 
+// P25: Wrap nested STAGE orchestration in callwithstack.
 function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
   var childStagePath = stagePath.concat([childStage.id]);
   var childBriefcase = cloneObject(inheritedBriefcase || {});
@@ -714,42 +720,45 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
     return noopWrapper;
   }
 
-  var childResult = compileStageRequestToElements(
-    childStage,
-    pipelineId,
-    dependencies,
-    {},
-    options || {}
-  );
-
-  var childElementFunctions = childResult.elementFunctions;
-  var childNextStageMessage = childResult.nextStageMessage;
-  var childStageDef = childResult.stage;
-
   if (childStage.async === true) {
     var asyncWrapper = function(env) {
-      orchestrateStage(childStageDef, childElementFunctions, pipelineId, env, childStagePath, options || {}, childNextStageMessage)
-        .catch(function(err) {
-          logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
-        });
-      return undefined;
+      return callwithstack(
+        EVALSTACK,
+        'nested-stage:' + childStage.id,
+        'async-await',
+        function() {
+          orchestrateStage(childStage, pipelineId, dependencies, env, childStagePath, options || {}, null)
+            .catch(function(err) {
+              logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
+            });
+          return undefined;
+        },
+        [env],
+        { context: { env: env }, capturecontinuation: true }
+      );
     };
     asyncWrapper.asyncStage = true;
     return asyncWrapper;
   } else {
     var syncWrapper = function(env) {
-      return orchestrateStage(childStageDef, childElementFunctions, pipelineId, env, childStagePath, options || {}, childNextStageMessage);
+      return callwithstack(
+        EVALSTACK,
+        'nested-stage:' + childStage.id,
+        'async-await',
+        function() {
+          return orchestrateStage(childStage, pipelineId, dependencies, env, childStagePath, options || {}, null);
+        },
+        [env],
+        { context: { env: env }, capturecontinuation: true }
+      );
     };
     syncWrapper.asyncStage = false;
     return syncWrapper;
   }
 }
 
-// P16: Redesigned function. Accepts resolved stage object, pipelineId, dependencies.
-function compileStageRequestToElements(stage, pipelineId, dependencies, env, options) {
-  if (options === undefined) options = {};
-  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compileStageRequestToElements: stage', stage.id, 'pipelineId', pipelineId);
-
+// Lazy element orchestration (P26)
+function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, options, nextStageMessage) {
   var constants = createBlockCompilerConstants();
   var BLOCKTYPES = constants.BLOCKTYPES;
   var INHERITEDKEYS = constants.INHERITEDKEYS;
@@ -758,56 +767,40 @@ function compileStageRequestToElements(stage, pipelineId, dependencies, env, opt
   var COMPILERS = createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options);
   var compilerConstants = { BLOCKTYPES: BLOCKTYPES, INHERITEDKEYS: INHERITEDKEYS, ANALYZERS: ANALYZERS, COMPILERS: COMPILERS };
 
-  var stageBriefcase = cloneObject({});
-  // No briefcase from pipeline definitions; keep empty for compatibility.
-  // Note: briefcase is obsolete; this can be removed entirely later.
-
-  var elementFunctions = [];
-  (stage.elements || []).forEach(function(child) {
-    if (child.element === 'BLOCK') {
-      elementFunctions.push(processElement(child, pipelineId, stage.id ? [stage.id] : [], stageBriefcase, compilerConstants, dnaConstants, dependencies, options));
-    } else if (child.element === 'PIPELINE') {
-      elementFunctions.push(processPipelineElement(child, pipelineId, stage.id ? [stage.id] : [], stageBriefcase, dependencies, options));
-    } else if (child.element === 'STAGE') {
-      elementFunctions.push(processNestedStage(child, pipelineId, stage.id ? [stage.id] : [], stageBriefcase, compilerConstants, dnaConstants, dependencies, options));
-    }
-  });
-
-  var nextStageMessage = null;
-  // Since stage is already resolved, we need to know its index for next stage.
-  // This function doesn't have access to full pipeline to know next index.
-  // We will leave nextStageMessage as null; hypervisor will handle progression based on stage completion.
-  // Alternatively, caller can pass stageIndex. But to keep simple, we'll set null and rely on hypervisor.
-  // In original design, nextStageMessage was used for nested stages; but now hypervisor handles.
-  // We'll keep compatibility by setting null.
-  // (A more complete redesign would pass stageIndex separately if needed.)
-
-  return { elementFunctions: elementFunctions, nextStageMessage: nextStageMessage, stage: stage };
-}
-
-function orchestrateStage(stage, elementFunctions, pipelineId, env, stagePath, options, nextStageMessage) {
-  function runElement(index, currentEnv) {
-    if (index >= elementFunctions.length) {
-      return Promise.resolve(currentEnv);
-    }
-    var elementFn = elementFunctions[index];
-    if (elementFn.asyncStage === true) {
-      elementFn(currentEnv);
-      return runElement(index + 1, currentEnv);
-    } else {
-      return elementFn(currentEnv).then(function(result) {
-        return runElement(index + 1, currentEnv);
+  var index = 0;
+  function runNext() {
+    if (index >= (stage.elements || []).length) {
+      var tag = generateTag();
+      return new Promise(function(resolve) {
+        PENDING_STORE[tag] = { env: env, sig: { inputs: [], outputs: {} }, id: stage.id, resolve: resolve };
+        enqueueHypervisorStageCompleted(pipelineId, stage.id, nextStageMessage || null, env, { responseType: 'stage_completed_ack' });
       });
     }
+
+    var elementDef = resolveNextElement(stage, index);
+    if (!elementDef) {
+      index++;
+      return runNext();
+    }
+
+    var elementFn;
+    if (elementDef.element === 'BLOCK') {
+      elementFn = processElement(elementDef, pipelineId, stagePath.concat([elementDef.id]), {}, compilerConstants, dnaConstants, dependencies, options);
+    } else if (elementDef.element === 'PIPELINE') {
+      elementFn = processPipelineElement(elementDef, pipelineId, stagePath.concat([elementDef.id]), {}, dependencies, options);
+    } else if (elementDef.element === 'STAGE') {
+      elementFn = processNestedStage(elementDef, pipelineId, stagePath.concat([elementDef.id]), {}, compilerConstants, dnaConstants, dependencies, options);
+    } else {
+      throw new Error('[orchestrateStage] unexpected element type: ' + elementDef.element);
+    }
+
+    return elementFn(env).then(function() {
+      index++;
+      return runNext();
+    });
   }
 
-  return runElement(0, env).then(function(finalEnv) {
-    var tag = generateTag();
-    return new Promise(function(resolve) {
-      PENDING_STORE[tag] = { env: env, sig: { inputs: [], outputs: {} }, id: stage.id, resolve: resolve };
-      enqueueHypervisorStageCompleted(pipelineId, stage.id, nextStageMessage || null, finalEnv, { responseType: 'stage_completed_ack' });
-    });
-  });
+  return runNext();
 }
 
 function waitForWitness(entry, timeout) {
@@ -905,23 +898,29 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   options.pipelineId = dnaEnvelope.pipelineId;
   options.dependencies = dnaEnvelope.dependencies || {};
 
-  // P17 + P16: Resolve stage via path starting at definition.
   var stage = resolveStageFromPath(dnaEnvelope, stagePath);
   if (!stage || stage.element !== 'STAGE') {
     throw new Error('[blockcompilerCompileStage] stage not found at path: ' + JSON.stringify(stagePath));
   }
 
-  // Now call compileStageRequestToElements with resolved stage, pipelineId, dependencies.
-  var compiled = compileStageRequestToElements(
-    stage,
-    dnaEnvelope.pipelineId,
-    dnaEnvelope.dependencies || {},
-    env || {},
-    options
-  );
+  // Determine next stage message for hypervisor (P22/P24)
+  var stageIndex = stagePath[stagePath.length - 1]; // numeric index in elements array
+  var pipeline = dnaEnvelope.definition.pipeline;
+  var nextStageMessage = null;
+  if (typeof stageIndex === 'number' && stageIndex + 1 < pipeline.elements.length) {
+    nextStageMessage = {
+      type: 'compile_stage',
+      pipeline: pipeline,
+      pipelineId: dnaEnvelope.pipelineId,
+      stageIndex: stageIndex + 1,
+      stagePath: ['pipeline', 'elements', stageIndex + 1],
+      briefcase: {},
+      env: null,
+      options: options
+    };
+  }
 
-  // stagePath for orchestration is the full path minus the final index? For now pass empty.
-  return orchestrateStage(compiled.stage, compiled.elementFunctions, dnaEnvelope.pipelineId, env || {}, [], options, compiled.nextStageMessage);
+  return orchestrateStage(stage, dnaEnvelope.pipelineId, dnaEnvelope.dependencies || {}, env || {}, stagePath, options, nextStageMessage);
 }
 
 function loadPipeline(pipelineDefinition, pipelineId, options) {

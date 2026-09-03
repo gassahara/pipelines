@@ -1,13 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/actors/mailactor.js
-// Changes applied:
-//   - Mailbox API: getMailbox, queryMailbox, waitForMailbox
-//   - Expectations hardened with context, status, trace
-//   - Timeout handling for pending expectations
-//   - Response handling stores in mailbox; non-actors query directly
-//   - sendInstruction accepts context; validates actor messages only (P8)
-// ============================================================
-
 var mailVerbosityConstants = createVerbosityConstants();
 var mailState = Object.freeze({ level: mailVerbosityConstants.DEBUG });
 
@@ -17,7 +7,9 @@ var RESPONSECONSUMERS = {};       // key: responseType -> function(result, tag)
 var EXPECTATIONS = {};            // key: tag -> structured expectation object
 var MAILBOX = [];                 // all messages, request and response
 
-var EXPECTATION_TIMEOUT = 30000;  // 30 seconds default
+var EXPECTATION_TIMEOUT = 20000;  // 30 seconds default
+var POLL_INTERVAL = 150;           // milliseconds between mailbox polls
+var MAILBOX_RESPONSE_TYPE = 'mailbox_response'; // generic fallback for missing response type
 
 // Pure behavior for SEND and ACK messages.
 // Returns env (or Promise<env>), never a non-env value.
@@ -67,12 +59,13 @@ function mailbehavior(env, message) {
         status: 'PENDING',
         createdAt: Date.now(),
         resolvedAt: null,
-        error: null
+        error: null,
+        read: false
       };
       EXPECTATIONS[flatMessage.tag] = expectation;
       MAILBOX.push(expectation); // store expectation in mailbox too
 
-      // Schedule timeout
+      // Schedule timeout (does NOT delete expectation; just marks it TIMEOUT)
       setTimeout(function() {
         if (EXPECTATIONS[flatMessage.tag] && EXPECTATIONS[flatMessage.tag].status === 'PENDING') {
           var exp = EXPECTATIONS[flatMessage.tag];
@@ -83,7 +76,7 @@ function mailbehavior(env, message) {
           if (typeof exp.responseSpec.reject === 'function') {
             exp.responseSpec.reject(new Error('Response timeout for tag ' + flatMessage.tag));
           }
-          delete EXPECTATIONS[flatMessage.tag];
+          // Do not delete; keep in mailbox with TIMEOUT status.
         }
       }, EXPECTATION_TIMEOUT);
     }
@@ -109,6 +102,7 @@ function mailbehavior(env, message) {
       var result = (message && message.result !== undefined) ? message.result : message;
       expectation.status = 'RESOLVED';
       expectation.resolvedAt = Date.now();
+      expectation.read = true; // mark as read when consumed by actor
       MAILBOX.push(expectation); // update mailbox record
       setTimeout(function() { responseConsumer(result, message.tag); }, 0);
       delete EXPECTATIONS[message.tag];
@@ -117,6 +111,7 @@ function mailbehavior(env, message) {
       if (expectation) {
         expectation.status = 'RESOLVED';
         expectation.resolvedAt = Date.now();
+        expectation.read = false; // keep unread for mailbox waiters
         MAILBOX.push(expectation);
         delete EXPECTATIONS[message.tag];
       }
@@ -132,6 +127,7 @@ function getMailbox() {
   return MAILBOX.slice();
 }
 
+// queryMailbox returns only unread messages by default.
 function queryMailbox(filter) {
   return MAILBOX.filter(function(item) {
     var matches = true;
@@ -141,15 +137,23 @@ function queryMailbox(filter) {
     if (filter.date !== undefined && item.timestamp !== filter.date) matches = false;
     if (filter.type !== undefined && item.type !== filter.type) matches = false;
     if (filter.status !== undefined && item.status !== filter.status) matches = false;
+    // Read filter: default to unread only
+    if (filter.read !== undefined) {
+      if (item.read !== filter.read) matches = false;
+    } else if (item.read === true) {
+      matches = false;
+    }
     return matches;
   });
 }
 
+// Unified wait: polls using POLL_INTERVAL, marks message as read on delivery.
 function waitForMailbox(filter, timeout) {
   if (timeout === undefined) timeout = EXPECTATION_TIMEOUT;
   return new Promise(function(resolve, reject) {
     var found = queryMailbox(filter);
     if (found.length > 0) {
+      found[0].read = true;
       resolve(found[0]);
       return;
     }
@@ -157,12 +161,20 @@ function waitForMailbox(filter, timeout) {
       var result = queryMailbox(filter);
       if (result.length > 0) {
         clearInterval(checkInterval);
+        result[0].read = true;
         resolve(result[0]);
       }
-    }, 50);
+    }, POLL_INTERVAL);
     setTimeout(function() {
       clearInterval(checkInterval);
-      reject(new Error('Mailbox wait timeout for filter: ' + JSON.stringify(filter)));
+      // Final check before rejecting (race mitigation)
+      var late = queryMailbox(filter);
+      if (late.length > 0) {
+        late[0].read = true;
+        resolve(late[0]);
+      } else {
+        reject(new Error('Mailbox wait timeout for filter: ' + JSON.stringify(filter)));
+      }
     }, timeout);
   });
 }
@@ -172,7 +184,7 @@ function generateTag() {
 }
 
 // Fire-and-forget sendInstruction: accepts optional context.
-// P8: Validate message if recipient is a registered actor.
+// Validates actor messages against registry interfaces (P8).
 function sendInstruction(recipient, type, payload, tag, sender, responseSpec, context) {
   if (tag === undefined) tag = generateTag();
   if (sender === undefined) sender = 'system';
@@ -188,7 +200,7 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
   if (responseSpec) flatMessage.responseSpec = responseSpec;
   if (context) flatMessage.context = context;
 
-  // P8: Validate only if recipient is a registered actor
+  // Validate only if recipient is a registered actor
   if (MESSAGEREGISTRY && typeof MESSAGEREGISTRY.getInterfaces === 'function') {
     var ifaces = MESSAGEREGISTRY.getInterfaces(recipient);
     if (ifaces && Object.keys(ifaces).length > 0) {
@@ -206,8 +218,13 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
   });
 }
 
-// sendResponse sends a response message with type determined by original expectation.
+// sendResponse sends a response message.
+// P20: responseType is now required. If omitted, fallback to generic mailbox type.
 function sendResponse(recipient, tag, result, sender, responseType) {
+  if (responseType === undefined) {
+    logwarn(mailState, '[MAILACTOR]', 'sendResponse missing responseType for tag:', tag);
+    responseType = MAILBOX_RESPONSE_TYPE;
+  }
   var type = responseType || MESSAGETYPES.RESPONSE;
   var payload = { result: result };
   sendInstruction(recipient, type, payload, tag, sender, undefined, null);
