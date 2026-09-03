@@ -345,6 +345,7 @@ function settleTask(taskid, status, result, error, env) {
   logdebug(env, '[EXECUTIONACTOR]', 'settleTask completed:', taskid, 'consumers notified:', consumers.length);
 }
 
+// P34: runElementTask now catches synchronous executor errors.
 function runElementTask(taskid, descriptor, env) {
   var executionContext = {
     env: descriptor.env,
@@ -374,7 +375,14 @@ function runElementTask(taskid, descriptor, env) {
     return Promise.resolve(descriptor.executor(executionContext));
   }
 
-  runWithProgram().then(function(result) {
+  var executionPromise;
+  try {
+    executionPromise = runWithProgram();
+  } catch (syncErr) {
+    executionPromise = Promise.reject(syncErr);
+  }
+
+  executionPromise.then(function(result) {
     logdebug(env, '[EXECUTIONACTOR]', 'runElementTask completed:', taskid, descriptor.elementid);
     settleTask(taskid, 'EXECUTED', result || {}, null, env);
   }).catch(function(err) {
@@ -446,7 +454,8 @@ function enqueueExecutionPing(responseSpec) {
 
 function startExecutionActor(options) {
   if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    var lvl = typeof options === 'number' ? options :
+      (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;
