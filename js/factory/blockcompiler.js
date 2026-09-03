@@ -6,7 +6,6 @@ var WITNESS_TIMEOUT = 5000;
 var PENDING_HTTP = {};
 var PENDING_DOM = {};
 var PENDING_STORE = {};
-// PENDING_EXEC removed; element execution uses mailbox waitFor.
 
 function createBlockCompilerConstants() {
   return Object.freeze({
@@ -135,7 +134,6 @@ function resolvePipelinePath(path, dependencies) {
   return value;
 }
 
-// P17: Resolver starts at dnaEnvelope.definition, not dnaEnvelope.
 function resolveStageFromPath(dnaEnvelope, stagePath) {
   var current = dnaEnvelope.definition;
   for (var i = 0; i < stagePath.length; i++) {
@@ -366,6 +364,7 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
 
 function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
   var compilers = {};
+
   compilers[BLOCKTYPES.FN] = function(merged, id, sig, inheritedProperties) {
     if (inheritedProperties === undefined) inheritedProperties = {};
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling FN block:', id);
@@ -378,9 +377,10 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var fnargs = [properties].concat(inputargs);
       return callwithstack(EVALSTACK, 'fn:' + (merged.ref || id), 'async-await', function() {
         return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
-      }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') }).then(function(result) {
-        writeoutputs(sig, env, result, id);
-        logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed FN block:', id);
+      }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
+      .then(function(result) {
+        // P37: return raw result, no internal writeoutputs
+        return result;
       });
     };
     blockfn.id = id;
@@ -400,7 +400,9 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var properties = buildBlockProperties(merged, inheritedProperties, sig, env, merged.deps);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       return Promise.resolve(fn(properties, inputargs)).then(function(result) {
-        if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) throw new Error('[WRITER] Block "' + id + '" returned invalid result');
+        if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) {
+          throw new Error('[WRITER] Block "' + id + '" returned invalid result');
+        }
         var target = merged.targetlabel || env.approot;
         if (!target) throw new Error('[WRITER] missing targetlabel/approot');
         var tag = generateTag();
@@ -410,12 +412,12 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         }).then(function() {
           if (result.id && Object.keys(sig.outputs || {}).length > 0) {
             return expectelement(result.id, result.timeout || 5000).then(function(domref) {
-              env[Object.keys(sig.outputs)[0]] = result;
+              env[Object.keys(sig.outputs)[0]] = result; // still internal for DOM ref
               env[result.id] = domref;
+              return result; // return raw result
             });
           }
-        }).then(function() {
-          logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'completed WRITER block:', id, 'target:', target);
+          return result; // return raw result even without DOM ref
         });
       });
     };
@@ -586,13 +588,11 @@ function compileblock(block, inheritedBriefcase, constants, options) {
   return compiler(block, block.id, blockIo, inheritedBriefcase);
 }
 
-// Resolve next element from stage by index (P26)
 function resolveNextElement(stage, index) {
   if (!stage || !stage.elements || index >= stage.elements.length) return null;
   return stage.elements[index];
 }
 
-// Process element receives full path context for tracing (P19)
 function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
   var fn = compileblock(el, inheritedBriefcase, constants, options);
   fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
@@ -600,7 +600,6 @@ function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants
   return createPersistentElementWrapper(fn, el, stagePath, pipelineId, options);
 }
 
-// P23: Wrap nested PIPELINE boot in callwithstack.
 function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, dependencies, options) {
   var elementId = el.id || 'pipeline_unknown';
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipelineElement:', elementId, 'pipeline:', el.pipeline);
@@ -680,7 +679,6 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
   return blockfn;
 }
 
-// P25: Wrap nested STAGE orchestration in callwithstack.
 function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
   var childStagePath = stagePath.concat([childStage.id]);
   var childBriefcase = cloneObject(inheritedBriefcase || {});
@@ -759,7 +757,6 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
   }
 }
 
-// Lazy element orchestration (P26)
 function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, options, nextStageMessage) {
   var constants = createBlockCompilerConstants();
   var BLOCKTYPES = constants.BLOCKTYPES;
@@ -905,8 +902,7 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
     throw new Error('[blockcompilerCompileStage] stage not found at path: ' + JSON.stringify(stagePath));
   }
 
-  // Determine next stage message for hypervisor (P22/P24)
-  var stageIndex = stagePath[stagePath.length - 1]; // numeric index in elements array
+  var stageIndex = stagePath[stagePath.length - 1];
   var pipeline = dnaEnvelope.definition.pipeline;
   var nextStageMessage = null;
   if (typeof stageIndex === 'number' && stageIndex + 1 < pipeline.elements.length) {
@@ -1005,8 +1001,6 @@ function validatePipelineBriefcase(briefcase) {
   };
 }
 
-// P14 + P36-rev: Wrap full element execution + mailbox wait in callwithstack.
-// writeoutputs moved after callwithstack; attachContinuation false.
 function createPersistentElementWrapper(compiledElement, elementDef, stagePath, pipelineId, options) {
   var elementId = elementDef.id || compiledElement.id || 'element_unknown';
   function wrapper(env) {
@@ -1055,7 +1049,7 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
               throw new Error(response.error);
             }
             var result = response && response.result !== undefined ? response.result : response;
-            return result; // no writeoutputs here
+            return result;
           });
       },
       [execEnv],
@@ -1072,7 +1066,6 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
   return wrapper;
 }
 
-// Response consumer functions (kept for backward compatibility; mailbox is primary)
 function blockcompilerApiResult(result, tag) {
   var pending = PENDING_HTTP[tag];
   if (!pending) return;
