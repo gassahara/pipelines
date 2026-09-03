@@ -1,9 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/factory/callwithstack.js
-// Change applied: ES5 syntax, no arrow functions, no const, module.exports
-// Promise retained per blueprint §2 (callwithstack contract requires promise return)
-// ============================================================
-
 function safeshallowclone(obj) {
     if (obj == null || typeof obj !== 'object') return obj;
     try { return JSON.parse(JSON.stringify(obj)); }
@@ -103,6 +97,19 @@ function callwithstack(evalstack, label, type, fn, args, options) {
             if (!err.diagnostic.debugtrace) err.diagnostic.debugtrace = evalstack.snapshot();
             if (captured && !err.diagnostic.continuation) err.diagnostic.continuation = captured;
             evalstack.popframe();
+
+            // P35: Auto-invoke debug actor on error
+            if (typeof sendInstruction === 'function' && typeof MESSAGETYPES !== 'undefined') {
+                try {
+                    sendInstruction('debugactor', MESSAGETYPES.SHOW, {
+                        error: err,
+                        continuation: (err.diagnostic && err.diagnostic.continuation) || null
+                    }, generateTag(), 'callwithstack');
+                } catch (notifyErr) {
+                    // Avoid recursion if debugactor fails
+                }
+            }
+
             if (catchfn) catchfn(err, context);
             if (typeof errk === 'function') {
                 try {
