@@ -60,6 +60,7 @@ function callwithstack(evalstack, label, type, fn, args, options) {
     var errk = options.errk;
     var context = options.context;
     var capturecontinuation = options.capturecontinuation !== undefined ? options.capturecontinuation : true;
+    var attachContinuation = options.attachContinuation !== false; // P36-rev
     var typecheck = options.typecheck;
     var wrappedfn = applyccc(fn, typecheck);
     var captured = null;
@@ -88,7 +89,9 @@ function callwithstack(evalstack, label, type, fn, args, options) {
 
         var onsuccess = function(result) {
             evalstack.popframe();
-            if (captured && result && typeof result === 'object' && !Array.isArray(result)) result.continuation = captured;
+            if (captured && attachContinuation && result && typeof result === 'object' && !Array.isArray(result)) {
+                result.continuation = captured; // only if allowed
+            }
             if (thenfn) thenfn(result, context);
             k(result);
         };

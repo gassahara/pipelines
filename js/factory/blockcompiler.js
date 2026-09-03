@@ -665,13 +665,15 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
         return waitForMailbox({ tag: tag, sender: 'hypervisoractor' }, WITNESS_TIMEOUT)
           .then(function(response) {
             var result = response.payload && response.payload.result ? response.payload.result : response.payload;
-            writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
             return result;
           });
       },
       [parentEnv],
-      { context: { env: parentEnv, pipestate: parentEnv.pipestate }, capturecontinuation: true, errk: createerrorcontext(elementId, 'pipeline') }
-    );
+      { context: { env: parentEnv, pipestate: parentEnv.pipestate }, capturecontinuation: true, attachContinuation: false, errk: createerrorcontext(elementId, 'pipeline') }
+    ).then(function(cleanResult) {
+      writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, cleanResult, elementId);
+      return cleanResult;
+    });
   };
   blockfn.id = elementId;
   blockfn.kind = 'pipeline';
@@ -734,7 +736,7 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
           return undefined;
         },
         [env],
-        { context: { env: env }, capturecontinuation: true }
+        { context: { env: env }, capturecontinuation: true, attachContinuation: false }
       );
     };
     asyncWrapper.asyncStage = true;
@@ -749,7 +751,7 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
           return orchestrateStage(childStage, pipelineId, dependencies, env, childStagePath, options || {}, null);
         },
         [env],
-        { context: { env: env }, capturecontinuation: true }
+        { context: { env: env }, capturecontinuation: true, attachContinuation: false }
       );
     };
     syncWrapper.asyncStage = false;
@@ -1003,7 +1005,8 @@ function validatePipelineBriefcase(briefcase) {
   };
 }
 
-// P14: Wrap full element execution + mailbox wait in callwithstack.
+// P14 + P36-rev: Wrap full element execution + mailbox wait in callwithstack.
+// writeoutputs moved after callwithstack; attachContinuation false.
 function createPersistentElementWrapper(compiledElement, elementDef, stagePath, pipelineId, options) {
   var elementId = elementDef.id || compiledElement.id || 'element_unknown';
   function wrapper(env) {
@@ -1052,14 +1055,16 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
               throw new Error(response.error);
             }
             var result = response && response.result !== undefined ? response.result : response;
-            writeoutputs({ inputs: blockInputs, outputs: blockOutputs }, execEnv, result, elementId);
-            logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'element completed:', elementId, 'pipeline:', pipelineId);
-            return result;
+            return result; // no writeoutputs here
           });
       },
       [execEnv],
-      { context: { env: execEnv, pipestate: execEnv.pipestate }, capturecontinuation: true, errk: createerrorcontext(elementId, 'element') }
-    );
+      { context: { env: execEnv, pipestate: execEnv.pipestate }, capturecontinuation: true, attachContinuation: false, errk: createerrorcontext(elementId, 'element') }
+    ).then(function(cleanResult) {
+      writeoutputs({ inputs: blockInputs, outputs: blockOutputs }, execEnv, cleanResult, elementId);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'element completed:', elementId, 'pipeline:', pipelineId);
+      return cleanResult;
+    });
   }
   wrapper.id = elementId;
   wrapper.kind = 'element';
@@ -1094,8 +1099,6 @@ function blockcompilerFetchResult(result, tag) {
 }
 
 function blockcompilerTaskResult(result, tag) {
-  // This function may still be called if RESPONSECONSUMERS are used.
-  // We keep it but it is not primary with mailbox.
   var pending = PENDING_EXEC[tag];
   if (!pending) return;
   delete PENDING_EXEC[tag];
