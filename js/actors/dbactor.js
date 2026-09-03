@@ -20,9 +20,10 @@ function ensureDbSlice(env) {
   return ensureEnvSlice(env, 'db', function() { return { store: {} }; });
 }
 
-// P28-rev: full recursive serializer with per-case handlers.
-function serializeForPersistence(value, seen) {
+// P28-rev + P33: full recursive serializer with per-case handlers and deduplication.
+function serializeForPersistence(value, seen, refMap) {
   if (seen === undefined) seen = [];
+  if (refMap === undefined) refMap = [];
   if (value === null) return null;
   var t = typeof value;
   if (t === 'string' || t === 'boolean') return value;
@@ -48,28 +49,35 @@ function serializeForPersistence(value, seen) {
   if (typeof Map !== 'undefined' && value instanceof Map) {
     var mapobj = { typeMarker: 'map', entries: [] };
     value.forEach(function(val, key) {
-      mapobj.entries.push([serializeForPersistence(key, seen), serializeForPersistence(val, seen)]);
+      mapobj.entries.push([serializeForPersistence(key, seen, refMap), serializeForPersistence(val, seen, refMap)]);
     });
     return mapobj;
   }
   if (typeof Set !== 'undefined' && value instanceof Set) {
     var setarr = [];
-    value.forEach(function(item) { setarr.push(serializeForPersistence(item, seen)); });
+    value.forEach(function(item) { setarr.push(serializeForPersistence(item, seen, refMap)); });
     return { typeMarker: 'set', values: setarr };
   }
-  if (seen.indexOf(value) !== -1) return { typeMarker: 'circular' };
-  seen.push(value);
-  var result;
-  if (Array.isArray(value)) {
-    result = value.map(function(item) { return serializeForPersistence(item, seen); });
-  } else if (typeof value === 'object') {
-    result = {};
-    Object.keys(value).forEach(function(key) {
-      result[key] = serializeForPersistence(value[key], seen);
-    });
+  if (typeof value === 'object') {
+    // Deduplication: check if already serialized
+    var refIndex = refMap.indexOf(value);
+    if (refIndex !== -1) return { typeMarker: 'ref', refIndex: refIndex };
+    if (seen.indexOf(value) !== -1) return { typeMarker: 'circular' };
+    refMap.push(value);
+    seen.push(value);
+    var result;
+    if (Array.isArray(value)) {
+      result = value.map(function(item) { return serializeForPersistence(item, seen, refMap); });
+    } else {
+      result = {};
+      Object.keys(value).forEach(function(key) {
+        result[key] = serializeForPersistence(value[key], seen, refMap);
+      });
+    }
+    seen.pop();
+    return result;
   }
-  seen.pop();
-  return result;
+  return value;
 }
 
 function persistAttempt(store, root, storage, attempt) {
@@ -164,7 +172,7 @@ function consolidateGraph(node) {
       var briefcase = node.briefcase;
       Object.keys(briefcase).forEach(function(key) {
         var refId = storePair(key, briefcase[key]);
-        briefcase[key] = { pairReference: refId }; // renamed from __pairref
+        briefcase[key] = { pairReference: refId };
       });
     }
     if (node.element === 'BLOCK') {
@@ -279,7 +287,7 @@ function optimizeSerializedDna(jsonString) {
     else break;
   } while (true);
 
-  optimized.frameworkPairStore = serializePairStore(); // renamed from __FRAMEWORK_PAIRSTORE__
+  optimized.frameworkPairStore = serializePairStore();
   var finalResult = JSON.stringify(optimized);
   logdebug(DBSTATE, '[DBACTOR]', 'optimizeSerializedDna completed, output length:', finalResult.length);
   return finalResult;
