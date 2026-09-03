@@ -5,7 +5,7 @@
 //   - Expectations hardened with context, status, trace
 //   - Timeout handling for pending expectations
 //   - Response handling stores in mailbox; non-actors query directly
-//   - sendInstruction accepts context; validates actor messages only
+//   - sendInstruction accepts context; validates actor messages only (P8)
 // ============================================================
 
 var mailVerbosityConstants = createVerbosityConstants();
@@ -171,7 +171,8 @@ function generateTag() {
   return 'tag_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
 }
 
-// Fire-and-forget sendInstruction: accepts optional context
+// Fire-and-forget sendInstruction: accepts optional context.
+// P8: Validate message if recipient is a registered actor.
 function sendInstruction(recipient, type, payload, tag, sender, responseSpec, context) {
   if (tag === undefined) tag = generateTag();
   if (sender === undefined) sender = 'system';
@@ -187,10 +188,15 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
   if (responseSpec) flatMessage.responseSpec = responseSpec;
   if (context) flatMessage.context = context;
 
-  // Validation: only if recipient is a registered actor
-  if (MESSAGEREGISTRY && typeof MESSAGEREGISTRY.validate === 'function') {
-    // We don't have actor list here; assume validation is optional
-    // Could check MESSAGEREGISTRY.getInterfaces(recipient) but skip for now
+  // P8: Validate only if recipient is a registered actor
+  if (MESSAGEREGISTRY && typeof MESSAGEREGISTRY.getInterfaces === 'function') {
+    var ifaces = MESSAGEREGISTRY.getInterfaces(recipient);
+    if (ifaces && Object.keys(ifaces).length > 0) {
+      var validation = MESSAGEREGISTRY.validate(recipient, flatMessage);
+      if (!validation.valid) {
+        throw new Error('[MAILACTOR] Message validation failed for ' + recipient + ': ' + validation.error);
+      }
+    }
   }
 
   dispatchToActor('mailactor', mailbehavior, {
