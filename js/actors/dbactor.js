@@ -1,23 +1,14 @@
-// ============================================================
-// UPDATED FILE: js/actors/dbactor.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR
-//   - dbbehavior now returns env after every operation.
-//   - Operation results are delivered via resolve/reject callbacks
-//     attached to the message, not via monadic return values.
-//   - Uses ensureDbSlice to initialize env.db.store if missing.
-//   - No RIGHT/LEFT monadic return; no OOP-style state factory.
-// ============================================================
+var DBVERBOSITYCONSTANTS = createVerbosityConstants();
+var DBSTATE = Object.freeze({ level: DBVERBOSITYCONSTANTS.DEBUG });
 
-var dbVerbosityConstants = createVerbosityConstants();
-var dbState = Object.freeze({ level: dbVerbosityConstants.DEBUG });
-
-var ROOT_KEY = 'FRAMEWORK_DBACTOR_MAP';
-var MAX_KEYS = 100;
-var MAX_ENTRY_BYTES = 2 * 1024 * 1024;
+var ROOTKEY = 'FRAMEWORK_DBACTOR_MAP';
+var MAXKEYS = 100;
+var MAXENTRYBYTES = 2 * 1024 * 1024;
 
 function getStorage() {
   try {
-    var storage = typeof localStorage !== 'undefined' ? localStorage : (typeof globalThis !== 'undefined' ? globalThis.localStorage : null);
+    var storage = typeof localStorage !== 'undefined' ? localStorage :
+      (typeof globalThis !== 'undefined' ? globalThis.localStorage : null);
     if (storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function') {
       return storage;
     }
@@ -26,21 +17,71 @@ function getStorage() {
 }
 
 function ensureDbSlice(env) {
-  return ensureEnvSlice(env, 'db', function() {
-    return { store: {} };
-  });
+  return ensureEnvSlice(env, 'db', function() { return { store: {} }; });
+}
+
+// P28-rev: full recursive serializer with per-case handlers.
+function serializeForPersistence(value, seen) {
+  if (seen === undefined) seen = [];
+  if (value === null) return null;
+  var t = typeof value;
+  if (t === 'string' || t === 'boolean') return value;
+  if (t === 'number') {
+    return (isNaN(value) || !isFinite(value)) ? String(value) : value;
+  }
+  if (t === 'undefined') return { typeMarker: 'undefined' };
+  if (t === 'function') return { typeMarker: 'function', source: value.toString() };
+  if (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement) {
+    return { typeMarker: 'dom', tag: value.tagName, id: value.id || null };
+  }
+  if (typeof Node !== 'undefined' && value instanceof Node) {
+    return { typeMarker: 'node', nodeName: value.nodeName };
+  }
+  if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) {
+    return { typeMarker: 'eventtarget' };
+  }
+  if (value instanceof Date) return { typeMarker: 'date', iso: value.toISOString() };
+  if (value instanceof RegExp) return { typeMarker: 'regexp', source: value.source, flags: value.flags };
+  if (value instanceof Error) {
+    return { typeMarker: 'error', name: value.name, message: value.message, stack: value.stack };
+  }
+  if (typeof Map !== 'undefined' && value instanceof Map) {
+    var mapobj = { typeMarker: 'map', entries: [] };
+    value.forEach(function(val, key) {
+      mapobj.entries.push([serializeForPersistence(key, seen), serializeForPersistence(val, seen)]);
+    });
+    return mapobj;
+  }
+  if (typeof Set !== 'undefined' && value instanceof Set) {
+    var setarr = [];
+    value.forEach(function(item) { setarr.push(serializeForPersistence(item, seen)); });
+    return { typeMarker: 'set', values: setarr };
+  }
+  if (seen.indexOf(value) !== -1) return { typeMarker: 'circular' };
+  seen.push(value);
+  var result;
+  if (Array.isArray(value)) {
+    result = value.map(function(item) { return serializeForPersistence(item, seen); });
+  } else if (typeof value === 'object') {
+    result = {};
+    Object.keys(value).forEach(function(key) {
+      result[key] = serializeForPersistence(value[key], seen);
+    });
+  }
+  seen.pop();
+  return result;
 }
 
 function persistAttempt(store, root, storage, attempt) {
   if (attempt > 2) return false;
   try {
-    storage.setItem(ROOT_KEY, JSON.stringify(root));
+    storage.setItem(ROOTKEY, JSON.stringify(serializeForPersistence(root)));
     return true;
   } catch (err) {
     var keys = Object.keys(store);
     if (!keys.length) return false;
-    var removeCount = Math.max(1, Math.floor(keys.length * 0.25));
-    keys.slice(0, removeCount).forEach(function(key) { delete store[key]; });
+    var removecount = Math.max(1, Math.floor(keys.length * 0.25));
+    keys.slice(0, removecount).forEach(function(key) { delete store[key]; });
     root.keys = store;
     return persistAttempt(store, root, storage, attempt + 1);
   }
@@ -55,11 +96,11 @@ function persist(store) {
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
 
-var FN_TAG = '__fn__';
+var FN_TAG = 'serializedFunction'; // renamed from __fn__
 
 function dnaReplacer(key, value) {
   if (typeof value === 'function') {
-    return { __fn__: true, source: value.toString() };
+    return { serializedFunction: true, source: value.toString() };
   }
   return value;
 }
@@ -77,7 +118,7 @@ function dnaReviver(key, value) {
       }
       return new Function('return (' + value.source + ')')();
     } catch (err) {
-      logwarn(dbState, '[DBACTOR]', '[DNA] failed to revive function using new Function:', err);
+      logwarn(DBSTATE, '[DBACTOR]', '[DNA] failed to revive function using new Function:', err);
       return function() { throw new Error('revived function failed'); };
     }
   }
@@ -94,17 +135,11 @@ var pairCounter = 0;
 
 function pairIdentity(key, value) {
   var normalized;
-  if (typeof value === 'function') {
-    normalized = 'function:' + value.toString();
-  } else if (typeof value === 'object' && value !== null) {
-    try {
-      normalized = 'json:' + JSON.stringify(value);
-    } catch (e) {
-      normalized = 'object:' + (value.constructor && value.constructor.name ? value.constructor.name : 'Object');
-    }
-  } else {
-    normalized = typeof value + ':' + String(value);
-  }
+  if (typeof value === 'function') normalized = 'function:' + value.toString();
+  else if (typeof value === 'object' && value !== null) {
+    try { normalized = 'json:' + JSON.stringify(value); }
+    catch (e) { normalized = 'object:' + (value.constructor && value.constructor.name ? value.constructor.name : 'Object'); }
+  } else normalized = typeof value + ':' + String(value);
   return key + '\u0000' + normalized;
 }
 
@@ -122,59 +157,41 @@ function storePair(key, value) {
 
 function consolidateGraph(node) {
   if (node === null || node === undefined) return node;
-
   if (typeof node === 'object') {
-    if (node.__pairref) return node;
-
-    if (Array.isArray(node)) {
-      return node.map(consolidateGraph);
-    }
-
+    if (node.pairReference) return node;
+    if (Array.isArray(node)) return node.map(consolidateGraph);
     if (node.briefcase && typeof node.briefcase === 'object') {
       var briefcase = node.briefcase;
       Object.keys(briefcase).forEach(function(key) {
         var refId = storePair(key, briefcase[key]);
-        briefcase[key] = { __pairref: refId };
+        briefcase[key] = { pairReference: refId }; // renamed from __pairref
       });
     }
-
     if (node.element === 'BLOCK') {
       Object.keys(node).forEach(function(key) {
         if (key === 'elements') return;
         var refId = storePair(key, node[key]);
-        node[key] = { __pairref: refId };
+        node[key] = { pairReference: refId };
       });
       return node;
     }
-
-    Object.keys(node).forEach(function(key) {
-      node[key] = consolidateGraph(node[key]);
-    });
+    Object.keys(node).forEach(function(key) { node[key] = consolidateGraph(node[key]); });
     return node;
   }
-
   return node;
 }
 
 function restoreGraph(node) {
   if (node === null || node === undefined) return node;
-
   if (typeof node === 'object') {
-    if (node.__pairref) {
-      var entry = PAIRSTORE['ref:' + node.__pairref];
+    if (node.pairReference) {
+      var entry = PAIRSTORE['ref:' + node.pairReference];
       return entry ? entry.value : undefined;
     }
-
-    if (Array.isArray(node)) {
-      return node.map(restoreGraph);
-    }
-
-    Object.keys(node).forEach(function(key) {
-      node[key] = restoreGraph(node[key]);
-    });
+    if (Array.isArray(node)) return node.map(restoreGraph);
+    Object.keys(node).forEach(function(key) { node[key] = restoreGraph(node[key]); });
     return node;
   }
-
   return node;
 }
 
@@ -187,17 +204,10 @@ function serializePairStore() {
 function deserializePairStore(json) {
   if (!json) return;
   var parsed;
-  try {
-    parsed = JSON.parse(json, dnaReviver);
-  } catch (err) {
-    logwarn(dbState, '[DBACTOR]', 'deserializePairStore failed:', err);
-    return;
-  }
-
+  try { parsed = JSON.parse(json, dnaReviver); }
+  catch (err) { logwarn(DBSTATE, '[DBACTOR]', 'deserializePairStore failed:', err); return; }
   Object.keys(PAIRSTORE).forEach(function(key) { delete PAIRSTORE[key]; });
-  Object.keys(parsed || {}).forEach(function(key) {
-    PAIRSTORE[key] = parsed[key];
-  });
+  Object.keys(parsed || {}).forEach(function(key) { PAIRSTORE[key] = parsed[key]; });
 }
 
 // ==================== POST-SERIALIZATION OPTIMIZATION ====================
@@ -207,16 +217,13 @@ function measureLength(obj) { return JSON.stringify(obj).length; }
 function optimizeSerializedDna(jsonString) {
   Object.keys(PAIRSTORE).forEach(function(key) { delete PAIRSTORE[key]; });
   pairCounter = 0;
-
-  logdebug(dbState, '[DBACTOR]', 'optimizeSerializedDna start, input length:', jsonString.length);
+  logdebug(DBSTATE, '[DBACTOR]', 'optimizeSerializedDna start, input length:', jsonString.length);
   var obj = JSON.parse(jsonString);
 
   var passObjectPairDedup = function(node) {
-    if (Array.isArray(node)) {
-      return node.map(passObjectPairDedup);
-    }
+    if (Array.isArray(node)) return node.map(passObjectPairDedup);
     if (node && typeof node === 'object') {
-      if (node.__pairref) return node;
+      if (node.pairReference) return node;
       if (node.element === 'BLOCK') {
         Object.keys(node).forEach(function(key) {
           if (key === 'elements') return;
@@ -228,7 +235,7 @@ function optimizeSerializedDna(jsonString) {
             PAIRSTORE[identity] = refId;
             PAIRSTORE['ref:' + refId] = { key: key, value: node[key] };
           }
-          node[key] = { __pairref: refId };
+          node[key] = { pairReference: refId };
         });
         return node;
       }
@@ -242,28 +249,20 @@ function optimizeSerializedDna(jsonString) {
             PAIRSTORE[identity] = refId;
             PAIRSTORE['ref:' + refId] = { key: key, value: node.briefcase[key] };
           }
-          node.briefcase[key] = { __pairref: refId };
+          node.briefcase[key] = { pairReference: refId };
         });
       }
-      Object.keys(node).forEach(function(key) {
-        node[key] = passObjectPairDedup(node[key]);
-      });
+      Object.keys(node).forEach(function(key) { node[key] = passObjectPairDedup(node[key]); });
       return node;
     }
     return node;
   };
 
   var passInnerDedup = function(node) {
-    if (Array.isArray(node)) {
-      return node.map(passInnerDedup);
-    }
+    if (Array.isArray(node)) return node.map(passInnerDedup);
     if (node && typeof node === 'object') {
-      if (node.__fn__ === true && typeof node.source === 'string') {
-        return node;
-      }
-      Object.keys(node).forEach(function(key) {
-        node[key] = passInnerDedup(node[key]);
-      });
+      if (node.serializedFunction === true && typeof node.source === 'string') return node;
+      Object.keys(node).forEach(function(key) { node[key] = passInnerDedup(node[key]); });
       return node;
     }
     return node;
@@ -276,33 +275,28 @@ function optimizeSerializedDna(jsonString) {
     var candidate = JSON.parse(JSON.stringify(optimized));
     candidate = passObjectPairDedup(candidate);
     candidate = passInnerDedup(candidate);
-    if (measureLength(candidate) < before) {
-      optimized = candidate;
-    } else {
-      break;
-    }
+    if (measureLength(candidate) < before) optimized = candidate;
+    else break;
   } while (true);
 
-  optimized.__FRAMEWORK_PAIRSTORE__ = serializePairStore();
+  optimized.frameworkPairStore = serializePairStore(); // renamed from __FRAMEWORK_PAIRSTORE__
   var finalResult = JSON.stringify(optimized);
-  logdebug(dbState, '[DBACTOR]', 'optimizeSerializedDna completed, output length:', finalResult.length);
+  logdebug(DBSTATE, '[DBACTOR]', 'optimizeSerializedDna completed, output length:', finalResult.length);
   return finalResult;
 }
 
 function deoptimizeSerializedDna(jsonString) {
-  logdebug(dbState, '[DBACTOR]', 'deoptimizeSerializedDna start, input length:', jsonString.length);
+  logdebug(DBSTATE, '[DBACTOR]', 'deoptimizeSerializedDna start, input length:', jsonString.length);
   var obj = JSON.parse(jsonString);
-
-  if (obj.__FRAMEWORK_PAIRSTORE__) {
-    deserializePairStore(obj.__FRAMEWORK_PAIRSTORE__);
-    delete obj.__FRAMEWORK_PAIRSTORE__;
+  if (obj.frameworkPairStore) {
+    deserializePairStore(obj.frameworkPairStore);
+    delete obj.frameworkPairStore;
   }
-
   var resolveNode = function(node) {
     if (Array.isArray(node)) return node.map(resolveNode);
     if (node && typeof node === 'object') {
-      if (node.__pairref) {
-        var entry = PAIRSTORE['ref:' + node.__pairref];
+      if (node.pairReference) {
+        var entry = PAIRSTORE['ref:' + node.pairReference];
         return entry ? entry.value : undefined;
       }
       Object.keys(node).forEach(function(key) { node[key] = resolveNode(node[key]); });
@@ -310,9 +304,8 @@ function deoptimizeSerializedDna(jsonString) {
     }
     return node;
   };
-
   var finalResult = JSON.stringify(resolveNode(obj));
-  logdebug(dbState, '[DBACTOR]', 'deoptimizeSerializedDna completed, output length:', finalResult.length);
+  logdebug(DBSTATE, '[DBACTOR]', 'deoptimizeSerializedDna completed, output length:', finalResult.length);
   return finalResult;
 }
 
@@ -320,42 +313,31 @@ function deoptimizeSerializedDna(jsonString) {
 
 var dbbehavior = function(env, message) {
   logdebug(env, '[DBACTOR]', 'behavior handling action:', message.type);
-
   var dbSlice = ensureDbSlice(env);
   var store = dbSlice.store;
-
   var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
   var reject = function(err) { if (typeof message.reject === 'function') message.reject(err); };
 
   switch (message.type) {
-    case MESSAGETYPES.STORE: {
+    case MESSAGETYPES.STORE:
       logdebug(env, '[DBACTOR]', 'action STORE key:', message.key);
       try {
-        var serialized = JSON.stringify(message.value);
-        if (serialized.length > MAX_ENTRY_BYTES) {
+        var serialized = JSON.stringify(serializeForPersistence(message.value));
+        if (serialized.length > MAXENTRYBYTES) {
           logwarn(env, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
           reject(new Error('value too large'));
           return env;
         }
-      } catch (e) {
-        reject(e);
-        return env;
-      }
-
+      } catch (e) { reject(e); return env; }
       var keys = Object.keys(store);
-      if (keys.length >= MAX_KEYS && !store[message.key]) {
+      if (keys.length >= MAXKEYS && !store[message.key]) {
         var oldest = keys[0];
         if (oldest) delete store[oldest];
       }
       store[message.key] = message.value;
       var persisted = persist(store);
-      if (persisted) {
-        resolve(true);
-      } else {
-        reject(new Error('persist failed'));
-      }
+      if (persisted) resolve(true); else reject(new Error('persist failed'));
       return env;
-    }
     case MESSAGETYPES.RESTORE:
       logdebug(env, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
       resolve(store[message.key] !== undefined ? store[message.key] : null);
@@ -364,17 +346,12 @@ var dbbehavior = function(env, message) {
       logdebug(env, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
       resolve(Object.keys(store));
       return env;
-    case MESSAGETYPES.DELETE: {
+    case MESSAGETYPES.DELETE:
       logdebug(env, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
       var persistedDel = persist(store);
-      if (persistedDel) {
-        resolve(true);
-      } else {
-        reject(new Error('persist failed'));
-      }
+      if (persistedDel) resolve(true); else reject(new Error('persist failed'));
       return env;
-    }
     default:
       logwarn(env, '[DBACTOR]', 'unknown action:', message.type);
       reject(new Error('[DBACTOR] unknown message type'));
@@ -382,15 +359,10 @@ var dbbehavior = function(env, message) {
   }
 };
 
-// No registerActorState for dbactor; state lives in global ENV under env.db.
-// Dispatch uses dispatchToActor('dbactor', dbbehavior, message).
-
 var enqueue = function(type, payload) {
   return new Promise(function(resolve, reject) {
     var message = {};
-    if (payload) {
-      Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
-    }
+    if (payload) Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
     message.type = type;
     message.resolve = resolve;
     message.reject = reject;
@@ -405,7 +377,8 @@ var enqueueDbDelete = function(key) { return enqueue(MESSAGETYPES.DELETE, { key:
 
 function startDbActor(options) {
   if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    var lvl = typeof options === 'number' ? options :
+      (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;

@@ -1,5 +1,5 @@
-var mailVerbosityConstants = createVerbosityConstants();
-var mailState = Object.freeze({ level: mailVerbosityConstants.DEBUG });
+var MAILVERBOSITYCONSTANTS = createVerbosityConstants();
+var MAILSTATE = Object.freeze({ level: MAILVERBOSITYCONSTANTS.DEBUG });
 
 // Global registries
 var ACTORCONSUMERS = {};          // key: actorName + ':' + messageType -> behavior function
@@ -7,8 +7,8 @@ var RESPONSECONSUMERS = {};       // key: responseType -> function(result, tag)
 var EXPECTATIONS = {};            // key: tag -> structured expectation object
 var MAILBOX = [];                 // all messages, request and response
 
-var EXPECTATION_TIMEOUT = 30000;  // 30 seconds default
-var POLL_INTERVAL = 50;           // milliseconds between mailbox polls
+var EXPECTATION_TIMEOUT = 20000;  // 30 seconds default
+var POLL_INTERVAL = 150;           // milliseconds between mailbox polls
 var MAILBOX_RESPONSE_TYPE = 'mailbox_response'; // generic fallback for missing response type
 
 // Pure behavior for SEND and ACK messages.
@@ -222,7 +222,7 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
 // P20: responseType is now required. If omitted, fallback to generic mailbox type.
 function sendResponse(recipient, tag, result, sender, responseType) {
   if (responseType === undefined) {
-    logwarn(mailState, '[MAILACTOR]', 'sendResponse missing responseType for tag:', tag);
+    logwarn(MAILSTATE, '[MAILACTOR]', 'sendResponse missing responseType for tag:', tag);
     responseType = MAILBOX_RESPONSE_TYPE;
   }
   var type = responseType || MESSAGETYPES.RESPONSE;
@@ -232,7 +232,8 @@ function sendResponse(recipient, tag, result, sender, responseType) {
 
 function startMailActor(options) {
   if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    var lvl = typeof options === 'number' ? options :
+      (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;

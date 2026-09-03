@@ -1,4 +1,4 @@
-var hypervisorVerbosityConstants = createVerbosityConstants();
+var HYPERVISORVERBOSITYCONSTANTS = createVerbosityConstants();
 
 function ensureHypervisorSlice(env) {
   return ensureEnvSlice(env, 'hypervisor', function() {
@@ -372,7 +372,8 @@ function enqueueHypervisorStageCompleted(pipelineId, stageId, nextStageMessage, 
 
 function startHypervisorActor(options) {
   if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    var lvl = typeof options === 'number' ? options :
+      (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;

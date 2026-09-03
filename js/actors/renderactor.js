@@ -1,14 +1,4 @@
-// ============================================================
-// UPDATED FILE: js/actors/renderactor.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR
-//   - renderbehavior returns env after processing.
-//   - All handler results are transmitted via sendResponse, never
-//     by returning non-env from behavior.
-//   - Uses ensureEnvSlice to initialize render slice if missing.
-//   - Sends updates to worldmapactor via value set format.
-// ============================================================
-
-var renderVerbosityConstants = createVerbosityConstants();
+var RENDERVERBOSITYCONSTANTS = createVerbosityConstants();
 
 function ensureRenderSlice(env) {
   return ensureEnvSlice(env, 'render', function() {
@@ -305,11 +295,7 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
       if (saved !== null && saved !== undefined) {
         env.render = saved;
       } else {
-        env.render = {
-          html: '',
-          viewport: null,
-          actorRegistry: null
-        };
+        env.render = { html: '', viewport: null, actorRegistry: null };
       }
       scheduleGcCycle(env.render);
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
@@ -317,11 +303,7 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
       }, generateTag(), 'renderactor');
       return env;
     }).catch(function(e) {
-      env.render = {
-        html: '',
-        viewport: null,
-        actorRegistry: null
-      };
+      env.render = { html: '', viewport: null, actorRegistry: null };
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'render', value: env.render }]
       }, generateTag(), 'renderactor');
@@ -358,9 +340,10 @@ HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(env, msg) {
   return true;
 };
 
+// P30: Respond with explicit response type.
 function respondIfNeeded(env, message, result) {
   if (message.sender && message.tag) {
-    var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
+    var responseType = (message.responseSpec && message.responseSpec.responseType) || MESSAGETYPES.DOM_RESULT;
     sendResponse(message.sender, message.tag, result, 'renderactor', responseType);
   }
 }
@@ -464,7 +447,8 @@ var enqueueRenderCrypto = function(bytes, responseSpec) {
 
 var startRenderActor = function(options) {
   if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
+    var lvl = typeof options === 'number' ? options :
+      (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       var env = getActorState('worldmapactor');
       if (env) env.verbosity = lvl;
