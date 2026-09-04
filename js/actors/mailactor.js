@@ -2,21 +2,17 @@ var MAILVERBOSITYCONSTANTS = createVerbosityConstants();
 var MAILSTATE = Object.freeze({ level: MAILVERBOSITYCONSTANTS.DEBUG });
 
 // Global registries
-var ACTORCONSUMERS = {};          // key: actorName + ':' + messageType -> behavior function
-var RESPONSECONSUMERS = {};       // key: responseType -> function(result, tag)
+var ACTORCONSUMERS = {};          // key: ACTOR_NAME + ':' + messageType -> behavior function
 var EXPECTATIONS = {};            // key: tag -> structured expectation object
 var MAILBOX = [];                 // all messages, request and response
 
-var EXPECTATION_TIMEOUT = 20000;  // 30 seconds default
-var POLL_INTERVAL = 150;           // milliseconds between mailbox polls
-var MAILBOX_RESPONSE_TYPE = 'mailbox_response'; // generic fallback for missing response type
+var EXPECTATION_TIMEOUT = 20000;
+var POLL_INTERVAL = 150;
+var MAILBOX_RESPONSE_TYPE = 'mailbox_response';
 
-// Pure behavior for SEND and ACK messages.
-// Returns env (or Promise<env>), never a non-env value.
 function mailbehavior(env, message) {
   logdebug(env, '[MAILACTOR]', 'behavior handling action:', message.type);
 
-  // Ensure mail slice exists if needed (optional audit)
   var mailSlice = ensureEnvSlice(env, 'mail', function() { return { queues: {}, nextId: 1 }; });
 
   if (message.type === MESSAGETYPES.SEND) {
@@ -27,7 +23,6 @@ function mailbehavior(env, message) {
     if (!mailSlice.queues[recipient]) mailSlice.queues[recipient] = [];
     var flatMessage = message.message;
 
-    // Log SEND start
     logdebug(env, '[MAILACTOR]', 'SEND start:', 'recipient=', recipient, 'type=', flatMessage.type, 'tag=', flatMessage.tag, 'sender=', flatMessage.sender);
 
     var envelope = {
@@ -36,27 +31,24 @@ function mailbehavior(env, message) {
       sender: (flatMessage && flatMessage.sender) || 'system',
       tag: (flatMessage && flatMessage.tag) || null,
       unread: true,
-      read: 'UNREAD',          // explicit initial read status
+      read: 'UNREAD',
       timestamp: Date.now(),
       payload: flatMessage
     };
 
-    // Log envelope creation
     logdebug(env, '[MAILACTOR]', 'Envelope created:', envelope.id, 'read=', envelope.read, 'tag=', envelope.tag, 'sender=', envelope.sender);
 
     mailSlice.queues[recipient].push(envelope);
-    MAILBOX.push(envelope); // store in mailbox
+    MAILBOX.push(envelope);
 
-    // Log MAILBOX push
     logdebug(env, '[MAILACTOR]', 'Envelope pushed to MAILBOX:', envelope.id, 'MAILBOX length=', MAILBOX.length);
 
-    // DIRECT DISPATCH: invoke consumer for recipient and message type
+    // DIRECT DISPATCH: invoke actor consumer for recipient and message type
     var consumerKey = recipient + ':' + flatMessage.type;
     var consumer = ACTORCONSUMERS[consumerKey];
     if (consumer) {
       logdebug(env, '[MAILACTOR]', 'Dispatching to actor:', recipient, 'type=', flatMessage.type, 'tag=', flatMessage.tag);
       dispatchToActor(recipient, consumer, flatMessage);
-      // Mark envelope as READ after dispatch
       envelope.read = 'READ';
       logdebug(env, '[MAILACTOR]', 'Envelope marked READ after dispatch:', envelope.id, 'tag=', envelope.tag);
     } else {
@@ -80,10 +72,9 @@ function mailbehavior(env, message) {
         read: 'UNREAD'
       };
       EXPECTATIONS[flatMessage.tag] = expectation;
-      MAILBOX.push(expectation); // store expectation in mailbox too
+      MAILBOX.push(expectation);
       logdebug(env, '[MAILACTOR]', 'Expectation created:', flatMessage.tag, 'status=', expectation.status, 'read=', expectation.read);
 
-      // Schedule timeout (does NOT delete expectation; just marks it TIMEOUT)
       setTimeout(function() {
         if (EXPECTATIONS[flatMessage.tag] && EXPECTATIONS[flatMessage.tag].status === 'PENDING') {
           var exp = EXPECTATIONS[flatMessage.tag];
@@ -94,7 +85,6 @@ function mailbehavior(env, message) {
           if (typeof exp.responseSpec.reject === 'function') {
             exp.responseSpec.reject(new Error('Response timeout for tag ' + flatMessage.tag));
           }
-          // Do not delete; keep in mailbox with TIMEOUT status.
         }
       }, EXPECTATION_TIMEOUT);
     }
@@ -112,50 +102,13 @@ function mailbehavior(env, message) {
     return env;
   }
 
-  // Response handling: for any message with a tag that has an expectation
-  if (message && message.tag && EXPECTATIONS[message.tag]) {
-    var expectation = EXPECTATIONS[message.tag];
-    var responseConsumer = RESPONSECONSUMERS[expectation.responseSpec.responseType];
-    var envelopeForResponse = null;
-    // Locate the envelope in MAILBOX with this tag to mark read
-    for (var i = 0; i < MAILBOX.length; i++) {
-      if (MAILBOX[i].tag === message.tag && MAILBOX[i].sender === 'executionactor') {
-        envelopeForResponse = MAILBOX[i];
-        break;
-      }
-    }
-
-    if (responseConsumer) {
-      var result = (message && message.result !== undefined) ? message.result : message;
-      expectation.status = 'RESOLVED';
-      expectation.resolvedAt = Date.now();
-      expectation.read = 'READ';
-      if (envelopeForResponse) envelopeForResponse.read = 'READ';
-      logdebug(env, '[MAILACTOR]', 'Response consumed by consumer:', message.tag, 'status=', expectation.status, 'read=', expectation.read);
-      setTimeout(function() { responseConsumer(result, message.tag); }, 0);
-      delete EXPECTATIONS[message.tag];
-    } else {
-      // No registered consumer; leave message in mailbox for non-actor
-      expectation.status = 'RESOLVED';
-      expectation.resolvedAt = Date.now();
-      expectation.read = 'READ';
-      if (envelopeForResponse) envelopeForResponse.read = 'READ';
-      logdebug(env, '[MAILACTOR]', 'No consumer, expectation resolved:', message.tag, 'status=', expectation.status, 'read=', expectation.read);
-      delete EXPECTATIONS[message.tag];
-    }
-    // Message already stored in mailbox; non-actor will query
-  }
-
   return env;
 }
 
-// Mailbox API: query and wait for messages/expectations
 function getMailbox() {
   return MAILBOX.slice();
 }
 
-// queryMailbox returns only unread messages by default.
-// Extended to support filter.matches (function) and filter.props (object).
 function queryMailbox(filter) {
   if (!filter) filter = {};
   logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox filter:', JSON.stringify(filter));
@@ -168,17 +121,14 @@ function queryMailbox(filter) {
     if (filter.date !== undefined && item.timestamp !== filter.date) matches = false;
     if (filter.type !== undefined && item.type !== filter.type) matches = false;
     if (filter.status !== undefined && item.status !== filter.status) matches = false;
-    // Read filter: default to unread only, using string statuses
     if (filter.read !== undefined) {
       if (item.read !== filter.read) matches = false;
     } else if (item.read === 'READ') {
-      matches = false;  // only return UNREAD by default
+      matches = false;
     }
-    // Extended: custom matches function
     if (filter.matches && typeof filter.matches === 'function') {
       if (!filter.matches(item)) matches = false;
     }
-    // Extended: property bag filter (checked on envelope and payload)
     if (filter.props && typeof filter.props === 'object') {
       Object.keys(filter.props).forEach(function(key) {
         var expected = filter.props[key];
@@ -203,13 +153,12 @@ function queryMailbox(filter) {
   return result;
 }
 
-// Unified wait: polls using POLL_INTERVAL, marks message as read on delivery.
 function waitForMailbox(filter, timeout) {
   if (timeout === undefined) timeout = EXPECTATION_TIMEOUT;
   return new Promise(function(resolve, reject) {
     var found = queryMailbox(filter);
     if (found.length > 0) {
-      found[0].read = 'READ';   // ensure read status
+      found[0].read = 'READ';
       resolve(found[0]);
       return;
     }
@@ -223,7 +172,6 @@ function waitForMailbox(filter, timeout) {
     }, POLL_INTERVAL);
     setTimeout(function() {
       clearInterval(checkInterval);
-      // Final check before rejecting (race mitigation)
       var late = queryMailbox(filter);
       if (late.length > 0) {
         late[0].read = 'READ';
@@ -239,8 +187,6 @@ function generateTag() {
   return 'tag_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
 }
 
-// Fire-and-forget sendInstruction: accepts optional context.
-// Validates actor messages against registry interfaces (P8).
 function sendInstruction(recipient, type, payload, tag, sender, responseSpec, context) {
   if (tag === undefined) tag = generateTag();
   if (sender === undefined) sender = 'system';
@@ -256,7 +202,6 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
   if (responseSpec) flatMessage.responseSpec = responseSpec;
   if (context) flatMessage.context = context;
 
-  // Validate only if recipient is a registered actor
   if (MESSAGEREGISTRY && typeof MESSAGEREGISTRY.getInterfaces === 'function') {
     var ifaces = MESSAGEREGISTRY.getInterfaces(recipient);
     if (ifaces && Object.keys(ifaces).length > 0) {
@@ -267,15 +212,13 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
     }
   }
 
-  dispatchToActor('mailactor', mailbehavior, {
+  dispatchToActor('MAILACTOR', mailbehavior, {
     type: MESSAGETYPES.SEND,
     recipient: recipient,
     message: flatMessage
   });
 }
 
-// sendResponse sends a response message.
-// P20: responseType is now required. If omitted, fallback to generic mailbox type.
 function sendResponse(recipient, tag, result, sender, responseType) {
   if (responseType === undefined) {
     logwarn(MAILSTATE, '[MAILACTOR]', 'sendResponse missing responseType for tag:', tag);
@@ -291,12 +234,12 @@ function startMailActor(options) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      var env = getActorState('worldmapactor');
+      var env = getActorState('WORLDMAPACTOR');
       if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('worldmapactor'); },
-    dispatch: function(message) { return dispatchToActor('mailactor', mailbehavior, message); }
+    getstate: function() { return getActorState('WORLDMAPACTOR'); },
+    dispatch: function(message) { return dispatchToActor('MAILACTOR', mailbehavior, message); }
   };
 }

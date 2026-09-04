@@ -103,12 +103,12 @@ function ensureTriggerObserver(renderSlice) {
 
       incrementSent(renderSlice._gc, gcObj.id, 1);
 
-      sendInstruction('hypervisoractor', 'trigger_event', {
+      sendInstruction('HYPERVISORACTOR', 'trigger_event', {
         pipelineId: gcObj.consumer && gcObj.consumer.pipelineId,
         stageId: gcObj.consumer && gcObj.consumer.stageId,
         stagePath: gcObj.metadata && gcObj.metadata.stagePath ? gcObj.metadata.stagePath : [],
         eventPayload: { type: event.type, targetId: targetId }
-      }, null, 'renderactor');
+      }, null, 'RENDERACTOR');
     });
   };
 
@@ -130,13 +130,16 @@ HANDLERS[MESSAGETYPES.CLEAR] = function(env, msg) {
   return true;
 };
 HANDLERS[MESSAGETYPES.HTML] = function(env, msg) {
-  return waitForDomReady().then(function() {
+  waitForDomReady().then(function() {
     withElementRetry(msg.id, null, function(el) {
       if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
       else el.innerHTML = msg.markup;
     });
-    return true;
+    respondIfNeeded(env, msg, true);
+  }).catch(function(err) {
+    respondIfNeeded(env, msg, { error: err.message || String(err) });
   });
+  // No return value; response sent asynchronously.
 };
 HANDLERS[MESSAGETYPES.REMOVE] = function(env, msg) {
   withElement(msg.id, null, function(el) { el.remove(); });
@@ -146,15 +149,16 @@ HANDLERS[MESSAGETYPES.SETSTYLES] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) {
     Object.keys(msg.styles || {}).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
   });
-  return true;
+  respondIfNeeded(env, msg, true);
+  // No return value.
 };
 HANDLERS[MESSAGETYPES.SETATTR] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.setAttribute(msg.name, msg.value); });
-  return true;
+  respondIfNeeded(env, msg, true);
 };
 HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.classList.toggle(msg.classname, msg.force); });
-  return true;
+  respondIfNeeded(env, msg, true);
 };
 HANDLERS[MESSAGETYPES.CRYPTO] = function(env, msg) {
   var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
@@ -163,16 +167,17 @@ HANDLERS[MESSAGETYPES.CRYPTO] = function(env, msg) {
   return Array.prototype.slice.call(array);
 };
 HANDLERS[MESSAGETYPES.GEOLOCATION] = function(env, msg) {
-  return new Promise(function(resolve, reject) {
-    var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-    var geo = win.navigator && win.navigator.geolocation;
-    if (!geo) return reject(new Error('geolocation API unavailable'));
-    geo.getCurrentPosition(
-      function(pos) { resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }); },
-      function(err) { reject(new Error('geolocation failed: ' + err.message)); },
-      { enablehighaccuracy: msg.enablehighaccuracy || false, timeout: msg.timeout || 5000 }
-    );
-  });
+  var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
+  var geo = win.navigator && win.navigator.geolocation;
+  if (!geo) {
+    respondIfNeeded(env, msg, { error: 'geolocation API unavailable' });
+    return;
+  }
+  geo.getCurrentPosition(
+    function(pos) { respondIfNeeded(env, msg, { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }); },
+    function(err) { respondIfNeeded(env, msg, { error: 'geolocation failed: ' + err.message }); },
+    { enablehighaccuracy: msg.enablehighaccuracy || false, timeout: msg.timeout || 5000 }
+  );
 };
 HANDLERS[MESSAGETYPES.PERSISTENCE] = function(env, msg) {
   var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
@@ -248,26 +253,28 @@ HANDLERS[MESSAGETYPES.GETLAYOUT] = function(env, msg) {
   };
 };
 HANDLERS[MESSAGETYPES.SETHTML] = function(env, msg) {
-  return waitForDomReady().then(function() {
+  waitForDomReady().then(function() {
     withElementRetry(msg.id, null, function(el) { el.innerHTML = msg.value; });
-    return true;
+    respondIfNeeded(env, msg, true);
+  }).catch(function(err) {
+    respondIfNeeded(env, msg, { error: err.message || String(err) });
   });
 };
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  return true;
+  respondIfNeeded(env, msg, true);
 };
 HANDLERS[MESSAGETYPES.SETSTYLE] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  return true;
+  respondIfNeeded(env, msg, true);
 };
 HANDLERS[MESSAGETYPES.SETVALUE] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { el.value = msg.value; });
-  return true;
+  respondIfNeeded(env, msg, true);
 };
 HANDLERS[MESSAGETYPES.SETLAYOUT] = function(env, msg) {
   withElementRetry(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el[prop] = msg.value[prop]; }); });
-  return true;
+  respondIfNeeded(env, msg, true);
 };
 HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(env, msg) {
   var doc = document.documentElement;
@@ -284,13 +291,15 @@ HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(env, msg) {
   return document.body ? document.body.innerHTML : '';
 };
 HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(env, msg) {
-  return waitForDomReady().then(function() {
+  waitForDomReady().then(function() {
     if (document.body) document.body.innerHTML = msg.html;
-    return true;
+    respondIfNeeded(env, msg, true);
+  }).catch(function(err) {
+    respondIfNeeded(env, msg, { error: err.message || String(err) });
   });
 };
 HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
-  return waitForDomReady().then(function() {
+  waitForDomReady().then(function() {
     return enqueueDbRestore('actor:state:render').then(function(saved) {
       if (saved !== null && saved !== undefined) {
         env.render = saved;
@@ -298,17 +307,19 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
         env.render = { html: '', viewport: null, actorRegistry: null };
       }
       scheduleGcCycle(env.render);
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+      sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'render', value: env.render }]
-      }, generateTag(), 'renderactor');
-      return env;
+      }, generateTag(), 'RENDERACTOR');
+      respondIfNeeded(env, msg, env);
     }).catch(function(e) {
       env.render = { html: '', viewport: null, actorRegistry: null };
-      sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+      sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'render', value: env.render }]
-      }, generateTag(), 'renderactor');
-      return env;
+      }, generateTag(), 'RENDERACTOR');
+      respondIfNeeded(env, msg, { error: e.message || String(e) });
     });
+  }).catch(function(err) {
+    respondIfNeeded(env, msg, { error: err.message || String(err) });
   });
 };
 HANDLERS[MESSAGETYPES.PING] = function(env, msg) { return true; };
@@ -330,9 +341,9 @@ HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(env, msg) {
     ensureTriggerObserver(env.render);
   }
   scheduleGcCycle(env.render);
-  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
     updates: [{ path: 'render', value: env.render }]
-  }, generateTag(), 'renderactor');
+  }, generateTag(), 'RENDERACTOR');
   return true;
 };
 HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(env, msg) {
@@ -340,11 +351,10 @@ HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(env, msg) {
   return true;
 };
 
-// P30: Respond with explicit response type.
 function respondIfNeeded(env, message, result) {
   if (message.sender && message.tag) {
     var responseType = (message.responseSpec && message.responseSpec.responseType) || MESSAGETYPES.DOM_RESULT;
-    sendResponse(message.sender, message.tag, result, 'renderactor', responseType);
+    sendResponse(message.sender, message.tag, result, 'RENDERACTOR', responseType);
   }
 }
 
@@ -355,13 +365,9 @@ function renderbehavior(env, message) {
   var handler = HANDLERS[message.type];
   if (handler) {
     var result = handler(env, message);
-    if (result && typeof result.then === 'function') {
-      return result.then(function(res) {
-        respondIfNeeded(env, message, res);
-        return env;
-      });
+    if (result !== undefined) {
+      respondIfNeeded(env, message, result);
     }
-    respondIfNeeded(env, message, result);
   }
   return env;
 }
@@ -384,7 +390,7 @@ function createEnqueuer(type, idRequired, extraPayloadFn) {
         responseSpec = lastArg;
       }
     }
-    sendInstruction('renderactor', type, payload, tag, 'system', responseSpec);
+    sendInstruction('RENDERACTOR', type, payload, tag, 'system', responseSpec);
   };
 }
 
@@ -414,35 +420,35 @@ var enqueuegetscreen = createEnqueuer(MESSAGETYPES.GETSCREEN, false);
 var enqueuematchmedia = createEnqueuer(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
 var enqueueRenderRegisterTrigger = function(registration, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER, registration, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER, registration, tag, 'system', responseSpec);
 };
 var enqueueRenderRegisterTriggerExpectation = function(registration, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, registration, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, registration, tag, 'system', responseSpec);
 };
 var enqueueRenderRevalidateTriggers = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, tag, 'system', responseSpec);
 };
 var enqueueRenderPing = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.PING, {}, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.PING, {}, tag, 'system', responseSpec);
 };
 var enqueueRenderGetBodyHtml = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.GET_BODY_HTML, {}, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.GET_BODY_HTML, {}, tag, 'system', responseSpec);
 };
 var enqueueRenderRestoreBodyHtml = function(html, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.RESTORE_BODY_HTML, { html: html }, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.RESTORE_BODY_HTML, { html: html }, tag, 'system', responseSpec);
 };
 var enqueueRenderRecover = function(responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.RECOVER, {}, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.RECOVER, {}, tag, 'system', responseSpec);
 };
 var enqueueRenderCrypto = function(bytes, responseSpec) {
   var tag = generateTag();
-  sendInstruction('renderactor', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'system', responseSpec);
+  sendInstruction('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'system', responseSpec);
 };
 
 var startRenderActor = function(options) {
@@ -450,13 +456,13 @@ var startRenderActor = function(options) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      var env = getActorState('worldmapactor');
+      var env = getActorState('WORLDMAPACTOR');
       if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('worldmapactor'); },
-    dispatch: function(message) { return dispatchToActor('renderactor', renderbehavior, message); }
+    getstate: function() { return getActorState('WORLDMAPACTOR'); },
+    dispatch: function(message) { return dispatchToActor('RENDERACTOR', renderbehavior, message); }
   };
 };
 
@@ -465,7 +471,7 @@ var expectelement = function(id, timeout) {
   return new Promise(function(resolve, reject) {
     var existing = document.getElementById(id);
     if (existing) {
-      var env = getActorState('worldmapactor');
+      var env = getActorState('WORLDMAPACTOR');
       return resolve(CREATEDOMREF(existing, env.render.actorRegistry));
     }
     var observer = null;
@@ -475,7 +481,7 @@ var expectelement = function(id, timeout) {
       if (el) {
         clearTimeout(timeoutid);
         observer.disconnect();
-        var envNow = getActorState('worldmapactor');
+        var envNow = getActorState('WORLDMAPACTOR');
         resolve(CREATEDOMREF(el, envNow.render.actorRegistry));
       }
     });
@@ -487,7 +493,7 @@ var handlefilereaderrequest = function(payload) {
   return new Promise(function(resolve, reject) {
     var reader = new FileReader();
     reader.onload = function(e) { resolve({ text: e.target.result }); };
-    reader.onerror = function() { reject(new Error('[renderactor] FileReader error')); };
+    reader.onerror = function() { reject(new Error('[RENDERACTOR] FileReader error')); };
     reader.readAsText(payload.file);
   });
 };

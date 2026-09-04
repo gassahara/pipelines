@@ -1,335 +1,317 @@
-// ============================================================
-// UPDATED FILE: js/registerconsumers.js
-// Change applied: MESSAGE INTERFACE HARDENING (P18)
-//   - Corrected interfaces to match actual message payloads.
-//   - hypervisoractor.boot_pipeline now requires dna instead of pipeline.
-//   - worldmapactor.update now requires updates array instead of patch.
-//   - Audited all other interfaces; no further changes needed.
-// ============================================================
-
 var REGISTERED_CONSUMERS = true;
 
 // ------------------------------------------------------------------
 // 1. Register request interfaces and actor consumers
 // ------------------------------------------------------------------
 
-// apiactor
-MESSAGEREGISTRY.register('apiactor', MESSAGETYPES.API, {
+// APIACTOR
+MESSAGEREGISTRY.register('APIACTOR', MESSAGETYPES.API, {
   endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
 }, apibehavior);
-ACTORCONSUMERS['apiactor:api'] = apibehavior;
+ACTORCONSUMERS['APIACTOR:api'] = apibehavior;
 
-MESSAGEREGISTRY.register('apiactor', MESSAGETYPES.FETCH, {
+MESSAGEREGISTRY.register('APIACTOR', MESSAGETYPES.FETCH, {
   endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
 }, apibehavior);
-ACTORCONSUMERS['apiactor:fetch'] = apibehavior;
+ACTORCONSUMERS['APIACTOR:fetch'] = apibehavior;
 
-// debugactor
-MESSAGEREGISTRY.register('debugactor', MESSAGETYPES.INIT_OVERLAY, { sender: 'string?', tag: 'string?' }, debugbehavior);
-ACTORCONSUMERS['debugactor:init_overlay'] = debugbehavior;
+// DEBUGACTOR
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.INIT_OVERLAY, { sender: 'string?', tag: 'string?' }, debugbehavior);
+ACTORCONSUMERS['DEBUGACTOR:init_overlay'] = debugbehavior;
 
-MESSAGEREGISTRY.register('debugactor', MESSAGETYPES.SHOW, { error: 'object', continuation: 'object?', sender: 'string?', tag: 'string?' }, debugbehavior);
-ACTORCONSUMERS['debugactor:show'] = debugbehavior;
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.SHOW, { error: 'object', continuation: 'object?', sender: 'string?', tag: 'string?' }, debugbehavior);
+ACTORCONSUMERS['DEBUGACTOR:show'] = debugbehavior;
 
-MESSAGEREGISTRY.register('debugactor', MESSAGETYPES.HIDE, { sender: 'string?', tag: 'string?' }, debugbehavior);
-ACTORCONSUMERS['debugactor:hide'] = debugbehavior;
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.HIDE, { sender: 'string?', tag: 'string?' }, debugbehavior);
+ACTORCONSUMERS['DEBUGACTOR:hide'] = debugbehavior;
 
-MESSAGEREGISTRY.register('debugactor', MESSAGETYPES.RECOVER, { sender: 'string?', tag: 'string?' }, debugbehavior);
-ACTORCONSUMERS['debugactor:recover'] = debugbehavior;
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.RECOVER, { sender: 'string?', tag: 'string?' }, debugbehavior);
+ACTORCONSUMERS['DEBUGACTOR:recover'] = debugbehavior;
 
-MESSAGEREGISTRY.register('debugactor', MESSAGETYPES.PING, { sender: 'string?', tag: 'string?' }, debugbehavior);
-ACTORCONSUMERS['debugactor:ping'] = debugbehavior;
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.PING, { sender: 'string?', tag: 'string?' }, debugbehavior);
+ACTORCONSUMERS['DEBUGACTOR:ping'] = debugbehavior;
 
-// executionactor
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: 'string', env: 'object?' }, executionbehavior);
-ACTORCONSUMERS['executionactor:pipeline_loaded'] = executionbehavior;
+// EXECUTIONACTOR
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: 'string', env: 'object?' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:pipeline_loaded'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.ENV_UPDATED, { pipelineid: 'string', env: 'object' }, executionbehavior);
-ACTORCONSUMERS['executionactor:env_updated'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.ENV_UPDATED, { pipelineid: 'string', env: 'object' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:env_updated'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.GET_STATUS, { pipelineid: 'string?' }, executionbehavior);
-ACTORCONSUMERS['executionactor:get_status'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.GET_STATUS, { pipelineid: 'string?' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:get_status'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, {
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.EXECUTE_ELEMENT, {
   pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object',
   executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?',
   programRef: 'string?', elementId: 'string?', origin: 'object?'
 }, executionbehavior);
-ACTORCONSUMERS['executionactor:execute_element'] = executionbehavior;
+ACTORCONSUMERS['EXECUTIONACTOR:execute_element'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.AWAIT_TASK, { taskid: 'string' }, executionbehavior);
-ACTORCONSUMERS['executionactor:await_task'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.AWAIT_TASK, { taskid: 'string' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:await_task'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.GET_TASKS, { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?' }, executionbehavior);
-ACTORCONSUMERS['executionactor:get_tasks'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.GET_TASKS, { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:get_tasks'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.GET_TASK_STATUS, { taskid: 'string' }, executionbehavior);
-ACTORCONSUMERS['executionactor:get_task_status'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.GET_TASK_STATUS, { taskid: 'string' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:get_task_status'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.CANCEL_TASK, { taskid: 'string' }, executionbehavior);
-ACTORCONSUMERS['executionactor:cancel_task'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CANCEL_TASK, { taskid: 'string' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:cancel_task'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.STOP_TASK, { taskid: 'string' }, executionbehavior);
-ACTORCONSUMERS['executionactor:stop_task'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.STOP_TASK, { taskid: 'string' }, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:stop_task'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.CCC_ABORT, {
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CCC_ABORT, {
   pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?'
 }, executionbehavior);
-ACTORCONSUMERS['executionactor:ccc_abort'] = executionbehavior;
+ACTORCONSUMERS['EXECUTIONACTOR:ccc_abort'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.CCC_CONTINUE, {
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CCC_CONTINUE, {
   pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?'
 }, executionbehavior);
-ACTORCONSUMERS['executionactor:ccc_continue'] = executionbehavior;
+ACTORCONSUMERS['EXECUTIONACTOR:ccc_continue'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.CCC_RETRY, {
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CCC_RETRY, {
   pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?'
 }, executionbehavior);
-ACTORCONSUMERS['executionactor:ccc_retry'] = executionbehavior;
+ACTORCONSUMERS['EXECUTIONACTOR:ccc_retry'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.TASK_SETTLED, {
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.TASK_SETTLED, {
   taskid: 'string', status: 'string', result: 'any', error: 'object?'
 }, executionbehavior);
-ACTORCONSUMERS['executionactor:task_settled'] = executionbehavior;
+ACTORCONSUMERS['EXECUTIONACTOR:task_settled'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.RECOVER, {}, executionbehavior);
-ACTORCONSUMERS['executionactor:recover'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.RECOVER, {}, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:recover'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.REGISTER_PIPELINE, {
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.REGISTER_PIPELINE, {
   pipelineid: 'string', dna: 'object?', env: 'object?'
 }, executionbehavior);
-ACTORCONSUMERS['executionactor:register_pipeline'] = executionbehavior;
+ACTORCONSUMERS['EXECUTIONACTOR:register_pipeline'] = executionbehavior;
 
-MESSAGEREGISTRY.register('executionactor', MESSAGETYPES.PING, {}, executionbehavior);
-ACTORCONSUMERS['executionactor:ping'] = executionbehavior;
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.PING, {}, executionbehavior);
+ACTORCONSUMERS['EXECUTIONACTOR:ping'] = executionbehavior;
 
-// hypervisoractor
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.LOAD, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:load'] = hypervisorbehavior;
+// HYPERVISORACTOR
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.LOAD, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:load'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.SAVE, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:save'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SAVE, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:save'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_ENV, { pipelineId: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_env'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_ENV, { pipelineId: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_env'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.SET_ENV, { pipelineId: 'string', env: 'object', stageId: 'string?', elementId: 'string?' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:set_env'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SET_ENV, { pipelineId: 'string', env: 'object', stageId: 'string?', elementId: 'string?' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:set_env'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_LATEST_ENV, { pipelineId: 'string', stageId: 'string', elementId: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_latest_env'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_LATEST_ENV, { pipelineId: 'string', stageId: 'string', elementId: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_latest_env'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_RENDER_HTML, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_render_html'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_RENDER_HTML, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_render_html'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.SET_RENDER_HTML, { html: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:set_render_html'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SET_RENDER_HTML, { html: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:set_render_html'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_EXECUTION_STACK, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_execution_stack'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_EXECUTION_STACK, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_execution_stack'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.SET_EXECUTION_STACK, { stack: 'array' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:set_execution_stack'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SET_EXECUTION_STACK, { stack: 'array' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:set_execution_stack'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_ROUTE, { key: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_route'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_ROUTE, { key: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_route'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.SET_ROUTE, { key: 'string', route: 'object?' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:set_route'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SET_ROUTE, { key: 'string', route: 'object?' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:set_route'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_ACTIVE_PIPELINES, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_active_pipelines'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_ACTIVE_PIPELINES, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_active_pipelines'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.REGISTER_PIPELINE, { pipelineId: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:register_pipeline'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.REGISTER_PIPELINE, { pipelineId: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:register_pipeline'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.UNREGISTER_PIPELINE, { pipelineId: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:unregister_pipeline'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.UNREGISTER_PIPELINE, { pipelineId: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:unregister_pipeline'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.SET_PROGRAM, { programKey: 'string', programSource: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:set_program'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SET_PROGRAM, { programKey: 'string', programSource: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:set_program'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_PROGRAM, { programKey: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_program'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_PROGRAM, { programKey: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_program'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.MARK_BOOT, { boot: 'boolean' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:mark_boot'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.MARK_BOOT, { boot: 'boolean' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:mark_boot'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.SET_STAGE_DESCRIPTOR, { pipelineId: 'string', stageId: 'string', descriptor: 'object' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:set_stage_descriptor'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SET_STAGE_DESCRIPTOR, { pipelineId: 'string', stageId: 'string', descriptor: 'object' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:set_stage_descriptor'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS, { pipelineId: 'string', stageId: 'string' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:get_trigger_recipient_status'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS, { pipelineId: 'string', stageId: 'string' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:get_trigger_recipient_status'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.TRIGGER_EVENT, { pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object' }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:trigger_event'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.TRIGGER_EVENT, { pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object' }, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:trigger_event'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.PING, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:ping'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.PING, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:ping'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.RECOVER, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:recover'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.RECOVER, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:recover'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.ACTIVATE_ACTORS, {}, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:activate_actors'] = hypervisorbehavior;
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.ACTIVATE_ACTORS, {}, hypervisorbehavior);
+ACTORCONSUMERS['HYPERVISORACTOR:activate_actors'] = hypervisorbehavior;
 
-// P18: corrected BOOT_PIPELINE interface: dna instead of pipeline
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.BOOT_PIPELINE, {
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, {
   dna: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', firstStage: 'object?'
 }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:boot_pipeline'] = hypervisorbehavior;
+ACTORCONSUMERS['HYPERVISORACTOR:boot_pipeline'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.COMPILE_STAGE, {
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.COMPILE_STAGE, {
   pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', options: 'object?'
 }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:compile_stage'] = hypervisorbehavior;
+ACTORCONSUMERS['HYPERVISORACTOR:compile_stage'] = hypervisorbehavior;
 
-MESSAGEREGISTRY.register('hypervisoractor', MESSAGETYPES.STAGE_COMPLETED, {
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED, {
   pipelineId: 'string', stageId: 'string', env: 'object?', nextStageMessage: 'object?'
 }, hypervisorbehavior);
-ACTORCONSUMERS['hypervisoractor:stage_completed'] = hypervisorbehavior;
+ACTORCONSUMERS['HYPERVISORACTOR:stage_completed'] = hypervisorbehavior;
 
-// renderactor
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.RENDER, { id: 'string', renderer: 'function', data: 'any', env: 'object' }, renderbehavior);
-ACTORCONSUMERS['renderactor:render'] = renderbehavior;
+// RENDERACTOR
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.RENDER, { id: 'string', renderer: 'function', data: 'any', env: 'object' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:render'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.CLEAR, { id: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:clear'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CLEAR, { id: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:clear'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.HTML, { id: 'string', markup: 'string', append: 'boolean' }, renderbehavior);
-ACTORCONSUMERS['renderactor:html'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.HTML, { id: 'string', markup: 'string', append: 'boolean' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:html'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.REMOVE, { id: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:remove'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REMOVE, { id: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:remove'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.SETSTYLES, { id: 'string', styles: 'object' }, renderbehavior);
-ACTORCONSUMERS['renderactor:setstyles'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETSTYLES, { id: 'string', styles: 'object' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:setstyles'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.SETATTR, { id: 'string', name: 'string', value: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:setattr'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETATTR, { id: 'string', name: 'string', value: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:setattr'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.TOGGLECLASS, { id: 'string', classname: 'string', force: 'boolean?' }, renderbehavior);
-ACTORCONSUMERS['renderactor:toggleclass'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.TOGGLECLASS, { id: 'string', classname: 'string', force: 'boolean?' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:toggleclass'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.CRYPTO, { bytes: 'number' }, renderbehavior);
-ACTORCONSUMERS['renderactor:crypto'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: 'number' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:crypto'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GEOLOCATION, { enablehighaccuracy: 'boolean', timeout: 'number' }, renderbehavior);
-ACTORCONSUMERS['renderactor:geolocation'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GEOLOCATION, { enablehighaccuracy: 'boolean', timeout: 'number' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:geolocation'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.PERSISTENCE, { action: 'string', key: 'string?', value: 'string?' }, renderbehavior);
-ACTORCONSUMERS['renderactor:persistence'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PERSISTENCE, { action: 'string', key: 'string?', value: 'string?' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:persistence'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.CREATEELEMENT, { tag: 'string', props: 'object?' }, renderbehavior);
-ACTORCONSUMERS['renderactor:createelement'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CREATEELEMENT, { tag: 'string', props: 'object?' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:createelement'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.CREATECONTAINER, {}, renderbehavior);
-ACTORCONSUMERS['renderactor:createcontainer'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CREATECONTAINER, {}, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:createcontainer'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.CREATEFROMHTML, { html: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:createfromhtml'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CREATEFROMHTML, { html: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:createfromhtml'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.PROPERTY, { id: 'string', name: 'string', arguments: 'array?' }, renderbehavior);
-ACTORCONSUMERS['renderactor:property'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PROPERTY, { id: 'string', name: 'string', arguments: 'array?' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:property'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GETHTML, { id: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:gethtml'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETHTML, { id: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:gethtml'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GETVALUE, { id: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:getvalue'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETVALUE, { id: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:getvalue'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GETSTYLE, { id: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:getstyle'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETSTYLE, { id: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:getstyle'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GETPOSITION, { id: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:getposition'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETPOSITION, { id: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:getposition'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GETLAYOUT, { id: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:getlayout'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETLAYOUT, { id: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:getlayout'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.SETHTML, { id: 'string', value: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:sethtml'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETHTML, { id: 'string', value: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:sethtml'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.SETPOSITION, { id: 'string', value: 'object' }, renderbehavior);
-ACTORCONSUMERS['renderactor:setposition'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETPOSITION, { id: 'string', value: 'object' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:setposition'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.SETSTYLE, { id: 'string', value: 'object' }, renderbehavior);
-ACTORCONSUMERS['renderactor:setstyle'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETSTYLE, { id: 'string', value: 'object' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:setstyle'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.SETVALUE, { id: 'string', value: 'any' }, renderbehavior);
-ACTORCONSUMERS['renderactor:setvalue'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETVALUE, { id: 'string', value: 'any' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:setvalue'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.SETLAYOUT, { id: 'string', value: 'object' }, renderbehavior);
-ACTORCONSUMERS['renderactor:setlayout'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETLAYOUT, { id: 'string', value: 'object' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:setlayout'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GETVIEWPORT, {}, renderbehavior);
-ACTORCONSUMERS['renderactor:getviewport'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETVIEWPORT, {}, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:getviewport'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GETSCREEN, {}, renderbehavior);
-ACTORCONSUMERS['renderactor:getscreen'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETSCREEN, {}, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:getscreen'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.MATCHMEDIA, { query: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:matchmedia'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.MATCHMEDIA, { query: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:matchmedia'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.GET_BODY_HTML, {}, renderbehavior);
-ACTORCONSUMERS['renderactor:get_body_html'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GET_BODY_HTML, {}, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:get_body_html'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.RESTORE_BODY_HTML, { html: 'string' }, renderbehavior);
-ACTORCONSUMERS['renderactor:restore_body_html'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.RESTORE_BODY_HTML, { html: 'string' }, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:restore_body_html'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.RECOVER, {}, renderbehavior);
-ACTORCONSUMERS['renderactor:recover'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.RECOVER, {}, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:recover'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.PING, {}, renderbehavior);
-ACTORCONSUMERS['renderactor:ping'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PING, {}, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:ping'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.REGISTER_TRIGGER, {
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER, {
   pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array'
 }, renderbehavior);
-ACTORCONSUMERS['renderactor:register_trigger'] = renderbehavior;
+ACTORCONSUMERS['RENDERACTOR:register_trigger'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, {
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, {
   pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', output: 'string?'
 }, renderbehavior);
-ACTORCONSUMERS['renderactor:register_trigger_expectation'] = renderbehavior;
+ACTORCONSUMERS['RENDERACTOR:register_trigger_expectation'] = renderbehavior;
 
-MESSAGEREGISTRY.register('renderactor', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, renderbehavior);
-ACTORCONSUMERS['renderactor:revalidate_triggers'] = renderbehavior;
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, renderbehavior);
+ACTORCONSUMERS['RENDERACTOR:revalidate_triggers'] = renderbehavior;
 
-// worldmapactor
-// P18: corrected UPDATE interface to use updates array
-MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.UPDATE, { updates: 'array' }, worldmapbehavior);
-ACTORCONSUMERS['worldmapactor:update'] = worldmapbehavior;
+// WORLDMAPACTOR
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { updates: 'array' }, worldmapbehavior);
+ACTORCONSUMERS['WORLDMAPACTOR:update'] = worldmapbehavior;
 
-MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.UPDATE_FN, { fn: 'function' }, worldmapbehavior);
-ACTORCONSUMERS['worldmapactor:update_fn'] = worldmapbehavior;
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.UPDATE_FN, { fn: 'function' }, worldmapbehavior);
+ACTORCONSUMERS['WORLDMAPACTOR:update_fn'] = worldmapbehavior;
 
-MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.OBSERVE, { observer: 'function' }, worldmapbehavior);
-ACTORCONSUMERS['worldmapactor:observe'] = worldmapbehavior;
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { observer: 'function' }, worldmapbehavior);
+ACTORCONSUMERS['WORLDMAPACTOR:observe'] = worldmapbehavior;
 
-MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.UNOBSERVE, { observer: 'function' }, worldmapbehavior);
-ACTORCONSUMERS['worldmapactor:unobserve'] = worldmapbehavior;
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { observer: 'function' }, worldmapbehavior);
+ACTORCONSUMERS['WORLDMAPACTOR:unobserve'] = worldmapbehavior;
 
-MESSAGEREGISTRY.register('worldmapactor', MESSAGETYPES.GET_WORLDMAP, {}, worldmapbehavior);
-ACTORCONSUMERS['worldmapactor:get_worldmap'] = worldmapbehavior;
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.GET_WORLDMAP, {}, worldmapbehavior);
+ACTORCONSUMERS['WORLDMAPACTOR:get_worldmap'] = worldmapbehavior;
 
-// dbactor
-MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.STORE, { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' }, dbbehavior);
-MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.RESTORE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
-MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.LIST, { resolve: 'function?', reject: 'function?' }, dbbehavior);
-MESSAGEREGISTRY.register('dbactor', MESSAGETYPES.DELETE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
+// DBACTOR
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.STORE, { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' }, dbbehavior);
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.RESTORE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.LIST, { resolve: 'function?', reject: 'function?' }, dbbehavior);
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.DELETE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
 
-// mailactor
-MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.SEND, { recipient: 'string', message: 'object' }, mailbehavior);
-MESSAGEREGISTRY.register('mailactor', MESSAGETYPES.ACK, { recipient: 'string', ids: 'array' }, mailbehavior);
+// MAILACTOR
+MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.SEND, { recipient: 'string', message: 'object' }, mailbehavior);
+MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.ACK, { recipient: 'string', ids: 'array' }, mailbehavior);
 
 // ------------------------------------------------------------------
-// 2. Register response consumers
+// 2. Response consumers removed – no RESPONSECONSUMERS registrations.
 // ------------------------------------------------------------------
-
-RESPONSECONSUMERS[MESSAGETYPES.API_RESULT] = blockcompilerApiResult;
-RESPONSECONSUMERS[MESSAGETYPES.FETCH_RESULT] = blockcompilerFetchResult;
-RESPONSECONSUMERS[MESSAGETYPES.TASK_RESULT] = blockcompilerTaskResult;
-RESPONSECONSUMERS[MESSAGETYPES.PIPELINE_BOOTED] = blockcompilerPipelineBooted;
-RESPONSECONSUMERS[MESSAGETYPES.DOM_RESULT] = blockcompilerDomResult;
-RESPONSECONSUMERS[MESSAGETYPES.STAGE_COMPLETED_ACK] = blockcompilerStageCompletedAck;
