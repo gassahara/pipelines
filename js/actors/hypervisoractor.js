@@ -312,7 +312,7 @@ function hypervisorbehavior(env, message) {
       sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, generateTag(), 'hypervisoractor');
-      if (message.sender && message.tag) sendResponse(message.sender, message.tag, { started: true, pipelineId: pipelineId }, 'hypervisoractor');
+      if (message.sender && message.tag) sendResponse(message.sender, message.tag, { started: true, pipelineId: pipelineId }, 'hypervisoractor', MESSAGETYPES.PIPELINE_BOOTED);
       return env;
     }
     case MESSAGETYPES.COMPILE_STAGE: {

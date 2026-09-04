@@ -1,11 +1,12 @@
+var PENDING_HTTP = {};
+var PENDING_DOM = {};
+var PENDING_STORE = {};
+var PENDING_EXEC = {};   // ADDED: declared to avoid ReferenceError in unused consumers
+
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
 var FRONTEND_BASE = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
 var WITNESS_TIMEOUT = 5000;
-
-var PENDING_HTTP = {};
-var PENDING_DOM = {};
-var PENDING_STORE = {};
 
 function createBlockCompilerConstants() {
   return Object.freeze({
@@ -1133,3 +1134,4 @@ function blockcompilerStageCompletedAck(result, tag) {
   delete PENDING_STORE[tag];
   pending.resolve(result);
 }
+

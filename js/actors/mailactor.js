@@ -32,19 +32,15 @@ function mailbehavior(env, message) {
       sender: (flatMessage && flatMessage.sender) || 'system',
       tag: (flatMessage && flatMessage.tag) || null,
       unread: true,
+      read: 'UNREAD',          // explicit initial read status
       timestamp: Date.now(),
       payload: flatMessage
     };
     mailSlice.queues[recipient].push(envelope);
     MAILBOX.push(envelope); // store in mailbox
 
-    // DIRECT DISPATCH: invoke consumer for recipient and message type
-    var consumerKey = recipient + ':' + flatMessage.type;
-    var consumer = ACTORCONSUMERS[consumerKey];
-    if (consumer) {
-      // Consumer is a pure behavior function; runtime owns state.
-      dispatchToActor(recipient, consumer, flatMessage);
-    }
+    // DIRECT DISPATCH REMOVED – no consumer invocation here.
+    // All delivery is through MAILBOX and queryMailbox/waitForMailbox.
 
     // Store expectation if responseSpec present
     if (flatMessage.responseSpec && flatMessage.tag) {
@@ -60,7 +56,7 @@ function mailbehavior(env, message) {
         createdAt: Date.now(),
         resolvedAt: null,
         error: null,
-        read: false
+        read: 'UNREAD'
       };
       EXPECTATIONS[flatMessage.tag] = expectation;
       MAILBOX.push(expectation); // store expectation in mailbox too
@@ -94,30 +90,8 @@ function mailbehavior(env, message) {
     return env;
   }
 
-  // Response handling: for any message with a tag that has an expectation
-  if (message && message.tag && EXPECTATIONS[message.tag]) {
-    var expectation = EXPECTATIONS[message.tag];
-    var responseConsumer = RESPONSECONSUMERS[expectation.responseSpec.responseType];
-    if (responseConsumer) {
-      var result = (message && message.result !== undefined) ? message.result : message;
-      expectation.status = 'RESOLVED';
-      expectation.resolvedAt = Date.now();
-      expectation.read = true; // mark as read when consumed by actor
-      MAILBOX.push(expectation); // update mailbox record
-      setTimeout(function() { responseConsumer(result, message.tag); }, 0);
-      delete EXPECTATIONS[message.tag];
-    } else {
-      // No registered consumer; leave message in mailbox for non-actor
-      if (expectation) {
-        expectation.status = 'RESOLVED';
-        expectation.resolvedAt = Date.now();
-        expectation.read = false; // keep unread for mailbox waiters
-        MAILBOX.push(expectation);
-        delete EXPECTATIONS[message.tag];
-      }
-      // Message already stored in mailbox; non-actor will query
-    }
-  }
+  // Response handling block REMOVED – messages are homogeneous.
+  // No special handling for tagged responses; they are already in MAILBOX.
 
   return env;
 }
@@ -128,7 +102,9 @@ function getMailbox() {
 }
 
 // queryMailbox returns only unread messages by default.
+// Extended to support filter.matches (function) and filter.props (object).
 function queryMailbox(filter) {
+  if (!filter) filter = {};
   return MAILBOX.filter(function(item) {
     var matches = true;
     if (filter.recipient !== undefined && item.recipient !== filter.recipient) matches = false;
@@ -137,13 +113,32 @@ function queryMailbox(filter) {
     if (filter.date !== undefined && item.timestamp !== filter.date) matches = false;
     if (filter.type !== undefined && item.type !== filter.type) matches = false;
     if (filter.status !== undefined && item.status !== filter.status) matches = false;
-    // Read filter: default to unread only
+    // Read filter: default to unread only, using string statuses
     if (filter.read !== undefined) {
       if (item.read !== filter.read) matches = false;
-    } else if (item.read === true) {
-      matches = false;
+    } else if (item.read === 'READ') {
+      matches = false;  // only return UNREAD by default
+    }
+    // Extended: custom matches function
+    if (filter.matches && typeof filter.matches === 'function') {
+      if (!filter.matches(item)) matches = false;
+    }
+    // Extended: property bag filter (checked on envelope and payload)
+    if (filter.props && typeof filter.props === 'object') {
+      Object.keys(filter.props).forEach(function(key) {
+        var expected = filter.props[key];
+        var actual = item[key] !== undefined ? item[key] : (item.payload && item.payload[key]);
+        if (actual !== expected) matches = false;
+      });
     }
     return matches;
+  }).map(function(item) {
+    // Mark as READ when query returns the item
+    if (item && item.read !== 'READ') {
+      item.read = 'READ';
+      // Also update the original in MAILBOX (it's the same reference)
+    }
+    return item;
   });
 }
 
@@ -153,7 +148,7 @@ function waitForMailbox(filter, timeout) {
   return new Promise(function(resolve, reject) {
     var found = queryMailbox(filter);
     if (found.length > 0) {
-      found[0].read = true;
+      found[0].read = 'READ';   // ensure read status
       resolve(found[0]);
       return;
     }
@@ -161,7 +156,7 @@ function waitForMailbox(filter, timeout) {
       var result = queryMailbox(filter);
       if (result.length > 0) {
         clearInterval(checkInterval);
-        result[0].read = true;
+        result[0].read = 'READ';
         resolve(result[0]);
       }
     }, POLL_INTERVAL);
@@ -170,7 +165,7 @@ function waitForMailbox(filter, timeout) {
       // Final check before rejecting (race mitigation)
       var late = queryMailbox(filter);
       if (late.length > 0) {
-        late[0].read = true;
+        late[0].read = 'READ';
         resolve(late[0]);
       } else {
         reject(new Error('Mailbox wait timeout for filter: ' + JSON.stringify(filter)));
