@@ -303,10 +303,17 @@ MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.GET_WORLDMAP, {}, worldma
 ACTORCONSUMERS['WORLDMAPACTOR:get_worldmap'] = worldmapbehavior;
 
 // DBACTOR
-MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.STORE, { key: 'string', value: 'any', resolve: 'function?', reject: 'function?' }, dbbehavior);
-MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.RESTORE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
-MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.LIST, { resolve: 'function?', reject: 'function?' }, dbbehavior);
-MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.DELETE, { key: 'string', resolve: 'function?', reject: 'function?' }, dbbehavior);
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.STORE, { key: 'string', value: 'any' }, dbbehavior);
+ACTORCONSUMERS['DBACTOR:store'] = dbbehavior;
+
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.RESTORE, { key: 'string' }, dbbehavior);
+ACTORCONSUMERS['DBACTOR:restore'] = dbbehavior;
+
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.LIST, {}, dbbehavior);
+ACTORCONSUMERS['DBACTOR:list'] = dbbehavior;
+
+MESSAGEREGISTRY.register('DBACTOR', MESSAGETYPES.DELETE, { key: 'string' }, dbbehavior);
+ACTORCONSUMERS['DBACTOR:delete'] = dbbehavior;
 
 // MAILACTOR
 MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.SEND, { recipient: 'string', message: 'object' }, mailbehavior);

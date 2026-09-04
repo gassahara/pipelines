@@ -1,12 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/actors/apiactor.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR
-//   - apibehavior returns env unchanged after sending updates via
-//     sendInstruction to worldmapactor (value set format).
-//   - No per-actor state globals; no createactor; no interfaces.
-// ============================================================
-
-// Pure behavior function: (env, message) -> env
 function apibehavior(env, message) {
   logdebug(env, '[APIACTOR]', 'behavior handling action:', message.type);
 
@@ -25,10 +16,10 @@ function apibehavior(env, message) {
       requestCount: (env.api && env.api.requestCount || 0) + 1
     };
 
-    // Send update to worldmapactor via message
-    sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+    // Send update to WORLDMAPACTOR via message
+    sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
       updates: [{ path: 'api', value: updatedApi }]
-    }, generateTag(), 'apiactor');
+    }, generateTag(), 'APIACTOR');
 
     var apiConstants = createApiConstants();
     var url = apiConstants.APIBASE + '/' + message.endpoint;
@@ -52,18 +43,18 @@ function apibehavior(env, message) {
         return response.json().then(function(data) {
           logdebug(env, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
           var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-          sendInstruction(message.sender, responseType, { result: { status: status, data: data } }, message.tag, 'apiactor');
+          sendResponse(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
         });
       }
       return response.text().then(function(data) {
         logdebug(env, '[APIACTOR]', 'action text response received for:', message.endpoint);
         var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        sendInstruction(message.sender, responseType, { result: { status: status, data: data } }, message.tag, 'apiactor');
+        sendResponse(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
       });
     }).catch(function(err) {
       logerror(env, '[APIACTOR]', 'action request error for:', message.endpoint, err);
       var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendInstruction(message.sender, responseType, { result: { error: err.message || String(err) } }, message.tag, 'apiactor');
+      sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'APIACTOR', responseType);
     });
   }
 
@@ -72,7 +63,7 @@ function apibehavior(env, message) {
 
 function enqueueapi(endpoint, method, payload, options, responseSpec) {
   var tag = generateTag();
-  sendInstruction('apiactor', MESSAGETYPES.API, {
+  sendInstruction('APIACTOR', MESSAGETYPES.API, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},
@@ -82,7 +73,7 @@ function enqueueapi(endpoint, method, payload, options, responseSpec) {
 
 function enqueuefetch(endpoint, method, payload, options, responseSpec) {
   var tag = generateTag();
-  sendInstruction('apiactor', MESSAGETYPES.FETCH, {
+  sendInstruction('APIACTOR', MESSAGETYPES.FETCH, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},

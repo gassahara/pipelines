@@ -59,7 +59,6 @@ function serializeForPersistence(value, seen, refMap) {
     return { typeMarker: 'set', values: setarr };
   }
   if (typeof value === 'object') {
-    // Deduplication: check if already serialized
     var refIndex = refMap.indexOf(value);
     if (refIndex !== -1) return { typeMarker: 'ref', refIndex: refIndex };
     if (seen.indexOf(value) !== -1) return { typeMarker: 'circular' };
@@ -104,7 +103,7 @@ function persist(store) {
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
 
-var FN_TAG = 'serializedFunction'; // renamed from __fn__
+var FN_TAG = 'serializedFunction';
 
 function dnaReplacer(key, value) {
   if (typeof value === 'function') {
@@ -323,8 +322,6 @@ var dbbehavior = function(env, message) {
   logdebug(env, '[DBACTOR]', 'behavior handling action:', message.type);
   var dbSlice = ensureDbSlice(env);
   var store = dbSlice.store;
-  var resolve = function(val) { if (typeof message.resolve === 'function') message.resolve(val); };
-  var reject = function(err) { if (typeof message.reject === 'function') message.reject(err); };
 
   switch (message.type) {
     case MESSAGETYPES.STORE:
@@ -333,10 +330,13 @@ var dbbehavior = function(env, message) {
         var serialized = JSON.stringify(serializeForPersistence(message.value));
         if (serialized.length > MAXENTRYBYTES) {
           logwarn(env, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
-          reject(new Error('value too large'));
+          sendResponse(message.sender, message.tag, { error: 'value too large' }, 'DBACTOR');
           return env;
         }
-      } catch (e) { reject(e); return env; }
+      } catch (e) {
+        sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'DBACTOR');
+        return env;
+      }
       var keys = Object.keys(store);
       if (keys.length >= MAXKEYS && !store[message.key]) {
         var oldest = keys[0];
@@ -344,56 +344,56 @@ var dbbehavior = function(env, message) {
       }
       store[message.key] = message.value;
       var persisted = persist(store);
-      if (persisted) resolve(true); else reject(new Error('persist failed'));
+      if (persisted) sendResponse(message.sender, message.tag, true, 'DBACTOR');
+      else sendResponse(message.sender, message.tag, { error: 'persist failed' }, 'DBACTOR');
       return env;
+
     case MESSAGETYPES.RESTORE:
       logdebug(env, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
-      resolve(store[message.key] !== undefined ? store[message.key] : null);
+      sendResponse(message.sender, message.tag, store[message.key] !== undefined ? store[message.key] : null, 'DBACTOR');
       return env;
+
     case MESSAGETYPES.LIST:
       logdebug(env, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
-      resolve(Object.keys(store));
+      sendResponse(message.sender, message.tag, Object.keys(store), 'DBACTOR');
       return env;
+
     case MESSAGETYPES.DELETE:
       logdebug(env, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
       var persistedDel = persist(store);
-      if (persistedDel) resolve(true); else reject(new Error('persist failed'));
+      if (persistedDel) sendResponse(message.sender, message.tag, true, 'DBACTOR');
+      else sendResponse(message.sender, message.tag, { error: 'persist failed' }, 'DBACTOR');
       return env;
+
     default:
       logwarn(env, '[DBACTOR]', 'unknown action:', message.type);
-      reject(new Error('[DBACTOR] unknown message type'));
+      sendResponse(message.sender, message.tag, { error: '[DBACTOR] unknown message type' }, 'DBACTOR');
       return env;
   }
 };
 
 var enqueue = function(type, payload) {
-  return new Promise(function(resolve, reject) {
-    var message = {};
-    if (payload) Object.keys(payload).forEach(function(k) { message[k] = payload[k]; });
-    message.type = type;
-    message.resolve = resolve;
-    message.reject = reject;
-    dispatchToActor('dbactor', dbbehavior, message);
-  });
+  var tag = generateTag();
+  sendInstruction('DBACTOR', type, payload, tag, 'system');
 };
 
-var enqueueDbStore = function(key, value) { return enqueue(MESSAGETYPES.STORE, { key: key, value: value }); };
-var enqueueDbRestore = function(key) { return enqueue(MESSAGETYPES.RESTORE, { key: key }); };
-var enqueueDbList = function() { return enqueue(MESSAGETYPES.LIST); };
-var enqueueDbDelete = function(key) { return enqueue(MESSAGETYPES.DELETE, { key: key }); };
+var enqueueDbStore = function(key, value) { enqueue(MESSAGETYPES.STORE, { key: key, value: value }); };
+var enqueueDbRestore = function(key) { enqueue(MESSAGETYPES.RESTORE, { key: key }); };
+var enqueueDbList = function() { enqueue(MESSAGETYPES.LIST); };
+var enqueueDbDelete = function(key) { enqueue(MESSAGETYPES.DELETE, { key: key }); };
 
 function startDbActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      var env = getActorState('worldmapactor');
+      var env = getActorState('WORLDMAPACTOR');
       if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('worldmapactor'); },
-    dispatch: function(message) { return dispatchToActor('dbactor', dbbehavior, message); }
+    getstate: function() { return getActorState('WORLDMAPACTOR'); },
+    dispatch: function(message) { return dispatchToActor('DBACTOR', dbbehavior, message); }
   };
 }

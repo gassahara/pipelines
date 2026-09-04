@@ -1,13 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/actors/worldmapactor.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR
-//   - No createInitialEnv; initial state is {} (empty object).
-//   - recoverEnv returns saved ENV or {}.
-//   - startWorldmapActor returns a Promise that resolves after recovery.
-//   - Worldmapactor does not define or merge actor slices.
-//   - Behavior returns env, compatible with immutable dispatch wrapper.
-// ============================================================
-
 var worldmapVerbosityConstants = createVerbosityConstants();
 var worldmapState = Object.freeze({ level: worldmapVerbosityConstants.DEBUG });
 
@@ -90,7 +80,7 @@ function worldmapbehavior(env, message) {
     case MESSAGETYPES.GET_WORLDMAP:
     case MESSAGETYPES.GET_ENV: {
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, env, 'worldmapactor');
+        sendResponse(message.sender, message.tag, env, 'WORLDMAPACTOR');
       }
       return env;
     }
@@ -101,23 +91,23 @@ function worldmapbehavior(env, message) {
 }
 
 // Initial state is empty object; actors own their slices.
-registerActorState('worldmapactor', {});
+registerActorState('WORLDMAPACTOR', {});
 
 function startWorldmapActor(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
       worldmapState = Object.freeze({ level: lvl });
-      var envForVerbosity = getActorState('worldmapactor');
+      var envForVerbosity = getActorState('WORLDMAPACTOR');
       if (envForVerbosity) {
-        setActorState('worldmapactor', setInPath(envForVerbosity, 'verbosity', lvl));
+        setActorState('WORLDMAPACTOR', setInPath(envForVerbosity, 'verbosity', lvl));
       }
     }
   }
-  var currentEnv = getActorState('worldmapactor') || {};
+  var currentEnv = getActorState('WORLDMAPACTOR') || {};
   // Return promise that resolves after recovery and state set.
   return recoverEnv().then(function(saved) {
-    setActorState('worldmapactor', saved);
+    setActorState('WORLDMAPACTOR', saved);
     return saved;
   }).catch(function(err) {
     logwarn(currentEnv, '[WORLDMAPACTOR]', 'state restore failed:', err);
@@ -128,26 +118,26 @@ function startWorldmapActor(options) {
 function sendworldmappatch(patch, responseSpec) {
   if (patch && patch.updates) {
     var tag = generateTag();
-    sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, { updates: patch.updates }, tag, 'system', responseSpec);
+    sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { updates: patch.updates }, tag, 'system', responseSpec);
   }
 }
 
 function updateworldmapfn(fn, responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE_FN, { fn: fn }, tag, 'system', responseSpec);
+  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE_FN, { fn: fn }, tag, 'system', responseSpec);
 }
 
 function observeworldmap(observer, responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.OBSERVE, { observer: observer }, tag, 'system', responseSpec);
+  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { observer: observer }, tag, 'system', responseSpec);
 }
 
 function unobserveworldmap(observer, responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.UNOBSERVE, { observer: observer }, tag, 'system', responseSpec);
+  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { observer: observer }, tag, 'system', responseSpec);
 }
 
 function getworldmap(responseSpec) {
   var tag = generateTag();
-  sendInstruction('worldmapactor', MESSAGETYPES.GET_WORLDMAP, {}, tag, 'system', responseSpec);
+  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.GET_WORLDMAP, {}, tag, 'system', responseSpec);
 }

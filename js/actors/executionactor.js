@@ -69,7 +69,7 @@ function cancelTask(execSlice, taskid) {
   (task.childTaskIds || []).forEach(function(childId) { cancelTask(execSlice, childId); });
   var err = { error: 'Task cancelled: ' + taskid };
   (task.consumers || []).forEach(function(consumer) {
-    sendResponse(consumer.sender, consumer.tag, err, 'executionactor');
+    sendResponse(consumer.sender, consumer.tag, err, 'EXECUTIONACTOR');
   });
   task.consumers = [];
 }
@@ -81,7 +81,7 @@ function stopTask(execSlice, taskid) {
   task.status = 'STOPPED';
   var err = { error: 'Task stopped: ' + taskid };
   (task.consumers || []).forEach(function(consumer) {
-    sendResponse(consumer.sender, consumer.tag, err, 'executionactor');
+    sendResponse(consumer.sender, consumer.tag, err, 'EXECUTIONACTOR');
   });
   task.consumers = [];
 }
@@ -100,9 +100,9 @@ function ensurePipeline(execSlice, pipelineid) {
 }
 
 function sendExecutionUpdate(execSlice) {
-  sendInstruction('worldmapactor', MESSAGETYPES.UPDATE, {
+  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
     updates: [{ path: 'execution', value: execSlice }]
-  }, generateTag(), 'executionactor');
+  }, generateTag(), 'EXECUTIONACTOR');
 }
 
 // Pure behavior function: (env, message) -> env
@@ -129,7 +129,7 @@ function executionbehavior(env, message) {
     case MESSAGETYPES.GET_STATUS: {
       var status = message.pipelineid ? (execSlice.pipelines[message.pipelineid] || null) : execSlice.pipelines;
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, status, 'executionactor');
+        sendResponse(message.sender, message.tag, status, 'EXECUTIONACTOR');
       }
       return env;
     }
@@ -143,7 +143,6 @@ function executionbehavior(env, message) {
         programRef: message.programRef || null,
         origin: message.origin || null
       });
-      // P13: Register requester as consumer so settleTask can respond.
       if (message.sender && message.tag) {
         task.consumers = task.consumers || [];
         task.consumers.push({ sender: message.sender, tag: message.tag });
@@ -158,25 +157,25 @@ function executionbehavior(env, message) {
       var awaitTask = execSlice.tasks[message.taskid];
       if (!awaitTask) {
         if (message.sender && message.tag) {
-          sendResponse(message.sender, message.tag, { error: '[EXECUTIONACTOR] unknown task: ' + message.taskid }, 'executionactor');
+          sendResponse(message.sender, message.tag, { error: '[EXECUTIONACTOR] unknown task: ' + message.taskid }, 'EXECUTIONACTOR');
         }
         return env;
       }
       if (awaitTask.status === 'EXECUTED') {
         if (message.sender && message.tag) {
-          sendResponse(message.sender, message.tag, awaitTask.result || {}, 'executionactor');
+          sendResponse(message.sender, message.tag, awaitTask.result || {}, 'EXECUTIONACTOR');
         }
       } else if (awaitTask.status === 'FAILED') {
         if (message.sender && message.tag) {
-          sendResponse(message.sender, message.tag, { error: awaitTask.error ? awaitTask.error.message : 'task failed' }, 'executionactor');
+          sendResponse(message.sender, message.tag, { error: awaitTask.error ? awaitTask.error.message : 'task failed' }, 'EXECUTIONACTOR');
         }
       } else if (awaitTask.status === 'CANCELLED') {
         if (message.sender && message.tag) {
-          sendResponse(message.sender, message.tag, { error: awaitTask.error ? awaitTask.error.message : 'task cancelled' }, 'executionactor');
+          sendResponse(message.sender, message.tag, { error: awaitTask.error ? awaitTask.error.message : 'task cancelled' }, 'EXECUTIONACTOR');
         }
       } else if (awaitTask.status === 'STOPPED') {
         if (message.sender && message.tag) {
-          sendResponse(message.sender, message.tag, { error: 'task stopped' }, 'executionactor');
+          sendResponse(message.sender, message.tag, { error: 'task stopped' }, 'EXECUTIONACTOR');
         }
       } else {
         if (!awaitTask.consumers) awaitTask.consumers = [];
@@ -206,7 +205,7 @@ function executionbehavior(env, message) {
         });
       });
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, result, 'executionactor');
+        sendResponse(message.sender, message.tag, result, 'EXECUTIONACTOR');
       }
       return env;
     }
@@ -225,7 +224,7 @@ function executionbehavior(env, message) {
         consumerCount: (t2.consumers || []).length
       } : null;
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, statusResult, 'executionactor');
+        sendResponse(message.sender, message.tag, statusResult, 'EXECUTIONACTOR');
       }
       return env;
     }
@@ -255,11 +254,11 @@ function executionbehavior(env, message) {
         var consumers = task4.consumers || [];
         if (message.status === 'EXECUTED') {
           consumers.forEach(function(consumer) {
-            sendResponse(consumer.sender, consumer.tag, message.result || {}, 'executionactor');
+            sendResponse(consumer.sender, consumer.tag, message.result || {}, 'EXECUTIONACTOR');
           });
         } else if (message.status === 'FAILED') {
           consumers.forEach(function(consumer) {
-            sendResponse(consumer.sender, consumer.tag, { error: message.error ? message.error.message : 'task failed' }, 'executionactor');
+            sendResponse(consumer.sender, consumer.tag, { error: message.error ? message.error.message : 'task failed' }, 'EXECUTIONACTOR');
           });
         }
         task4.consumers = [];
@@ -280,9 +279,9 @@ function executionbehavior(env, message) {
           };
         }
         sendExecutionUpdate(env.execution);
-        if (message.sender && message.tag) sendResponse(message.sender, message.tag, env, 'executionactor');
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, env, 'EXECUTIONACTOR');
       }).catch(function(e) {
-        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'executionactor');
+        if (message.sender && message.tag) sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'EXECUTIONACTOR');
       });
       return env;
     }
@@ -296,7 +295,7 @@ function executionbehavior(env, message) {
     }
     case MESSAGETYPES.PING: {
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, true, 'executionactor');
+        sendResponse(message.sender, message.tag, true, 'EXECUTIONACTOR');
       }
       return env;
     }
@@ -307,7 +306,6 @@ function executionbehavior(env, message) {
   }
 }
 
-// Internal task settlement: direct call, then update worldmapactor.
 function settleTask(taskid, status, result, error, env) {
   logdebug(env, '[EXECUTIONACTOR]', 'settleTask task:', taskid, 'status:', status, 'pipeline:', (env.execution && env.execution.tasks && env.execution.tasks[taskid] ? env.execution.tasks[taskid].pipelineid : 'unknown'));
   var execSlice = env.execution;
@@ -327,7 +325,7 @@ function settleTask(taskid, status, result, error, env) {
       result: result || {}
     };
     consumers.forEach(function(consumer) {
-      sendResponse(consumer.sender, consumer.tag, responsePayload, 'executionactor', MESSAGETYPES.TASK_RESULT);
+      sendResponse(consumer.sender, consumer.tag, responsePayload, 'EXECUTIONACTOR', MESSAGETYPES.TASK_RESULT);
     });
   } else if (status === 'FAILED') {
     responsePayload = {
@@ -337,7 +335,7 @@ function settleTask(taskid, status, result, error, env) {
       error: error ? error.message : 'task failed'
     };
     consumers.forEach(function(consumer) {
-      sendResponse(consumer.sender, consumer.tag, responsePayload, 'executionactor', MESSAGETYPES.TASK_RESULT);
+      sendResponse(consumer.sender, consumer.tag, responsePayload, 'EXECUTIONACTOR', MESSAGETYPES.TASK_RESULT);
     });
   }
   task.consumers = [];
@@ -345,7 +343,6 @@ function settleTask(taskid, status, result, error, env) {
   logdebug(env, '[EXECUTIONACTOR]', 'settleTask completed:', taskid, 'consumers notified:', consumers.length);
 }
 
-// P34: runElementTask now catches synchronous executor errors.
 function runElementTask(taskid, descriptor, env) {
   var executionContext = {
     env: descriptor.env,
@@ -393,63 +390,63 @@ function runElementTask(taskid, descriptor, env) {
 
 function enqueueExecutionPipelineLoaded(pipelineid, env, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionSubmit(descriptor, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionAwaitTask(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.AWAIT_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.AWAIT_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionGetTasks(filters, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.GET_TASKS, filters || {}, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.GET_TASKS, filters || {}, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionGetTaskStatus(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.GET_TASK_STATUS, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionCancelTask(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CANCEL_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.CANCEL_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionStopTask(taskid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.STOP_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.STOP_TASK, { taskid: taskid }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionGetStatus(pipelineid, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.GET_STATUS, { pipelineid: pipelineid }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionEnvUpdated(pipelineid, env, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.ENV_UPDATED, { pipelineid: pipelineid, env: env }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionCccAbort(pipelineid, path, elementid, continuation, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.CCC_ABORT, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionCccContinue(pipelineid, path, elementid, continuation, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.CCC_CONTINUE, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionCccRetry(pipelineid, path, elementid, continuation, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.CCC_RETRY, { pipelineid: pipelineid, path: path, elementid: elementid, continuation: continuation }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionRegisterPipeline(pipelineid, dna, env, responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineid, dna: dna, env: env }, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionRecover(responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.RECOVER, {}, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.RECOVER, {}, tag, 'blockcompiler', responseSpec);
 }
 function enqueueExecutionPing(responseSpec) {
   var tag = generateTag();
-  sendInstruction('executionactor', MESSAGETYPES.PING, {}, tag, 'blockcompiler', responseSpec);
+  sendInstruction('EXECUTIONACTOR', MESSAGETYPES.PING, {}, tag, 'blockcompiler', responseSpec);
 }
 
 function startExecutionActor(options) {
@@ -457,13 +454,13 @@ function startExecutionActor(options) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      var env = getActorState('worldmapactor');
+      var env = getActorState('WORLDMAPACTOR');
       if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('worldmapactor'); },
-    dispatch: function(message) { return dispatchToActor('executionactor', executionbehavior, message); }
+    getstate: function() { return getActorState('WORLDMAPACTOR'); },
+    dispatch: function(message) { return dispatchToActor('EXECUTIONACTOR', executionbehavior, message); }
   };
 }
 

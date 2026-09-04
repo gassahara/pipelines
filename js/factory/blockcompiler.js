@@ -336,7 +336,7 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
 
     var tag = generateTag();
     var responseType = isTextual ? 'fetch_result' : 'api_result';
-    var sender = isTextual ? 'APIACTOR' : 'APIACTOR'; // both go to APIACTOR
+    var sender = 'APIACTOR'; // both API and FETCH go to APIACTOR
 
     sendInstruction('APIACTOR', isTextual ? MESSAGETYPES.FETCH : MESSAGETYPES.API, {
       endpoint: endpoint,
@@ -451,7 +451,27 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var props = merged.command.properties || {};
       var tag = generateTag();
       var responseType = 'dom_result';
-      sendInstruction('RENDERACTOR', MESSAGETYPES[cmd.toUpperCase()] || cmd, {
+      // Map command to correct MESSAGETYPES constant
+      var msgType;
+      switch (cmd) {
+        case 'gethtml': msgType = MESSAGETYPES.GETHTML; break;
+        case 'getvalue': msgType = MESSAGETYPES.GETVALUE; break;
+        case 'getstyle': msgType = MESSAGETYPES.GETSTYLE; break;
+        case 'getposition': msgType = MESSAGETYPES.GETPOSITION; break;
+        case 'getlayout': msgType = MESSAGETYPES.GETLAYOUT; break;
+        case 'sethtml': msgType = MESSAGETYPES.SETHTML; break;
+        case 'setposition': msgType = MESSAGETYPES.SETPOSITION; break;
+        case 'setstyle': msgType = MESSAGETYPES.SETSTYLE; break;
+        case 'setvalue': msgType = MESSAGETYPES.SETVALUE; break;
+        case 'setlayout': msgType = MESSAGETYPES.SETLAYOUT; break;
+        case 'toggleclass': msgType = MESSAGETYPES.TOGGLECLASS; break;
+        case 'property': msgType = MESSAGETYPES.PROPERTY; break;
+        case 'getviewport': msgType = MESSAGETYPES.GETVIEWPORT; break;
+        case 'getscreen': msgType = MESSAGETYPES.GETSCREEN; break;
+        case 'matchmedia': msgType = MESSAGETYPES.MATCHMEDIA; break;
+        default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
+      }
+      sendInstruction('RENDERACTOR', msgType, {
         id: props.id,
         value: props.value,
         classname: props.classname,
@@ -505,7 +525,17 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var args = command.args || {};
       var tag = generateTag();
       var responseType = 'task_result';
-      sendInstruction('EXECUTIONACTOR', MESSAGETYPES[COMMAND.toUpperCase()] || COMMAND, args, tag, 'BLOCKCOMPILER', { responseType: responseType });
+      var msgType;
+      switch (COMMAND) {
+        case 'get': msgType = MESSAGETYPES.GET_STATUS; break;
+        case 'tasks': msgType = MESSAGETYPES.GET_TASKS; break;
+        case 'task_status': msgType = MESSAGETYPES.GET_TASK_STATUS; break;
+        case 'await_task': msgType = MESSAGETYPES.AWAIT_TASK; break;
+        case 'cancel_task': msgType = MESSAGETYPES.CANCEL_TASK; break;
+        case 'stop_task': msgType = MESSAGETYPES.STOP_TASK; break;
+        default: throw new Error('[executionquery] unknown command: ' + COMMAND);
+      }
+      sendInstruction('EXECUTIONACTOR', msgType, args, tag, 'BLOCKCOMPILER', { responseType: responseType });
       return waitForMailbox({ tag: tag, sender: 'EXECUTIONACTOR' }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
@@ -522,8 +552,16 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var COMMAND = command.COMMAND;
       var args = command.args || {};
       var tag = generateTag();
-      var responseType = 'dom_result'; // dbactor uses dom_result? Actually should be a dedicated type; but for now keep consistent.
-      sendInstruction('DBACTOR', MESSAGETYPES[COMMAND.toUpperCase()] || COMMAND, args, tag, 'BLOCKCOMPILER', { responseType: responseType });
+      var responseType = 'dom_result'; // dbactor sends response; type can be 'dom_result' or dedicated
+      var msgType;
+      switch (COMMAND) {
+        case 'store': msgType = MESSAGETYPES.STORE; break;
+        case 'restore': msgType = MESSAGETYPES.RESTORE; break;
+        case 'list': msgType = MESSAGETYPES.LIST; break;
+        case 'delete': msgType = MESSAGETYPES.DELETE; break;
+        default: throw new Error('[storequery] unknown command: ' + COMMAND);
+      }
+      sendInstruction('DBACTOR', msgType, args, tag, 'BLOCKCOMPILER', { responseType: responseType });
       return waitForMailbox({ tag: tag, sender: 'DBACTOR' }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
@@ -1000,4 +1038,3 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
   if (compiledElement.blockmeta) wrapper.blockmeta = compiledElement.blockmeta;
   return wrapper;
 }
-
