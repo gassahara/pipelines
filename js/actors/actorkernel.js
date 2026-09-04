@@ -1,16 +1,6 @@
-// ============================================================
-// UPDATED FILE: js/actors/actorkernel.js
-// Change applied: IMMUTABLE DISPATCH REFACTOR
-//   - Added pure dispatchImmutable(env, actorName, behavior, message)
-//   - dispatchToActor is now a wrapper that reads current ENV,
-//     calls dispatchImmutable, then stores returned ENV.
-//   - Added ensureEnvSlice(env, sliceName, defaultFactory) helper.
-//   - No internal global mutations inside pure transformer.
-// ============================================================
-
 var kernelVerbosityConstants = createVerbosityConstants();
 
-// State registry now only holds worldmapactor's ENV.
+// State registry now only holds WORLDMAPACTOR's ENV.
 var actorStateRegistry = {};
 
 function registerActorState(actorName, initialState) {
@@ -36,18 +26,18 @@ function dispatchImmutable(env, actorName, behavior, message) {
 
 // Wrapper that manages global state outside the pure core.
 function dispatchToActor(actorName, behavior, message) {
-  var currentEnv = getActorState('worldmapactor');
+  var currentEnv = getActorState('WORLDMAPACTOR');
   if (currentEnv === undefined) {
-    throw new Error('[dispatchToActor] worldmapactor state (ENV) is not registered');
+    throw new Error('[dispatchToActor] WORLDMAPACTOR state (ENV) is not registered');
   }
   var result = dispatchImmutable(currentEnv, actorName, behavior, message);
   if (result && typeof result.then === 'function') {
     return result.then(function(newEnv) {
-      setActorState('worldmapactor', newEnv);
+      setActorState('WORLDMAPACTOR', newEnv);
       return newEnv;
     });
   }
-  setActorState('worldmapactor', result);
+  setActorState('WORLDMAPACTOR', result);
   return result;
 }
 
