@@ -26,6 +26,10 @@ function mailbehavior(env, message) {
     }
     if (!mailSlice.queues[recipient]) mailSlice.queues[recipient] = [];
     var flatMessage = message.message;
+
+    // Log SEND start
+    logdebug(env, '[MAILACTOR]', 'SEND start:', 'recipient=', recipient, 'type=', flatMessage.type, 'tag=', flatMessage.tag, 'sender=', flatMessage.sender);
+
     var envelope = {
       id: 'mail_' + (mailSlice.nextId++),
       recipient: recipient,
@@ -36,11 +40,28 @@ function mailbehavior(env, message) {
       timestamp: Date.now(),
       payload: flatMessage
     };
+
+    // Log envelope creation
+    logdebug(env, '[MAILACTOR]', 'Envelope created:', envelope.id, 'read=', envelope.read, 'tag=', envelope.tag, 'sender=', envelope.sender);
+
     mailSlice.queues[recipient].push(envelope);
     MAILBOX.push(envelope); // store in mailbox
 
-    // DIRECT DISPATCH REMOVED – no consumer invocation here.
-    // All delivery is through MAILBOX and queryMailbox/waitForMailbox.
+    // Log MAILBOX push
+    logdebug(env, '[MAILACTOR]', 'Envelope pushed to MAILBOX:', envelope.id, 'MAILBOX length=', MAILBOX.length);
+
+    // DIRECT DISPATCH: invoke consumer for recipient and message type
+    var consumerKey = recipient + ':' + flatMessage.type;
+    var consumer = ACTORCONSUMERS[consumerKey];
+    if (consumer) {
+      logdebug(env, '[MAILACTOR]', 'Dispatching to actor:', recipient, 'type=', flatMessage.type, 'tag=', flatMessage.tag);
+      dispatchToActor(recipient, consumer, flatMessage);
+      // Mark envelope as READ after dispatch
+      envelope.read = 'READ';
+      logdebug(env, '[MAILACTOR]', 'Envelope marked READ after dispatch:', envelope.id, 'tag=', envelope.tag);
+    } else {
+      logdebug(env, '[MAILACTOR]', 'No consumer registered for:', consumerKey);
+    }
 
     // Store expectation if responseSpec present
     if (flatMessage.responseSpec && flatMessage.tag) {
@@ -60,6 +81,7 @@ function mailbehavior(env, message) {
       };
       EXPECTATIONS[flatMessage.tag] = expectation;
       MAILBOX.push(expectation); // store expectation in mailbox too
+      logdebug(env, '[MAILACTOR]', 'Expectation created:', flatMessage.tag, 'status=', expectation.status, 'read=', expectation.read);
 
       // Schedule timeout (does NOT delete expectation; just marks it TIMEOUT)
       setTimeout(function() {
@@ -90,8 +112,39 @@ function mailbehavior(env, message) {
     return env;
   }
 
-  // Response handling block REMOVED – messages are homogeneous.
-  // No special handling for tagged responses; they are already in MAILBOX.
+  // Response handling: for any message with a tag that has an expectation
+  if (message && message.tag && EXPECTATIONS[message.tag]) {
+    var expectation = EXPECTATIONS[message.tag];
+    var responseConsumer = RESPONSECONSUMERS[expectation.responseSpec.responseType];
+    var envelopeForResponse = null;
+    // Locate the envelope in MAILBOX with this tag to mark read
+    for (var i = 0; i < MAILBOX.length; i++) {
+      if (MAILBOX[i].tag === message.tag && MAILBOX[i].sender === 'executionactor') {
+        envelopeForResponse = MAILBOX[i];
+        break;
+      }
+    }
+
+    if (responseConsumer) {
+      var result = (message && message.result !== undefined) ? message.result : message;
+      expectation.status = 'RESOLVED';
+      expectation.resolvedAt = Date.now();
+      expectation.read = 'READ';
+      if (envelopeForResponse) envelopeForResponse.read = 'READ';
+      logdebug(env, '[MAILACTOR]', 'Response consumed by consumer:', message.tag, 'status=', expectation.status, 'read=', expectation.read);
+      setTimeout(function() { responseConsumer(result, message.tag); }, 0);
+      delete EXPECTATIONS[message.tag];
+    } else {
+      // No registered consumer; leave message in mailbox for non-actor
+      expectation.status = 'RESOLVED';
+      expectation.resolvedAt = Date.now();
+      expectation.read = 'READ';
+      if (envelopeForResponse) envelopeForResponse.read = 'READ';
+      logdebug(env, '[MAILACTOR]', 'No consumer, expectation resolved:', message.tag, 'status=', expectation.status, 'read=', expectation.read);
+      delete EXPECTATIONS[message.tag];
+    }
+    // Message already stored in mailbox; non-actor will query
+  }
 
   return env;
 }
@@ -105,7 +158,9 @@ function getMailbox() {
 // Extended to support filter.matches (function) and filter.props (object).
 function queryMailbox(filter) {
   if (!filter) filter = {};
-  return MAILBOX.filter(function(item) {
+  logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox filter:', JSON.stringify(filter));
+
+  var matched = MAILBOX.filter(function(item) {
     var matches = true;
     if (filter.recipient !== undefined && item.recipient !== filter.recipient) matches = false;
     if (filter.sender !== undefined && item.sender !== filter.sender) matches = false;
@@ -132,14 +187,20 @@ function queryMailbox(filter) {
       });
     }
     return matches;
-  }).map(function(item) {
-    // Mark as READ when query returns the item
+  });
+
+  logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox raw matches:', matched.length);
+
+  var result = matched.map(function(item) {
     if (item && item.read !== 'READ') {
       item.read = 'READ';
-      // Also update the original in MAILBOX (it's the same reference)
+      logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox marking READ:', item.id, 'tag=', item.tag);
     }
     return item;
   });
+
+  logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox returning', result.length, 'items');
+  return result;
 }
 
 // Unified wait: polls using POLL_INTERVAL, marks message as read on delivery.
