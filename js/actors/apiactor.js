@@ -1,4 +1,4 @@
-function apibehavior(env, message) {
+function APIBEHAVIOR(env, message) {
   logdebug(env, '[APIACTOR]', 'behavior handling action:', message.type);
 
   if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
@@ -17,9 +17,9 @@ function apibehavior(env, message) {
     };
 
     // Send update to WORLDMAPACTOR via message
-    sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
       updates: [{ path: 'api', value: updatedApi }]
-    }, generateTag(), 'APIACTOR');
+    }, GENERATETAG(), 'APIACTOR');
 
     var apiConstants = createApiConstants();
     var url = apiConstants.APIBASE + '/' + message.endpoint;
@@ -43,27 +43,27 @@ function apibehavior(env, message) {
         return response.json().then(function(data) {
           logdebug(env, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
           var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-          sendResponse(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
+          SENDRESPONSE(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
         });
       }
       return response.text().then(function(data) {
         logdebug(env, '[APIACTOR]', 'action text response received for:', message.endpoint);
         var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        sendResponse(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
+        SENDRESPONSE(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
       });
     }).catch(function(err) {
       logerror(env, '[APIACTOR]', 'action request error for:', message.endpoint, err);
       var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      sendResponse(message.sender, message.tag, { error: err.message || String(err) }, 'APIACTOR', responseType);
+      SENDRESPONSE(message.sender, message.tag, { error: err.message || String(err) }, 'APIACTOR', responseType);
     });
   }
 
   return env;
 }
 
-function enqueueapi(endpoint, method, payload, options, responseSpec) {
-  var tag = generateTag();
-  sendInstruction('APIACTOR', MESSAGETYPES.API, {
+function ENQUEUEAPI(endpoint, method, payload, options, responseSpec) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION('APIACTOR', MESSAGETYPES.API, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},
@@ -71,9 +71,9 @@ function enqueueapi(endpoint, method, payload, options, responseSpec) {
   }, tag, 'system', responseSpec);
 }
 
-function enqueuefetch(endpoint, method, payload, options, responseSpec) {
-  var tag = generateTag();
-  sendInstruction('APIACTOR', MESSAGETYPES.FETCH, {
+function ENQUEUEFETCH(endpoint, method, payload, options, responseSpec) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION('APIACTOR', MESSAGETYPES.FETCH, {
     endpoint: endpoint,
     method: method,
     payload: payload || {},

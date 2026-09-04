@@ -1,17 +1,3 @@
-// ============================================================
-// PROGRAM: js/messageregistry.js  (L0 leaf — no dependencies)
-// MESSAGE REGISTRY — global-vars architecture
-//   window.MESSAGETYPES    frozen union of ALL message type constants
-//   window.MESSAGEREGISTRY owner-scoped registry pairing each message type
-//                          with its interface spec AND its trigger (behavior)
-// Owner-scoping is mandatory: wire strings collide across actors
-// ('recover' x4, 'ping' x4, 'register_pipeline' x2) — REASONED_ITER4 proof 5.
-// A bare-type-keyed registry would silently overwrite. Each actor registers
-// its own types at load: MESSAGEREGISTRY.register(owner, type, iface, handler).
-// CENTRALIZATION: registration now occurs ONLY in registerconsumers.js,
-// not inside actor files.
-// ============================================================
-
 var MESSAGETYPES = Object.freeze({
   // renderactor (33)
   RENDER: 'render',
@@ -115,7 +101,8 @@ var MESSAGETYPES = Object.freeze({
   TASK_RESULT: 'task_result',
   PIPELINE_BOOTED: 'pipeline_booted',
   DOM_RESULT: 'dom_result',
-  STAGE_COMPLETED_ACK: 'stage_completed_ack'
+  STAGE_COMPLETED_ACK: 'stage_completed_ack',
+  DB_RESULT: 'db_result'
 });
 
 var MESSAGEREGISTRY_STORE = {};

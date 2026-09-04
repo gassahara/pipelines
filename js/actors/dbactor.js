@@ -5,6 +5,16 @@ var ROOTKEY = 'FRAMEWORK_DBACTOR_MAP';
 var MAXKEYS = 100;
 var MAXENTRYBYTES = 2 * 1024 * 1024;
 
+// Dedicated store mailbox (independent from main MAILBOX)
+var STORE_MAILBOX = [];
+
+// DBACTOR's own consumer registry
+var DBACTOR_CONSUMERS = {};
+
+// ------------------------------------------------------------------
+// Storage helpers
+// ------------------------------------------------------------------
+
 function getStorage() {
   try {
     var storage = typeof localStorage !== 'undefined' ? localStorage :
@@ -316,9 +326,56 @@ function deoptimizeSerializedDna(jsonString) {
   return finalResult;
 }
 
-// ==================== ACTOR BEHAVIOR (PURE FUNCTION, RETURNS ENV) ====================
+// ==================== STORE MAILBOX & WAIT ====================
 
-var dbbehavior = function(env, message) {
+function STORESEND(recipient, type, payload, tag, sender) {
+  var envelope = {
+    id: 'store_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    recipient: recipient,
+    type: type,
+    payload: payload,
+    tag: tag,
+    sender: sender,
+    read: 'UNREAD',
+    timestamp: Date.now()
+  };
+  STORE_MAILBOX.push(envelope);
+  return envelope;
+}
+
+function STOREWAIT(filter, timeout) {
+  if (timeout === undefined) timeout = 20000;
+  return new Promise(function(resolve, reject) {
+    var start = Date.now();
+    function poll() {
+      var matches = STORE_MAILBOX.filter(function(item) {
+        if (filter.tag !== undefined && item.tag !== filter.tag) return false;
+        if (filter.sender !== undefined && item.sender !== filter.sender) return false;
+        if (filter.recipient !== undefined && item.recipient !== filter.recipient) return false;
+        if (filter.type !== undefined && item.type !== filter.type) return false;
+        if (filter.read !== undefined && item.read !== filter.read) return false;
+        if (item.read === 'READ') return false; // default unread only
+        return true;
+      });
+      if (matches.length > 0) {
+        var item = matches[0];
+        item.read = 'READ';
+        resolve(item);
+        return;
+      }
+      if (Date.now() - start > timeout) {
+        reject(new Error('STORE wait timeout for filter: ' + JSON.stringify(filter)));
+        return;
+      }
+      setTimeout(poll, 50);
+    }
+    poll();
+  });
+}
+
+// ==================== DBACTOR BEHAVIOR ====================
+
+var DBBEHAVIOR = function(env, message) {
   logdebug(env, '[DBACTOR]', 'behavior handling action:', message.type);
   var dbSlice = ensureDbSlice(env);
   var store = dbSlice.store;
@@ -330,11 +387,11 @@ var dbbehavior = function(env, message) {
         var serialized = JSON.stringify(serializeForPersistence(message.value));
         if (serialized.length > MAXENTRYBYTES) {
           logwarn(env, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
-          sendResponse(message.sender, message.tag, { error: 'value too large' }, 'DBACTOR');
+          STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { error: 'value too large' }, message.tag, 'DBACTOR');
           return env;
         }
       } catch (e) {
-        sendResponse(message.sender, message.tag, { error: e.message || String(e) }, 'DBACTOR');
+        STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { error: e.message || String(e) }, message.tag, 'DBACTOR');
         return env;
       }
       var keys = Object.keys(store);
@@ -344,46 +401,71 @@ var dbbehavior = function(env, message) {
       }
       store[message.key] = message.value;
       var persisted = persist(store);
-      if (persisted) sendResponse(message.sender, message.tag, true, 'DBACTOR');
-      else sendResponse(message.sender, message.tag, { error: 'persist failed' }, 'DBACTOR');
+      if (persisted) STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { result: true }, message.tag, 'DBACTOR');
+      else STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { error: 'persist failed' }, message.tag, 'DBACTOR');
       return env;
 
     case MESSAGETYPES.RESTORE:
       logdebug(env, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
-      sendResponse(message.sender, message.tag, store[message.key] !== undefined ? store[message.key] : null, 'DBACTOR');
+      var restoredValue = store[message.key] !== undefined ? store[message.key] : null;
+      STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { result: restoredValue }, message.tag, 'DBACTOR');
       return env;
 
     case MESSAGETYPES.LIST:
       logdebug(env, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
-      sendResponse(message.sender, message.tag, Object.keys(store), 'DBACTOR');
+      STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { result: Object.keys(store) }, message.tag, 'DBACTOR');
       return env;
 
     case MESSAGETYPES.DELETE:
       logdebug(env, '[DBACTOR]', 'action DELETE key:', message.key);
       delete store[message.key];
       var persistedDel = persist(store);
-      if (persistedDel) sendResponse(message.sender, message.tag, true, 'DBACTOR');
-      else sendResponse(message.sender, message.tag, { error: 'persist failed' }, 'DBACTOR');
+      if (persistedDel) STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { result: true }, message.tag, 'DBACTOR');
+      else STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { error: 'persist failed' }, message.tag, 'DBACTOR');
       return env;
 
     default:
       logwarn(env, '[DBACTOR]', 'unknown action:', message.type);
-      sendResponse(message.sender, message.tag, { error: '[DBACTOR] unknown message type' }, 'DBACTOR');
+      STORESEND(message.sender, MESSAGETYPES.DB_RESULT, { error: '[DBACTOR] unknown message type' }, message.tag, 'DBACTOR');
       return env;
   }
 };
 
-var enqueue = function(type, payload) {
-  var tag = generateTag();
-  sendInstruction('DBACTOR', type, payload, tag, 'system');
-};
+// Register consumers for DBACTOR's own mailbox
+DBACTOR_CONSUMERS[MESSAGETYPES.STORE] = DBBEHAVIOR;
+DBACTOR_CONSUMERS[MESSAGETYPES.RESTORE] = DBBEHAVIOR;
+DBACTOR_CONSUMERS[MESSAGETYPES.LIST] = DBBEHAVIOR;
+DBACTOR_CONSUMERS[MESSAGETYPES.DELETE] = DBBEHAVIOR;
 
-var enqueueDbStore = function(key, value) { enqueue(MESSAGETYPES.STORE, { key: key, value: value }); };
-var enqueueDbRestore = function(key) { enqueue(MESSAGETYPES.RESTORE, { key: key }); };
-var enqueueDbList = function() { enqueue(MESSAGETYPES.LIST); };
-var enqueueDbDelete = function(key) { enqueue(MESSAGETYPES.DELETE, { key: key }); };
+// ==================== DIRECT DB API ====================
 
-function startDbActor(options) {
+function DB_STORE(key, value) {
+  var tag = GENERATETAG();
+  STORESEND('DBACTOR', MESSAGETYPES.STORE, { key: key, value: value }, tag, 'WORLDMAPACTOR');
+  return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
+}
+
+function DB_RESTORE(key) {
+  var tag = GENERATETAG();
+  STORESEND('DBACTOR', MESSAGETYPES.RESTORE, { key: key }, tag, 'WORLDMAPACTOR');
+  return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
+}
+
+function DB_LIST() {
+  var tag = GENERATETAG();
+  STORESEND('DBACTOR', MESSAGETYPES.LIST, {}, tag, 'WORLDMAPACTOR');
+  return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
+}
+
+function DB_DELETE(key) {
+  var tag = GENERATETAG();
+  STORESEND('DBACTOR', MESSAGETYPES.DELETE, { key: key }, tag, 'WORLDMAPACTOR');
+  return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
+}
+
+// ==================== START FUNCTION ====================
+
+function STARTDBACTOR(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
@@ -394,6 +476,6 @@ function startDbActor(options) {
   }
   return {
     getstate: function() { return getActorState('WORLDMAPACTOR'); },
-    dispatch: function(message) { return dispatchToActor('DBACTOR', dbbehavior, message); }
+    dispatch: function(message) { return DBBEHAVIOR(getActorState('WORLDMAPACTOR'), message); }
   };
 }

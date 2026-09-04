@@ -2,15 +2,15 @@ var MAILVERBOSITYCONSTANTS = createVerbosityConstants();
 var MAILSTATE = Object.freeze({ level: MAILVERBOSITYCONSTANTS.DEBUG });
 
 // Global registries
-var ACTORCONSUMERS = {};          // key: ACTOR_NAME + ':' + messageType -> behavior function
-var EXPECTATIONS = {};            // key: tag -> structured expectation object
-var MAILBOX = [];                 // all messages, request and response
+var ACTORCONSUMERS = {};
+var EXPECTATIONS = {};
+var MAILBOX = [];
 
 var EXPECTATION_TIMEOUT = 20000;
 var POLL_INTERVAL = 150;
 var MAILBOX_RESPONSE_TYPE = 'mailbox_response';
 
-function mailbehavior(env, message) {
+function MAILBEHAVIOR(env, message) {
   logdebug(env, '[MAILACTOR]', 'behavior handling action:', message.type);
 
   var mailSlice = ensureEnvSlice(env, 'mail', function() { return { queues: {}, nextId: 1 }; });
@@ -43,7 +43,6 @@ function mailbehavior(env, message) {
 
     logdebug(env, '[MAILACTOR]', 'Envelope pushed to MAILBOX:', envelope.id, 'MAILBOX length=', MAILBOX.length);
 
-    // DIRECT DISPATCH: invoke actor consumer for recipient and message type
     var consumerKey = recipient + ':' + flatMessage.type;
     var consumer = ACTORCONSUMERS[consumerKey];
     if (consumer) {
@@ -55,7 +54,6 @@ function mailbehavior(env, message) {
       logdebug(env, '[MAILACTOR]', 'No consumer registered for:', consumerKey);
     }
 
-    // Store expectation if responseSpec present
     if (flatMessage.responseSpec && flatMessage.tag) {
       var context = flatMessage.context || null;
       var expectation = {
@@ -109,7 +107,7 @@ function getMailbox() {
   return MAILBOX.slice();
 }
 
-function queryMailbox(filter) {
+function QUERYMAILBOX(filter) {
   if (!filter) filter = {};
   logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox filter:', JSON.stringify(filter));
 
@@ -153,17 +151,17 @@ function queryMailbox(filter) {
   return result;
 }
 
-function waitForMailbox(filter, timeout) {
+function WAITFORMAILBOX(filter, timeout) {
   if (timeout === undefined) timeout = EXPECTATION_TIMEOUT;
   return new Promise(function(resolve, reject) {
-    var found = queryMailbox(filter);
+    var found = QUERYMAILBOX(filter);
     if (found.length > 0) {
       found[0].read = 'READ';
       resolve(found[0]);
       return;
     }
     var checkInterval = setInterval(function() {
-      var result = queryMailbox(filter);
+      var result = QUERYMAILBOX(filter);
       if (result.length > 0) {
         clearInterval(checkInterval);
         result[0].read = 'READ';
@@ -172,7 +170,7 @@ function waitForMailbox(filter, timeout) {
     }, POLL_INTERVAL);
     setTimeout(function() {
       clearInterval(checkInterval);
-      var late = queryMailbox(filter);
+      var late = QUERYMAILBOX(filter);
       if (late.length > 0) {
         late[0].read = 'READ';
         resolve(late[0]);
@@ -183,12 +181,12 @@ function waitForMailbox(filter, timeout) {
   });
 }
 
-function generateTag() {
+function GENERATETAG() {
   return 'tag_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
 }
 
-function sendInstruction(recipient, type, payload, tag, sender, responseSpec, context) {
-  if (tag === undefined) tag = generateTag();
+function SENDINSTRUCTION(recipient, type, payload, tag, sender, responseSpec, context) {
+  if (tag === undefined) tag = GENERATETAG();
   if (sender === undefined) sender = 'system';
 
   var flatMessage = { type: type, sender: sender, tag: tag };
@@ -212,24 +210,24 @@ function sendInstruction(recipient, type, payload, tag, sender, responseSpec, co
     }
   }
 
-  dispatchToActor('MAILACTOR', mailbehavior, {
+  dispatchToActor('MAILACTOR', MAILBEHAVIOR, {
     type: MESSAGETYPES.SEND,
     recipient: recipient,
     message: flatMessage
   });
 }
 
-function sendResponse(recipient, tag, result, sender, responseType) {
+function SENDRESPONSE(recipient, tag, result, sender, responseType) {
   if (responseType === undefined) {
     logwarn(MAILSTATE, '[MAILACTOR]', 'sendResponse missing responseType for tag:', tag);
     responseType = MAILBOX_RESPONSE_TYPE;
   }
   var type = responseType || MESSAGETYPES.RESPONSE;
   var payload = { result: result };
-  sendInstruction(recipient, type, payload, tag, sender, undefined, null);
+  SENDINSTRUCTION(recipient, type, payload, tag, sender, undefined, null);
 }
 
-function startMailActor(options) {
+function STARTMAILACTOR(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
@@ -240,6 +238,6 @@ function startMailActor(options) {
   }
   return {
     getstate: function() { return getActorState('WORLDMAPACTOR'); },
-    dispatch: function(message) { return dispatchToActor('MAILACTOR', mailbehavior, message); }
+    dispatch: function(message) { return dispatchToActor('MAILACTOR', MAILBEHAVIOR, message); }
   };
 }

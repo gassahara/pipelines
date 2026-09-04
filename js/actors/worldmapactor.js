@@ -1,28 +1,28 @@
-var worldmapVerbosityConstants = createVerbosityConstants();
-var worldmapState = Object.freeze({ level: worldmapVerbosityConstants.DEBUG });
+var WORLDMAPVERBOSITYCONSTANTS = createVerbosityConstants();
+var WORLDMAPSTATE = Object.freeze({ level: WORLDMAPVERBOSITYCONSTANTS.DEBUG });
 
 // Immutable path setter and value set application remain.
-function setInPath(obj, path, value) {
+function SETINPATH(obj, path, value) {
   var keys = path.split('.');
   if (keys.length === 0) return value;
   var key = keys[0];
   var rest = keys.slice(1).join('.');
   var nextObj = obj && typeof obj === 'object' ? obj : {};
-  var updatedChild = rest ? setInPath(nextObj[key], rest, value) : value;
+  var updatedChild = rest ? SETINPATH(nextObj[key], rest, value) : value;
   var newObj = Array.isArray(nextObj) ? nextObj.slice() : Object.assign({}, nextObj);
   newObj[key] = updatedChild;
   return newObj;
 }
 
-function applyValueSet(env, updates) {
+function APPLYVALUESET(env, updates) {
   return updates.reduce(function(acc, update) {
-    return setInPath(acc, update.path, update.value);
+    return SETINPATH(acc, update.path, update.value);
   }, env);
 }
 
-function persistEnv(env) {
+function PERSISTENV(env) {
   logdebug(env, '[WORLDMAPACTOR]', 'persistEnv saving ENV to db');
-  enqueueDbStore('actor:state:env', env).then(function(success) {
+  DB_STORE('actor:state:env', env).then(function(success) {
     if (success === false) {
       logwarn(env, '[WORLDMAPACTOR]', 'state persist failed');
     }
@@ -31,9 +31,9 @@ function persistEnv(env) {
   });
 }
 
-function recoverEnv() {
+function RECOVERENV() {
   logdebug({}, '[WORLDMAPACTOR]', 'recoverEnv start');
-  return enqueueDbRestore('actor:state:env').then(function(saved) {
+  return DB_RESTORE('actor:state:env').then(function(saved) {
     if (saved !== null && saved !== undefined) {
       loginfo(saved, '[WORLDMAPACTOR]', 'recoverEnv restored ENV');
       return saved;
@@ -44,7 +44,7 @@ function recoverEnv() {
 }
 
 // Pure behavior function: (env, message) -> env
-function worldmapbehavior(env, message) {
+function WORLDMAPBEHAVIOR(env, message) {
   logdebug(env, '[WORLDMAPACTOR]', 'behavior handling action:', message.type);
 
   switch (message.type) {
@@ -53,11 +53,11 @@ function worldmapbehavior(env, message) {
         logwarn(env, '[WORLDMAPACTOR]', 'UPDATE missing updates array');
         return env;
       }
-      var newEnv = applyValueSet(env, message.updates);
+      var newEnv = APPLYVALUESET(env, message.updates);
       (newEnv.observers || []).forEach(function(observer) {
         try { observer(newEnv); } catch (err) { logwarn(newEnv, '[WORLDMAPACTOR]', 'observer notification failed:', err); }
       });
-      persistEnv(newEnv);
+      PERSISTENV(newEnv);
       return newEnv;
     }
     case MESSAGETYPES.UPDATE_FN: {
@@ -66,21 +66,21 @@ function worldmapbehavior(env, message) {
       (nextEnv.observers || []).forEach(function(observer) {
         try { observer(nextEnv); } catch (err) { logwarn(nextEnv, '[WORLDMAPACTOR]', 'observer notification failed:', err); }
       });
-      persistEnv(nextEnv);
+      PERSISTENV(nextEnv);
       return nextEnv;
     }
     case MESSAGETYPES.OBSERVE: {
       var newObservers = (env.observers || []).concat([message.observer]);
-      return setInPath(env, 'observers', newObservers);
+      return SETINPATH(env, 'observers', newObservers);
     }
     case MESSAGETYPES.UNOBSERVE: {
       var filtered = (env.observers || []).filter(function(obs) { return obs !== message.observer; });
-      return setInPath(env, 'observers', filtered);
+      return SETINPATH(env, 'observers', filtered);
     }
     case MESSAGETYPES.GET_WORLDMAP:
     case MESSAGETYPES.GET_ENV: {
       if (message.sender && message.tag) {
-        sendResponse(message.sender, message.tag, env, 'WORLDMAPACTOR');
+        SENDRESPONSE(message.sender, message.tag, env, 'WORLDMAPACTOR');
       }
       return env;
     }
@@ -91,23 +91,23 @@ function worldmapbehavior(env, message) {
 }
 
 // Initial state is empty object; actors own their slices.
-registerActorState('WORLDMAPACTOR', {});
+REGISTERACTORSTATE('WORLDMAPACTOR', {});
 
-function startWorldmapActor(options) {
+function STARTWORLDMAPACTOR(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      worldmapState = Object.freeze({ level: lvl });
-      var envForVerbosity = getActorState('WORLDMAPACTOR');
+      WORLDMAPSTATE = Object.freeze({ level: lvl });
+      var envForVerbosity = GETACTORSTATE('WORLDMAPACTOR');
       if (envForVerbosity) {
-        setActorState('WORLDMAPACTOR', setInPath(envForVerbosity, 'verbosity', lvl));
+        SETACTORSTATE('WORLDMAPACTOR', SETINPATH(envForVerbosity, 'verbosity', lvl));
       }
     }
   }
-  var currentEnv = getActorState('WORLDMAPACTOR') || {};
+  var currentEnv = GETACTORSTATE('WORLDMAPACTOR') || {};
   // Return promise that resolves after recovery and state set.
-  return recoverEnv().then(function(saved) {
-    setActorState('WORLDMAPACTOR', saved);
+  return RECOVERENV().then(function(saved) {
+    SETACTORSTATE('WORLDMAPACTOR', saved);
     return saved;
   }).catch(function(err) {
     logwarn(currentEnv, '[WORLDMAPACTOR]', 'state restore failed:', err);
@@ -115,29 +115,29 @@ function startWorldmapActor(options) {
   });
 }
 
-function sendworldmappatch(patch, responseSpec) {
+function SENDWORLDMAPPATCH(patch, responseSpec) {
   if (patch && patch.updates) {
-    var tag = generateTag();
-    sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { updates: patch.updates }, tag, 'system', responseSpec);
+    var tag = GENERATETAG();
+    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { updates: patch.updates }, tag, 'system', responseSpec);
   }
 }
 
-function updateworldmapfn(fn, responseSpec) {
-  var tag = generateTag();
-  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UPDATE_FN, { fn: fn }, tag, 'system', responseSpec);
+function UPDATEWORLDMAPFN(fn, responseSpec) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE_FN, { fn: fn }, tag, 'system', responseSpec);
 }
 
-function observeworldmap(observer, responseSpec) {
-  var tag = generateTag();
-  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { observer: observer }, tag, 'system', responseSpec);
+function OBSERVEWORLDMAP(observer, responseSpec) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { observer: observer }, tag, 'system', responseSpec);
 }
 
-function unobserveworldmap(observer, responseSpec) {
-  var tag = generateTag();
-  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { observer: observer }, tag, 'system', responseSpec);
+function UNOBSERVEWORLDMAP(observer, responseSpec) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { observer: observer }, tag, 'system', responseSpec);
 }
 
-function getworldmap(responseSpec) {
-  var tag = generateTag();
-  sendInstruction('WORLDMAPACTOR', MESSAGETYPES.GET_WORLDMAP, {}, tag, 'system', responseSpec);
+function GETWORLDMAP(responseSpec) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.GET_WORLDMAP, {}, tag, 'system', responseSpec);
 }
