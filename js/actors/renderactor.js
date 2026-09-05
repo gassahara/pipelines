@@ -487,6 +487,9 @@ var EXPECTELEMENT = function(id, timeout) {
   });
 };
 
+// Alias for blockcompiler.js which expects lowercase expectelement
+var expectelement = EXPECTELEMENT;
+
 var HANDLEFILEREADERREQUEST = function(payload) {
   return new Promise(function(resolve, reject) {
     var reader = new FileReader();

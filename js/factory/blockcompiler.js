@@ -161,15 +161,19 @@ function buildBlockProperties(merged, inherited, io, env, dependencies) {
     if (Array.isArray(merged.deps)) {
       var depsMap = dependencies || window;
       var resolvedDeps = {};
+      var missingDeps = [];
       merged.deps.forEach(function(name) {
         if (typeof depsMap[name] !== 'undefined') {
           resolvedDeps[name] = depsMap[name];
         } else if (typeof window[name] !== 'undefined') {
           resolvedDeps[name] = window[name];
         } else {
-          logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'buildBlockProperties: missing dep:', name);
+          missingDeps.push(name);
         }
       });
+      if (missingDeps.length > 0) {
+        throw new Error('[buildBlockProperties] Missing dependencies for block "' + merged.id + '": ' + missingDeps.join(', '));
+      }
       properties.deps = resolvedDeps;
     } else {
       properties.deps = merged.deps;
@@ -591,52 +595,67 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
     resolvedPipeline = el.pipeline;
   }
 
-  var blockfn = function(env) {
-    var parentEnv = env;
-    var childEnv = cloneObject(parentEnv);
-    childEnv.containerid = el.container || null;
-    childEnv.pipelineid = el.pipelineIdOverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline_' + elementId;
+  var nestedLibs = (resolvedPipeline && resolvedPipeline.libs) || [];
+  var nestedPrograms = (resolvedPipeline && resolvedPipeline.programs) || [];
+  var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
+  var frontendBase = options && options.frontendBase ? options.frontendBase : FRONTEND_BASE;
+  var witnessTimeout = options && options.witnessTimeout ? options.witnessTimeout : WITNESS_TIMEOUT;
 
-    var inputkeys = el.inputs || [];
-    inputkeys.forEach(function(key) {
-      childEnv[key] = compilepathaccessor(key)(parentEnv);
+  return loadFrameworkLibs(nestedLibs, frameworkBase, witnessTimeout)
+    .then(function() {
+      return loadFrontendPrograms(nestedPrograms, frontendBase, witnessTimeout);
+    })
+    .then(function() {
+      var nestedDeps = buildDependenciesRegistry(nestedPrograms);
+      var mergedDependencies = extendObject(cloneObject(dependencies || {}), nestedDeps);
+
+      var blockfn = function(env) {
+        var parentEnv = env;
+        var childEnv = cloneObject(parentEnv);
+        childEnv.containerid = el.container || null;
+        childEnv.pipelineid = el.pipelineIdOverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline_' + elementId;
+
+        var inputkeys = el.inputs || [];
+        inputkeys.forEach(function(key) {
+          childEnv[key] = compilepathaccessor(key)(parentEnv);
+        });
+
+        var childOptions = el.options || {};
+        if (childOptions.autorun === undefined) childOptions.autorun = true;
+        if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
+        if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
+        if (childOptions.verbosity === undefined && options && options.verbosity !== undefined) childOptions.verbosity = options.verbosity;
+
+        var innerDnaEnvelope = {
+          pipelineId: childEnv.pipelineid,
+          definition: { pipeline: resolvedPipeline },
+          dependencies: mergedDependencies || {}
+        };
+
+        var bootMessage = {
+          dna: innerDnaEnvelope,
+          accessors: el.accessors || null,
+          sinks: el.sinks || [],
+          pipelineId: childEnv.pipelineid,
+          options: childOptions
+        };
+
+        var tag = GENERATETAG();
+        var responseType = 'pipeline_booted';
+        SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'BLOCKCOMPILER', { responseType: responseType });
+
+        return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR' }, WITNESS_TIMEOUT)
+          .then(function(mailboxMessage) {
+            var response = mailboxMessage.payload;
+            var result = response && response.result ? response.result : response;
+            writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
+            return result;
+          });
+      };
+      blockfn.id = elementId;
+      blockfn.kind = 'pipeline';
+      return blockfn;
     });
-
-    var childOptions = el.options || {};
-    if (childOptions.autorun === undefined) childOptions.autorun = true;
-    if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
-    if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
-    if (childOptions.verbosity === undefined && options && options.verbosity !== undefined) childOptions.verbosity = options.verbosity;
-
-    var innerDnaEnvelope = {
-      pipelineId: childEnv.pipelineid,
-      definition: { pipeline: resolvedPipeline },
-      dependencies: dependencies || {}
-    };
-
-    var bootMessage = {
-      dna: innerDnaEnvelope,
-      accessors: el.accessors || null,
-      sinks: el.sinks || [],
-      pipelineId: childEnv.pipelineid,
-      options: childOptions
-    };
-
-    var tag = GENERATETAG();
-    var responseType = 'pipeline_booted';
-    SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'BLOCKCOMPILER', { responseType: responseType });
-
-    return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR' }, WITNESS_TIMEOUT)
-      .then(function(mailboxMessage) {
-        var response = mailboxMessage.payload;
-        var result = response && response.result ? response.result : response;
-        writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
-        return result;
-      });
-  };
-  blockfn.id = elementId;
-  blockfn.kind = 'pipeline';
-  return blockfn;
 }
 
 function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
@@ -757,9 +776,15 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
       throw new Error('[orchestrateStage] unexpected element type: ' + elementDef.element);
     }
 
-    return elementFn(env).then(function() {
+    // elementFn might be a Promise (e.g., processPipelineElement) or a function returning a Promise
+    return Promise.resolve(elementFn).then(function(fn) {
+      return fn(env);
+    }).then(function() {
       index++;
       return runNext();
+    }).catch(function(err) {
+      logerror(blockCompilerState, '[BLOCKCOMPILER]', 'Element failed:', elementDef.id, err);
+      throw err;
     });
   }
 
