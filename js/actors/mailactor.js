@@ -15,23 +15,18 @@ var EXPECTATION_TIMEOUT = 20000;
 var POLL_INTERVAL = 150;
 var MAILBOX_RESPONSE_TYPE = 'mailbox_response';
 
-function removeEnvelopeFromMailbox(id) {
-  var idx = MAILBOX.findIndex(function(env) { return env.id === id; });
-  if (idx !== -1) {
-    MAILBOX.splice(idx, 1);
-    var env = MAILBOX[idx]; // now undefined; but we need original before splice? We should remove from indices too.
-    // We'll handle index update separately in addEnvelopeToMailbox/removeEnvelopeFromMailbox.
-  }
-}
-
 function addEnvelopeToMailbox(envelope) {
   MAILBOX.push(envelope);
-  if (envelope.tag) indexByTag[envelope.tag] = indexByTag[envelope.tag] || [];
-  indexByTag[envelope.tag].push(envelope);
-  if (envelope.sender) indexBySender[envelope.sender] = indexBySender[envelope.sender] || [];
-  indexBySender[envelope.sender].push(envelope);
+  if (envelope.tag) {
+    if (!indexByTag[envelope.tag]) indexByTag[envelope.tag] = [];
+    indexByTag[envelope.tag].push(envelope);
+  }
+  if (envelope.sender) {
+    if (!indexBySender[envelope.sender]) indexBySender[envelope.sender] = [];
+    indexBySender[envelope.sender].push(envelope);
+  }
   if (envelope.payload && envelope.payload.type) {
-    indexByType[envelope.payload.type] = indexByType[envelope.payload.type] || [];
+    if (!indexByType[envelope.payload.type]) indexByType[envelope.payload.type] = [];
     indexByType[envelope.payload.type].push(envelope);
   }
 }
@@ -69,8 +64,7 @@ function createExpectation(tag, recipient, sender, type, context, responseSpec) 
   };
   EXPECTATIONS[tag] = expectation;
   MAILBOX.push(expectation);
-  // Note: expectation is also in MAILBOX; but we'll not add to index maps for expectations unless needed.
-  // For simplicity, we keep only envelopes in indices; expectation entries are checked separately.
+
   setTimeout(function() {
     if (EXPECTATIONS[tag] && EXPECTATIONS[tag].status === 'PENDING') {
       rejectExpectation(tag, { message: 'Response timeout for tag ' + tag });
@@ -87,13 +81,13 @@ function resolveExpectation(tag) {
     exp.resolvedAt = Date.now();
     exp.read = 'READ';
     delete EXPECTATIONS[tag];
-    // Remove associated envelopes with same tag
+
     if (indexByTag[tag]) {
       indexByTag[tag].slice().forEach(function(env) {
         if (env.tag === tag) removeEnvelopeFromMailbox(env);
       });
     }
-    // Also remove the expectation object from MAILBOX if present
+
     var expIdx = MAILBOX.findIndex(function(item) { return item.tag === tag && item.read === 'UNREAD' && item.status === 'RESOLVED'; });
     if (expIdx !== -1) MAILBOX.splice(expIdx, 1);
   }
@@ -110,12 +104,13 @@ function rejectExpectation(tag, error) {
       exp.responseSpec.reject(new Error(error && error.message ? error.message : 'Expectation rejected'));
     }
     delete EXPECTATIONS[tag];
-    // Remove associated envelopes
+
     if (indexByTag[tag]) {
       indexByTag[tag].slice().forEach(function(env) {
         if (env.tag === tag) removeEnvelopeFromMailbox(env);
       });
     }
+
     var expIdx = MAILBOX.findIndex(function(item) { return item.tag === tag && item.read === 'UNREAD' && item.status === 'TIMEOUT'; });
     if (expIdx !== -1) MAILBOX.splice(expIdx, 1);
   }
@@ -170,9 +165,6 @@ function MAILBEHAVIOR(env, message) {
       );
     }
 
-    // If no responseSpec and no tag, envelope may be transient; we can remove immediately after dispatch.
-    // But for now keep for possible queries.
-
     return env;
   }
 
@@ -196,7 +188,6 @@ function getMailbox() {
 function QUERYMAILBOX(filter) {
   if (!filter) filter = {};
 
-  // Validate filter type if present
   if (filter.type !== undefined) {
     var allowedTypes = (typeof MAILBOX_FILTER_TYPES !== 'undefined' && MAILBOX_FILTER_TYPES)
       ? Object.keys(MAILBOX_FILTER_TYPES).map(function(k) { return MAILBOX_FILTER_TYPES[k]; })
@@ -208,7 +199,6 @@ function QUERYMAILBOX(filter) {
 
   logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox filter:', JSON.stringify(filter));
 
-  // Candidate set based on indexed keys if possible
   var candidates = MAILBOX;
   if (filter.tag && indexByTag[filter.tag]) {
     candidates = indexByTag[filter.tag];
@@ -257,13 +247,10 @@ function QUERYMAILBOX(filter) {
     return item;
   });
 
-  // Resolve expectations for matched items
   result.forEach(function(item) {
     if (item && item.tag && EXPECTATIONS[item.tag] && item.read === 'READ') {
       resolveExpectation(item.tag);
     }
-    // Remove consumed envelope if it had no pending expectation
-    // We'll remove after returning; but since we are in filter, we can schedule removal asynchronously.
     if (item && item.read === 'READ' && !EXPECTATIONS[item.tag]) {
       setTimeout(function() { removeEnvelopeFromMailbox(item); }, 0);
     }
@@ -276,15 +263,12 @@ function QUERYMAILBOX(filter) {
 function WAITFORMAILBOX(filter, timeout) {
   if (timeout === undefined) timeout = EXPECTATION_TIMEOUT;
   return new Promise(function(resolve, reject) {
-    // Check active cancellation token from blockcompiler
     if (typeof blockCompilerState !== 'undefined' && blockCompilerState.activeCancellationToken && blockCompilerState.activeCancellationToken.cancelled) {
       reject(new Error('Cancelled'));
       return;
     }
 
-    // Check expectation status if filter.tag corresponds to an expectation
     if (filter.tag && EXPECTATIONS[filter.tag] && EXPECTATIONS[filter.tag].status !== 'PENDING') {
-      // Already resolved or timed out; reject immediately
       reject(new Error('Expectation already settled'));
       return;
     }
@@ -297,7 +281,6 @@ function WAITFORMAILBOX(filter, timeout) {
     }
 
     var checkInterval = setInterval(function() {
-      // Re-check cancellation and expectation status
       if (typeof blockCompilerState !== 'undefined' && blockCompilerState.activeCancellationToken && blockCompilerState.activeCancellationToken.cancelled) {
         clearInterval(checkInterval);
         reject(new Error('Cancelled'));
