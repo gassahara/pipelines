@@ -40,7 +40,7 @@ function COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, env, optio
   if (!entry || !entry.dna) {
     return Promise.resolve({ error: 'missing DNA for pipeline: ' + pipelineId });
   }
-  // P47/P51: use latest stored env slice and full DNA envelope
+  // Use latest stored env slice for pipeline, fallback to provided env
   var latestEnv = (hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] && hyperSlice.envByPipeline[pipelineId].env) || env || {};
   return blockcompilerCompileStage(entry.dna, stagePath, latestEnv, options || {});
 }
@@ -49,6 +49,7 @@ function HANDLESTAGECOMPLETED(hyperSlice, message) {
   var key = message.pipelineId + ':' + message.stageId;
   loginfo(hyperSlice, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
 
+  // Always send typed ack
   if (message.sender && message.tag) {
     SENDRESPONSE(message.sender, message.tag, { stageId: message.stageId }, 'HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED_ACK);
   }
@@ -84,12 +85,9 @@ function HANDLESTAGECOMPLETED(hyperSlice, message) {
       logwarn(hyperSlice, '[HYPERVISOR]', 'next stage orchestration failed:', err);
     });
   } else {
-    if (hyperSlice.activePipelines) {
-      hyperSlice.activePipelines = hyperSlice.activePipelines.filter(function(id) { return id !== message.pipelineId; });
-      SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
-      }, GENERATETAG(), 'HYPERVISORACTOR');
-    }
+    // No next sequential stage. Do not remove pipeline from activePipelines; hypervisor is always active.
+    // EVENT stages can still be triggered via EVENT_TRIGGERED using stored DNA and env.
+    loginfo(hyperSlice, '[HYPERVISOR]', 'No next sequential stage for pipeline:', message.pipelineId);
   }
 }
 
@@ -202,7 +200,6 @@ function HYPERVISORBEHAVIOR(env, message) {
       var eventOptions = loadedEntry.options || {};
       eventOptions.isEventTrigger = true;
 
-      // Standard compile path; no special env logic
       COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, {}, eventOptions)
         .then(function() {
           if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { started: true }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);

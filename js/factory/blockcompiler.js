@@ -759,6 +759,33 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
   }
 }
 
+function buildNextStageMessage(pipeline, stageIndex, pipelineId, env, options) {
+  var nextIndex = stageIndex + 1;
+  if (!pipeline || !pipeline.elements || nextIndex >= pipeline.elements.length) return null;
+  return {
+    type: 'compile_stage',
+    pipeline: pipeline,
+    pipelineId: pipelineId,
+    stageIndex: nextIndex,
+    stagePath: ['pipeline', 'elements', nextIndex],
+    briefcase: {},
+    env: env || {},
+    options: options || {}
+  };
+}
+
+function sendStageCompleted(pipelineId, stageId, nextStageMessage, env) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED, {
+    pipelineId: pipelineId,
+    stageId: stageId,
+    nextStageMessage: nextStageMessage,
+    env: env || {}
+  }, tag, 'BLOCKCOMPILER', { responseType: 'stage_completed_ack' });
+  return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, WITNESS_TIMEOUT)
+    .then(function() { return; });
+}
+
 function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, options, nextStageMessage) {
   var constants = createBlockCompilerConstants();
   var BLOCKTYPES = constants.BLOCKTYPES;
@@ -773,15 +800,7 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
 
   function runNext() {
     if (index >= (stage.elements || []).length) {
-      var tag = GENERATETAG();
-      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED, {
-        pipelineId: pipelineId,
-        stageId: stage.id,
-        nextStageMessage: nextStageMessage || null,
-        env: env
-      }, tag, 'BLOCKCOMPILER', { responseType: 'stage_completed_ack' });
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, WITNESS_TIMEOUT)
-        .then(function() { return; });
+      return sendStageCompleted(pipelineId, stage.id, nextStageMessage || null, env);
     }
 
     var elementDef = resolveNextElement(stage, index);
@@ -912,17 +931,6 @@ function buildDependenciesRegistry(entries) {
   return registry;
 }
 
-function findNextNonEventStage(pipeline, startIndex) {
-  if (!pipeline || !pipeline.elements) return null;
-  for (var i = startIndex; i < pipeline.elements.length; i++) {
-    var s = pipeline.elements[i];
-    if (s && (!s.control || s.control.command !== 'EVENT')) {
-      return { stage: s, index: i };
-    }
-  }
-  return null;
-}
-
 function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'blockcompilerCompileStage:', dnaEnvelope.pipelineId, 'stagePath', JSON.stringify(stagePath));
   if (!dnaEnvelope || !dnaEnvelope.definition || !dnaEnvelope.definition.pipeline) {
@@ -943,51 +951,16 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   var isEventTrigger = options.isEventTrigger === true;
 
   if (isEventStage && !isEventTrigger) {
+    // P75: Register EVENT stage and skip orchestration
     return registerEventStage(stage, dnaEnvelope.pipelineId, stagePath, options)
       .then(function() {
-        var next = findNextNonEventStage(pipeline, stageIndex + 1);
-        var nextStageMessage = null;
-        if (next) {
-          nextStageMessage = {
-            type: 'compile_stage',
-            pipeline: pipeline,
-            pipelineId: dnaEnvelope.pipelineId,
-            stageIndex: next.index,
-            stagePath: ['pipeline', 'elements', next.index],
-            briefcase: {},
-            env: env || {},
-            options: options
-          };
-        }
-
-        var tag = GENERATETAG();
-        SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED, {
-          pipelineId: dnaEnvelope.pipelineId,
-          stageId: stage.id,
-          nextStageMessage: nextStageMessage,
-          env: env || {}
-        }, tag, 'BLOCKCOMPILER', { responseType: 'stage_completed_ack' });
-
-        return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, WITNESS_TIMEOUT)
-          .then(function() { return; });
+        var nextStageMessage = buildNextStageMessage(pipeline, stageIndex, dnaEnvelope.pipelineId, env, options);
+        return sendStageCompleted(dnaEnvelope.pipelineId, stage.id, nextStageMessage, env);
       });
   }
 
-  var next = findNextNonEventStage(pipeline, stageIndex + 1);
-  var nextStageMessage = null;
-  if (!isEventTrigger && next) {
-    nextStageMessage = {
-      type: 'compile_stage',
-      pipeline: pipeline,
-      pipelineId: dnaEnvelope.pipelineId,
-      stageIndex: next.index,
-      stagePath: ['pipeline', 'elements', next.index],
-      briefcase: {},
-      env: null,
-      options: options
-    };
-  }
-
+  // Non-EVENT or triggered EVENT: orchestrate normally
+  var nextStageMessage = buildNextStageMessage(pipeline, stageIndex, dnaEnvelope.pipelineId, env, options);
   return orchestrateStage(stage, dnaEnvelope.pipelineId, dnaEnvelope.dependencies || {}, env || {}, stagePath, options, nextStageMessage);
 }
 
