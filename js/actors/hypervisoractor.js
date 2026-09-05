@@ -40,7 +40,9 @@ function COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, env, optio
   if (!entry || !entry.dna) {
     return Promise.resolve({ error: 'missing DNA for pipeline: ' + pipelineId });
   }
-  return blockcompilerCompileStage(entry.dna, stagePath, env || {}, options || {});
+  // P47: Always use latest stored env slice for pipeline
+  var latestEnv = (hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] && hyperSlice.envByPipeline[pipelineId].env) || env || {};
+  return blockcompilerCompileStage(entry.dna, stagePath, latestEnv, options || {});
 }
 
 function HANDLESTAGECOMPLETED(hyperSlice, message) {
@@ -189,9 +191,6 @@ function HYPERVISORBEHAVIOR(env, message) {
       var stageId = message.stageId;
       var stagePath = message.stagePath || ['pipeline', 'elements', -1];
 
-      var rootEntry = hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId];
-      var envForTrigger = rootEntry ? rootEntry.env : { pipelineid: pipelineId };
-
       var loadedEntry = hyperSlice.loadedPipelines && hyperSlice.loadedPipelines[pipelineId];
       if (!loadedEntry || !loadedEntry.dna) {
         if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: 'missing loaded pipeline DNA' }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
@@ -200,7 +199,11 @@ function HYPERVISORBEHAVIOR(env, message) {
 
       loginfo(env, '[HYPERVISOR]', 'EVENT_TRIGGERED compiling stage:', pipelineId, stageId, stagePath);
 
-      COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, envForTrigger, loadedEntry.options || {})
+      // P47: No special-casing; delegate to standard compile path with isEventTrigger flag.
+      var eventOptions = loadedEntry.options || {};
+      eventOptions.isEventTrigger = true;
+
+      COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, {}, eventOptions)
         .then(function() {
           if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { started: true }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
         })

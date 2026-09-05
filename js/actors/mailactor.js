@@ -237,9 +237,19 @@ function QUERYMAILBOX(filter) {
     return matches;
   });
 
-  logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox raw matches:', matched.length);
+  // P48: Deduplicate by tag before marking read/returning
+  var seenTags = {};
+  var deduped = matched.filter(function(item) {
+    if (item.tag) {
+      if (seenTags[item.tag]) return false;
+      seenTags[item.tag] = true;
+    }
+    return true;
+  });
 
-  var result = matched.map(function(item) {
+  logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox raw matches:', deduped.length);
+
+  var result = deduped.map(function(item) {
     if (item && item.read !== 'READ') {
       item.read = 'READ';
       logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox marking READ:', item.id, 'tag=', item.tag);
@@ -247,6 +257,7 @@ function QUERYMAILBOX(filter) {
     return item;
   });
 
+  // Resolve expectations for matched items
   result.forEach(function(item) {
     if (item && item.tag && EXPECTATIONS[item.tag] && item.read === 'READ') {
       resolveExpectation(item.tag);

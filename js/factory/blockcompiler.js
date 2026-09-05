@@ -914,6 +914,17 @@ function buildDependenciesRegistry(entries) {
   return registry;
 }
 
+function findNextNonEventStage(pipeline, startIndex) {
+  if (!pipeline || !pipeline.elements) return null;
+  for (var i = startIndex; i < pipeline.elements.length; i++) {
+    var s = pipeline.elements[i];
+    if (s && (!s.control || s.control.command !== 'EVENT')) {
+      return { stage: s, index: i };
+    }
+  }
+  return null;
+}
+
 function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'blockcompilerCompileStage:', dnaEnvelope.pipelineId, 'stagePath', JSON.stringify(stagePath));
   if (!dnaEnvelope || !dnaEnvelope.definition || !dnaEnvelope.definition.pipeline) {
@@ -929,44 +940,59 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
     throw new Error('[blockcompilerCompileStage] stage not found at path: ' + JSON.stringify(stagePath));
   }
 
-  // P44: Validate EVENT stages before registration
-  var eventStages = (pipeline.elements || []).filter(function(pipelineStage) {
-    return pipelineStage && pipelineStage.element === 'STAGE' &&
-           pipelineStage.control && pipelineStage.control.command === 'EVENT';
-  });
+  var stageIndex = stagePath[stagePath.length - 1];
+  var isEventStage = stage.control && stage.control.command === 'EVENT';
+  var isEventTrigger = options.isEventTrigger === true;
 
-  var validationErrors = [];
-  eventStages.forEach(function(eventStage) {
-    validationErrors = validationErrors.concat(validateeventstage(eventStage));
-  });
-  if (validationErrors.length > 0) {
-    throw new Error('[blockcompilerCompileStage] EVENT stage validation failed: ' + validationErrors.join('; '));
+  if (isEventStage && !isEventTrigger) {
+    // P46: Boot-time EVENT stage: register only, then skip to next non-EVENT stage
+    return registerEventStage(stage, dnaEnvelope.pipelineId, stagePath, options)
+      .then(function() {
+        var next = findNextNonEventStage(pipeline, stageIndex + 1);
+        var nextStageMessage = null;
+        if (next) {
+          nextStageMessage = {
+            type: 'compile_stage',
+            pipeline: pipeline,
+            pipelineId: dnaEnvelope.pipelineId,
+            stageIndex: next.index,
+            stagePath: ['pipeline', 'elements', next.index],
+            briefcase: {},
+            env: env || {},
+            options: options
+          };
+        }
+
+        var tag = GENERATETAG();
+        SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED, {
+          pipelineId: dnaEnvelope.pipelineId,
+          stageId: stage.id,
+          nextStageMessage: nextStageMessage,
+          env: env || {}
+        }, tag, 'BLOCKCOMPILER', { responseType: 'stage_completed_ack' });
+
+        return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, WITNESS_TIMEOUT)
+          .then(function() { return; });
+      });
   }
 
-  // Register EVENT stages and wait for acks
-  var eventRegistrationPromises = eventStages.map(function(eventStage, idx) {
-    var eventStagePath = ['pipeline', 'elements', idx];
-    return registerEventStage(eventStage, dnaEnvelope.pipelineId, eventStagePath, options);
-  });
+  // Non-EVENT or already-registered EVENT: orchestrate normally
+  var next = findNextNonEventStage(pipeline, stageIndex + 1);
+  var nextStageMessage = null;
+  if (!isEventTrigger && next) {
+    nextStageMessage = {
+      type: 'compile_stage',
+      pipeline: pipeline,
+      pipelineId: dnaEnvelope.pipelineId,
+      stageIndex: next.index,
+      stagePath: ['pipeline', 'elements', next.index],
+      briefcase: {},
+      env: null,
+      options: options
+    };
+  }
 
-  return Promise.all(eventRegistrationPromises).then(function() {
-    var stageIndex = stagePath[stagePath.length - 1];
-    var nextStageMessage = null;
-    if (typeof stageIndex === 'number' && stageIndex + 1 < pipeline.elements.length) {
-      nextStageMessage = {
-        type: 'compile_stage',
-        pipeline: pipeline,
-        pipelineId: dnaEnvelope.pipelineId,
-        stageIndex: stageIndex + 1,
-        stagePath: ['pipeline', 'elements', stageIndex + 1],
-        briefcase: {},
-        env: null,
-        options: options
-      };
-    }
-
-    return orchestrateStage(stage, dnaEnvelope.pipelineId, dnaEnvelope.dependencies || {}, env || {}, stagePath, options, nextStageMessage);
-  });
+  return orchestrateStage(stage, dnaEnvelope.pipelineId, dnaEnvelope.dependencies || {}, env || {}, stagePath, options, nextStageMessage);
 }
 
 function loadPipeline(pipelineDefinition, pipelineId, options) {

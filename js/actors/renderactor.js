@@ -386,11 +386,8 @@ HANDLERS[MESSAGETYPES.REGISTER_EVENT_LISTENER] = function(env, msg) {
     updates: [{ path: 'render', value: renderSlice }]
   }, GENERATETAG(), 'RENDERACTOR');
 
-  if (msg.sender && msg.tag) {
-    SENDRESPONSE(msg.sender, msg.tag, { registered: true, sourceid: msg.sourceid, event: msg.event }, 'RENDERACTOR', MESSAGETYPES.EVENT_LISTENER_REGISTERED);
-  }
-
-  return true;
+  // P45: Return result object; RENDERBEHAVIOR will send exactly one response
+  return { registered: true, sourceid: msg.sourceid, event: msg.event };
 };
 
 function RESPONDIFNEEDED(env, message, result) {
