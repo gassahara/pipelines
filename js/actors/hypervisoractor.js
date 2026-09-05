@@ -49,12 +49,16 @@ function HANDLESTAGECOMPLETED(hyperSlice, message) {
   var key = message.pipelineId + ':' + message.stageId;
   loginfo(hyperSlice, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
 
+  // P6: Always send ack to the sender, regardless of next stage
+  if (message.sender && message.tag) {
+    SENDRESPONSE(message.sender, message.tag, { stageId: message.stageId }, 'HYPERVISORACTOR');
+  }
+
   if (message.env !== undefined && message.env !== null) {
     if (!hyperSlice.envByPipeline) hyperSlice.envByPipeline = {};
     if (!hyperSlice.envByPipeline[message.pipelineId]) hyperSlice.envByPipeline[message.pipelineId] = {};
-    hyperSlice.envByPipeline[message.pipelineId].__root__ = {
-      __root__: { env: message.env, updatedAt: Date.now() }
-    };
+    hyperSlice.envByPipeline[message.pipelineId].env = message.env;
+    hyperSlice.envByPipeline[message.pipelineId].updatedAt = Date.now();
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
       updates: [{ path: 'hypervisor', value: hyperSlice }]
     }, GENERATETAG(), 'HYPERVISORACTOR');
@@ -87,9 +91,6 @@ function HANDLESTAGECOMPLETED(hyperSlice, message) {
         updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
     }
-    if (message.sender && message.tag) {
-      SENDRESPONSE(message.sender, message.tag, { pipelineId: message.pipelineId }, 'HYPERVISORACTOR');
-    }
   }
 }
 
@@ -109,21 +110,15 @@ function HYPERVISORBEHAVIOR(env, message) {
       return env;
     case MESSAGETYPES.GET_ENV: {
       var p = hyperSlice.envByPipeline && hyperSlice.envByPipeline[message.pipelineId];
-      var root = p && p.__root__ && p.__root__.__root__;
-      var result = root ? root.env : (p || null);
+      var result = p ? p.env : null;
       if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, result, 'HYPERVISORACTOR');
       return env;
     }
     case MESSAGETYPES.SET_ENV: {
       if (!hyperSlice.envByPipeline) hyperSlice.envByPipeline = {};
       if (!hyperSlice.envByPipeline[message.pipelineId]) hyperSlice.envByPipeline[message.pipelineId] = {};
-      var stageId = message.stageId || '__root__';
-      var elementId = message.elementId || '__root__';
-      if (!hyperSlice.envByPipeline[message.pipelineId][stageId]) hyperSlice.envByPipeline[message.pipelineId][stageId] = {};
-      hyperSlice.envByPipeline[message.pipelineId][stageId][elementId] = { env: message.env || {}, updatedAt: Date.now() };
-      if (stageId !== '__root__' || elementId !== '__root__') {
-        hyperSlice.envByPipeline[message.pipelineId].__root__ = { __root__: { env: message.env || {}, updatedAt: Date.now() } };
-      }
+      hyperSlice.envByPipeline[message.pipelineId].env = message.env || {};
+      hyperSlice.envByPipeline[message.pipelineId].updatedAt = Date.now();
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
@@ -131,9 +126,7 @@ function HYPERVISORBEHAVIOR(env, message) {
     }
     case MESSAGETYPES.GET_LATEST_ENV: {
       var pState = hyperSlice.envByPipeline && hyperSlice.envByPipeline[message.pipelineId];
-      var sState = pState && pState[message.stageId];
-      var eState = sState && sState[message.elementId];
-      var latest = eState ? eState.env : (pState && pState.__root__ && pState.__root__.__root__ ? pState.__root__.__root__.env : null);
+      var latest = pState ? pState.env : null;
       if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, latest, 'HYPERVISORACTOR');
       return env;
     }
@@ -219,8 +212,7 @@ function HYPERVISORBEHAVIOR(env, message) {
     case MESSAGETYPES.TRIGGER_EVENT: {
       var pipelineId = message.pipelineId;
       var stageId = message.stageId;
-      var rootEntry = hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] &&
-        hyperSlice.envByPipeline[pipelineId].__root__ && hyperSlice.envByPipeline[pipelineId].__root__.__root__;
+      var rootEntry = hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId];
       var envForTrigger = rootEntry ? rootEntry.env : { pipelineid: pipelineId };
       var descriptorKey = pipelineId + ':' + stageId;
       var descriptor = hyperSlice.stageDescriptors && hyperSlice.stageDescriptors[descriptorKey];
@@ -246,7 +238,8 @@ function HYPERVISORBEHAVIOR(env, message) {
       }, [envForTrigger], { context: { env: envForTrigger }, capturecontinuation: true, errk: CREATEHYPERVISORERRORCONTEXT('trigger') }).then(function(result) {
         var updatedEnv = result && result.env ? result.env : envForTrigger;
         if (!hyperSlice.envByPipeline[pipelineId]) hyperSlice.envByPipeline[pipelineId] = {};
-        hyperSlice.envByPipeline[pipelineId].__root__ = { __root__: { env: updatedEnv, updatedAt: Date.now() } };
+        hyperSlice.envByPipeline[pipelineId].env = updatedEnv;
+        hyperSlice.envByPipeline[pipelineId].updatedAt = Date.now();
         SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
           updates: [{ path: 'hypervisor', value: hyperSlice }]
         }, GENERATETAG(), 'HYPERVISORACTOR');

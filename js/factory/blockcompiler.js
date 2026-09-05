@@ -108,16 +108,8 @@ function buildproperties(merged, inherited) {
 }
 
 function resolveDepsArray(depsArray) {
-  logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'resolveDepsArray:', depsArray);
-  var depsObj = {};
-  (depsArray || []).forEach(function(name) {
-    if (typeof window[name] !== 'undefined') {
-      depsObj[name] = window[name];
-    } else {
-      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'resolveDepsArray: missing global for deps name:', name);
-    }
-  });
-  return depsObj;
+  // P8: this function is now unused; retained for compatibility but should not be called.
+  throw new Error('[resolveDepsArray] This function is deprecated; use buildDependenciesRegistry instead.');
 }
 
 function resolvePipelinePath(path, dependencies) {
@@ -452,6 +444,17 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       var cmd = merged.command && merged.command.COMMAND;
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
+
+      // P5: Resolve value and classname if they are string path accessors
+      var resolvedValue = props.value;
+      if (typeof props.value === 'string' && (containsPathAccessorChars(props.value) || (sig.inputs || []).indexOf(props.value) !== -1)) {
+        resolvedValue = compilepathaccessor(props.value)(env);
+      }
+      var resolvedClassname = props.classname;
+      if (typeof props.classname === 'string' && (containsPathAccessorChars(props.classname) || (sig.inputs || []).indexOf(props.classname) !== -1)) {
+        resolvedClassname = compilepathaccessor(props.classname)(env);
+      }
+
       var tag = GENERATETAG();
       var responseType = 'dom_result';
       var msgType;
@@ -475,8 +478,8 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       }
       SENDINSTRUCTION('RENDERACTOR', msgType, {
         id: props.id,
-        value: props.value,
-        classname: props.classname,
+        value: resolvedValue,
+        classname: resolvedClassname,
         force: props.force,
         query: props.query,
         arguments: props.arguments,
@@ -597,65 +600,81 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
 
   var nestedLibs = (resolvedPipeline && resolvedPipeline.libs) || [];
   var nestedPrograms = (resolvedPipeline && resolvedPipeline.programs) || [];
+
+  // P7: Filter out already-loaded entries to avoid duplicate script loading
+  function isAlreadyLoaded(entry) {
+    if (!entry || !entry.provides || entry.provides.length === 0) return false;
+    return entry.provides.every(function(name) { return typeof window[name] !== 'undefined'; });
+  }
+
+  var filteredLibs = nestedLibs.filter(function(entry) { return !isAlreadyLoaded(entry); });
+  var filteredPrograms = nestedPrograms.filter(function(entry) { return !isAlreadyLoaded(entry); });
+
   var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
   var frontendBase = options && options.frontendBase ? options.frontendBase : FRONTEND_BASE;
   var witnessTimeout = options && options.witnessTimeout ? options.witnessTimeout : WITNESS_TIMEOUT;
 
-  return loadFrameworkLibs(nestedLibs, frameworkBase, witnessTimeout)
-    .then(function() {
-      return loadFrontendPrograms(nestedPrograms, frontendBase, witnessTimeout);
-    })
-    .then(function() {
-      var nestedDeps = buildDependenciesRegistry(nestedPrograms);
-      var mergedDependencies = extendObject(cloneObject(dependencies || {}), nestedDeps);
+  var loadingPromise;
+  if (filteredLibs.length === 0 && filteredPrograms.length === 0) {
+    loadingPromise = Promise.resolve();
+  } else {
+    loadingPromise = loadFrameworkLibs(filteredLibs, frameworkBase, witnessTimeout)
+      .then(function() {
+        return loadFrontendPrograms(filteredPrograms, frontendBase, witnessTimeout);
+      });
+  }
 
-      var blockfn = function(env) {
-        var parentEnv = env;
-        var childEnv = cloneObject(parentEnv);
-        childEnv.containerid = el.container || null;
-        childEnv.pipelineid = el.pipelineIdOverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline_' + elementId;
+  return loadingPromise.then(function() {
+    var nestedDeps = buildDependenciesRegistry(nestedPrograms);
+    var mergedDependencies = extendObject(cloneObject(dependencies || {}), nestedDeps);
 
-        var inputkeys = el.inputs || [];
-        inputkeys.forEach(function(key) {
-          childEnv[key] = compilepathaccessor(key)(parentEnv);
-        });
+    var blockfn = function(env) {
+      var parentEnv = env;
+      var childEnv = cloneObject(parentEnv);
+      childEnv.containerid = el.container || null;
+      childEnv.pipelineid = el.pipelineIdOverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline_' + elementId;
 
-        var childOptions = el.options || {};
-        if (childOptions.autorun === undefined) childOptions.autorun = true;
-        if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
-        if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
-        if (childOptions.verbosity === undefined && options && options.verbosity !== undefined) childOptions.verbosity = options.verbosity;
+      var inputkeys = el.inputs || [];
+      inputkeys.forEach(function(key) {
+        childEnv[key] = compilepathaccessor(key)(parentEnv);
+      });
 
-        var innerDnaEnvelope = {
-          pipelineId: childEnv.pipelineid,
-          definition: { pipeline: resolvedPipeline },
-          dependencies: mergedDependencies || {}
-        };
+      var childOptions = el.options || {};
+      if (childOptions.autorun === undefined) childOptions.autorun = true;
+      if (childOptions.baseEnv === undefined) childOptions.baseEnv = childEnv;
+      if (childOptions.updateworldmap === undefined) childOptions.updateworldmap = parentEnv.updateworldmap;
+      if (childOptions.verbosity === undefined && options && options.verbosity !== undefined) childOptions.verbosity = options.verbosity;
 
-        var bootMessage = {
-          dna: innerDnaEnvelope,
-          accessors: el.accessors || null,
-          sinks: el.sinks || [],
-          pipelineId: childEnv.pipelineid,
-          options: childOptions
-        };
-
-        var tag = GENERATETAG();
-        var responseType = 'pipeline_booted';
-        SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'BLOCKCOMPILER', { responseType: responseType });
-
-        return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR' }, WITNESS_TIMEOUT)
-          .then(function(mailboxMessage) {
-            var response = mailboxMessage.payload;
-            var result = response && response.result ? response.result : response;
-            writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
-            return result;
-          });
+      var innerDnaEnvelope = {
+        pipelineId: childEnv.pipelineid,
+        definition: { pipeline: resolvedPipeline },
+        dependencies: mergedDependencies || {}
       };
-      blockfn.id = elementId;
-      blockfn.kind = 'pipeline';
-      return blockfn;
-    });
+
+      var bootMessage = {
+        dna: innerDnaEnvelope,
+        accessors: el.accessors || null,
+        sinks: el.sinks || [],
+        pipelineId: childEnv.pipelineid,
+        options: childOptions
+      };
+
+      var tag = GENERATETAG();
+      var responseType = 'pipeline_booted';
+      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'BLOCKCOMPILER', { responseType: responseType });
+
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR' }, WITNESS_TIMEOUT)
+        .then(function(mailboxMessage) {
+          var response = mailboxMessage.payload;
+          var result = response && response.result ? response.result : response;
+          writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
+          return result;
+        });
+    };
+    blockfn.id = elementId;
+    blockfn.kind = 'pipeline';
+    return blockfn;
+  });
 }
 
 function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
@@ -864,15 +883,19 @@ function loadFrontendPrograms(programs, basePath, timeout) {
 
 function buildDependenciesRegistry(entries) {
   var registry = {};
+  var missing = [];
   (entries || []).forEach(function(entry) {
     (entry.provides || []).forEach(function(name) {
       if (typeof window[name] !== 'undefined') {
         registry[name] = window[name];
       } else {
-        logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'buildDependenciesRegistry: missing global:', name);
+        missing.push(name);
       }
     });
   });
+  if (missing.length > 0) {
+    throw new Error('[buildDependenciesRegistry] Missing global(s): ' + missing.join(', '));
+  }
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'dependencies registry keys:', Object.keys(registry));
   return registry;
 }
@@ -924,10 +947,6 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
   return loadFrameworkLibs(libs, frameworkBase, witnessTimeout)
     .then(function() {
       return loadFrontendPrograms(programs, frontendBase, witnessTimeout);
-    })
-    .catch(function(err) {
-      logerror(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline failed to load dependencies:', err);
-      return;
     })
     .then(function() {
       loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'all dependencies loaded for pipeline:', id);

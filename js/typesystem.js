@@ -1,14 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/typesystem.js
-// Change applied: ES5 syntax, module.exports, object-based registry
-// (no Map), Number.isInteger → Math.floor(v)===v, validateschema
-// converted from async/await to promise-chain CPS, DOMQUERY
-// constants imported from leaf domqueryconstants.js (interface →
-// interface; NO renderactor import per P-8).
-// P3: all for/while loops → map/reduce/forEach (functional-recursive).
-// ============================================================
-
-
 function extractstagesblocks(pipeline) {
   if (pipeline.elements) {
     var elements = pipeline.elements || [];
@@ -358,12 +347,13 @@ function validatedomqueryblock(block) {
   return [];
 }
 
+// P10: Align with actual compiler support (only six commands)
 function validateexecutionqueryblock(block) {
   if (block.type !== 'executionquery') return [];
   var command = block.command || {};
   var cmd = command.COMMAND;
   if (!cmd) return ['EXECUTIONQUERY: block "' + block.id + '" requires command.COMMAND'];
-  var allowed = ['get', 'set', 'start', 'stop', 'restart', 'continue', 'save_status', 'tasks', 'task_status', 'await_task', 'cancel_task', 'stop_task', 'recover'];
+  var allowed = ['get', 'tasks', 'task_status', 'await_task', 'cancel_task', 'stop_task'];
   if (allowed.indexOf(cmd) === -1) return ['EXECUTIONQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd];
   return [];
 }
