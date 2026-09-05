@@ -10,8 +10,6 @@ function ENSUREHYPERVISORSLICE(env) {
       routes: {},
       activePipelines: [],
       programs: {},
-      stageDescriptors: {},
-      triggerRecipients: {},
       loadedPipelines: {},
       nextStageMessages: {}
     };
@@ -49,7 +47,6 @@ function HANDLESTAGECOMPLETED(hyperSlice, message) {
   var key = message.pipelineId + ':' + message.stageId;
   loginfo(hyperSlice, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
 
-  // Always send typed ack
   if (message.sender && message.tag) {
     SENDRESPONSE(message.sender, message.tag, { stageId: message.stageId }, 'HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED_ACK);
   }
@@ -167,11 +164,6 @@ function HYPERVISORBEHAVIOR(env, message) {
     case MESSAGETYPES.UNREGISTER_PIPELINE:
       if (!hyperSlice.activePipelines) hyperSlice.activePipelines = [];
       hyperSlice.activePipelines = hyperSlice.activePipelines.filter(function(id) { return id !== message.pipelineId; });
-      if (hyperSlice.triggerRecipients) {
-        Object.keys(hyperSlice.triggerRecipients).forEach(function(key) {
-          if (key.indexOf(message.pipelineId + ':') === 0) delete hyperSlice.triggerRecipients[key];
-        });
-      }
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
@@ -192,23 +184,6 @@ function HYPERVISORBEHAVIOR(env, message) {
         updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
       return env;
-    case MESSAGETYPES.SET_STAGE_DESCRIPTOR: {
-      if (!hyperSlice.stageDescriptors) hyperSlice.stageDescriptors = {};
-      if (!hyperSlice.triggerRecipients) hyperSlice.triggerRecipients = {};
-      var key = message.pipelineId + ':' + message.stageId;
-      hyperSlice.stageDescriptors[key] = message.descriptor;
-      hyperSlice.triggerRecipients[key] = true;
-      SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
-      }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
-    }
-    case MESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS: {
-      var recipientKey = message.pipelineId + ':' + message.stageId;
-      var status = hyperSlice.triggerRecipients && hyperSlice.triggerRecipients[recipientKey] === true;
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, status, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
-    }
     case MESSAGETYPES.EVENT_TRIGGERED: {
       var pipelineId = message.pipelineId;
       var stageId = message.stageId;
@@ -227,7 +202,6 @@ function HYPERVISORBEHAVIOR(env, message) {
 
       COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, envForTrigger, loadedEntry.options || {})
         .then(function() {
-          // Stage orchestrated; no response needed unless tagged
           if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { started: true }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
         })
         .catch(function(err) {
@@ -244,8 +218,7 @@ function HYPERVISORBEHAVIOR(env, message) {
         if (saved && typeof saved === 'object') env.hypervisor = saved;
         else env.hypervisor = {
           boot: true, envByPipeline: {}, renderHtml: '', executionStack: [],
-          routes: {}, activePipelines: [], programs: {}, stageDescriptors: {},
-          triggerRecipients: {}, loadedPipelines: {}, nextStageMessages: {}
+          routes: {}, activePipelines: [], programs: {}, loadedPipelines: {}, nextStageMessages: {}
         };
         SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
           updates: [{ path: 'hypervisor', value: env.hypervisor }]
@@ -281,7 +254,6 @@ function HYPERVISORBEHAVIOR(env, message) {
       SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineId, env: {} }, null, 'HYPERVISORACTOR');
       SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineId, dna: null, env: {} }, null, 'HYPERVISORACTOR');
 
-      // P17: Send immediate boot ack BEFORE compiling first stage
       if (message.sender && message.tag) {
         SENDRESPONSE(message.sender, message.tag, { started: true, pipelineId: pipelineId }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
       }
@@ -291,7 +263,6 @@ function HYPERVISORBEHAVIOR(env, message) {
         .then(function() {})
         .catch(function(err) {
           logwarn(env, '[HYPERVISOR]', 'boot pipeline orchestration failed:', err);
-          // Do not send another pipeline_booted here; already sent
         });
 
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
@@ -347,9 +318,6 @@ function ENQUEUEHYPERVISORUNREGISTERPIPELINE(pipelineId, responseSpec) { return 
 function ENQUEUEHYPERVISORSETPROGRAM(programKey, programSource, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SET_PROGRAM, { programKey: programKey, programSource: programSource }, responseSpec); }
 function ENQUEUEHYPERVISORGETPROGRAM(programKey, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_PROGRAM, { programKey: programKey }, responseSpec); }
 function ENQUEUEHYPERVISORMARKBOOT(boot, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.MARK_BOOT, { boot: boot }, responseSpec); }
-function ENQUEUEHYPERVISORSETSTAGEDESCRIPTOR(pipelineId, stageId, descriptor, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SET_STAGE_DESCRIPTOR, { pipelineId: pipelineId, stageId: stageId, descriptor: descriptor }, responseSpec); }
-function ENQUEUEHYPERVISORGETTRIGGERRECIPIENTSTATUS(pipelineId, stageId, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS, { pipelineId: pipelineId, stageId: stageId }, responseSpec); }
-function ENQUEUEHYPERVISORTRIGGER(payload, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.TRIGGER_EVENT, payload, responseSpec); }
 function ENQUEUEHYPERVISORPING(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.PING, {}, responseSpec); }
 function ENQUEUEHYPERVISORACTIVATEACTORS(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.ACTIVATE_ACTORS, {}, responseSpec); }
 function ENQUEUEHYPERVISORBOOTPIPELINE(payload, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.BOOT_PIPELINE, payload, responseSpec); }

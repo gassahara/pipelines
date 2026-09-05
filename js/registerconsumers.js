@@ -146,14 +146,11 @@ ACTORCONSUMERS['HYPERVISORACTOR:get_program'] = HYPERVISORBEHAVIOR;
 MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.MARK_BOOT, { boot: 'boolean' }, HYPERVISORBEHAVIOR);
 ACTORCONSUMERS['HYPERVISORACTOR:mark_boot'] = HYPERVISORBEHAVIOR;
 
-MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SET_STAGE_DESCRIPTOR, { pipelineId: 'string', stageId: 'string', descriptor: 'object' }, HYPERVISORBEHAVIOR);
-ACTORCONSUMERS['HYPERVISORACTOR:set_stage_descriptor'] = HYPERVISORBEHAVIOR;
-
-MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GET_TRIGGER_RECIPIENT_STATUS, { pipelineId: 'string', stageId: 'string' }, HYPERVISORBEHAVIOR);
-ACTORCONSUMERS['HYPERVISORACTOR:get_trigger_recipient_status'] = HYPERVISORBEHAVIOR;
-
-MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.TRIGGER_EVENT, { pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object' }, HYPERVISORBEHAVIOR);
-ACTORCONSUMERS['HYPERVISORACTOR:trigger_event'] = HYPERVISORBEHAVIOR;
+// P40: Register EVENT_TRIGGERED for HYPERVISORACTOR
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.EVENT_TRIGGERED, {
+  pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object'
+}, HYPERVISORBEHAVIOR);
+ACTORCONSUMERS['HYPERVISORACTOR:event_triggered'] = HYPERVISORBEHAVIOR;
 
 MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.PING, {}, HYPERVISORBEHAVIOR);
 ACTORCONSUMERS['HYPERVISORACTOR:ping'] = HYPERVISORBEHAVIOR;
@@ -273,18 +270,12 @@ ACTORCONSUMERS['RENDERACTOR:recover'] = RENDERBEHAVIOR;
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PING, {}, RENDERBEHAVIOR);
 ACTORCONSUMERS['RENDERACTOR:ping'] = RENDERBEHAVIOR;
 
-MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER, {
-  pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array'
+// P40: Register REGISTER_EVENT_LISTENER for RENDERACTOR
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTER_EVENT_LISTENER, {
+  pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string',
+  control: 'object', elements: 'array', briefcase: 'object?', options: 'object?'
 }, RENDERBEHAVIOR);
-ACTORCONSUMERS['RENDERACTOR:register_trigger'] = RENDERBEHAVIOR;
-
-MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, {
-  pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string', control: 'object', children: 'array', output: 'string?'
-}, RENDERBEHAVIOR);
-ACTORCONSUMERS['RENDERACTOR:register_trigger_expectation'] = RENDERBEHAVIOR;
-
-MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, RENDERBEHAVIOR);
-ACTORCONSUMERS['RENDERACTOR:revalidate_triggers'] = RENDERBEHAVIOR;
+ACTORCONSUMERS['RENDERACTOR:register_event_listener'] = RENDERBEHAVIOR;
 
 // WORLDMAPACTOR
 MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { updates: 'array' }, WORLDMAPBEHAVIOR);
@@ -305,9 +296,3 @@ ACTORCONSUMERS['WORLDMAPACTOR:get_worldmap'] = WORLDMAPBEHAVIOR;
 // MAILACTOR
 MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.SEND, { recipient: 'string', message: 'object' }, MAILBEHAVIOR);
 MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.ACK, { recipient: 'string', ids: 'array' }, MAILBEHAVIOR);
-
-// ------------------------------------------------------------------
-// 2. DBACTOR IS NOT REGISTERED HERE.
-//    DBACTOR has its own DBACTOR_CONSUMERS and STORE mailbox inside
-//    js/actors/dbactor.js.
-// ------------------------------------------------------------------

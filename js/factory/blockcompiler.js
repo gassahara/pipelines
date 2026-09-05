@@ -698,6 +698,9 @@ function registerEventStage(stage, pipelineId, stagePath, options) {
   return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENT_LISTENER_REGISTERED }, WITNESS_TIMEOUT)
     .then(function(mailboxMessage) {
       var response = mailboxMessage.payload;
+      if (response && response.error) {
+        throw new Error('[registerEventStage] Registration failed for ' + stage.id + ': ' + response.error);
+      }
       if (response && response.result !== undefined) {
         return response.result;
       }
@@ -713,7 +716,6 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
   }
 
   if (childStage.control && childStage.control.command === 'EVENT') {
-    // Return a promise that registers the event and then resolves to a noop wrapper
     return registerEventStage(childStage, pipelineId, childStagePath, options)
       .then(function() {
         var noopWrapper = function(env) { return Promise.resolve(env); };
@@ -927,12 +929,21 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
     throw new Error('[blockcompilerCompileStage] stage not found at path: ' + JSON.stringify(stagePath));
   }
 
-  // P32: Register EVENT stages at boot and wait for ack
+  // P44: Validate EVENT stages before registration
   var eventStages = (pipeline.elements || []).filter(function(pipelineStage) {
     return pipelineStage && pipelineStage.element === 'STAGE' &&
            pipelineStage.control && pipelineStage.control.command === 'EVENT';
   });
 
+  var validationErrors = [];
+  eventStages.forEach(function(eventStage) {
+    validationErrors = validationErrors.concat(validateeventstage(eventStage));
+  });
+  if (validationErrors.length > 0) {
+    throw new Error('[blockcompilerCompileStage] EVENT stage validation failed: ' + validationErrors.join('; '));
+  }
+
+  // Register EVENT stages and wait for acks
   var eventRegistrationPromises = eventStages.map(function(eventStage, idx) {
     var eventStagePath = ['pipeline', 'elements', idx];
     return registerEventStage(eventStage, dnaEnvelope.pipelineId, eventStagePath, options);

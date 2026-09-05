@@ -461,6 +461,40 @@ var ENQUEUEGETVIEWPORT = CREATEENQUEUER(MESSAGETYPES.GETVIEWPORT, false);
 var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
 var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
 
+// Compatibility aliases for removed enqueuers (deprecated)
+function ENQUEUERENDERREGISTERTRIGGER(registration, responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERREGISTERTRIGGER; use blockcompiler REGISTER_EVENT_LISTENER instead');
+  return undefined;
+}
+function ENQUEUERENDERREGISTERTRIGGEREXPECTATION(registration, responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERREGISTERTRIGGEREXPECTATION; use blockcompiler REGISTER_EVENT_LISTENER instead');
+  return undefined;
+}
+function ENQUEUERENDERREVALIDATETRIGGERS(responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERREVALIDATETRIGGERS; no longer needed');
+  return undefined;
+}
+function ENQUEUERENDERPING(responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERPING; use ENQUEUERENDER... or direct message');
+  return undefined;
+}
+function ENQUEUERENDERGETBODYHTML(responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERGETBODYHTML; use GET_BODY_HTML message directly');
+  return undefined;
+}
+function ENQUEUERENDERRESTOREBODYHTML(html, responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERRESTOREBODYHTML; use RESTORE_BODY_HTML message directly');
+  return undefined;
+}
+function ENQUEUERENDERRECOVER(responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERRECOVER; use RECOVER message directly');
+  return undefined;
+}
+function ENQUEUERENDERCRYPTO(bytes, responseSpec) {
+  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERCRYPTO; use CRYPTO message directly');
+  return undefined;
+}
+
 var STARTRENDERACTOR = function(options) {
   if (options !== undefined) {
     var lvl = typeof options === 'number' ? options :
