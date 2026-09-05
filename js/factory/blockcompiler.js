@@ -8,7 +8,8 @@ function createBlockCompilerConstants() {
     BLOCKTYPES: Object.freeze({
       FN: 'fn', API: 'api', FETCH: 'fetch', WRITER: 'writer',
       IO: 'io', DOMQUERY: 'domquery', CRYPTO: 'crypto',
-      WAIT: 'wait', EXECUTIONQUERY: 'executionquery', STOREQUERY: 'storequery'
+      WAIT: 'wait', EXECUTIONQUERY: 'executionquery'
+      // STOREQUERY removed
     }),
     INHERITEDKEYS: Object.freeze(['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents'])
   });
@@ -308,9 +309,7 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
     { field: 'command', required: true, message: 'executionquery requires command', custom: function(v) { return v && typeof v.COMMAND === 'string'; } }
   ]);
 
-  analyzers[BLOCKTYPES.STOREQUERY] = createBlockAnalyzer([
-    { field: 'command', required: true, message: 'storequery requires command', custom: function(v) { return v && typeof v.COMMAND === 'string'; } }
-  ]);
+  // STOREQUERY analyzer removed
 
   return Object.freeze(analyzers);
 }
@@ -545,32 +544,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
     return blockfn;
   };
 
-  compilers[BLOCKTYPES.STOREQUERY] = function(merged, id, sig) {
-    var blockfn = function(env) {
-      var command = merged.command || {};
-      var COMMAND = command.COMMAND;
-      var args = command.args || {};
-
-      switch (COMMAND) {
-        case 'store':
-          return DB_STORE(args.key, args.value !== undefined ? args.value : compilepathaccessor(args.value)(env))
-            .then(function(response) { return response && response.result !== undefined ? response.result : response; });
-        case 'restore':
-          return DB_RESTORE(args.key)
-            .then(function(response) { return response && response.result !== undefined ? response.result : response; });
-        case 'list':
-          return DB_LIST()
-            .then(function(response) { return response && response.result !== undefined ? response.result : response; });
-        case 'delete':
-          return DB_DELETE(args.key)
-            .then(function(response) { return response && response.result !== undefined ? response.result : response; });
-        default:
-          throw new Error('[storequery] unknown command: ' + COMMAND);
-      }
-    };
-    blockfn.id = id;
-    return blockfn;
-  };
+  // STOREQUERY compiler removed
 
   return Object.freeze(compilers);
 }
@@ -1026,8 +1000,9 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
 
     return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR' }, WITNESS_TIMEOUT)
       .then(function(mailboxMessage) {
-        var response = mailboxMessage.payload;
-        var result = response && response.result !== undefined ? response.result : response;
+        var payload = mailboxMessage.payload;
+        var outerResult = payload && payload.result !== undefined ? payload.result : payload;
+        var result = outerResult && outerResult.result !== undefined ? outerResult.result : outerResult;
         writeoutputs({ inputs: blockInputs, outputs: blockOutputs }, execEnv, result, elementId);
         logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'element completed:', elementId, 'pipeline:', pipelineId);
         return result;

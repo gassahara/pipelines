@@ -8,7 +8,7 @@ var MAXENTRYBYTES = 2 * 1024 * 1024;
 // Dedicated store mailbox (independent from main MAILBOX)
 var STORE_MAILBOX = [];
 
-// DBACTOR's own consumer registry
+// DBACTOR's own consumer registry (currently direct functions dispatch)
 var DBACTOR_CONSUMERS = {};
 
 // ------------------------------------------------------------------
@@ -27,7 +27,7 @@ function getStorage() {
 }
 
 function ensureDbSlice(env) {
-  return ensureEnvSlice(env, 'db', function() { return { store: {} }; });
+  return ENSUREENVSLICE(env, 'db', function() { return { store: {} }; });
 }
 
 // P28-rev + P33: full recursive serializer with per-case handlers and deduplication.
@@ -354,7 +354,7 @@ function STOREWAIT(filter, timeout) {
         if (filter.recipient !== undefined && item.recipient !== filter.recipient) return false;
         if (filter.type !== undefined && item.type !== filter.type) return false;
         if (filter.read !== undefined && item.read !== filter.read) return false;
-        if (item.read === 'READ') return false; // default unread only
+        if (item.read === 'READ') return false;
         return true;
       });
       if (matches.length > 0) {
@@ -431,35 +431,37 @@ var DBBEHAVIOR = function(env, message) {
   }
 };
 
-// Register consumers for DBACTOR's own mailbox
-DBACTOR_CONSUMERS[MESSAGETYPES.STORE] = DBBEHAVIOR;
-DBACTOR_CONSUMERS[MESSAGETYPES.RESTORE] = DBBEHAVIOR;
-DBACTOR_CONSUMERS[MESSAGETYPES.LIST] = DBBEHAVIOR;
-DBACTOR_CONSUMERS[MESSAGETYPES.DELETE] = DBBEHAVIOR;
-
-// ==================== DIRECT DB API ====================
+// ==================== DIRECT DB API (actors only) ====================
 
 function DB_STORE(key, value) {
   var tag = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.STORE, { key: key, value: value }, tag, 'WORLDMAPACTOR');
+  var msg = { type: MESSAGETYPES.STORE, key: key, value: value, sender: 'WORLDMAPACTOR', tag: tag };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
   return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
 }
 
 function DB_RESTORE(key) {
   var tag = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.RESTORE, { key: key }, tag, 'WORLDMAPACTOR');
+  var msg = { type: MESSAGETYPES.RESTORE, key: key, sender: 'WORLDMAPACTOR', tag: tag };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
   return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
 }
 
 function DB_LIST() {
   var tag = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.LIST, {}, tag, 'WORLDMAPACTOR');
+  var msg = { type: MESSAGETYPES.LIST, sender: 'WORLDMAPACTOR', tag: tag };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
   return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
 }
 
 function DB_DELETE(key) {
   var tag = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.DELETE, { key: key }, tag, 'WORLDMAPACTOR');
+  var msg = { type: MESSAGETYPES.DELETE, key: key, sender: 'WORLDMAPACTOR', tag: tag };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
   return STOREWAIT({ tag: tag, sender: 'DBACTOR' }, 20000);
 }
 
@@ -470,12 +472,12 @@ function STARTDBACTOR(options) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      var env = getActorState('WORLDMAPACTOR');
+      var env = GETACTORSTATE('WORLDMAPACTOR');
       if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('WORLDMAPACTOR'); },
-    dispatch: function(message) { return DBBEHAVIOR(getActorState('WORLDMAPACTOR'), message); }
+    getstate: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
+    dispatch: function(message) { return DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), message); }
   };
 }
