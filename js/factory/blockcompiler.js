@@ -366,7 +366,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing FN block:', id);
       var fn = merged.fn;
       if (!fn) throw new Error('fn block must have a function: ' + id);
-      // P49: use actual dependencies map
       var properties = buildBlockProperties(merged, inheritedProperties, sig, env, dependencies);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       var fnargs = [properties].concat(inputargs);
@@ -391,7 +390,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
       var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
-      // P49: use actual dependencies map
       var properties = buildBlockProperties(merged, inheritedProperties, sig, env, dependencies);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       return Promise.resolve(fn(properties, inputargs)).then(function(result) {
@@ -583,16 +581,38 @@ function processElement(el, pipelineId, stagePath, inheritedBriefcase, constants
   return createPersistentElementWrapper(fn, el, stagePath, pipelineId, options);
 }
 
+function loadPipelineDependencies(container, options) {
+  var libs = (container && container.libs) || [];
+  var deps = (container && container.deps) || (container && container.programs) || [];
+  var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
+  var frontendBase = options && options.frontendBase ? options.frontendBase : FRONTEND_BASE;
+  var witnessTimeout = options && options.witnessTimeout ? options.witnessTimeout : WITNESS_TIMEOUT;
+
+  return loadFrameworkLibs(libs, frameworkBase, witnessTimeout)
+    .then(function() {
+      return loadFrontendPrograms(deps, frontendBase, witnessTimeout);
+    })
+    .then(function() {
+      return buildDependenciesRegistry(deps);
+    });
+}
+
 function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, dependencies, options) {
   var elementId = el.id || 'pipeline_unknown';
   logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'processPipelineElement:', elementId, 'pipeline:', el.pipeline);
 
   var resolvedPipeline = null;
+  var parentContainer = null;
+
   if (typeof el.pipeline === 'string') {
+    var segments = el.pipeline.split('.');
+    if (segments.length > 1 && segments[segments.length - 1] === 'pipeline') {
+      var parentPath = segments.slice(0, -1).join('.');
+      parentContainer = resolvePipelinePath(parentPath, dependencies || window);
+      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'derived parent container for dependencies:', parentPath);
+    }
     resolvedPipeline = resolvePipelinePath(el.pipeline, dependencies || window);
-    if (resolvedPipeline && resolvedPipeline.elements) {
-      logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'resolved pipeline path:', el.pipeline, 'to inner pipeline with elements');
-    } else {
+    if (!resolvedPipeline || !resolvedPipeline.elements) {
       logerror(blockCompilerState, '[BLOCKCOMPILER]', 'failed to resolve pipeline path:', el.pipeline);
       throw new Error('[processPipelineElement] failed to resolve pipeline path: ' + el.pipeline);
     }
@@ -600,33 +620,9 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
     resolvedPipeline = el.pipeline;
   }
 
-  var nestedLibs = (resolvedPipeline && resolvedPipeline.libs) || [];
-  var nestedPrograms = (resolvedPipeline && resolvedPipeline.programs) || [];
+  var depContainer = parentContainer || resolvedPipeline;
 
-  function isAlreadyLoaded(entry) {
-    if (!entry || !entry.provides || entry.provides.length === 0) return false;
-    return entry.provides.every(function(name) { return typeof window[name] !== 'undefined'; });
-  }
-
-  var filteredLibs = nestedLibs.filter(function(entry) { return !isAlreadyLoaded(entry); });
-  var filteredPrograms = nestedPrograms.filter(function(entry) { return !isAlreadyLoaded(entry); });
-
-  var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
-  var frontendBase = options && options.frontendBase ? options.frontendBase : FRONTEND_BASE;
-  var witnessTimeout = options && options.witnessTimeout ? options.witnessTimeout : WITNESS_TIMEOUT;
-
-  var loadingPromise;
-  if (filteredLibs.length === 0 && filteredPrograms.length === 0) {
-    loadingPromise = Promise.resolve();
-  } else {
-    loadingPromise = loadFrameworkLibs(filteredLibs, frameworkBase, witnessTimeout)
-      .then(function() {
-        return loadFrontendPrograms(filteredPrograms, frontendBase, witnessTimeout);
-      });
-  }
-
-  return loadingPromise.then(function() {
-    var nestedDeps = buildDependenciesRegistry(nestedPrograms);
+  return loadPipelineDependencies(depContainer, options).then(function(nestedDeps) {
     var mergedDependencies = extendObject(cloneObject(dependencies || {}), nestedDeps);
 
     var blockfn = function(env) {
@@ -769,7 +765,6 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
   var INHERITEDKEYS = constants.INHERITEDKEYS;
   var dnaConstants = createDnaSerializerConstants();
   var ANALYZERS = createBlockAnalyzers(BLOCKTYPES, dnaConstants);
-  // P49: pass dependencies map to compilers
   var COMPILERS = createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options);
   var compilerConstants = { BLOCKTYPES: BLOCKTYPES, INHERITEDKEYS: INHERITEDKEYS, ANALYZERS: ANALYZERS, COMPILERS: COMPILERS };
 
@@ -1001,23 +996,14 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
   var id = pipelineId || pipelineDefinition.id || (pipelineDefinition.identity && pipelineDefinition.identity.id) || 'default_pipeline';
   loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loadPipeline start for pipeline:', id);
 
-  var libs = pipelineDefinition.libs || [];
-  var programs = pipelineDefinition.programs || [];
-  var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
-  var frontendBase = options.frontendBase || FRONTEND_BASE;
-  var witnessTimeout = options.witnessTimeout || WITNESS_TIMEOUT;
-
-  return loadFrameworkLibs(libs, frameworkBase, witnessTimeout)
-    .then(function() {
-      return loadFrontendPrograms(programs, frontendBase, witnessTimeout);
-    })
-    .then(function() {
+  return loadPipelineDependencies(pipelineDefinition, options)
+    .then(function(depsRegistry) {
       loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'all dependencies loaded for pipeline:', id);
 
       var dnaEnvelope = {
         pipelineId: id,
         definition: pipelineDefinition,
-        dependencies: buildDependenciesRegistry(programs),
+        dependencies: depsRegistry,
         loadedAt: Date.now()
       };
 
@@ -1038,7 +1024,7 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
         responseType: 'pipeline_booted'
       });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, witnessTimeout)
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           if (response && response.error) throw new Error(response.error);

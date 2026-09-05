@@ -40,8 +40,7 @@ function COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, env, optio
   if (!entry || !entry.dna) {
     return Promise.resolve({ error: 'missing DNA for pipeline: ' + pipelineId });
   }
-  // P51: Always pass the full DNA envelope so nested dependencies are available.
-  // P47: Use latest stored env slice for pipeline.
+  // P47/P51: use latest stored env slice and full DNA envelope
   var latestEnv = (hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] && hyperSlice.envByPipeline[pipelineId].env) || env || {};
   return blockcompilerCompileStage(entry.dna, stagePath, latestEnv, options || {});
 }
@@ -200,10 +199,10 @@ function HYPERVISORBEHAVIOR(env, message) {
 
       loginfo(env, '[HYPERVISOR]', 'EVENT_TRIGGERED compiling stage:', pipelineId, stageId, stagePath);
 
-      // P47: No special-casing; delegate to standard compile path with isEventTrigger flag.
       var eventOptions = loadedEntry.options || {};
       eventOptions.isEventTrigger = true;
 
+      // Standard compile path; no special env logic
       COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, {}, eventOptions)
         .then(function() {
           if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { started: true }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
@@ -243,6 +242,18 @@ function HYPERVISORBEHAVIOR(env, message) {
       var dnaEnvelope = message.dna;
       if (!dnaEnvelope || !dnaEnvelope.definition) {
         if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: '[HYPERVISOR] missing DNA envelope' }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
+        return env;
+      }
+
+      // P56: If pipeline already loaded and env exists, skip re-registration/recompilation
+      var alreadyLoaded = hyperSlice.loadedPipelines && hyperSlice.loadedPipelines[pipelineId] && hyperSlice.loadedPipelines[pipelineId].dna;
+      var hasEnvState = hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] && hyperSlice.envByPipeline[pipelineId].env;
+
+      if (alreadyLoaded && hasEnvState) {
+        loginfo(env, '[HYPERVISOR]', 'BOOT_PIPELINE skipped (state already present):', pipelineId);
+        if (message.sender && message.tag) {
+          SENDRESPONSE(message.sender, message.tag, { started: true, pipelineId: pipelineId, reused: true }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
+        }
         return env;
       }
 

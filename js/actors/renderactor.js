@@ -8,7 +8,8 @@ function ENSURERENDERSLICE(env) {
       actorRegistry: null,
       _gc: createGarbageCollector(),
       _triggerObserverInstalled: false,
-      _triggerGcScheduled: false
+      _triggerGcScheduled: false,
+      scriptTags: []
     };
   });
 }
@@ -323,15 +324,17 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
       if (saved !== null && saved !== undefined) {
         env.render = saved;
       } else {
-        env.render = { html: '', viewport: null, actorRegistry: null };
+        env.render = { html: '', viewport: null, actorRegistry: null, scriptTags: [] };
       }
       SCHEDULEGCCYCLE(env.render);
+      // P57: Re-inject missing script tags after restore
+      reinjectScriptTags(env.render.scriptTags || []);
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'render', value: env.render }]
       }, GENERATETAG(), 'RENDERACTOR');
       RESPONDIFNEEDED(env, msg, env);
     }).catch(function(e) {
-      env.render = { html: '', viewport: null, actorRegistry: null };
+      env.render = { html: '', viewport: null, actorRegistry: null, scriptTags: [] };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'render', value: env.render }]
       }, GENERATETAG(), 'RENDERACTOR');
@@ -386,7 +389,6 @@ HANDLERS[MESSAGETYPES.REGISTER_EVENT_LISTENER] = function(env, msg) {
     updates: [{ path: 'render', value: renderSlice }]
   }, GENERATETAG(), 'RENDERACTOR');
 
-  // P45: Return result object; RENDERBEHAVIOR will send exactly one response
   return { registered: true, sourceid: msg.sourceid, event: msg.event };
 };
 
@@ -395,6 +397,23 @@ function RESPONDIFNEEDED(env, message, result) {
     var responseType = (message.responseSpec && message.responseSpec.responseType) || MESSAGETYPES.DOM_RESULT;
     SENDRESPONSE(message.sender, message.tag, result, 'RENDERACTOR', responseType);
   }
+}
+
+// P57: Reinject script tags from saved state
+function reinjectScriptTags(scriptTags) {
+  if (!scriptTags || !scriptTags.length || typeof document === 'undefined') return;
+  var existingSrcs = {};
+  Array.prototype.slice.call(document.head.getElementsByTagName('script')).forEach(function(s) {
+    if (s.src) existingSrcs[s.src] = true;
+  });
+  scriptTags.forEach(function(src) {
+    if (!existingSrcs[src]) {
+      var script = document.createElement('script');
+      script.src = src;
+      document.head.appendChild(script);
+      loginfo({}, '[RENDERACTOR]', 'Re-injected script tag:', src);
+    }
+  });
 }
 
 // Pure behavior function: (env, message) -> env
