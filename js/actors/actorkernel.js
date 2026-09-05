@@ -1,22 +1,22 @@
-var kernelVerbosityConstants = createVerbosityConstants();
+var KERNELVERBOSITYCONSTANTS = createVerbosityConstants();
 
 // State registry now only holds WORLDMAPACTOR's ENV.
-var actorStateRegistry = {};
+var ACTORSTATEREGISTRY = {};
 
-function registerActorState(actorName, initialState) {
-  actorStateRegistry[actorName] = initialState;
+function REGISTERACTORSTATE(actorName, initialState) {
+  ACTORSTATEREGISTRY[actorName] = initialState;
 }
 
-function getActorState(actorName) {
-  return actorStateRegistry[actorName];
+function GETACTORSTATE(actorName) {
+  return ACTORSTATEREGISTRY[actorName];
 }
 
-function setActorState(actorName, nextState) {
-  actorStateRegistry[actorName] = nextState;
+function SETACTORSTATE(actorName, nextState) {
+  ACTORSTATEREGISTRY[actorName] = nextState;
 }
 
 // Pure immutable transformer: (env, actorName, behavior, message) -> env | Promise<env>
-function dispatchImmutable(env, actorName, behavior, message) {
+function DISPATCHIMMUTABLE(env, actorName, behavior, message) {
   var result = behavior(env, message);
   if (result && typeof result.then === 'function') {
     return result;
@@ -25,31 +25,31 @@ function dispatchImmutable(env, actorName, behavior, message) {
 }
 
 // Wrapper that manages global state outside the pure core.
-function dispatchToActor(actorName, behavior, message) {
-  var currentEnv = getActorState('WORLDMAPACTOR');
+function DISPATCHTOACTOR(actorName, behavior, message) {
+  var currentEnv = GETACTORSTATE('WORLDMAPACTOR');
   if (currentEnv === undefined) {
-    throw new Error('[dispatchToActor] WORLDMAPACTOR state (ENV) is not registered');
+    throw new Error('[DISPATCHTOACTOR] WORLDMAPACTOR state (ENV) is not registered');
   }
-  var result = dispatchImmutable(currentEnv, actorName, behavior, message);
+  var result = DISPATCHIMMUTABLE(currentEnv, actorName, behavior, message);
   if (result && typeof result.then === 'function') {
     return result.then(function(newEnv) {
-      setActorState('WORLDMAPACTOR', newEnv);
+      SETACTORSTATE('WORLDMAPACTOR', newEnv);
       return newEnv;
     });
   }
-  setActorState('WORLDMAPACTOR', result);
+  SETACTORSTATE('WORLDMAPACTOR', result);
   return result;
 }
 
 // Helper for actors to ensure their slice exists.
-function ensureEnvSlice(env, sliceName, defaultFactory) {
+function ENSUREENVSLICE(env, sliceName, defaultFactory) {
   if (!env[sliceName]) {
     env[sliceName] = defaultFactory();
   }
   return env[sliceName];
 }
 
-function createMessageValidator(interfaceMap) {
+function CREATEMESSAGEVALIDATOR(interfaceMap) {
   return function(message) {
     if (!message || typeof message !== 'object') {
       return { valid: false, error: 'message must be a non-null object', type: 'null' };
@@ -96,9 +96,9 @@ function createMessageValidator(interfaceMap) {
   };
 }
 
-var actorRegistry = {};
+var ACTORREGISTRY = {};
 
-function pingActor(enqueuePing, timeout) {
+function PINGACTOR(enqueuePing, timeout) {
   if (timeout === undefined) timeout = 1000;
   return new Promise(function(resolve) {
     var timer = setTimeout(function() { resolve(false); }, timeout);
@@ -112,6 +112,6 @@ function pingActor(enqueuePing, timeout) {
   });
 }
 
-function getActorRegistry() {
-  return actorRegistry;
+function GETACTORREGISTRY() {
+  return ACTORREGISTRY;
 }

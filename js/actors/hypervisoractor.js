@@ -1,7 +1,7 @@
 var HYPERVISORVERBOSITYCONSTANTS = createVerbosityConstants();
 
 function ENSUREHYPERVISORSLICE(env) {
-  return ensureEnvSlice(env, 'hypervisor', function() {
+  return ENSUREENVSLICE(env, 'hypervisor', function() {
     return {
       boot: true,
       envByPipeline: {},
@@ -374,12 +374,12 @@ function STARTHYPERVISORACTOR(options) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      var env = getActorState('WORLDMAPACTOR');
+      var env = GETACTORSTATE('WORLDMAPACTOR');
       if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('WORLDMAPACTOR'); },
-    dispatch: function(message) { return dispatchToActor('HYPERVISORACTOR', HYPERVISORBEHAVIOR, message); }
+    getstate: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
+    dispatch: function(message) { return DISPATCHTOACTOR('HYPERVISORACTOR', HYPERVISORBEHAVIOR, message); }
   };
 }

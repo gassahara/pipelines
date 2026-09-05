@@ -1,3 +1,4 @@
+// Pure behavior function: (env, message) -> env
 function APIBEHAVIOR(env, message) {
   logdebug(env, '[APIACTOR]', 'behavior handling action:', message.type);
 

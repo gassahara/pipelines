@@ -13,7 +13,7 @@ var MAILBOX_RESPONSE_TYPE = 'mailbox_response';
 function MAILBEHAVIOR(env, message) {
   logdebug(env, '[MAILACTOR]', 'behavior handling action:', message.type);
 
-  var mailSlice = ensureEnvSlice(env, 'mail', function() { return { queues: {}, nextId: 1 }; });
+  var mailSlice = ENSUREENVSLICE(env, 'mail', function() { return { queues: {}, nextId: 1 }; });
 
   if (message.type === MESSAGETYPES.SEND) {
     var recipient = message.recipient;
@@ -47,7 +47,7 @@ function MAILBEHAVIOR(env, message) {
     var consumer = ACTORCONSUMERS[consumerKey];
     if (consumer) {
       logdebug(env, '[MAILACTOR]', 'Dispatching to actor:', recipient, 'type=', flatMessage.type, 'tag=', flatMessage.tag);
-      dispatchToActor(recipient, consumer, flatMessage);
+      DISPATCHTOACTOR(recipient, consumer, flatMessage);
       envelope.read = 'READ';
       logdebug(env, '[MAILACTOR]', 'Envelope marked READ after dispatch:', envelope.id, 'tag=', envelope.tag);
     } else {
@@ -210,7 +210,7 @@ function SENDINSTRUCTION(recipient, type, payload, tag, sender, responseSpec, co
     }
   }
 
-  dispatchToActor('MAILACTOR', MAILBEHAVIOR, {
+  DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, {
     type: MESSAGETYPES.SEND,
     recipient: recipient,
     message: flatMessage
@@ -232,12 +232,12 @@ function STARTMAILACTOR(options) {
     var lvl = typeof options === 'number' ? options :
       (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
     if (lvl !== undefined) {
-      var env = getActorState('WORLDMAPACTOR');
+      var env = GETACTORSTATE('WORLDMAPACTOR');
       if (env) env.verbosity = lvl;
     }
   }
   return {
-    getstate: function() { return getActorState('WORLDMAPACTOR'); },
-    dispatch: function(message) { return dispatchToActor('MAILACTOR', MAILBEHAVIOR, message); }
+    getstate: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
+    dispatch: function(message) { return DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, message); }
   };
 }
