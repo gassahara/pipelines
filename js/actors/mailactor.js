@@ -138,8 +138,15 @@ function getMailbox() {
 function QUERYMAILBOX(filter) {
   if (!filter) filter = {};
 
-  // P19: Validate filter type using enum
-  if (filter.type !== undefined && typeof MESSAGETYPES[filter.type] === 'undefined') {
+  // P21/P22: Correct validation using allowed values, not key lookup
+  var allowedTypes;
+  if (typeof MAILBOX_FILTER_TYPES !== 'undefined' && MAILBOX_FILTER_TYPES) {
+    allowedTypes = Object.keys(MAILBOX_FILTER_TYPES).map(function(k) { return MAILBOX_FILTER_TYPES[k]; });
+  } else {
+    allowedTypes = Object.keys(MESSAGETYPES).map(function(k) { return MESSAGETYPES[k]; });
+  }
+
+  if (filter.type !== undefined && allowedTypes.indexOf(filter.type) === -1) {
     throw new Error('[QUERYMAILBOX] Invalid filter type: ' + filter.type);
   }
 
@@ -184,7 +191,7 @@ function QUERYMAILBOX(filter) {
     return item;
   });
 
-  // P20: resolve expectations for matched items
+  // Resolve expectations for matched items
   result.forEach(function(item) {
     if (item && item.tag && EXPECTATIONS[item.tag] && item.read === 'READ') {
       resolveExpectation(item.tag);
@@ -262,7 +269,6 @@ function SENDINSTRUCTION(recipient, type, payload, tag, sender, responseSpec, co
 }
 
 function SENDRESPONSE(recipient, tag, result, sender, responseType) {
-  // Enforce responseType
   if (responseType === undefined) {
     throw new Error('[SENDRESPONSE] responseType is required');
   }
@@ -285,3 +291,4 @@ function STARTMAILACTOR(options) {
     dispatch: function(message) { return DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, message); }
   };
 }
+
