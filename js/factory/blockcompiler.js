@@ -108,7 +108,7 @@ function buildproperties(merged, inherited) {
 }
 
 function resolveDepsArray(depsArray) {
-  // P8: this function is now unused; retained for compatibility but should not be called.
+  // deprecated; kept for compatibility but not used.
   throw new Error('[resolveDepsArray] This function is deprecated; use buildDependenciesRegistry instead.');
 }
 
@@ -340,7 +340,6 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
       token: env.authsessionaccesstoken || ''
     }, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-    // P14: typed filter
     return WAITFORMAILBOX({ tag: tag, sender: sender, type: isTextual ? MESSAGETYPES.FETCH_RESULT : MESSAGETYPES.API_RESULT }, WITNESS_TIMEOUT)
       .then(function(mailboxMessage) {
         var response = mailboxMessage.payload;
@@ -406,7 +405,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
           append: !merged.replace
         }, tag, 'BLOCKCOMPILER', { responseType: 'dom_result' });
 
-        // P14: typed filter
         return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
           .then(function() {
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
@@ -447,7 +445,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
 
-      // P5: Resolve value and classname if they are string path accessors
+      // Resolve value and classname path accessors
       var resolvedValue = props.value;
       if (typeof props.value === 'string' && (containsPathAccessorChars(props.value) || (sig.inputs || []).indexOf(props.value) !== -1)) {
         resolvedValue = compilepathaccessor(props.value)(env);
@@ -488,7 +486,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         name: props.name
       }, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-      // P14: typed filter
       return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
@@ -507,7 +504,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
       var tag = GENERATETAG();
       SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responseType: 'dom_result' });
-      // P14: typed filter
       return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           return mailboxMessage.payload && mailboxMessage.payload.result !== undefined ? mailboxMessage.payload.result : mailboxMessage.payload;
@@ -545,7 +541,6 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         default: throw new Error('[executionquery] unknown command: ' + COMMAND);
       }
       SENDINSTRUCTION('EXECUTIONACTOR', msgType, args, tag, 'BLOCKCOMPILER', { responseType: responseType });
-      // P14: typed filter
       return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
@@ -606,7 +601,6 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
   var nestedLibs = (resolvedPipeline && resolvedPipeline.libs) || [];
   var nestedPrograms = (resolvedPipeline && resolvedPipeline.programs) || [];
 
-  // P7: Filter out already-loaded entries to avoid duplicate script loading
   function isAlreadyLoaded(entry) {
     if (!entry || !entry.provides || entry.provides.length === 0) return false;
     return entry.provides.every(function(name) { return typeof window[name] !== 'undefined'; });
@@ -668,7 +662,6 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
       var responseType = 'pipeline_booted';
       SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-      // P14: typed filter
       return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
@@ -771,6 +764,8 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
   var compilerConstants = { BLOCKTYPES: BLOCKTYPES, INHERITEDKEYS: INHERITEDKEYS, ANALYZERS: ANALYZERS, COMPILERS: COMPILERS };
 
   var index = 0;
+  var stageToken = { cancelled: false };
+
   function runNext() {
     if (index >= (stage.elements || []).length) {
       var tag = GENERATETAG();
@@ -780,7 +775,6 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
         nextStageMessage: nextStageMessage || null,
         env: env
       }, tag, 'BLOCKCOMPILER', { responseType: 'stage_completed_ack' });
-      // P14: typed filter
       return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, WITNESS_TIMEOUT)
         .then(function() { return; });
     }
@@ -802,15 +796,23 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
       throw new Error('[orchestrateStage] unexpected element type: ' + elementDef.element);
     }
 
-    // elementFn might be a Promise (e.g., processPipelineElement) or a function returning a Promise
+    // P26: set active cancellation token for this element
+    blockCompilerState.activeCancellationToken = stageToken;
+
     return Promise.resolve(elementFn).then(function(fn) {
       return fn(env);
     }).then(function() {
       index++;
       return runNext();
     }).catch(function(err) {
+      stageToken.cancelled = true;
+      blockCompilerState.activeCancellationToken = null;
       logerror(blockCompilerState, '[BLOCKCOMPILER]', 'Element failed:', elementDef.id, err);
       throw err;
+    }).then(function(result) {
+      // Clear token after successful element execution
+      blockCompilerState.activeCancellationToken = null;
+      return result;
     });
   }
 
@@ -916,13 +918,47 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   options.pipelineId = dnaEnvelope.pipelineId;
   options.dependencies = dnaEnvelope.dependencies || {};
 
+  var pipeline = dnaEnvelope.definition.pipeline;
   var stage = resolveStageFromPath(dnaEnvelope, stagePath);
   if (!stage || stage.element !== 'STAGE') {
     throw new Error('[blockcompilerCompileStage] stage not found at path: ' + JSON.stringify(stagePath));
   }
 
+  // P28: Register top-level trigger stages at boot
+  var constants = createBlockCompilerConstants();
+  var dnaConstants = createDnaSerializerConstants();
+  var compilerConstants = {
+    BLOCKTYPES: constants.BLOCKTYPES,
+    INHERITEDKEYS: constants.INHERITEDKEYS,
+    ANALYZERS: createBlockAnalyzers(constants.BLOCKTYPES, dnaConstants),
+    COMPILERS: createBlockCompilers(constants.BLOCKTYPES, constants.INHERITEDKEYS, options)
+  };
+  var registeredTriggers = options.registeredTriggers || {};
+  (pipeline.elements || []).forEach(function(pipelineStage, idx) {
+    if (pipelineStage && pipelineStage.element === 'STAGE' && pipelineStage.control && pipelineStage.control.command === 'TRIGGER') {
+      var triggerKey = dnaEnvelope.pipelineId + ':' + pipelineStage.id;
+      if (!registeredTriggers[triggerKey]) {
+        registeredTriggers[triggerKey] = true;
+        try {
+          processNestedStage(
+            pipelineStage,
+            dnaEnvelope.pipelineId,
+            ['pipeline', 'elements', idx],
+            {},
+            compilerConstants,
+            dnaConstants,
+            dnaEnvelope.dependencies || {},
+            options
+          );
+        } catch (e) {
+          logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'trigger registration failed for', pipelineStage.id, e);
+        }
+      }
+    }
+  });
+  options.registeredTriggers = registeredTriggers;
+
   var stageIndex = stagePath[stagePath.length - 1];
-  var pipeline = dnaEnvelope.definition.pipeline;
   var nextStageMessage = null;
   if (typeof stageIndex === 'number' && stageIndex + 1 < pipeline.elements.length) {
     nextStageMessage = {
@@ -982,7 +1018,6 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
         responseType: 'pipeline_booted'
       });
 
-      // P14: typed filter
       return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, witnessTimeout)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
@@ -1050,7 +1085,6 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
 
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responseType: 'task_result' });
 
-    // P14: typed filter
     return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, WITNESS_TIMEOUT)
       .then(function(mailboxMessage) {
         var payload = mailboxMessage.payload;

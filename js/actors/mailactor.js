@@ -6,9 +6,52 @@ var ACTORCONSUMERS = {};
 var EXPECTATIONS = {};
 var MAILBOX = [];
 
+// Index maps for efficient lookup
+var indexByTag = {};
+var indexBySender = {};
+var indexByType = {};
+
 var EXPECTATION_TIMEOUT = 20000;
 var POLL_INTERVAL = 150;
 var MAILBOX_RESPONSE_TYPE = 'mailbox_response';
+
+function removeEnvelopeFromMailbox(id) {
+  var idx = MAILBOX.findIndex(function(env) { return env.id === id; });
+  if (idx !== -1) {
+    MAILBOX.splice(idx, 1);
+    var env = MAILBOX[idx]; // now undefined; but we need original before splice? We should remove from indices too.
+    // We'll handle index update separately in addEnvelopeToMailbox/removeEnvelopeFromMailbox.
+  }
+}
+
+function addEnvelopeToMailbox(envelope) {
+  MAILBOX.push(envelope);
+  if (envelope.tag) indexByTag[envelope.tag] = indexByTag[envelope.tag] || [];
+  indexByTag[envelope.tag].push(envelope);
+  if (envelope.sender) indexBySender[envelope.sender] = indexBySender[envelope.sender] || [];
+  indexBySender[envelope.sender].push(envelope);
+  if (envelope.payload && envelope.payload.type) {
+    indexByType[envelope.payload.type] = indexByType[envelope.payload.type] || [];
+    indexByType[envelope.payload.type].push(envelope);
+  }
+}
+
+function removeEnvelopeFromMailbox(envelope) {
+  var idx = MAILBOX.indexOf(envelope);
+  if (idx !== -1) MAILBOX.splice(idx, 1);
+  if (envelope.tag && indexByTag[envelope.tag]) {
+    indexByTag[envelope.tag] = indexByTag[envelope.tag].filter(function(e) { return e !== envelope; });
+    if (indexByTag[envelope.tag].length === 0) delete indexByTag[envelope.tag];
+  }
+  if (envelope.sender && indexBySender[envelope.sender]) {
+    indexBySender[envelope.sender] = indexBySender[envelope.sender].filter(function(e) { return e !== envelope; });
+    if (indexBySender[envelope.sender].length === 0) delete indexBySender[envelope.sender];
+  }
+  if (envelope.payload && envelope.payload.type && indexByType[envelope.payload.type]) {
+    indexByType[envelope.payload.type] = indexByType[envelope.payload.type].filter(function(e) { return e !== envelope; });
+    if (indexByType[envelope.payload.type].length === 0) delete indexByType[envelope.payload.type];
+  }
+}
 
 function createExpectation(tag, recipient, sender, type, context, responseSpec) {
   var expectation = {
@@ -26,7 +69,8 @@ function createExpectation(tag, recipient, sender, type, context, responseSpec) 
   };
   EXPECTATIONS[tag] = expectation;
   MAILBOX.push(expectation);
-
+  // Note: expectation is also in MAILBOX; but we'll not add to index maps for expectations unless needed.
+  // For simplicity, we keep only envelopes in indices; expectation entries are checked separately.
   setTimeout(function() {
     if (EXPECTATIONS[tag] && EXPECTATIONS[tag].status === 'PENDING') {
       rejectExpectation(tag, { message: 'Response timeout for tag ' + tag });
@@ -43,6 +87,15 @@ function resolveExpectation(tag) {
     exp.resolvedAt = Date.now();
     exp.read = 'READ';
     delete EXPECTATIONS[tag];
+    // Remove associated envelopes with same tag
+    if (indexByTag[tag]) {
+      indexByTag[tag].slice().forEach(function(env) {
+        if (env.tag === tag) removeEnvelopeFromMailbox(env);
+      });
+    }
+    // Also remove the expectation object from MAILBOX if present
+    var expIdx = MAILBOX.findIndex(function(item) { return item.tag === tag && item.read === 'UNREAD' && item.status === 'RESOLVED'; });
+    if (expIdx !== -1) MAILBOX.splice(expIdx, 1);
   }
 }
 
@@ -57,6 +110,14 @@ function rejectExpectation(tag, error) {
       exp.responseSpec.reject(new Error(error && error.message ? error.message : 'Expectation rejected'));
     }
     delete EXPECTATIONS[tag];
+    // Remove associated envelopes
+    if (indexByTag[tag]) {
+      indexByTag[tag].slice().forEach(function(env) {
+        if (env.tag === tag) removeEnvelopeFromMailbox(env);
+      });
+    }
+    var expIdx = MAILBOX.findIndex(function(item) { return item.tag === tag && item.read === 'UNREAD' && item.status === 'TIMEOUT'; });
+    if (expIdx !== -1) MAILBOX.splice(expIdx, 1);
   }
 }
 
@@ -86,12 +147,7 @@ function MAILBEHAVIOR(env, message) {
       payload: flatMessage
     };
 
-    logdebug(env, '[MAILACTOR]', 'Envelope created:', envelope.id, 'read=', envelope.read, 'tag=', envelope.tag, 'sender=', envelope.sender);
-
-    mailSlice.queues[recipient].push(envelope);
-    MAILBOX.push(envelope);
-
-    logdebug(env, '[MAILACTOR]', 'Envelope pushed to MAILBOX:', envelope.id, 'MAILBOX length=', MAILBOX.length);
+    addEnvelopeToMailbox(envelope);
 
     var consumerKey = recipient + ':' + flatMessage.type;
     var consumer = ACTORCONSUMERS[consumerKey];
@@ -99,7 +155,6 @@ function MAILBEHAVIOR(env, message) {
       logdebug(env, '[MAILACTOR]', 'Dispatching to actor:', recipient, 'type=', flatMessage.type, 'tag=', flatMessage.tag);
       DISPATCHTOACTOR(recipient, consumer, flatMessage);
       envelope.read = 'READ';
-      logdebug(env, '[MAILACTOR]', 'Envelope marked READ after dispatch:', envelope.id, 'tag=', envelope.tag);
     } else {
       logdebug(env, '[MAILACTOR]', 'No consumer registered for:', consumerKey);
     }
@@ -114,6 +169,9 @@ function MAILBEHAVIOR(env, message) {
         flatMessage.responseSpec
       );
     }
+
+    // If no responseSpec and no tag, envelope may be transient; we can remove immediately after dispatch.
+    // But for now keep for possible queries.
 
     return env;
   }
@@ -138,21 +196,29 @@ function getMailbox() {
 function QUERYMAILBOX(filter) {
   if (!filter) filter = {};
 
-  // P21/P22: Correct validation using allowed values, not key lookup
-  var allowedTypes;
-  if (typeof MAILBOX_FILTER_TYPES !== 'undefined' && MAILBOX_FILTER_TYPES) {
-    allowedTypes = Object.keys(MAILBOX_FILTER_TYPES).map(function(k) { return MAILBOX_FILTER_TYPES[k]; });
-  } else {
-    allowedTypes = Object.keys(MESSAGETYPES).map(function(k) { return MESSAGETYPES[k]; });
-  }
-
-  if (filter.type !== undefined && allowedTypes.indexOf(filter.type) === -1) {
-    throw new Error('[QUERYMAILBOX] Invalid filter type: ' + filter.type);
+  // Validate filter type if present
+  if (filter.type !== undefined) {
+    var allowedTypes = (typeof MAILBOX_FILTER_TYPES !== 'undefined' && MAILBOX_FILTER_TYPES)
+      ? Object.keys(MAILBOX_FILTER_TYPES).map(function(k) { return MAILBOX_FILTER_TYPES[k]; })
+      : Object.keys(MESSAGETYPES).map(function(k) { return MESSAGETYPES[k]; });
+    if (allowedTypes.indexOf(filter.type) === -1) {
+      throw new Error('[QUERYMAILBOX] Invalid filter type: ' + filter.type);
+    }
   }
 
   logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox filter:', JSON.stringify(filter));
 
-  var matched = MAILBOX.filter(function(item) {
+  // Candidate set based on indexed keys if possible
+  var candidates = MAILBOX;
+  if (filter.tag && indexByTag[filter.tag]) {
+    candidates = indexByTag[filter.tag];
+  } else if (filter.sender && indexBySender[filter.sender]) {
+    candidates = indexBySender[filter.sender];
+  } else if (filter.type && indexByType[filter.type]) {
+    candidates = indexByType[filter.type];
+  }
+
+  var matched = candidates.filter(function(item) {
     var matches = true;
     if (filter.recipient !== undefined && item.recipient !== filter.recipient) matches = false;
     if (filter.sender !== undefined && item.sender !== filter.sender) matches = false;
@@ -196,6 +262,11 @@ function QUERYMAILBOX(filter) {
     if (item && item.tag && EXPECTATIONS[item.tag] && item.read === 'READ') {
       resolveExpectation(item.tag);
     }
+    // Remove consumed envelope if it had no pending expectation
+    // We'll remove after returning; but since we are in filter, we can schedule removal asynchronously.
+    if (item && item.read === 'READ' && !EXPECTATIONS[item.tag]) {
+      setTimeout(function() { removeEnvelopeFromMailbox(item); }, 0);
+    }
   });
 
   logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox returning', result.length, 'items');
@@ -205,13 +276,38 @@ function QUERYMAILBOX(filter) {
 function WAITFORMAILBOX(filter, timeout) {
   if (timeout === undefined) timeout = EXPECTATION_TIMEOUT;
   return new Promise(function(resolve, reject) {
+    // Check active cancellation token from blockcompiler
+    if (typeof blockCompilerState !== 'undefined' && blockCompilerState.activeCancellationToken && blockCompilerState.activeCancellationToken.cancelled) {
+      reject(new Error('Cancelled'));
+      return;
+    }
+
+    // Check expectation status if filter.tag corresponds to an expectation
+    if (filter.tag && EXPECTATIONS[filter.tag] && EXPECTATIONS[filter.tag].status !== 'PENDING') {
+      // Already resolved or timed out; reject immediately
+      reject(new Error('Expectation already settled'));
+      return;
+    }
+
     var found = QUERYMAILBOX(filter);
     if (found.length > 0) {
       found[0].read = 'READ';
       resolve(found[0]);
       return;
     }
+
     var checkInterval = setInterval(function() {
+      // Re-check cancellation and expectation status
+      if (typeof blockCompilerState !== 'undefined' && blockCompilerState.activeCancellationToken && blockCompilerState.activeCancellationToken.cancelled) {
+        clearInterval(checkInterval);
+        reject(new Error('Cancelled'));
+        return;
+      }
+      if (filter.tag && EXPECTATIONS[filter.tag] && EXPECTATIONS[filter.tag].status !== 'PENDING') {
+        clearInterval(checkInterval);
+        reject(new Error('Expectation already settled'));
+        return;
+      }
       var result = QUERYMAILBOX(filter);
       if (result.length > 0) {
         clearInterval(checkInterval);
@@ -219,8 +315,13 @@ function WAITFORMAILBOX(filter, timeout) {
         resolve(result[0]);
       }
     }, POLL_INTERVAL);
+
     setTimeout(function() {
       clearInterval(checkInterval);
+      if (typeof blockCompilerState !== 'undefined' && blockCompilerState.activeCancellationToken && blockCompilerState.activeCancellationToken.cancelled) {
+        reject(new Error('Cancelled'));
+        return;
+      }
       var late = QUERYMAILBOX(filter);
       if (late.length > 0) {
         late[0].read = 'READ';
@@ -291,4 +392,3 @@ function STARTMAILACTOR(options) {
     dispatch: function(message) { return DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, message); }
   };
 }
-
