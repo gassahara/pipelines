@@ -137,6 +137,12 @@ function getMailbox() {
 
 function QUERYMAILBOX(filter) {
   if (!filter) filter = {};
+
+  // P19: Validate filter type using enum
+  if (filter.type !== undefined && typeof MESSAGETYPES[filter.type] === 'undefined') {
+    throw new Error('[QUERYMAILBOX] Invalid filter type: ' + filter.type);
+  }
+
   logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox filter:', JSON.stringify(filter));
 
   var matched = MAILBOX.filter(function(item) {
@@ -145,7 +151,10 @@ function QUERYMAILBOX(filter) {
     if (filter.sender !== undefined && item.sender !== filter.sender) matches = false;
     if (filter.tag !== undefined && item.tag !== filter.tag) matches = false;
     if (filter.date !== undefined && item.timestamp !== filter.date) matches = false;
-    if (filter.type !== undefined && item.type !== filter.type) matches = false;
+    if (filter.type !== undefined) {
+      var actualType = (item.payload && item.payload.type) ? item.payload.type : item.type;
+      if (actualType !== filter.type) matches = false;
+    }
     if (filter.status !== undefined && item.status !== filter.status) matches = false;
     if (filter.read !== undefined) {
       if (item.read !== filter.read) matches = false;
@@ -175,7 +184,7 @@ function QUERYMAILBOX(filter) {
     return item;
   });
 
-  // P15: resolve expectations if matched
+  // P20: resolve expectations for matched items
   result.forEach(function(item) {
     if (item && item.tag && EXPECTATIONS[item.tag] && item.read === 'READ') {
       resolveExpectation(item.tag);
@@ -253,7 +262,7 @@ function SENDINSTRUCTION(recipient, type, payload, tag, sender, responseSpec, co
 }
 
 function SENDRESPONSE(recipient, tag, result, sender, responseType) {
-  // P13: Enforce responseType
+  // Enforce responseType
   if (responseType === undefined) {
     throw new Error('[SENDRESPONSE] responseType is required');
   }

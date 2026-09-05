@@ -49,7 +49,7 @@ function HANDLESTAGECOMPLETED(hyperSlice, message) {
   var key = message.pipelineId + ':' + message.stageId;
   loginfo(hyperSlice, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
 
-  // P12: Always send typed ack with STAGE_COMPLETED_ACK
+  // Always send typed ack
   if (message.sender && message.tag) {
     SENDRESPONSE(message.sender, message.tag, { stageId: message.stageId }, 'HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED_ACK);
   }
@@ -293,18 +293,23 @@ function HYPERVISORBEHAVIOR(env, message) {
       SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineId, env: {} }, null, 'HYPERVISORACTOR');
       SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineId, dna: null, env: {} }, null, 'HYPERVISORACTOR');
 
+      // P17: Send immediate boot ack BEFORE compiling first stage
+      if (message.sender && message.tag) {
+        SENDRESPONSE(message.sender, message.tag, { started: true, pipelineId: pipelineId }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
+      }
+
       var stagePath = message.stagePath || ['pipeline', 'elements', 0];
       COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, bootOptions.baseEnv || {}, bootOptions)
         .then(function() {})
         .catch(function(err) {
           logwarn(env, '[HYPERVISOR]', 'boot pipeline orchestration failed:', err);
-          if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: err.message || String(err) }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
+          // Do not send another pipeline_booted here; already sent
         });
 
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         updates: [{ path: 'hypervisor', value: hyperSlice }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { started: true, pipelineId: pipelineId }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
+
       return env;
     }
     case MESSAGETYPES.COMPILE_STAGE: {
