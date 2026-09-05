@@ -372,3 +372,16 @@ function validateblockproperties(block) {
   }
   return [];
 }
+
+// P36: EVENT stage validation
+function validateeventstage(stage) {
+  var errors = [];
+  if (!stage.control || stage.control.command !== 'EVENT') return errors;
+  if (!stage.control.sourceid || typeof stage.control.sourceid !== 'string' || stage.control.sourceid.trim() === '') {
+    errors.push('EVENT stage "' + stage.id + '" requires control.sourceid (non-empty string)');
+  }
+  if (!stage.control.event || typeof stage.control.event !== 'string' || stage.control.event.trim() === '') {
+    errors.push('EVENT stage "' + stage.id + '" requires control.event (non-empty string)');
+  }
+  return errors;
+}

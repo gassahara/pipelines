@@ -209,43 +209,31 @@ function HYPERVISORBEHAVIOR(env, message) {
       if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, status, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
       return env;
     }
-    case MESSAGETYPES.TRIGGER_EVENT: {
+    case MESSAGETYPES.EVENT_TRIGGERED: {
       var pipelineId = message.pipelineId;
       var stageId = message.stageId;
+      var stagePath = message.stagePath || ['pipeline', 'elements', -1];
+
       var rootEntry = hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId];
       var envForTrigger = rootEntry ? rootEntry.env : { pipelineid: pipelineId };
-      var descriptorKey = pipelineId + ':' + stageId;
-      var descriptor = hyperSlice.stageDescriptors && hyperSlice.stageDescriptors[descriptorKey];
-      if (!descriptor) {
-        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: 'missing trigger descriptor: ' + descriptorKey }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+
+      var loadedEntry = hyperSlice.loadedPipelines && hyperSlice.loadedPipelines[pipelineId];
+      if (!loadedEntry || !loadedEntry.dna) {
+        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: 'missing loaded pipeline DNA' }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
         return env;
       }
-      hyperSlice.routes['pipeline:' + pipelineId] = { stageId: stageId, stagePath: message.stagePath || [stageId] };
-      SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
-      }, GENERATETAG(), 'HYPERVISORACTOR');
-      callwithstack(EVALSTACK, 'hypervisor-trigger:' + pipelineId + ':' + stageId, 'async-await', function() {
-        var stage = {
-          id: descriptor.stageId || 'trigger_stage',
-          elements: descriptor.elements || [],
-          briefcase: descriptor.briefcase || {}
-        };
-        var stagePath = descriptor.stagePath || [stage.id];
-        var options = descriptor.options || {};
-        var dependencies = (descriptor.options && descriptor.options.dependencies) || {};
-        return orchestrateStage(stage, descriptor.pipelineId, dependencies, envForTrigger, stagePath, options, null)
-          .then(function(finalEnv) { return { env: finalEnv }; });
-      }, [envForTrigger], { context: { env: envForTrigger }, capturecontinuation: true, errk: CREATEHYPERVISORERRORCONTEXT('trigger') }).then(function(result) {
-        var updatedEnv = result && result.env ? result.env : envForTrigger;
-        if (!hyperSlice.envByPipeline[pipelineId]) hyperSlice.envByPipeline[pipelineId] = {};
-        hyperSlice.envByPipeline[pipelineId].env = updatedEnv;
-        hyperSlice.envByPipeline[pipelineId].updatedAt = Date.now();
-        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-          updates: [{ path: 'hypervisor', value: hyperSlice }]
-        }, GENERATETAG(), 'HYPERVISORACTOR');
-      }).catch(function(err) {
-        logwarn(env, '[HYPERVISOR]', 'trigger failed:', err);
-      });
+
+      loginfo(env, '[HYPERVISOR]', 'EVENT_TRIGGERED compiling stage:', pipelineId, stageId, stagePath);
+
+      COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, envForTrigger, loadedEntry.options || {})
+        .then(function() {
+          // Stage orchestrated; no response needed unless tagged
+          if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { started: true }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+        })
+        .catch(function(err) {
+          logwarn(env, '[HYPERVISOR]', 'EVENT_TRIGGERED compilation failed:', err);
+          if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: err.message || String(err) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+        });
       return env;
     }
     case MESSAGETYPES.PING:

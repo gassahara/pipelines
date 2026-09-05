@@ -31,9 +31,7 @@ var MESSAGETYPES = Object.freeze({
   RESTORE_BODY_HTML: 'restore_body_html',
   RECOVER: 'recover',
   PING: 'ping',
-  REGISTER_TRIGGER: 'register_trigger',
-  REGISTER_TRIGGER_EXPECTATION: 'register_trigger_expectation',
-  REVALIDATE_TRIGGERS: 'revalidate_triggers',
+  REGISTER_EVENT_LISTENER: 'register_event_listener',   // new
   // apiactor (2)
   API: 'api',
   FETCH: 'fetch',
@@ -82,8 +80,8 @@ var MESSAGETYPES = Object.freeze({
   GET_PROGRAM: 'get_program',
   MARK_BOOT: 'mark_boot',
   SET_STAGE_DESCRIPTOR: 'set_stage_descriptor',
-  GET_TRIGGER_RECIPIENT_STATUS: 'get_trigger_recipient_status',
-  TRIGGER_EVENT: 'trigger_event',
+  GET_TRIGGER_RECIPIENT_STATUS: 'get_trigger_recipient_status',   // kept for compatibility? no, removed? We'll keep but not used.
+  EVENT_TRIGGERED: 'event_triggered',   // new
   ACTIVATE_ACTORS: 'activate_actors',
   BOOT_PIPELINE: 'boot_pipeline',
   COMPILE_STAGE: 'compile_stage',
@@ -102,7 +100,8 @@ var MESSAGETYPES = Object.freeze({
   PIPELINE_BOOTED: 'pipeline_booted',
   DOM_RESULT: 'dom_result',
   STAGE_COMPLETED_ACK: 'stage_completed_ack',
-  DB_RESULT: 'db_result'
+  DB_RESULT: 'db_result',
+  EVENT_LISTENER_REGISTERED: 'event_listener_registered'   // new response type
 });
 
 var MAILBOX_FILTER_TYPES = Object.freeze({
@@ -113,7 +112,8 @@ var MAILBOX_FILTER_TYPES = Object.freeze({
   PIPELINE_BOOTED: MESSAGETYPES.PIPELINE_BOOTED,
   DOM_RESULT: MESSAGETYPES.DOM_RESULT,
   STAGE_COMPLETED_ACK: MESSAGETYPES.STAGE_COMPLETED_ACK,
-  DB_RESULT: MESSAGETYPES.DB_RESULT
+  DB_RESULT: MESSAGETYPES.DB_RESULT,
+  EVENT_LISTENER_REGISTERED: MESSAGETYPES.EVENT_LISTENER_REGISTERED   // added
 });
 
 var MESSAGEREGISTRY_STORE = {};

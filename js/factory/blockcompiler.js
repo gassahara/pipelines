@@ -676,6 +676,35 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
   });
 }
 
+function registerEventStage(stage, pipelineId, stagePath, options) {
+  var sourceid = stage.control.sourceid;
+  var event = stage.control.event;
+  if (!sourceid || !event) {
+    return Promise.reject(new Error('[registerEventStage] EVENT stage missing sourceid/event'));
+  }
+  var tag = GENERATETAG();
+  var payload = {
+    pipelineId: pipelineId,
+    stageId: stage.id,
+    stagePath: stagePath,
+    sourceid: sourceid,
+    event: event,
+    control: stage.control,
+    elements: stage.elements,
+    briefcase: stage.briefcase || {},
+    options: options || {}
+  };
+  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTER_EVENT_LISTENER, payload, tag, 'BLOCKCOMPILER', { responseType: MESSAGETYPES.EVENT_LISTENER_REGISTERED });
+  return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENT_LISTENER_REGISTERED }, WITNESS_TIMEOUT)
+    .then(function(mailboxMessage) {
+      var response = mailboxMessage.payload;
+      if (response && response.result !== undefined) {
+        return response.result;
+      }
+      return true;
+    });
+}
+
 function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcase, constants, dnaConstants, dependencies, options) {
   var childStagePath = stagePath.concat([childStage.id]);
   var childBriefcase = cloneObject(inheritedBriefcase || {});
@@ -683,38 +712,14 @@ function processNestedStage(childStage, pipelineId, stagePath, inheritedBriefcas
     Object.keys(childStage.briefcase).forEach(function(key) { childBriefcase[key] = childStage.briefcase[key]; });
   }
 
-  if (childStage.control && childStage.control.command === 'TRIGGER') {
-    var sourceid = childStage.control.sourceid;
-    var event = childStage.control.event;
-    if (!sourceid || !event) throw new Error('[processNestedStage] trigger stage missing sourceid/event');
-    var descriptor = {
-      pipelineId: pipelineId,
-      stageId: childStage.id,
-      stagePath: childStagePath,
-      control: childStage.control,
-      elements: childStage.elements,
-      briefcase: childBriefcase,
-      options: options || {}
-    };
-    enqueueHypervisorSetStageDescriptor(pipelineId, childStage.id, descriptor).catch(function(err) {
-      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'failed to set nested stage descriptor:', err);
-    });
-    enqueueRenderRegisterTriggerExpectation({
-      pipelineId: pipelineId,
-      stageId: childStage.id,
-      stagePath: childStagePath,
-      sourceid: sourceid,
-      event: event,
-      control: childStage.control,
-      children: childStage.elements,
-      output: null,
-      env: null
-    }).catch(function(err) {
-      logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'failed to register nested trigger:', err);
-    });
-    var noopWrapper = function(env) { return Promise.resolve(env); };
-    noopWrapper.isTriggerRegistration = true;
-    return noopWrapper;
+  if (childStage.control && childStage.control.command === 'EVENT') {
+    // Return a promise that registers the event and then resolves to a noop wrapper
+    return registerEventStage(childStage, pipelineId, childStagePath, options)
+      .then(function() {
+        var noopWrapper = function(env) { return Promise.resolve(env); };
+        noopWrapper.isEventRegistration = true;
+        return noopWrapper;
+      });
   }
 
   if (childStage.async === true) {
@@ -796,7 +801,6 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
       throw new Error('[orchestrateStage] unexpected element type: ' + elementDef.element);
     }
 
-    // P26: set active cancellation token for this element
     blockCompilerState.activeCancellationToken = stageToken;
 
     return Promise.resolve(elementFn).then(function(fn) {
@@ -810,7 +814,6 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
       logerror(blockCompilerState, '[BLOCKCOMPILER]', 'Element failed:', elementDef.id, err);
       throw err;
     }).then(function(result) {
-      // Clear token after successful element execution
       blockCompilerState.activeCancellationToken = null;
       return result;
     });
@@ -924,56 +927,35 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
     throw new Error('[blockcompilerCompileStage] stage not found at path: ' + JSON.stringify(stagePath));
   }
 
-  // P28: Register top-level trigger stages at boot
-  var constants = createBlockCompilerConstants();
-  var dnaConstants = createDnaSerializerConstants();
-  var compilerConstants = {
-    BLOCKTYPES: constants.BLOCKTYPES,
-    INHERITEDKEYS: constants.INHERITEDKEYS,
-    ANALYZERS: createBlockAnalyzers(constants.BLOCKTYPES, dnaConstants),
-    COMPILERS: createBlockCompilers(constants.BLOCKTYPES, constants.INHERITEDKEYS, options)
-  };
-  var registeredTriggers = options.registeredTriggers || {};
-  (pipeline.elements || []).forEach(function(pipelineStage, idx) {
-    if (pipelineStage && pipelineStage.element === 'STAGE' && pipelineStage.control && pipelineStage.control.command === 'TRIGGER') {
-      var triggerKey = dnaEnvelope.pipelineId + ':' + pipelineStage.id;
-      if (!registeredTriggers[triggerKey]) {
-        registeredTriggers[triggerKey] = true;
-        try {
-          processNestedStage(
-            pipelineStage,
-            dnaEnvelope.pipelineId,
-            ['pipeline', 'elements', idx],
-            {},
-            compilerConstants,
-            dnaConstants,
-            dnaEnvelope.dependencies || {},
-            options
-          );
-        } catch (e) {
-          logwarn(blockCompilerState, '[BLOCKCOMPILER]', 'trigger registration failed for', pipelineStage.id, e);
-        }
-      }
-    }
+  // P32: Register EVENT stages at boot and wait for ack
+  var eventStages = (pipeline.elements || []).filter(function(pipelineStage) {
+    return pipelineStage && pipelineStage.element === 'STAGE' &&
+           pipelineStage.control && pipelineStage.control.command === 'EVENT';
   });
-  options.registeredTriggers = registeredTriggers;
 
-  var stageIndex = stagePath[stagePath.length - 1];
-  var nextStageMessage = null;
-  if (typeof stageIndex === 'number' && stageIndex + 1 < pipeline.elements.length) {
-    nextStageMessage = {
-      type: 'compile_stage',
-      pipeline: pipeline,
-      pipelineId: dnaEnvelope.pipelineId,
-      stageIndex: stageIndex + 1,
-      stagePath: ['pipeline', 'elements', stageIndex + 1],
-      briefcase: {},
-      env: null,
-      options: options
-    };
-  }
+  var eventRegistrationPromises = eventStages.map(function(eventStage, idx) {
+    var eventStagePath = ['pipeline', 'elements', idx];
+    return registerEventStage(eventStage, dnaEnvelope.pipelineId, eventStagePath, options);
+  });
 
-  return orchestrateStage(stage, dnaEnvelope.pipelineId, dnaEnvelope.dependencies || {}, env || {}, stagePath, options, nextStageMessage);
+  return Promise.all(eventRegistrationPromises).then(function() {
+    var stageIndex = stagePath[stagePath.length - 1];
+    var nextStageMessage = null;
+    if (typeof stageIndex === 'number' && stageIndex + 1 < pipeline.elements.length) {
+      nextStageMessage = {
+        type: 'compile_stage',
+        pipeline: pipeline,
+        pipelineId: dnaEnvelope.pipelineId,
+        stageIndex: stageIndex + 1,
+        stagePath: ['pipeline', 'elements', stageIndex + 1],
+        briefcase: {},
+        env: null,
+        options: options
+      };
+    }
+
+    return orchestrateStage(stage, dnaEnvelope.pipelineId, dnaEnvelope.dependencies || {}, env || {}, stagePath, options, nextStageMessage);
+  });
 }
 
 function loadPipeline(pipelineDefinition, pipelineId, options) {

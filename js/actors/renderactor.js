@@ -5,7 +5,10 @@ function ENSURERENDERSLICE(env) {
     return {
       html: '',
       viewport: null,
-      actorRegistry: null
+      actorRegistry: null,
+      _gc: createGarbageCollector(),
+      _triggerObserverInstalled: false,
+      _triggerGcScheduled: false
     };
   });
 }
@@ -65,11 +68,11 @@ function WAITFORDOMREADY() {
   return Promise.resolve();
 }
 
-function CREATETRIGGERPRODUCERCONSUMER(msg) {
+function CREATEEVENTPRODUCERCONSUMER(msg) {
   return {
     producer: { type: 'dom-event', id: msg.sourceid, event: msg.event },
-    consumer: { type: 'trigger-recipient', pipelineId: msg.pipelineId, stageId: msg.stageId },
-    metadata: { stagePath: msg.stagePath || [], control: msg.control, children: msg.children, env: msg.env || {} }
+    consumer: { type: 'event-trigger', pipelineId: msg.pipelineId, stageId: msg.stageId },
+    metadata: { stagePath: msg.stagePath || [], control: msg.control, children: msg.elements, env: msg.env || {} }
   };
 }
 
@@ -85,36 +88,54 @@ function SCHEDULEGCCYCLE(renderSlice) {
   }, 0);
 }
 
-function ENSURETRIGGEROBSERVER(renderSlice) {
+function ENSUREEVENTOBSERVER(renderSlice) {
   if (!renderSlice || renderSlice._triggerObserverInstalled) return;
   if (typeof document === 'undefined') return;
   renderSlice._triggerObserverInstalled = true;
+  loginfo(renderSlice, '[RENDERACTOR]', 'Installing global DOM event observer for EVENT stages');
 
   var handler = function(event) {
     var target = event.target;
     var targetId = target && target.id;
     if (!targetId || !renderSlice._gc) return;
 
-    listObjects(renderSlice._gc).forEach(function(gcObj) {
+    var matchingObjects = listObjects(renderSlice._gc).filter(function(gcObj) {
       var producer = gcObj.producer || {};
-      if (producer.type !== 'dom-event') return;
-      if (producer.id !== targetId) return;
-      if (producer.event !== event.type) return;
+      return producer.type === 'dom-event' &&
+             producer.id === targetId &&
+             producer.event === event.type;
+    });
 
+    if (matchingObjects.length === 0) return;
+
+    loginfo(renderSlice, '[RENDERACTOR]', 'EVENT observed:', {
+      sourceid: targetId,
+      event: event.type,
+      pipelineId: matchingObjects[0].consumer && matchingObjects[0].consumer.pipelineId,
+      stageId: matchingObjects[0].consumer && matchingObjects[0].consumer.stageId
+    });
+
+    matchingObjects.forEach(function(gcObj) {
       incrementSent(renderSlice._gc, gcObj.id, 1);
 
-      SENDINSTRUCTION('HYPERVISORACTOR', 'trigger_event', {
-        pipelineId: gcObj.consumer && gcObj.consumer.pipelineId,
-        stageId: gcObj.consumer && gcObj.consumer.stageId,
-        stagePath: gcObj.metadata && gcObj.metadata.stagePath ? gcObj.metadata.stagePath : [],
+      var consumer = gcObj.consumer || {};
+      var metadata = gcObj.metadata || {};
+
+      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.EVENT_TRIGGERED, {
+        pipelineId: consumer.pipelineId,
+        stageId: consumer.stageId,
+        stagePath: metadata.stagePath || [consumer.stageId],
         eventPayload: { type: event.type, targetId: targetId }
       }, null, 'RENDERACTOR');
+
+      logdebug(renderSlice, '[RENDERACTOR]', 'EVENT_TRIGGERED sent to HYPERVISORACTOR for', consumer.stageId);
     });
   };
 
   document.addEventListener('click', handler, true);
   document.addEventListener('input', handler, true);
   document.addEventListener('change', handler, true);
+  loginfo(renderSlice, '[RENDERACTOR]', 'Global event observer installed for click/input/change');
 }
 
 var HANDLERS = {};
@@ -321,31 +342,54 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
   });
 };
 HANDLERS[MESSAGETYPES.PING] = function(env, msg) { return true; };
-HANDLERS[MESSAGETYPES.REGISTER_TRIGGER] = function(env, msg) {
-  return HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION](env, msg);
-};
-HANDLERS[MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION] = function(env, msg) {
-  var pc = CREATETRIGGERPRODUCERCONSUMER(msg);
-  var existing = listObjects(env.render._gc).filter(function(obj) {
+HANDLERS[MESSAGETYPES.REGISTER_EVENT_LISTENER] = function(env, msg) {
+  var renderSlice = ENSURERENDERSLICE(env);
+  if (!renderSlice._gc) renderSlice._gc = createGarbageCollector();
+
+  loginfo(env, '[RENDERACTOR]', 'REGISTER_EVENT_LISTENER start:', {
+    sourceid: msg.sourceid,
+    event: msg.event,
+    pipelineId: msg.pipelineId,
+    stageId: msg.stageId
+  });
+
+  var pc = CREATEEVENTPRODUCERCONSUMER(msg);
+
+  var existing = listObjects(renderSlice._gc).filter(function(obj) {
     return obj.producer.id === pc.producer.id && obj.producer.event === pc.producer.event &&
       obj.consumer.pipelineId === pc.consumer.pipelineId && obj.consumer.stageId === pc.consumer.stageId;
   })[0];
+
   if (existing) {
-    existing.metadata = pc.metadata; existing.status = 'EXPECTING'; existing.sentCount = 0; existing.receivedCount = 1;
+    loginfo(env, '[RENDERACTOR]', 'EVENT listener already registered for', msg.sourceid, msg.event);
+    existing.metadata = pc.metadata;
+    existing.status = 'EXPECTING';
+    existing.sentCount = 0;
+    existing.receivedCount = 1;
   } else {
-    var gcObject = { producer: pc.producer, consumer: pc.consumer, metadata: pc.metadata, status: 'EXPECTING', sentCount: 0, receivedCount: 0 };
-    registerObject(env.render._gc, gcObject);
-    incrementReceived(env.render._gc, gcObject.id, 1);
-    ENSURETRIGGEROBSERVER(env.render);
+    var gcObject = {
+      producer: pc.producer,
+      consumer: pc.consumer,
+      metadata: pc.metadata,
+      status: 'EXPECTING',
+      sentCount: 0,
+      receivedCount: 0
+    };
+    registerObject(renderSlice._gc, gcObject);
+    incrementReceived(renderSlice._gc, gcObject.id, 1);
+    ENSUREEVENTOBSERVER(renderSlice);
+    loginfo(env, '[RENDERACTOR]', 'EVENT listener registered:', msg.sourceid, msg.event, 'for stage', msg.stageId);
   }
-  SCHEDULEGCCYCLE(env.render);
+
+  SCHEDULEGCCYCLE(renderSlice);
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-    updates: [{ path: 'render', value: env.render }]
+    updates: [{ path: 'render', value: renderSlice }]
   }, GENERATETAG(), 'RENDERACTOR');
-  return true;
-};
-HANDLERS[MESSAGETYPES.REVALIDATE_TRIGGERS] = function(env, msg) {
-  SCHEDULEGCCYCLE(env.render);
+
+  if (msg.sender && msg.tag) {
+    SENDRESPONSE(msg.sender, msg.tag, { registered: true, sourceid: msg.sourceid, event: msg.event }, 'RENDERACTOR', MESSAGETYPES.EVENT_LISTENER_REGISTERED);
+  }
+
   return true;
 };
 
@@ -416,38 +460,6 @@ var ENQUEUESETLAYOUT = CREATEENQUEUER(MESSAGETYPES.SETLAYOUT, true, function(res
 var ENQUEUEGETVIEWPORT = CREATEENQUEUER(MESSAGETYPES.GETVIEWPORT, false);
 var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
 var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
-var ENQUEUERENDERREGISTERTRIGGER = function(registration, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER, registration, tag, 'system', responseSpec);
-};
-var ENQUEUERENDERREGISTERTRIGGEREXPECTATION = function(registration, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTER_TRIGGER_EXPECTATION, registration, tag, 'system', responseSpec);
-};
-var ENQUEUERENDERREVALIDATETRIGGERS = function(responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REVALIDATE_TRIGGERS, {}, tag, 'system', responseSpec);
-};
-var ENQUEUERENDERPING = function(responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.PING, {}, tag, 'system', responseSpec);
-};
-var ENQUEUERENDERGETBODYHTML = function(responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.GET_BODY_HTML, {}, tag, 'system', responseSpec);
-};
-var ENQUEUERENDERRESTOREBODYHTML = function(html, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.RESTORE_BODY_HTML, { html: html }, tag, 'system', responseSpec);
-};
-var ENQUEUERENDERRECOVER = function(responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.RECOVER, {}, tag, 'system', responseSpec);
-};
-var ENQUEUERENDERCRYPTO = function(bytes, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'system', responseSpec);
-};
 
 var STARTRENDERACTOR = function(options) {
   if (options !== undefined) {
