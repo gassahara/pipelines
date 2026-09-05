@@ -356,7 +356,7 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
   return blockfn;
 }
 
-function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
+function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) {
   var compilers = {};
 
   compilers[BLOCKTYPES.FN] = function(merged, id, sig, inheritedProperties) {
@@ -366,7 +366,8 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing FN block:', id);
       var fn = merged.fn;
       if (!fn) throw new Error('fn block must have a function: ' + id);
-      var properties = buildBlockProperties(merged, inheritedProperties, sig, env, merged.deps);
+      // P49: use actual dependencies map
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env, dependencies);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       var fnargs = [properties].concat(inputargs);
       return callwithstack(EVALSTACK, 'fn:' + (merged.ref || id), 'async-await', function() {
@@ -390,7 +391,8 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
       var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
-      var properties = buildBlockProperties(merged, inheritedProperties, sig, env, merged.deps);
+      // P49: use actual dependencies map
+      var properties = buildBlockProperties(merged, inheritedProperties, sig, env, dependencies);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       return Promise.resolve(fn(properties, inputargs)).then(function(result) {
         if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) {
@@ -767,7 +769,8 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
   var INHERITEDKEYS = constants.INHERITEDKEYS;
   var dnaConstants = createDnaSerializerConstants();
   var ANALYZERS = createBlockAnalyzers(BLOCKTYPES, dnaConstants);
-  var COMPILERS = createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options);
+  // P49: pass dependencies map to compilers
+  var COMPILERS = createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options);
   var compilerConstants = { BLOCKTYPES: BLOCKTYPES, INHERITEDKEYS: INHERITEDKEYS, ANALYZERS: ANALYZERS, COMPILERS: COMPILERS };
 
   var index = 0;
@@ -945,7 +948,6 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   var isEventTrigger = options.isEventTrigger === true;
 
   if (isEventStage && !isEventTrigger) {
-    // P46: Boot-time EVENT stage: register only, then skip to next non-EVENT stage
     return registerEventStage(stage, dnaEnvelope.pipelineId, stagePath, options)
       .then(function() {
         var next = findNextNonEventStage(pipeline, stageIndex + 1);
@@ -976,7 +978,6 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
       });
   }
 
-  // Non-EVENT or already-registered EVENT: orchestrate normally
   var next = findNextNonEventStage(pipeline, stageIndex + 1);
   var nextStageMessage = null;
   if (!isEventTrigger && next) {

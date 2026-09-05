@@ -40,7 +40,8 @@ function COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, env, optio
   if (!entry || !entry.dna) {
     return Promise.resolve({ error: 'missing DNA for pipeline: ' + pipelineId });
   }
-  // P47: Always use latest stored env slice for pipeline
+  // P51: Always pass the full DNA envelope so nested dependencies are available.
+  // P47: Use latest stored env slice for pipeline.
   var latestEnv = (hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] && hyperSlice.envByPipeline[pipelineId].env) || env || {};
   return blockcompilerCompileStage(entry.dna, stagePath, latestEnv, options || {});
 }
