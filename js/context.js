@@ -1,17 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/context.js
-// Changes applied:
-//   - updated imports from worldmapactor to use new Mail Actor wrappers
-//   - updateworldmap now supports both patch objects and functions
-//     (using updateworldmapfn when update is a function)
-//   - all worldmap interactions are asynchronous; functions now
-//     return Promises resolved via tag-based responses
-//   - no dynamic imports; static imports only
-//   - ES5 syntax: var, function expressions, no spread/for-of
-// ============================================================
-
-
-
 var createinitialworldmap = function(envoverrides) {
   envoverrides = envoverrides !== undefined ? envoverrides : {};
   var baseEnv = {
@@ -34,12 +20,12 @@ var createinitialworldmap = function(envoverrides) {
   };
 };
 
-// Functional update: if passed a function, use updateworldmapfn; otherwise patch.
+// Functional update: if passed a function, use UPDATEWORLDMAPFN; otherwise patch.
 var updateworldmap = function(update) {
   if (typeof update === 'function') {
-    return updateworldmapfn(update);
+    return UPDATEWORLDMAPFN(update);
   }
-  return sendworldmappatch(update);
+  return SENDWORLDMAPPATCH(update);
 };
 
 var select = function(selectorfn) { return function(state) { return selectorfn(state); }; };
