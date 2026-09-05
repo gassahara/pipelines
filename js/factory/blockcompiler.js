@@ -340,7 +340,8 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
       token: env.authsessionaccesstoken || ''
     }, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-    return WAITFORMAILBOX({ tag: tag, sender: sender }, WITNESS_TIMEOUT)
+    // P14: typed filter
+    return WAITFORMAILBOX({ tag: tag, sender: sender, type: isTextual ? MESSAGETYPES.FETCH_RESULT : MESSAGETYPES.API_RESULT }, WITNESS_TIMEOUT)
       .then(function(mailboxMessage) {
         var response = mailboxMessage.payload;
         var result = response && response.result ? response.result : response;
@@ -405,7 +406,8 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
           append: !merged.replace
         }, tag, 'BLOCKCOMPILER', { responseType: 'dom_result' });
 
-        return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR' }, WITNESS_TIMEOUT)
+        // P14: typed filter
+        return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
           .then(function() {
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
               return expectelement(result.id, result.timeout || 5000).then(function(domref) {
@@ -486,7 +488,8 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         name: props.name
       }, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR' }, WITNESS_TIMEOUT)
+      // P14: typed filter
+      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           return response && response.result !== undefined ? response.result : response;
@@ -504,7 +507,8 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
       var tag = GENERATETAG();
       SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responseType: 'dom_result' });
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR' }, WITNESS_TIMEOUT)
+      // P14: typed filter
+      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           return mailboxMessage.payload && mailboxMessage.payload.result !== undefined ? mailboxMessage.payload.result : mailboxMessage.payload;
         });
@@ -541,7 +545,8 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, options) {
         default: throw new Error('[executionquery] unknown command: ' + COMMAND);
       }
       SENDINSTRUCTION('EXECUTIONACTOR', msgType, args, tag, 'BLOCKCOMPILER', { responseType: responseType });
-      return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR' }, WITNESS_TIMEOUT)
+      // P14: typed filter
+      return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           return response && response.result !== undefined ? response.result : response;
@@ -663,7 +668,8 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
       var responseType = 'pipeline_booted';
       SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR' }, WITNESS_TIMEOUT)
+      // P14: typed filter
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, WITNESS_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           var result = response && response.result ? response.result : response;
@@ -774,7 +780,8 @@ function orchestrateStage(stage, pipelineId, dependencies, env, stagePath, optio
         nextStageMessage: nextStageMessage || null,
         env: env
       }, tag, 'BLOCKCOMPILER', { responseType: 'stage_completed_ack' });
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR' }, WITNESS_TIMEOUT)
+      // P14: typed filter
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, WITNESS_TIMEOUT)
         .then(function() { return; });
     }
 
@@ -975,7 +982,8 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
         responseType: 'pipeline_booted'
       });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR' }, witnessTimeout)
+      // P14: typed filter
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, witnessTimeout)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           if (response && response.error) throw new Error(response.error);
@@ -1042,7 +1050,8 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
 
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responseType: 'task_result' });
 
-    return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR' }, WITNESS_TIMEOUT)
+    // P14: typed filter
+    return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, WITNESS_TIMEOUT)
       .then(function(mailboxMessage) {
         var payload = mailboxMessage.payload;
         var outerResult = payload && payload.result !== undefined ? payload.result : payload;

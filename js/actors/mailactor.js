@@ -10,6 +10,56 @@ var EXPECTATION_TIMEOUT = 20000;
 var POLL_INTERVAL = 150;
 var MAILBOX_RESPONSE_TYPE = 'mailbox_response';
 
+function createExpectation(tag, recipient, sender, type, context, responseSpec) {
+  var expectation = {
+    tag: tag,
+    recipient: recipient,
+    sender: sender || 'system',
+    type: type,
+    context: context,
+    responseSpec: responseSpec,
+    status: 'PENDING',
+    createdAt: Date.now(),
+    resolvedAt: null,
+    error: null,
+    read: 'UNREAD'
+  };
+  EXPECTATIONS[tag] = expectation;
+  MAILBOX.push(expectation);
+
+  setTimeout(function() {
+    if (EXPECTATIONS[tag] && EXPECTATIONS[tag].status === 'PENDING') {
+      rejectExpectation(tag, { message: 'Response timeout for tag ' + tag });
+    }
+  }, EXPECTATION_TIMEOUT);
+
+  return expectation;
+}
+
+function resolveExpectation(tag) {
+  if (EXPECTATIONS[tag]) {
+    var exp = EXPECTATIONS[tag];
+    exp.status = 'RESOLVED';
+    exp.resolvedAt = Date.now();
+    exp.read = 'READ';
+    delete EXPECTATIONS[tag];
+  }
+}
+
+function rejectExpectation(tag, error) {
+  if (EXPECTATIONS[tag]) {
+    var exp = EXPECTATIONS[tag];
+    exp.status = 'TIMEOUT';
+    exp.resolvedAt = Date.now();
+    exp.error = error;
+    exp.read = 'READ';
+    if (exp.responseSpec && typeof exp.responseSpec.reject === 'function') {
+      exp.responseSpec.reject(new Error(error && error.message ? error.message : 'Expectation rejected'));
+    }
+    delete EXPECTATIONS[tag];
+  }
+}
+
 function MAILBEHAVIOR(env, message) {
   logdebug(env, '[MAILACTOR]', 'behavior handling action:', message.type);
 
@@ -55,36 +105,14 @@ function MAILBEHAVIOR(env, message) {
     }
 
     if (flatMessage.responseSpec && flatMessage.tag) {
-      var context = flatMessage.context || null;
-      var expectation = {
-        tag: flatMessage.tag,
-        recipient: recipient,
-        sender: flatMessage.sender || 'system',
-        type: flatMessage.type,
-        context: context,
-        responseSpec: flatMessage.responseSpec,
-        status: 'PENDING',
-        createdAt: Date.now(),
-        resolvedAt: null,
-        error: null,
-        read: 'UNREAD'
-      };
-      EXPECTATIONS[flatMessage.tag] = expectation;
-      MAILBOX.push(expectation);
-      logdebug(env, '[MAILACTOR]', 'Expectation created:', flatMessage.tag, 'status=', expectation.status, 'read=', expectation.read);
-
-      setTimeout(function() {
-        if (EXPECTATIONS[flatMessage.tag] && EXPECTATIONS[flatMessage.tag].status === 'PENDING') {
-          var exp = EXPECTATIONS[flatMessage.tag];
-          exp.status = 'TIMEOUT';
-          exp.resolvedAt = Date.now();
-          exp.error = { message: 'Response timeout for tag ' + flatMessage.tag };
-          logwarn(env, '[MAILACTOR]', 'Expectation timeout:', exp.tag, 'context:', exp.context);
-          if (typeof exp.responseSpec.reject === 'function') {
-            exp.responseSpec.reject(new Error('Response timeout for tag ' + flatMessage.tag));
-          }
-        }
-      }, EXPECTATION_TIMEOUT);
+      createExpectation(
+        flatMessage.tag,
+        recipient,
+        flatMessage.sender || 'system',
+        flatMessage.type,
+        flatMessage.context || null,
+        flatMessage.responseSpec
+      );
     }
 
     return env;
@@ -145,6 +173,13 @@ function QUERYMAILBOX(filter) {
       logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox marking READ:', item.id, 'tag=', item.tag);
     }
     return item;
+  });
+
+  // P15: resolve expectations if matched
+  result.forEach(function(item) {
+    if (item && item.tag && EXPECTATIONS[item.tag] && item.read === 'READ') {
+      resolveExpectation(item.tag);
+    }
   });
 
   logdebug(MAILSTATE, '[MAILACTOR]', 'queryMailbox returning', result.length, 'items');
@@ -218,11 +253,11 @@ function SENDINSTRUCTION(recipient, type, payload, tag, sender, responseSpec, co
 }
 
 function SENDRESPONSE(recipient, tag, result, sender, responseType) {
+  // P13: Enforce responseType
   if (responseType === undefined) {
-    logwarn(MAILSTATE, '[MAILACTOR]', 'sendResponse missing responseType for tag:', tag);
-    responseType = MAILBOX_RESPONSE_TYPE;
+    throw new Error('[SENDRESPONSE] responseType is required');
   }
-  var type = responseType || MESSAGETYPES.RESPONSE;
+  var type = responseType;
   var payload = { result: result };
   SENDINSTRUCTION(recipient, type, payload, tag, sender, undefined, null);
 }
