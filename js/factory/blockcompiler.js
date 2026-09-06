@@ -1,7 +1,11 @@
 var blockCompilerState = Object.freeze({ level: createVerbosityConstants().DEBUG });
 
 var FRONTEND_BASE = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
-var WITNESS_TIMEOUT = 5000;
+// Separate timeouts:
+// - SCRIPT_WITNESS_TIMEOUT: how long to wait for dynamically loaded scripts to provide their globals.
+// - MAILBOX_WAIT_TIMEOUT: default timeout for WAITFORMAILBOX calls (API, DOM, etc.). 25 seconds to accommodate slow API responses.
+var SCRIPT_WITNESS_TIMEOUT = 5000;   // former WITNESS_TIMEOUT
+var MAILBOX_WAIT_TIMEOUT = 25000;   // new, for mailbox waits
 
 function createBlockCompilerConstants() {
   return Object.freeze({
@@ -151,14 +155,16 @@ function buildBlockProperties(merged, inherited, io, env, dependencies) {
 
   if (merged && merged.deps) {
     if (Array.isArray(merged.deps)) {
-      var depsMap = dependencies || window;
+      var depsMap = dependencies || (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {}));
       var resolvedDeps = {};
       var missingDeps = [];
       merged.deps.forEach(function(name) {
         if (typeof depsMap[name] !== 'undefined') {
           resolvedDeps[name] = depsMap[name];
-        } else if (typeof window[name] !== 'undefined') {
+        } else if (typeof window !== 'undefined' && typeof window[name] !== 'undefined') {
           resolvedDeps[name] = window[name];
+        } else if (typeof globalThis !== 'undefined' && typeof globalThis[name] !== 'undefined') {
+          resolvedDeps[name] = globalThis[name];
         } else {
           missingDeps.push(name);
         }
@@ -311,7 +317,7 @@ function createBlockAnalyzers(BLOCKTYPES, dnaConstants) {
 }
 
 function compileHttpBlock(merged, id, sig, isTextual, options) {
-  var blockfn = function(env) {
+  var innerFn = function(env) {
     var label = (isTextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing http block:', id, 'type:', isTextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
     var inputaccessors = (sig.inputs || []).map(compilepathaccessor);
@@ -340,7 +346,8 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
       token: env.authsessionaccesstoken || ''
     }, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-    return WAITFORMAILBOX({ tag: tag, sender: sender, type: isTextual ? MESSAGETYPES.FETCH_RESULT : MESSAGETYPES.API_RESULT }, WITNESS_TIMEOUT)
+    var timeout = merged.timeout || MAILBOX_WAIT_TIMEOUT;
+    return WAITFORMAILBOX({ tag: tag, sender: sender, type: isTextual ? MESSAGETYPES.FETCH_RESULT : MESSAGETYPES.API_RESULT }, timeout)
       .then(function(mailboxMessage) {
         var response = mailboxMessage.payload;
         var result = response && response.result ? response.result : response;
@@ -351,6 +358,16 @@ function compileHttpBlock(merged, id, sig, isTextual, options) {
         }
         return finalResult;
       });
+  };
+
+  var blockfn = function(env) {
+    return callwithstack(EVALSTACK, (isTextual ? 'fetch' : 'api') + ':' + id, 'async-await', function() {
+      return innerFn(env);
+    }, [env], {
+      context: { env: env, pipestate: env.pipestate },
+      capturecontinuation: true,
+      errk: createerrorcontext(id, isTextual ? 'fetch' : 'api')
+    });
   };
   blockfn.id = id;
   return blockfn;
@@ -386,7 +403,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
   compilers[BLOCKTYPES.WRITER] = function(merged, id, sig, inheritedProperties) {
     if (inheritedProperties === undefined) inheritedProperties = {};
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
-    var blockfn = function(env) {
+    var innerFn = function(env) {
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
       var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
@@ -405,7 +422,7 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
           append: !merged.replace
         }, tag, 'BLOCKCOMPILER', { responseType: 'dom_result' });
 
-        return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
+        return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, MAILBOX_WAIT_TIMEOUT)
           .then(function() {
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
               return expectelement(result.id, result.timeout || 5000).then(function(domref) {
@@ -418,13 +435,20 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
           });
       });
     };
+    var blockfn = function(env) {
+      return callwithstack(EVALSTACK, 'writer:' + id, 'async-await', function() { return innerFn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(id, 'writer')
+      });
+    };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.IO] = function(merged, id, sig) {
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling IO block:', id);
-    var blockfn = function(env) {
+    var innerFn = function(env) {
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'executing IO block:', id);
       var io = typeof merged.ref === 'function' ? merged.ref : null;
       if (!io) throw new Error('io block "' + id + '" ref must be a function');
@@ -434,18 +458,24 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
         return Promise.resolve(io(inputdata, e));
       }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') });
     };
+    var blockfn = function(env) {
+      return callwithstack(EVALSTACK, 'io:' + id, 'async-await', function() { return innerFn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(id, 'io')
+      });
+    };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.DOMQUERY] = function(merged, id, sig) {
     logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
-    var blockfn = function(env) {
+    var innerFn = function(env) {
       var cmd = merged.command && merged.command.COMMAND;
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
       var props = merged.command.properties || {};
 
-      // Resolve value and classname path accessors
       var resolvedValue = props.value;
       if (typeof props.value === 'string' && (containsPathAccessorChars(props.value) || (sig.inputs || []).indexOf(props.value) !== -1)) {
         resolvedValue = compilepathaccessor(props.value)(env);
@@ -486,45 +516,66 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
         name: props.name
       }, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
+      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, MAILBOX_WAIT_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           return response && response.result !== undefined ? response.result : response;
         });
+    };
+    var blockfn = function(env) {
+      return callwithstack(EVALSTACK, 'domquery:' + id, 'async-await', function() { return innerFn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(id, 'domquery')
+      });
     };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.CRYPTO] = function(merged, id, sig) {
-    var blockfn = function(env) {
+    var innerFn = function(env) {
       var outputkey = Object.keys(sig.outputs || {})[0];
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
       var tag = GENERATETAG();
       SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responseType: 'dom_result' });
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, WITNESS_TIMEOUT)
+      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, MAILBOX_WAIT_TIMEOUT)
         .then(function(mailboxMessage) {
           return mailboxMessage.payload && mailboxMessage.payload.result !== undefined ? mailboxMessage.payload.result : mailboxMessage.payload;
         });
+    };
+    var blockfn = function(env) {
+      return callwithstack(EVALSTACK, 'crypto:' + id, 'async-await', function() { return innerFn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(id, 'crypto')
+      });
     };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.WAIT] = function(merged, id) {
-    var blockfn = function(env) {
+    var innerFn = function(env) {
       var ms = typeof merged.ms === 'number' ? merged.ms : compilepathaccessor(merged.ms)(env);
       if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
       return new Promise(function(r) { setTimeout(r, ms); }).then(function() { return {}; });
+    };
+    var blockfn = function(env) {
+      return callwithstack(EVALSTACK, 'wait:' + id, 'async-await', function() { return innerFn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(id, 'wait')
+      });
     };
     blockfn.id = id;
     return blockfn;
   };
 
   compilers[BLOCKTYPES.EXECUTIONQUERY] = function(merged, id, sig) {
-    var blockfn = function(env) {
+    var innerFn = function(env) {
       var command = merged.command || {};
       var COMMAND = command.COMMAND;
       var args = command.args || {};
@@ -541,11 +592,18 @@ function createBlockCompilers(BLOCKTYPES, INHERITEDKEYS, dependencies, options) 
         default: throw new Error('[executionquery] unknown command: ' + COMMAND);
       }
       SENDINSTRUCTION('EXECUTIONACTOR', msgType, args, tag, 'BLOCKCOMPILER', { responseType: responseType });
-      return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, WITNESS_TIMEOUT)
+      return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, MAILBOX_WAIT_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           return response && response.result !== undefined ? response.result : response;
         });
+    };
+    var blockfn = function(env) {
+      return callwithstack(EVALSTACK, 'executionquery:' + id, 'async-await', function() { return innerFn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(id, 'executionquery')
+      });
     };
     blockfn.id = id;
     return blockfn;
@@ -586,7 +644,7 @@ function loadPipelineDependencies(container, options) {
   var deps = (container && container.deps) || (container && container.programs) || [];
   var frameworkBase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
   var frontendBase = options && options.frontendBase ? options.frontendBase : FRONTEND_BASE;
-  var witnessTimeout = options && options.witnessTimeout ? options.witnessTimeout : WITNESS_TIMEOUT;
+  var witnessTimeout = options && options.witnessTimeout ? options.witnessTimeout : SCRIPT_WITNESS_TIMEOUT;
 
   return loadFrameworkLibs(libs, frameworkBase, witnessTimeout)
     .then(function() {
@@ -608,10 +666,10 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
     var segments = el.pipeline.split('.');
     if (segments.length > 1 && segments[segments.length - 1] === 'pipeline') {
       var parentPath = segments.slice(0, -1).join('.');
-      parentContainer = resolvePipelinePath(parentPath, dependencies || window);
+      parentContainer = resolvePipelinePath(parentPath, dependencies || (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {})));
       logdebug(blockCompilerState, '[BLOCKCOMPILER]', 'derived parent container for dependencies:', parentPath);
     }
-    resolvedPipeline = resolvePipelinePath(el.pipeline, dependencies || window);
+    resolvedPipeline = resolvePipelinePath(el.pipeline, dependencies || (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {})));
     if (!resolvedPipeline || !resolvedPipeline.elements) {
       logerror(blockCompilerState, '[BLOCKCOMPILER]', 'failed to resolve pipeline path:', el.pipeline);
       throw new Error('[processPipelineElement] failed to resolve pipeline path: ' + el.pipeline);
@@ -625,7 +683,7 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
   return loadPipelineDependencies(depContainer, options).then(function(nestedDeps) {
     var mergedDependencies = extendObject(cloneObject(dependencies || {}), nestedDeps);
 
-    var blockfn = function(env) {
+    var innerFn = function(env) {
       var parentEnv = env;
       var childEnv = cloneObject(parentEnv);
       childEnv.containerid = el.container || null;
@@ -660,13 +718,21 @@ function processPipelineElement(el, pipelineId, stagePath, inheritedBriefcase, d
       var responseType = 'pipeline_booted';
       SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootMessage, tag, 'BLOCKCOMPILER', { responseType: responseType });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, WITNESS_TIMEOUT)
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, MAILBOX_WAIT_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           var result = response && response.result ? response.result : response;
           writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentEnv, result, elementId);
           return result;
         });
+    };
+
+    var blockfn = function(env) {
+      return callwithstack(EVALSTACK, 'pipeline:' + elementId, 'async-await', function() { return innerFn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(elementId, 'pipeline')
+      });
     };
     blockfn.id = elementId;
     blockfn.kind = 'pipeline';
@@ -693,7 +759,7 @@ function registerEventStage(stage, pipelineId, stagePath, options) {
     options: options || {}
   };
   SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTER_EVENT_LISTENER, payload, tag, 'BLOCKCOMPILER', { responseType: MESSAGETYPES.EVENT_LISTENER_REGISTERED });
-  return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENT_LISTENER_REGISTERED }, WITNESS_TIMEOUT)
+  return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENT_LISTENER_REGISTERED }, MAILBOX_WAIT_TIMEOUT)
     .then(function(mailboxMessage) {
       var response = mailboxMessage.payload;
       if (response && response.error) {
@@ -782,7 +848,7 @@ function sendStageCompleted(pipelineId, stageId, nextStageMessage, env) {
     nextStageMessage: nextStageMessage,
     env: env || {}
   }, tag, 'BLOCKCOMPILER', { responseType: 'stage_completed_ack' });
-  return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, WITNESS_TIMEOUT)
+  return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, MAILBOX_WAIT_TIMEOUT)
     .then(function() { return; });
 }
 
@@ -847,7 +913,7 @@ function waitForWitness(entry, timeout) {
     function check() {
       if (!entry.provides || entry.provides.length === 0) return resolve();
       var allDefined = entry.provides.every(function(name) {
-        return typeof window[name] !== 'undefined';
+        return typeof window[name] !== 'undefined' || typeof globalThis[name] !== 'undefined';
       });
       if (allDefined) return resolve();
       if (Date.now() - start > timeout) return reject(new Error('timeout waiting for witness from ' + entry.src));
@@ -899,14 +965,14 @@ function normalizeEntries(entries) {
 }
 
 function loadFrameworkLibs(libs, basePath, timeout) {
-  if (typeof timeout === 'undefined') timeout = WITNESS_TIMEOUT;
+  if (typeof timeout === 'undefined') timeout = SCRIPT_WITNESS_TIMEOUT;
   var normalized = normalizeEntries(libs);
   loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loading framework libs:', normalized.length);
   return loadScriptsSequentially(normalized, basePath, timeout);
 }
 
 function loadFrontendPrograms(programs, basePath, timeout) {
-  if (typeof timeout === 'undefined') timeout = WITNESS_TIMEOUT;
+  if (typeof timeout === 'undefined') timeout = SCRIPT_WITNESS_TIMEOUT;
   var normalized = normalizeEntries(programs);
   loginfo(blockCompilerState, '[BLOCKCOMPILER]', 'loading frontend programs:', normalized.length);
   return loadScriptsSequentially(normalized, basePath, timeout);
@@ -917,8 +983,10 @@ function buildDependenciesRegistry(entries) {
   var missing = [];
   (entries || []).forEach(function(entry) {
     (entry.provides || []).forEach(function(name) {
-      if (typeof window[name] !== 'undefined') {
+      if (typeof window !== 'undefined' && typeof window[name] !== 'undefined') {
         registry[name] = window[name];
+      } else if (typeof globalThis !== 'undefined' && typeof globalThis[name] !== 'undefined') {
+        registry[name] = globalThis[name];
       } else {
         missing.push(name);
       }
@@ -951,7 +1019,6 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
   var isEventTrigger = options.isEventTrigger === true;
 
   if (isEventStage && !isEventTrigger) {
-    // P75: Register EVENT stage and skip orchestration
     return registerEventStage(stage, dnaEnvelope.pipelineId, stagePath, options)
       .then(function() {
         var nextStageMessage = buildNextStageMessage(pipeline, stageIndex, dnaEnvelope.pipelineId, env, options);
@@ -959,7 +1026,6 @@ function blockcompilerCompileStage(dnaEnvelope, stagePath, env, options) {
       });
   }
 
-  // Non-EVENT or triggered EVENT: orchestrate normally
   var nextStageMessage = buildNextStageMessage(pipeline, stageIndex, dnaEnvelope.pipelineId, env, options);
   return orchestrateStage(stage, dnaEnvelope.pipelineId, dnaEnvelope.dependencies || {}, env || {}, stagePath, options, nextStageMessage);
 }
@@ -997,7 +1063,7 @@ function loadPipeline(pipelineDefinition, pipelineId, options) {
         responseType: 'pipeline_booted'
       });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, WITNESS_TIMEOUT)
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, MAILBOX_WAIT_TIMEOUT)
         .then(function(mailboxMessage) {
           var response = mailboxMessage.payload;
           if (response && response.error) throw new Error(response.error);
@@ -1064,7 +1130,7 @@ function createPersistentElementWrapper(compiledElement, elementDef, stagePath, 
 
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responseType: 'task_result' });
 
-    return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, WITNESS_TIMEOUT)
+    return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, MAILBOX_WAIT_TIMEOUT)
       .then(function(mailboxMessage) {
         var payload = mailboxMessage.payload;
         var outerResult = payload && payload.result !== undefined ? payload.result : payload;
