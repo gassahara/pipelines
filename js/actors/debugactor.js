@@ -1,241 +1,260 @@
-var DEBUGVERBOSITYCONSTANTS = createVerbosityConstants();
+var DEBUGVERBOSITYCONSTANTS = CREATEVERBOSITYCONSTANTS();
 
-function GETCTX(error, cont) {
-  var env = (cont && cont.envsnapshot) ||
-    (cont && cont.options && cont.options.context && cont.options.context.env) || {};
+function GETCTX(ERROR, CONT) {
+  var ENV = (CONT && CONT.ENVSNAPSHOT) ||
+    (CONT && CONT.OPTIONS && CONT.OPTIONS.CONTEXT && CONT.OPTIONS.CONTEXT.ENV) || {};
   return {
-    pipelineid: env.pipelineid || env.agentid ||
-      (error && error.diagnostic && error.diagnostic.pipelineid) || 'unknown_pipeline',
-    path: [
-      (error && error.diagnostic && error.diagnostic.pipelinestage) || 'unknown_stage',
-      (error && error.diagnostic && error.diagnostic.blockid) ||
-      (error && error.diagnostic && error.diagnostic.elementid) || 'unknown_element'
+    PIPELINEID: ENV.PIPELINEID || ENV.AGENTID ||
+      (ERROR && ERROR.DIAGNOSTIC && ERROR.DIAGNOSTIC.PIPELINEID) || 'UNKNOWNPIPELINE',
+    PATH: [
+      (ERROR && ERROR.DIAGNOSTIC && ERROR.DIAGNOSTIC.PIPELINESTAGE) || 'UNKNOWNSTAGE',
+      (ERROR && ERROR.DIAGNOSTIC && ERROR.DIAGNOSTIC.BLOCKID) ||
+      (ERROR && ERROR.DIAGNOSTIC && ERROR.DIAGNOSTIC.ELEMENTID) || 'UNKNOWNELEMENT'
     ],
-    elementid: (error && error.diagnostic && error.diagnostic.blockid) ||
-      (error && error.diagnostic && error.diagnostic.elementid) || 'unknown_element'
+    ELEMENTID: (ERROR && ERROR.DIAGNOSTIC && ERROR.DIAGNOSTIC.BLOCKID) ||
+      (ERROR && ERROR.DIAGNOSTIC && ERROR.DIAGNOSTIC.ELEMENTID) || 'UNKNOWNELEMENT'
   };
 }
 
-function BTN(text, style, onclick) {
-  var b = document.createElement('button');
-  b.textContent = text;
-  b.style.cssText = 'border:none; padding:10px 20px; cursor:pointer; font-weight:bold; ' + style;
-  b.onclick = onclick;
-  return b;
+function BTN(TEXT, STYLE, ONCLICK) {
+  var B = DOCUMENT.CREATEELEMENT('button');
+  B.TEXTCONTENT = TEXT;
+  B.STYLE.CSSTEXT = 'border:none; padding:10px 20px; cursor:pointer; font-weight:bold; ' + STYLE;
+  B.ONCLICK = ONCLICK;
+  return B;
 }
 
-function ENSUREOVERLAY(debugSlice) {
-  if (!debugSlice.overlay) {
-    var overlay = document.getElementById('debugoverlay');
-    if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'debugoverlay';
-      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.95);z-index:10000;display:none;flex-direction:column;';
-      document.body.appendChild(overlay);
+function ENSUREOVERLAY(DEBUGSLICE) {
+  if (!DEBUGSLICE.OVERLAY) {
+    var OVERLAY = DOCUMENT.GETELEMENTBYID('debugoverlay');
+    if (!OVERLAY) {
+      OVERLAY = DOCUMENT.CREATEELEMENT('div');
+      OVERLAY.ID = 'debugoverlay';
+      OVERLAY.STYLE.CSSTEXT = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.95);z-index:10000;display:none;flex-direction:column;';
+      DOCUMENT.BODY.APPENDCHILD(OVERLAY);
     }
-    debugSlice.overlay = overlay;
+    DEBUGSLICE.OVERLAY = OVERLAY;
   }
-  return debugSlice.overlay;
+  return DEBUGSLICE.OVERLAY;
 }
 
-function ENSUREDEBUGSLICE(env) {
-  return ENSUREENVSLICE(env, 'debug', function() {
+function ENSUREDEBUGSLICE(ENV) {
+  return ENSUREENVSLICE(ENV, 'debug', function() {
     return {
-      overlay: null,
-      currentContinuation: null,
-      overlayVisible: false,
-      cccState: { currentContinuation: null },
-      globalListenersInstalled: false
+      OVERLAY: null,
+      CURRENTCONTINUATION: null,
+      OVERLAYVISIBLE: false,
+      CCCSTATE: { CURRENTCONTINUATION: null },
+      GLOBALLISTENERSINSTALLED: false
     };
   });
 }
 
 // Pure behavior function: (env, message) -> env
-function DEBUGBEHAVIOR(env, message) {
-  logdebug(env, '[DEBUGACTOR]', 'behavior handling action:', message.type);
+function DEBUGBEHAVIOR(ENV, MESSAGE) {
+  LOGDEBUG(ENV, '[DEBUGACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
-  var debugSlice = ENSUREDEBUGSLICE(env);
+  var DEBUGSLICE = ENSUREDEBUGSLICE(ENV);
 
-  if (message.type === MESSAGETYPES.PING) {
-    logdebug(env, '[DEBUGACTOR]', 'action PING');
-    if (message.sender && message.tag) {
-      var responseTypePing = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      SENDRESPONSE(message.sender, message.tag, true, 'DEBUGACTOR', responseTypePing);
+  if (MESSAGE.TYPE === MESSAGETYPES.PING) {
+    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION PING');
+    if (MESSAGE.SENDER && MESSAGE.TAG) {
+      var RESPONSESPECPING = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+      var RESPONSETYPEPING = (RESPONSESPECPING && (RESPONSESPECPING.RESPONSETYPE || RESPONSESPECPING.RESPONSETYPE)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEPING);
     }
-    return env;
+    return ENV;
   }
 
-  if (message.type === MESSAGETYPES.INIT_OVERLAY) {
-    logdebug(env, '[DEBUGACTOR]', 'action INIT_OVERLAY');
-    ENSUREOVERLAY(debugSlice);
+  if (MESSAGE.TYPE === MESSAGETYPES.INITOVERLAY || MESSAGE.TYPE === MESSAGETYPES.INIT_OVERLAY) {
+    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION INITOVERLAY');
+    ENSUREOVERLAY(DEBUGSLICE);
 
-    if (!debugSlice.globalListenersInstalled) {
-      debugSlice.globalListenersInstalled = true;
+    if (!DEBUGSLICE.GLOBALLISTENERSINSTALLED) {
+      DEBUGSLICE.GLOBALLISTENERSINSTALLED = true;
 
-      window.addEventListener('error', function(e) {
-        e.preventDefault();
-        logwarn(env, '[DEBUGACTOR]', 'global window error captured:', e.error || e);
+      WINDOW.ADDEVENTLISTENER('error', function(E) {
+        E.PREVENTDEFAULT();
+        LOGWARN(ENV, '[DEBUGACTOR]', 'GLOBAL WINDOW ERROR CAPTURED:', E.ERROR || E);
         SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
-          error: e.error || e,
-          continuation: null
+          ERROR: E.ERROR || E,
+          CONTINUATION: null
         }, null, 'window');
       });
 
-      window.addEventListener('unhandledrejection', function(e) {
-        if (e.reason && e.reason.diagnostic) {
-          e.preventDefault();
-          logwarn(env, '[DEBUGACTOR]', 'global unhandled rejection captured:', e.reason);
+      WINDOW.ADDEVENTLISTENER('unhandledrejection', function(E) {
+        if (E.REASON && E.REASON.DIAGNOSTIC) {
+          E.PREVENTDEFAULT();
+          LOGWARN(ENV, '[DEBUGACTOR]', 'GLOBAL UNHANDLED REJECTION CAPTURED:', E.REASON);
           SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
-            error: e.reason,
-            continuation: e.reason.diagnostic.continuation || null
+            ERROR: E.REASON,
+            CONTINUATION: E.REASON.DIAGNOSTIC.CONTINUATION || null
           }, null, 'window');
         }
       });
     }
 
-    debugSlice.overlayVisible = false;
+    DEBUGSLICE.OVERLAYVISIBLE = false;
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      updates: [{ path: 'debug', value: debugSlice }]
+      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
-    if (message.sender && message.tag) {
-      var responseTypeInit = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      SENDRESPONSE(message.sender, message.tag, true, 'DEBUGACTOR', responseTypeInit);
+    if (MESSAGE.SENDER && MESSAGE.TAG) {
+      var RESPONSESPECINIT = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+      var RESPONSETYPEINIT = (RESPONSESPECINIT && (RESPONSESPECINIT.RESPONSETYPE || RESPONSESPECINIT.RESPONSETYPE)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEINIT);
     }
-    return env;
+    return ENV;
   }
 
-  if (message.type === MESSAGETYPES.HIDE) {
-    logdebug(env, '[DEBUGACTOR]', 'action HIDE');
-    if (debugSlice.overlay) {
-      debugSlice.overlay.style.display = 'none';
-      debugSlice.overlay.innerHTML = '';
+  if (MESSAGE.TYPE === MESSAGETYPES.HIDE) {
+    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION HIDE');
+    if (DEBUGSLICE.OVERLAY) {
+      DEBUGSLICE.OVERLAY.STYLE.DISPLAY = 'none';
+      DEBUGSLICE.OVERLAY.INNERHTML = '';
     }
-    debugSlice.overlayVisible = false;
-    debugSlice.cccState.currentContinuation = null;
-    debugSlice.currentContinuation = null;
+    DEBUGSLICE.OVERLAYVISIBLE = false;
+    DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = null;
+    DEBUGSLICE.CURRENTCONTINUATION = null;
 
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      updates: [{ path: 'debug', value: debugSlice }]
+      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
-    if (message.sender && message.tag) {
-      var responseTypeHide = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      SENDRESPONSE(message.sender, message.tag, env, 'DEBUGACTOR', responseTypeHide);
+    if (MESSAGE.SENDER && MESSAGE.TAG) {
+      var RESPONSESPECHIDE = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+      var RESPONSETYPEHIDE = (RESPONSESPECHIDE && (RESPONSESPECHIDE.RESPONSETYPE || RESPONSESPECHIDE.RESPONSETYPE)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEHIDE);
     }
-    return env;
+    return ENV;
   }
 
-  if (message.type === MESSAGETYPES.SHOW) {
-    loginfo(env, '[DEBUGACTOR]', 'action SHOW debug overlay');
-    logdebug(env, '[DEBUGACTOR]', 'action SHOW error:', message.error, 'continuation:', message.continuation);
-    var overlay = ENSUREOVERLAY(debugSlice);
+  if (MESSAGE.TYPE === MESSAGETYPES.SHOW) {
+    LOGINFO(ENV, '[DEBUGACTOR]', 'ACTION SHOW DEBUG OVERLAY');
+    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION SHOW ERROR:', MESSAGE.ERROR, 'CONTINUATION:', MESSAGE.CONTINUATION);
+    var OVERLAY = ENSUREOVERLAY(DEBUGSLICE);
 
-    overlay.innerHTML = formatdebugtrace(
-      message.error,
-      (message.error && message.error.diagnostic && message.error.diagnostic.debugtrace) || frames
+    OVERLAY.INNERHTML = FORMATDEBUGTRACE(
+      MESSAGE.ERROR,
+      (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
     );
 
-    var actions = document.createElement('div');
-    actions.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
+    var ACTIONS = DOCUMENT.CREATEELEMENT('div');
+    ACTIONS.STYLE.CSSTEXT = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
 
-    if (message.continuation) {
-      var ctx = GETCTX(message.error, message.continuation);
+    if (MESSAGE.CONTINUATION) {
+      var CTX = GETCTX(MESSAGE.ERROR, MESSAGE.CONTINUATION);
 
-      actions.appendChild(BTN('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
-        logdebug(env, '[DEBUGACTOR]', 'Retrying stage:', ctx);
-        overlay.style.display = 'none';
-        overlay.innerHTML = '';
-        SENDINSTRUCTION('EXECUTIONACTOR', 'ccc_retry', {
-          pipelineid: ctx.pipelineid,
-          path: ctx.path,
-          elementid: ctx.elementid,
-          continuation: message.continuation
+      ACTIONS.APPENDCHILD(BTN('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
+        LOGDEBUG(ENV, '[DEBUGACTOR]', 'RETRYING STAGE:', CTX);
+        OVERLAY.STYLE.DISPLAY = 'none';
+        OVERLAY.INNERHTML = '';
+        SENDINSTRUCTION('EXECUTIONACTOR', 'CCCRETRY', {
+          PIPELINEID: CTX.PIPELINEID,
+          PATH: CTX.PATH,
+          ELEMENTID: CTX.ELEMENTID,
+          CONTINUATION: MESSAGE.CONTINUATION
         }, null, 'DEBUGACTOR');
       }));
 
-      actions.appendChild(BTN('CONTINUE', 'background:#4488ff;color:#fff;', function() {
-        logdebug(env, '[DEBUGACTOR]', 'Continuing stage:', ctx);
-        overlay.style.display = 'none';
-        overlay.innerHTML = '';
-        SENDINSTRUCTION('EXECUTIONACTOR', 'ccc_continue', {
-          pipelineid: ctx.pipelineid,
-          path: ctx.path,
-          elementid: ctx.elementid,
-          continuation: message.continuation
+      ACTIONS.APPENDCHILD(BTN('CONTINUE', 'background:#4488ff;color:#fff;', function() {
+        LOGDEBUG(ENV, '[DEBUGACTOR]', 'CONTINUING STAGE:', CTX);
+        OVERLAY.STYLE.DISPLAY = 'none';
+        OVERLAY.INNERHTML = '';
+        SENDINSTRUCTION('EXECUTIONACTOR', 'CCCCONTINUE', {
+          PIPELINEID: CTX.PIPELINEID,
+          PATH: CTX.PATH,
+          ELEMENTID: CTX.ELEMENTID,
+          CONTINUATION: MESSAGE.CONTINUATION
         }, null, 'DEBUGACTOR');
       }));
     }
 
-    actions.appendChild(BTN('ABORT', 'background:#ff5555;color:#fff;', function() {
-      var abortCtx = message.continuation
-        ? GETCTX(null, message.continuation)
-        : { pipelineid: 'unknown_pipeline', path: ['unknown_stage', 'unknown_element'], elementid: 'unknown_element' };
-      logdebug(env, '[DEBUGACTOR]', 'Aborting stage:', abortCtx);
-      overlay.style.display = 'none';
-      overlay.innerHTML = '';
-      SENDINSTRUCTION('EXECUTIONACTOR', 'ccc_abort', {
-        pipelineid: abortCtx.pipelineid,
-        path: abortCtx.path,
-        elementid: abortCtx.elementid,
-        continuation: message.continuation
+    ACTIONS.APPENDCHILD(BTN('ABORT', 'background:#ff5555;color:#fff;', function() {
+      var ABORTCTX = MESSAGE.CONTINUATION
+        ? GETCTX(null, MESSAGE.CONTINUATION)
+        : { PIPELINEID: 'unknownpipeline', PATH: ['unknownstage', 'unknownelement'], ELEMENTID: 'unknownelement' };
+      LOGDEBUG(ENV, '[DEBUGACTOR]', 'ABORTING STAGE:', ABORTCTX);
+      OVERLAY.STYLE.DISPLAY = 'none';
+      OVERLAY.INNERHTML = '';
+      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCABORT', {
+        PIPELINEID: ABORTCTX.PIPELINEID,
+        PATH: ABORTCTX.PATH,
+        ELEMENTID: ABORTCTX.ELEMENTID,
+        CONTINUATION: MESSAGE.CONTINUATION
       }, null, 'DEBUGACTOR');
     }));
 
-    overlay.appendChild(actions);
-    overlay.style.display = 'flex';
+    OVERLAY.APPENDCHILD(ACTIONS);
+    OVERLAY.STYLE.DISPLAY = 'flex';
 
-    debugSlice.overlayVisible = true;
-    debugSlice.cccState.currentContinuation = message.continuation || null;
-    debugSlice.currentContinuation = message.continuation || null;
+    DEBUGSLICE.OVERLAYVISIBLE = true;
+    DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
+    DEBUGSLICE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
 
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      updates: [{ path: 'debug', value: debugSlice }]
+      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
-    if (message.sender && message.tag) {
-      var responseTypeShow = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      SENDRESPONSE(message.sender, message.tag, env, 'DEBUGACTOR', responseTypeShow);
+    if (MESSAGE.SENDER && MESSAGE.TAG) {
+      var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+      var RESPONSETYPESHOW = (RESPONSESPECSHOW && (RESPONSESPECSHOW.RESPONSETYPE || RESPONSESPECSHOW.RESPONSETYPE)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPESHOW);
     }
-    return env;
+    return ENV;
   }
 
-  if (message.type === MESSAGETYPES.RECOVER) {
-    logdebug(env, '[DEBUGACTOR]', 'action RECOVER debug state');
-    DBRESTORE('actor:state:debug').then(function(saved) {
-      var newDebug = (saved !== null && saved !== undefined) ? saved : {
-        overlay: null,
-        currentContinuation: null,
-        overlayVisible: false,
-        cccState: { currentContinuation: null },
-        globalListenersInstalled: false
+  if (MESSAGE.TYPE === MESSAGETYPES.RECOVER) {
+    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
+    DBRESTORE('actor:state:debug').then(function(SAVED) {
+      var NEWDEBUG = (SAVED !== null && SAVED !== undefined) ? SAVED : {
+        OVERLAY: null,
+        CURRENTCONTINUATION: null,
+        OVERLAYVISIBLE: false,
+        CCCSTATE: { CURRENTCONTINUATION: null },
+        GLOBALLISTENERSINSTALLED: false
       };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'debug', value: newDebug }]
+        UPDATES: [{ PATH: 'debug', VALUE: NEWDEBUG }]
       }, GENERATETAG(), 'DEBUGACTOR');
-      if (message.sender && message.tag) {
-        var responseTypeRecover = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        SENDRESPONSE(message.sender, message.tag, env, 'DEBUGACTOR', responseTypeRecover);
+      if (MESSAGE.SENDER && MESSAGE.TAG) {
+        var RESPONSESPECRECOVER = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+        var RESPONSETYPERECOVER = (RESPONSESPECRECOVER && (RESPONSESPECRECOVER.RESPONSETYPE || RESPONSESPECRECOVER.RESPONSETYPE)) || 'response';
+        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPERECOVER);
       }
-    }).catch(function(e) {
-      logwarn(env, '[DEBUGACTOR]', 'state restore failed:', e);
-      if (message.sender && message.tag) {
-        var responseTypeErr = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        SENDRESPONSE(message.sender, message.tag, env, 'DEBUGACTOR', responseTypeErr);
+    }).catch(function(E) {
+      LOGWARN(ENV, '[DEBUGACTOR]', 'STATE RESTORE FAILED:', E);
+      if (MESSAGE.SENDER && MESSAGE.TAG) {
+        var RESPONSESPECERR = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+        var RESPONSETYPEERR = (RESPONSESPECERR && (RESPONSESPECERR.RESPONSETYPE || RESPONSESPECERR.RESPONSETYPE)) || 'response';
+        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEERR);
       }
     });
-    return env;
+    return ENV;
   }
 
-  return env;
+  return ENV;
 }
 
-function ENQUEUEDEBUGPING(responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.PING, {}, tag, 'system', responseSpec);
+function ENQUEUEDEBUGPING(RESPONSESPEC) {
+  var TAG = GENERATETAG();
+  SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.PING, {}, TAG, 'system', RESPONSESPEC);
 }
 
-function ENQUEUEDEBUGRECOVER(responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.RECOVER, {}, tag, 'system', responseSpec);
+function ENQUEUEDEBUGRECOVER(RESPONSESPEC) {
+  var TAG = GENERATETAG();
+  SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.RECOVER, {}, TAG, 'system', RESPONSESPEC);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    DEBUGVERBOSITYCONSTANTS: DEBUGVERBOSITYCONSTANTS,
+    GETCTX: GETCTX,
+    BTN: BTN,
+    ENSUREOVERLAY: ENSUREOVERLAY,
+    ENSUREDEBUGSLICE: ENSUREDEBUGSLICE,
+    DEBUGBEHAVIOR: DEBUGBEHAVIOR,
+    ENQUEUEDEBUGPING: ENQUEUEDEBUGPING,
+    ENQUEUEDEBUGRECOVER: ENQUEUEDEBUGRECOVER
+  };
 }

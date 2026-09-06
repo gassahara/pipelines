@@ -1,83 +1,93 @@
-// Pure behavior function: (env, message) -> env
-function APIBEHAVIOR(env, message) {
-  logdebug(env, '[APIACTOR]', 'behavior handling action:', message.type);
+function APIBEHAVIOR(ENV, MESSAGE) {
+  LOGDEBUG(ENV, '[APIACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
-  if (message.type === MESSAGETYPES.API || message.type === MESSAGETYPES.FETCH) {
-    logdebug(env, '[APIACTOR]', 'action:', message.type, 'method:', message.method, 'endpoint:', message.endpoint);
+  if (MESSAGE.TYPE === MESSAGETYPES.API || MESSAGE.TYPE === MESSAGETYPES.FETCH) {
+    LOGDEBUG(ENV, '[APIACTOR]', 'ACTION:', MESSAGE.TYPE, 'METHOD:', MESSAGE.METHOD, 'ENDPOINT:', MESSAGE.ENDPOINT);
 
-    var updatedApi = {
-      lastRequest: {
-        type: message.type,
-        endpoint: message.endpoint,
-        method: message.method,
-        payload: message.payload || {},
-        token: message.token || '',
-        timestamp: Date.now()
+    var UPDATEDAPI = {
+      LASTREQUEST: {
+        TYPE: MESSAGE.TYPE,
+        ENDPOINT: MESSAGE.ENDPOINT,
+        METHOD: MESSAGE.METHOD,
+        PAYLOAD: MESSAGE.PAYLOAD || {},
+        TOKEN: MESSAGE.TOKEN || '',
+        TIMESTAMP: Date.now()
       },
-      requestCount: (env.api && env.api.requestCount || 0) + 1
+      REQUESTCOUNT: (ENV.API && (ENV.API.REQUESTCOUNT || ENV.API.REQUESTCOUNT || ENV.API.requestCount) || 0) + 1
     };
 
-    // Send update to WORLDMAPACTOR via message
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      updates: [{ path: 'api', value: updatedApi }]
+      UPDATES: [{ PATH: 'api', VALUE: UPDATEDAPI }]
     }, GENERATETAG(), 'APIACTOR');
 
-    var apiConstants = createApiConstants();
-    var url = apiConstants.APIBASE + '/' + message.endpoint;
-    var isTextual = message.type === MESSAGETYPES.FETCH;
-    var method = String(message.method || 'GET').toUpperCase();
-    var headers = {
-      'Authorization': 'Bearer ' + (message.token || '')
+    var APICONSTANTS = (typeof CREATEAPICONSTANTS === 'function') ? CREATEAPICONSTANTS() : (typeof CREATEAPICONSTANTS === 'function' ? CREATEAPICONSTANTS() : { APIBASE: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1' });
+    var APIBASE = APICONSTANTS.APIBASE || APICONSTANTS.APIBASE || '';
+    var URL = APIBASE + '/' + MESSAGE.ENDPOINT;
+    var ISTEXTUAL = MESSAGE.TYPE === MESSAGETYPES.FETCH;
+    var METHOD = String(MESSAGE.METHOD || 'GET').toUpperCase();
+    var HEADERS = {
+      'Authorization': 'Bearer ' + (MESSAGE.TOKEN || '')
     };
-    if (method === 'POST') {
-      headers['Content-Type'] = 'application/json';
+    if (METHOD === 'POST') {
+      HEADERS['Content-Type'] = 'application/json';
     }
-    if (isTextual) {
-      headers['Accept'] = 'text/plain, */*';
+    if (ISTEXTUAL) {
+      HEADERS['Accept'] = 'text/plain, */*';
     }
-    var body = method === 'POST' ? JSON.stringify(message.payload || {}) : undefined;
+    var BODY = METHOD === 'POST' ? JSON.stringify(MESSAGE.PAYLOAD || {}) : undefined;
 
-    fetch(url, { method: method, headers: headers, body: body }).then(function(response) {
-      var status = response.status;
-      logdebug(env, '[APIACTOR]', 'action response status:', status, 'for:', message.endpoint);
-      if (!isTextual) {
-        return response.json().then(function(data) {
-          logdebug(env, '[APIACTOR]', 'action JSON response received for:', message.endpoint);
-          var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-          SENDRESPONSE(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
+    FETCH(URL, { METHOD: METHOD, HEADERS: HEADERS, BODY: BODY }).then(function(RESPONSE) {
+      var STATUS = RESPONSE.STATUS;
+      LOGDEBUG(ENV, '[APIACTOR]', 'ACTION RESPONSE STATUS:', STATUS, 'FOR:', MESSAGE.ENDPOINT);
+      if (!ISTEXTUAL) {
+        return RESPONSE.JSON().then(function(DATA) {
+          LOGDEBUG(ENV, '[APIACTOR]', 'ACTION JSON RESPONSE RECEIVED FOR:', MESSAGE.ENDPOINT);
+          var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+          var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.RESPONSETYPE || RESPONSESPEC.RESPONSETYPE)) || 'response';
+          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STATUS: STATUS, DATA: DATA }, 'APIACTOR', RESPONSETYPE);
         });
       }
-      return response.text().then(function(data) {
-        logdebug(env, '[APIACTOR]', 'action text response received for:', message.endpoint);
-        var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-        SENDRESPONSE(message.sender, message.tag, { status: status, data: data }, 'APIACTOR', responseType);
+      return RESPONSE.TEXT().then(function(DATA) {
+        LOGDEBUG(ENV, '[APIACTOR]', 'ACTION TEXT RESPONSE RECEIVED FOR:', MESSAGE.ENDPOINT);
+        var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+        var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.RESPONSETYPE || RESPONSESPEC.RESPONSETYPE)) || 'response';
+        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STATUS: STATUS, DATA: DATA }, 'APIACTOR', RESPONSETYPE);
       });
-    }).catch(function(err) {
-      logerror(env, '[APIACTOR]', 'action request error for:', message.endpoint, err);
-      var responseType = (message.responseSpec && message.responseSpec.responseType) || 'response';
-      SENDRESPONSE(message.sender, message.tag, { error: err.message || String(err) }, 'APIACTOR', responseType);
+    }).catch(function(ERR) {
+      LOGERROR(ENV, '[APIACTOR]', 'ACTION REQUEST ERROR FOR:', MESSAGE.ENDPOINT, ERR);
+      var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+      var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.RESPONSETYPE || RESPONSESPEC.RESPONSETYPE)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: ERR.MESSAGE || String(ERR) }, 'APIACTOR', RESPONSETYPE);
     });
   }
 
-  return env;
+  return ENV;
 }
 
-function ENQUEUEAPI(endpoint, method, payload, options, responseSpec) {
-  var tag = GENERATETAG();
+function ENQUEUEAPI(ENDPOINT, METHOD, PAYLOAD, OPTIONS, RESPONSESPEC) {
+  var TAG = GENERATETAG();
   SENDINSTRUCTION('APIACTOR', MESSAGETYPES.API, {
-    endpoint: endpoint,
-    method: method,
-    payload: payload || {},
-    token: (options && options.token) || ''
-  }, tag, 'system', responseSpec);
+    ENDPOINT: ENDPOINT,
+    METHOD: METHOD,
+    PAYLOAD: PAYLOAD || {},
+    TOKEN: (OPTIONS && OPTIONS.TOKEN) || ''
+  }, TAG, 'system', RESPONSESPEC);
 }
 
-function ENQUEUEFETCH(endpoint, method, payload, options, responseSpec) {
-  var tag = GENERATETAG();
+function ENQUEUEFETCH(ENDPOINT, METHOD, PAYLOAD, OPTIONS, RESPONSESPEC) {
+  var TAG = GENERATETAG();
   SENDINSTRUCTION('APIACTOR', MESSAGETYPES.FETCH, {
-    endpoint: endpoint,
-    method: method,
-    payload: payload || {},
-    token: (options && options.token) || ''
-  }, tag, 'system', responseSpec);
+    ENDPOINT: ENDPOINT,
+    METHOD: METHOD,
+    PAYLOAD: PAYLOAD || {},
+    TOKEN: (OPTIONS && OPTIONS.TOKEN) || ''
+  }, TAG, 'system', RESPONSESPEC);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    APIBEHAVIOR: APIBEHAVIOR,
+    ENQUEUEAPI: ENQUEUEAPI,
+    ENQUEUEFETCH: ENQUEUEFETCH
+  };
 }

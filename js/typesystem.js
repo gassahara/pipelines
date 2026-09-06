@@ -18,7 +18,7 @@ function extractstagesblocks(pipeline) {
   return { stages: pipeline.stages || [], blocks: [] };
 }
 
-var TYPESCHEMA = {
+var typeschema = {
   agent: { dna: { type: 'object', required: true }, pipeline: { type: 'function', required: true } },
   oracledna: { identity: { type: 'object', required: true }, pipeline: { type: 'object', required: true }, presentation: { type: 'object', required: false } },
   layoutcomponent: { key: { type: 'string', required: true }, parent: { type: 'string' }, id: { type: 'string' }, datapath: { type: 'string' } },
@@ -31,11 +31,11 @@ var TYPESCHEMA = {
   blockcontract: { id: { type: 'string', required: true }, type: { type: 'string', required: true }, reads: { type: 'array' }, ref: { type: 'string' }, schemaref: { type: 'string' }, responseadapterref: { type: 'string' }, paramsfrom: { type: 'string' }, resultto: { type: 'string' }, datalabel: { type: 'string' }, targetlabel: { type: 'string' }, stylizer: { type: 'function' }, output: { type: 'string' } }
 };
 
-function validateFields(value, fieldSpecs) {
+function validatefields(value, fieldspecs) {
   if (value == null) return ['VALUE IS NULL OR UNDEFINED'];
-  var keys = Object.keys(fieldSpecs || {});
+  var keys = Object.keys(fieldspecs || {});
   return keys.reduce(function(errors, key) {
-    var rules = fieldSpecs[key];
+    var rules = fieldspecs[key];
     var propvalue = value[key];
     if (rules.required && propvalue == null) {
       errors.push('REQUIRED PROPERTY "' + key + '" IS MISSING');
@@ -50,9 +50,9 @@ function validateFields(value, fieldSpecs) {
 }
 
 var validate = function(value, schemaname) {
-  var schema = TYPESCHEMA[schemaname];
+  var schema = typeschema[schemaname];
   if (!schema) return { tag: 'success' };
-  var errors = validateFields(value, schema);
+  var errors = validatefields(value, schema);
   return errors.length
     ? { tag: 'failure', message: 'VALIDATION FAILED FOR SCHEMA "' + schemaname + '": ' + errors.join('; ') }
     : { tag: 'success' };
@@ -78,55 +78,55 @@ var validatecall = function(schema, fn, functionname) {
   };
 };
 
-// validateschema — ES5 promise-chain CPS (was async/await recursive).
-function validateschemaInner(value, schema, context, registry, strict) {
+// validateschema — ES5 promise-chain CPS.
+function validateschemainner(value, schema, context, registry, strict) {
   var errors = [];
   var curr = typeof schema === 'string' ? registry[schema] : schema;
   if (curr && curr.schemaref) curr = registry[curr.schemaref];
   if (!curr) return Promise.resolve(errors);
 
   if (curr.type && curr.type !== 'any') {
-    var actualType = Array.isArray(value) ? 'array' : typeof value;
-    if (actualType !== curr.type && !(curr.type === 'integer' && actualType === 'number' && Math.floor(value) === value)) {
-      return Promise.resolve([context + ': TYPE MISMATCH. EXPECTED ' + curr.type + ', GOT ' + actualType]);
+    var actualtype = Array.isArray(value) ? 'array' : typeof value;
+    if (actualtype !== curr.type && !(curr.type === 'integer' && actualtype === 'number' && Math.floor(value) === value)) {
+      return Promise.resolve([context + ': TYPE MISMATCH. EXPECTED ' + curr.type + ', GOT ' + actualtype]);
     }
   }
 
   if (curr.oneof) {
     var branches = [];
     var oi = 0;
-    var nextOneOf = function() {
+    var nextoneof = function() {
       if (oi >= curr.oneof.length) {
-        var branchText = branches.map(function(b) {
+        var branchtext = branches.map(function(b) {
           return '  · ' + b.label + ': ' + b.errs.join('; ') + '\n';
         }).join('');
-        return Promise.resolve([context + ': NO MATCHING VARIANT IN ONEOF.\n' + branchText]);
+        return Promise.resolve([context + ': NO MATCHING VARIANT IN ONEOF.\n' + branchtext]);
       }
       var s = curr.oneof[oi];
       oi += 1;
       var label = s.required ? 'variant with keys [' + s.required.join(', ') + ']' : 'variant ' + (oi - 1);
-      return validateschemaInner(value, s, context + '<oneOf:' + (oi - 1) + '>', registry, strict).then(function(errs) {
+      return validateschemainner(value, s, context + '<oneOf:' + (oi - 1) + '>', registry, strict).then(function(errs) {
         if (errs.length === 0) return [];
         branches.push({ label: label, errs: errs });
-        return nextOneOf();
+        return nextoneof();
       });
     };
-    return nextOneOf();
+    return nextoneof();
   }
 
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     if (strict && curr.strict !== false) {
-      var allowedMap = {};
+      var allowedmap = {};
       var required = curr.required || [];
       var optional = curr.optional || [];
-      var propertyKeys = Object.keys(curr.properties || {});
-      required.forEach(function(r) { allowedMap[r] = true; });
-      optional.forEach(function(o) { allowedMap[o] = true; });
-      propertyKeys.forEach(function(pk) { allowedMap[pk] = true; });
+      var propertykeys = Object.keys(curr.properties || {});
+      required.forEach(function(r) { allowedmap[r] = true; });
+      optional.forEach(function(o) { allowedmap[o] = true; });
+      propertykeys.forEach(function(pk) { allowedmap[pk] = true; });
 
-      var valueKeys = Object.keys(value);
-      valueKeys.forEach(function(vk) {
-        if (!allowedMap[vk]) errors.push(context + ': UNEXPECTED PROPERTY "' + vk + '"');
+      var valuekeys = Object.keys(value);
+      valuekeys.forEach(function(vk) {
+        if (!allowedmap[vk]) errors.push(context + ': UNEXPECTED PROPERTY "' + vk + '"');
       });
     }
 
@@ -138,53 +138,53 @@ function validateschemaInner(value, schema, context, registry, strict) {
     if (curr.properties) {
       var keys = Object.keys(value);
       var ki = 0;
-      var nextProperty = function() {
+      var nextproperty = function() {
         if (ki >= keys.length) return Promise.resolve(errors);
         var k = keys[ki];
         ki += 1;
         if (curr.properties[k]) {
-          return validateschemaInner(value[k], curr.properties[k], context + '.' + k, registry, strict).then(function(childErrors) {
-            childErrors.forEach(function(ce) { errors.push(ce); });
-            return nextProperty();
+          return validateschemainner(value[k], curr.properties[k], context + '.' + k, registry, strict).then(function(childerrors) {
+            childerrors.forEach(function(ce) { errors.push(ce); });
+            return nextproperty();
           });
         }
-        return nextProperty();
+        return nextproperty();
       };
-      return nextProperty();
+      return nextproperty();
     }
   }
 
   if (curr.items && Array.isArray(value)) {
     var ii = 0;
-    var nextItem = function() {
+    var nextitem = function() {
       if (ii >= value.length) return Promise.resolve(errors);
       var item = value[ii];
       ii += 1;
-      return validateschemaInner(item, curr.items, context + '[' + (ii - 1) + ']', registry, strict).then(function(itemErrors) {
-        itemErrors.forEach(function(ie) { errors.push(ie); });
-        return nextItem();
+      return validateschemainner(item, curr.items, context + '[' + (ii - 1) + ']', registry, strict).then(function(itemerrors) {
+        itemerrors.forEach(function(ie) { errors.push(ie); });
+        return nextitem();
       });
     };
-    return nextItem();
+    return nextitem();
   }
 
   var validators = curr.validators || [];
   var vi2 = 0;
-  var nextValidator = function() {
+  var nextvalidator = function() {
     if (vi2 >= validators.length) return Promise.resolve(errors);
     var verrors = validators[vi2](value, context);
     vi2 += 1;
     verrors.forEach(function(ve) { errors.push(ve); });
-    return nextValidator();
+    return nextvalidator();
   };
-  return nextValidator();
+  return nextvalidator();
 }
 
 function validateschema(value, schema, context, registry, strict) {
   if (context === undefined) context = 'stream';
   if (registry === undefined) registry = {};
   if (strict === undefined) strict = false;
-  return validateschemaInner(value, schema, context, registry, strict);
+  return validateschemainner(value, schema, context, registry, strict);
 }
 
 function validateformalblock(block) {
@@ -200,12 +200,12 @@ function validateformalblock(block) {
 function validatestageflow(stages) {
   var cumulativewrites = {};
 
-  var ambientKeys = [
+  var ambientkeys = [
     'containerref', 'domlens', 'callapi', 'callwriter', 'callfn', 'registersubscription',
     'spawnagent', 'updateworldmap', 'getworldmap', 'openapischemas', 'validateschema',
     'schemaadapter', 'createnodefromtemplate', 'authsessionaccesstoken', 'agents', 'rituals'
   ];
-  ambientKeys.forEach(function(k) {
+  ambientkeys.forEach(function(k) {
     cumulativewrites[k] = true;
   });
 
@@ -218,23 +218,23 @@ function validatestageflow(stages) {
       var inputs = b.inputs || [];
       inputs.forEach(function(inp) { stagereads[inp] = true; });
 
-      var outputKeys = Object.keys(b.outputs || {});
-      outputKeys.forEach(function(key) {
+      var outputkeys = Object.keys(b.outputs || {});
+      outputkeys.forEach(function(key) {
         stagewrites[key] = true;
         cumulativewrites[key] = true;
       });
     });
 
-    var readKeys = Object.keys(stagereads);
-    var missing = readKeys.filter(function(rk) {
+    var readkeys = Object.keys(stagereads);
+    var missing = readkeys.filter(function(rk) {
       return !cumulativewrites[rk];
     });
 
     return {
       stageid: stage.id,
-      stagereads: readKeys,
+      stagereads: readkeys,
       stagewrites: Object.keys(stagewrites),
-      cumulativereads: readKeys,
+      cumulativereads: readkeys,
       cumulativewrites: Object.keys(cumulativewrites),
       missingkeys: missing,
       resolved: missing.length === 0
@@ -266,10 +266,10 @@ function validateblockio(block, cumulativewrites) {
 
 function validateblockfnio(block) {
   if (block.type !== 'fn' || !block.fn || !block.signature) return [];
-  var pCount = block.fn.length;
+  var pcount = block.fn.length;
   var inputs = block.signature.inputs || [];
-  if (pCount > 0 && pCount !== inputs.length) {
-    return ['FN IO: block "' + block.id + '" fn expects ' + pCount + ' params but declares ' + inputs.length + ' inputs'];
+  if (pcount > 0 && pcount !== inputs.length) {
+    return ['FN IO: block "' + block.id + '" fn expects ' + pcount + ' params but declares ' + inputs.length + ' inputs'];
   }
   return [];
 }
@@ -334,13 +334,13 @@ function validatedomqueryblock(block) {
   var command = block.command || {};
   var cmd = command.COMMAND;
   if (!cmd) return ['DOMQUERY: block "' + block.id + '" requires command.COMMAND'];
-  var all = DOMQUERYMESSAGES.concat(['getviewport', 'getscreen', 'matchmedia']);
+  var all = domquerymessages.concat(['getviewport', 'getscreen', 'matchmedia']);
   if (all.indexOf(cmd) === -1) return ['DOMQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd];
   var props = command.properties || {};
   if (['getviewport', 'getscreen', 'matchmedia'].indexOf(cmd) === -1 && (!props.id || typeof props.id !== 'string')) {
     return ['DOMQUERY: block "' + block.id + '" requires command.properties.id'];
   }
-  if (DOMQUERYSETTERS.indexOf(cmd) !== -1) {
+  if (domquerysetters.indexOf(cmd) !== -1) {
     if (cmd === 'toggleclass' && (!props.classname || typeof props.classname !== 'string')) return ['DOMQUERY: block "' + block.id + '" toggleclass requires classname'];
     if (cmd !== 'toggleclass' && props.value === undefined) return ['DOMQUERY: block "' + block.id + '" setter requires value'];
   }
@@ -351,9 +351,9 @@ function validatedomqueryblock(block) {
 function validateexecutionqueryblock(block) {
   if (block.type !== 'executionquery') return [];
   var command = block.command || {};
-  var cmd = command.COMMAND;
+  var cmd = command.COMMAND || command.command;
   if (!cmd) return ['EXECUTIONQUERY: block "' + block.id + '" requires command.COMMAND'];
-  var allowed = ['get', 'tasks', 'task_status', 'await_task', 'cancel_task', 'stop_task'];
+  var allowed = ['get', 'tasks', 'taskstatus', 'task_status', 'awaittask', 'await_task', 'canceltask', 'cancel_task', 'stoptask', 'stop_task'];
   if (allowed.indexOf(cmd) === -1) return ['EXECUTIONQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd];
   return [];
 }
@@ -361,7 +361,7 @@ function validateexecutionqueryblock(block) {
 function validatestorequeryblock(block) {
   if (block.type !== 'storequery') return [];
   var command = block.command || {};
-  var cmd = command.COMMAND;
+  var cmd = command.COMMAND || command.command;
   if (!cmd || ['store', 'restore'].indexOf(cmd) === -1) return ['STOREQUERY: block "' + block.id + '" invalid command'];
   return [];
 }
@@ -384,4 +384,28 @@ function validateeventstage(stage) {
     errors.push('EVENT stage "' + stage.id + '" requires control.event (non-empty string)');
   }
   return errors;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    extractstagesblocks: extractstagesblocks,
+    typeschema: typeschema,
+    validatefields: validatefields,
+    validate: validate,
+    validatecall: validatecall,
+    validateschema: validateschema,
+    validateformalblock: validateformalblock,
+    validatestageflow: validatestageflow,
+    validatemonadalgebra: validatemonadalgebra,
+    validateblockio: validateblockio,
+    validateblockfnio: validateblockfnio,
+    validatecontainerrefs: validatecontainerrefs,
+    validatespawncontracts: validatespawncontracts,
+    validateblocktype: validateblocktype,
+    validatedomqueryblock: validatedomqueryblock,
+    validateexecutionqueryblock: validateexecutionqueryblock,
+    validatestorequeryblock: validatestorequeryblock,
+    validateblockproperties: validateblockproperties,
+    validateeventstage: validateeventstage
+  };
 }

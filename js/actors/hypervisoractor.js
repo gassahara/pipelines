@@ -1,351 +1,480 @@
-var HYPERVISORVERBOSITYCONSTANTS = createVerbosityConstants();
+var HYPERVISORVERBOSITYCONSTANTS = CREATEVERBOSITYCONSTANTS();
 
-function ENSUREHYPERVISORSLICE(env) {
-  return ENSUREENVSLICE(env, 'hypervisor', function() {
+function ENSUREHYPERVISORSLICE(ENV) {
+  return ENSUREENVSLICE(ENV, 'hypervisor', function() {
     return {
-      boot: true,
-      envByPipeline: {},
-      renderHtml: '',
-      executionStack: [],
-      routes: {},
-      activePipelines: [],
-      programs: {},
-      loadedPipelines: {},
-      nextStageMessages: {}
+      BOOT: true,
+      ENVBYPIPELINE: {},
+      RENDERHTML: '',
+      EXECUTIONSTACK: [],
+      ROUTES: {},
+      ACTIVEPIPELINES: [],
+      PROGRAMS: {},
+      LOADEDPIPELINES: {},
+      NEXTSTAGEMESSAGES: {}
     };
   });
 }
 
-function CREATEHYPERVISORERRORCONTEXT(label) {
-  return function(err) {
-    if (!err) err = new Error('unknown hypervisor error');
-    if (!err.diagnostic) err.diagnostic = {};
-    err.diagnostic.hypervisorstage = label;
-    throw err;
+function CREATEHYPERVISORERRORCONTEXT(LABEL) {
+  return function(ERR) {
+    if (!ERR) ERR = new Error('unknown hypervisor error');
+    if (!ERR.DIAGNOSTIC) ERR.DIAGNOSTIC = {};
+    ERR.DIAGNOSTIC.HYPERVISORSTAGE = LABEL;
+    throw ERR;
   };
 }
 
-function REGISTERHYPERVISORPIPELINE(hyperSlice, pipelineId) {
-  if (!hyperSlice.activePipelines) hyperSlice.activePipelines = [];
-  if (hyperSlice.activePipelines.indexOf(pipelineId) === -1) {
-    hyperSlice.activePipelines.push(pipelineId);
+function REGISTERHYPERVISORPIPELINE(HYPERSLICE, PIPELINEID) {
+  if (!HYPERSLICE.ACTIVEPIPELINES) HYPERSLICE.ACTIVEPIPELINES = HYPERSLICE.ACTIVEPIPELINES || [];
+  if (HYPERSLICE.ACTIVEPIPELINES.indexOf(PIPELINEID) === -1) {
+    HYPERSLICE.ACTIVEPIPELINES.push(PIPELINEID);
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      updates: [{ path: 'hypervisor', value: hyperSlice }]
+      UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
     }, GENERATETAG(), 'HYPERVISORACTOR');
   }
 }
 
-function COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, env, options) {
-  var entry = hyperSlice.loadedPipelines && hyperSlice.loadedPipelines[pipelineId];
-  if (!entry || !entry.dna) {
-    return Promise.resolve({ error: 'missing DNA for pipeline: ' + pipelineId });
+function COMPILESTAGEFROMSTOREDDNA(HYPERSLICE, PIPELINEID, STAGEPATH, ENV, OPTIONS) {
+  var LOADED = HYPERSLICE.LOADEDPIPELINES || HYPERSLICE.LOADEDPIPELINES;
+  var ENTRY = LOADED && LOADED[PIPELINEID];
+  if (!ENTRY || !ENTRY.DNA) {
+    return Promise.resolve({ ERROR: 'missing DNA for pipeline: ' + PIPELINEID });
   }
-  // Use latest stored env slice for pipeline, fallback to provided env
-  var latestEnv = (hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] && hyperSlice.envByPipeline[pipelineId].env) || env || {};
-  return blockcompilerCompileStage(entry.dna, stagePath, latestEnv, options || {});
+  var ENVMAP = HYPERSLICE.ENVBYPIPELINE || HYPERSLICE.ENVBYPIPELINE;
+  var LATESTENV = (ENVMAP && ENVMAP[PIPELINEID] && ENVMAP[PIPELINEID].ENV) || ENV || {};
+  var COMPFN = (typeof BLOCKCOMPILERCOMPILESTAGE === 'function') ? BLOCKCOMPILERCOMPILESTAGE :
+    ((typeof BLOCKCOMPILERCOMPILESTAGE === 'function') ? BLOCKCOMPILERCOMPILESTAGE :
+    ((typeof COMPILESTAGE === 'function') ? COMPILESTAGE : function() { return Promise.resolve(); }));
+  return COMPFN(ENTRY.DNA, STAGEPATH, LATESTENV, OPTIONS || {});
 }
 
-function HANDLESTAGECOMPLETED(hyperSlice, message) {
-  var key = message.pipelineId + ':' + message.stageId;
-  loginfo(hyperSlice, '[HYPERVISOR]', 'action STAGE_COMPLETED:', key);
+function HANDLESTAGECOMPLETED(HYPERSLICE, MESSAGE) {
+  var PIPELINEID = MESSAGE.PIPELINEID || MESSAGE.PIPELINEID;
+  var STAGEID = MESSAGE.STAGEID || MESSAGE.STAGEID;
+  var KEY = PIPELINEID + ':' + STAGEID;
+  LOGINFO(HYPERSLICE, '[HYPERVISOR]', 'ACTION STAGECOMPLETED:', KEY);
 
-  // Always send typed ack
-  if (message.sender && message.tag) {
-    SENDRESPONSE(message.sender, message.tag, { stageId: message.stageId }, 'HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED_ACK);
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    var ACKTYPE = MESSAGETYPES.STAGECOMPLETEDACK || MESSAGETYPES.STAGE_COMPLETED_ACK;
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STAGEID: STAGEID }, 'HYPERVISORACTOR', ACKTYPE);
   }
 
-  if (message.env !== undefined && message.env !== null) {
-    if (!hyperSlice.envByPipeline) hyperSlice.envByPipeline = {};
-    if (!hyperSlice.envByPipeline[message.pipelineId]) hyperSlice.envByPipeline[message.pipelineId] = {};
-    hyperSlice.envByPipeline[message.pipelineId].env = message.env;
-    hyperSlice.envByPipeline[message.pipelineId].updatedAt = Date.now();
+  if (MESSAGE.ENV !== undefined && MESSAGE.ENV !== null) {
+    if (!HYPERSLICE.ENVBYPIPELINE) HYPERSLICE.ENVBYPIPELINE = HYPERSLICE.ENVBYPIPELINE || {};
+    if (!HYPERSLICE.ENVBYPIPELINE[PIPELINEID]) HYPERSLICE.ENVBYPIPELINE[PIPELINEID] = {};
+    HYPERSLICE.ENVBYPIPELINE[PIPELINEID].ENV = MESSAGE.ENV;
+    HYPERSLICE.ENVBYPIPELINE[PIPELINEID].UPDATEDAT = Date.now();
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      updates: [{ path: 'hypervisor', value: hyperSlice }]
+      UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
     }, GENERATETAG(), 'HYPERVISORACTOR');
   }
 
-  var nextMsg = message.nextStageMessage || (hyperSlice.nextStageMessages ? hyperSlice.nextStageMessages[key] : null);
-  if (nextMsg) {
-    if (hyperSlice.nextStageMessages && hyperSlice.nextStageMessages[key]) delete hyperSlice.nextStageMessages[key];
-    var nextStagePath;
-    if (nextMsg.stagePath && Array.isArray(nextMsg.stagePath) && nextMsg.stagePath.length > 0) {
-      nextStagePath = nextMsg.stagePath;
+  var NEXTMSGMAP = HYPERSLICE.NEXTSTAGEMESSAGES || HYPERSLICE.NEXTSTAGEMESSAGES || {};
+  var NEXTMSG = MESSAGE.NEXTSTAGEMESSAGE || MESSAGE.NEXTSTAGEMESSAGE || NEXTMSGMAP[KEY];
+  if (NEXTMSG) {
+    if (NEXTMSGMAP[KEY]) delete NEXTMSGMAP[KEY];
+    var NEXTSTAGEPATH;
+    var SP = NEXTMSG.STAGEPATH || NEXTMSG.STAGEPATH;
+    if (SP && Array.isArray(SP) && SP.length > 0) {
+      NEXTSTAGEPATH = SP;
     } else {
-      nextStagePath = ['pipeline', 'elements', nextMsg.stageIndex];
+      var SIDX = (NEXTMSG.STAGEINDEX !== undefined) ? NEXTMSG.STAGEINDEX : NEXTMSG.STAGEINDEX;
+      NEXTSTAGEPATH = ['pipeline', 'elements', SIDX];
     }
+    var TARGETPIPE = NEXTMSG.PIPELINEID || NEXTMSG.PIPELINEID || PIPELINEID;
     COMPILESTAGEFROMSTOREDDNA(
-      hyperSlice,
-      nextMsg.pipelineId || message.pipelineId,
-      nextStagePath,
-      nextMsg.env || message.env || {},
-      nextMsg.options || {}
+      HYPERSLICE,
+      TARGETPIPE,
+      NEXTSTAGEPATH,
+      NEXTMSG.ENV || MESSAGE.ENV || {},
+      NEXTMSG.OPTIONS || {}
     ).then(function() {
       // Next stage will send its own stage_completed
-    }).catch(function(err) {
-      logwarn(hyperSlice, '[HYPERVISOR]', 'next stage orchestration failed:', err);
+    }).catch(function(ERR) {
+      LOGWARN(HYPERSLICE, '[HYPERVISOR]', 'NEXT STAGE ORCHESTRATION FAILED:', ERR);
     });
   } else {
-    // No next sequential stage. Do not remove pipeline from activePipelines; hypervisor is always active.
-    // EVENT stages can still be triggered via EVENT_TRIGGERED using stored DNA and env.
-    loginfo(hyperSlice, '[HYPERVISOR]', 'No next sequential stage for pipeline:', message.pipelineId);
+    LOGINFO(HYPERSLICE, '[HYPERVISOR]', 'NO NEXT SEQUENTIAL STAGE FOR PIPELINE:', PIPELINEID);
   }
 }
 
 // Pure behavior function: (env, message) -> env
-function HYPERVISORBEHAVIOR(env, message) {
-  logdebug(env, '[HYPERVISOR]', 'behavior handling action:', message.type);
+function HYPERVISORBEHAVIOR(ENV, MESSAGE) {
+  LOGDEBUG(ENV, '[HYPERVISOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
-  var hyperSlice = ENSUREHYPERVISORSLICE(env);
+  var HYPERSLICE = ENSUREHYPERVISORSLICE(ENV);
+  var PIPELINEID = MESSAGE.PIPELINEID || MESSAGE.PIPELINEID;
 
-  switch (message.type) {
+  switch (MESSAGE.TYPE) {
     case MESSAGETYPES.LOAD:
-      return env;
+      return ENV;
     case MESSAGETYPES.SAVE:
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
+      return ENV;
+    case MESSAGETYPES.GETENV:
     case MESSAGETYPES.GET_ENV: {
-      var p = hyperSlice.envByPipeline && hyperSlice.envByPipeline[message.pipelineId];
-      var result = p ? p.env : null;
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, result, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      var ENVMAP = HYPERSLICE.ENVBYPIPELINE || HYPERSLICE.ENVBYPIPELINE;
+      var P = ENVMAP && ENVMAP[PIPELINEID];
+      var RESULT = P ? P.ENV : null;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESULT, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
     }
+    case MESSAGETYPES.SETENV:
     case MESSAGETYPES.SET_ENV: {
-      if (!hyperSlice.envByPipeline) hyperSlice.envByPipeline = {};
-      if (!hyperSlice.envByPipeline[message.pipelineId]) hyperSlice.envByPipeline[message.pipelineId] = {};
-      hyperSlice.envByPipeline[message.pipelineId].env = message.env || {};
-      hyperSlice.envByPipeline[message.pipelineId].updatedAt = Date.now();
+      if (!HYPERSLICE.ENVBYPIPELINE) HYPERSLICE.ENVBYPIPELINE = HYPERSLICE.ENVBYPIPELINE || {};
+      if (!HYPERSLICE.ENVBYPIPELINE[PIPELINEID]) HYPERSLICE.ENVBYPIPELINE[PIPELINEID] = {};
+      HYPERSLICE.ENVBYPIPELINE[PIPELINEID].ENV = MESSAGE.ENV || {};
+      HYPERSLICE.ENVBYPIPELINE[PIPELINEID].UPDATEDAT = Date.now();
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
+      return ENV;
     }
+    case MESSAGETYPES.GETLATESTENV:
     case MESSAGETYPES.GET_LATEST_ENV: {
-      var pState = hyperSlice.envByPipeline && hyperSlice.envByPipeline[message.pipelineId];
-      var latest = pState ? pState.env : null;
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, latest, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      var ENVMAP2 = HYPERSLICE.ENVBYPIPELINE || HYPERSLICE.ENVBYPIPELINE;
+      var PSTATE = ENVMAP2 && ENVMAP2[PIPELINEID];
+      var LATEST = PSTATE ? PSTATE.ENV : null;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, LATEST, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
     }
+    case MESSAGETYPES.GETRENDERHTML:
     case MESSAGETYPES.GET_RENDER_HTML:
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, hyperSlice.renderHtml || '', 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, HYPERSLICE.RENDERHTML || HYPERSLICE.RENDERHTML || '', 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
+    case MESSAGETYPES.SETRENDERHTML:
     case MESSAGETYPES.SET_RENDER_HTML:
-      hyperSlice.renderHtml = message.html || '';
+      HYPERSLICE.RENDERHTML = MESSAGE.HTML || '';
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
+      return ENV;
+    case MESSAGETYPES.GETEXECUTIONSTACK:
     case MESSAGETYPES.GET_EXECUTION_STACK:
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, hyperSlice.executionStack || [], 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, HYPERSLICE.EXECUTIONSTACK || HYPERSLICE.EXECUTIONSTACK || [], 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
+    case MESSAGETYPES.SETEXECUTIONSTACK:
     case MESSAGETYPES.SET_EXECUTION_STACK:
-      hyperSlice.executionStack = message.stack || [];
+      HYPERSLICE.EXECUTIONSTACK = MESSAGE.STACK || [];
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
+      return ENV;
+    case MESSAGETYPES.GETROUTE:
     case MESSAGETYPES.GET_ROUTE:
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, hyperSlice.routes && message.key ? (hyperSlice.routes[message.key] || null) : null, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, HYPERSLICE.ROUTES && MESSAGE.KEY ? (HYPERSLICE.ROUTES[MESSAGE.KEY] || null) : null, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
+    case MESSAGETYPES.SETROUTE:
     case MESSAGETYPES.SET_ROUTE:
-      if (!hyperSlice.routes) hyperSlice.routes = {};
-      hyperSlice.routes[message.key] = message.route || null;
+      if (!HYPERSLICE.ROUTES) HYPERSLICE.ROUTES = {};
+      HYPERSLICE.ROUTES[MESSAGE.KEY] = MESSAGE.ROUTE || null;
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
+      return ENV;
+    case MESSAGETYPES.GETACTIVEPIPELINES:
     case MESSAGETYPES.GET_ACTIVE_PIPELINES:
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, (hyperSlice.activePipelines || []).slice(), 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, (HYPERSLICE.ACTIVEPIPELINES || HYPERSLICE.ACTIVEPIPELINES || []).slice(), 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
+    case MESSAGETYPES.REGISTERPIPELINE:
     case MESSAGETYPES.REGISTER_PIPELINE:
-      REGISTERHYPERVISORPIPELINE(hyperSlice, message.pipelineId);
-      return env;
+      REGISTERHYPERVISORPIPELINE(HYPERSLICE, PIPELINEID);
+      return ENV;
+    case MESSAGETYPES.UNREGISTERPIPELINE:
     case MESSAGETYPES.UNREGISTER_PIPELINE:
-      if (!hyperSlice.activePipelines) hyperSlice.activePipelines = [];
-      hyperSlice.activePipelines = hyperSlice.activePipelines.filter(function(id) { return id !== message.pipelineId; });
+      if (!HYPERSLICE.ACTIVEPIPELINES) HYPERSLICE.ACTIVEPIPELINES = HYPERSLICE.ACTIVEPIPELINES || [];
+      HYPERSLICE.ACTIVEPIPELINES = HYPERSLICE.ACTIVEPIPELINES.filter(function(ID) { return ID !== PIPELINEID; });
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
-    case MESSAGETYPES.SET_PROGRAM:
-      if (!hyperSlice.programs) hyperSlice.programs = {};
-      hyperSlice.programs[message.programKey] = message.programSource;
+      return ENV;
+    case MESSAGETYPES.SETPROGRAM:
+    case MESSAGETYPES.SET_PROGRAM: {
+      var PROGKEY = MESSAGE.PROGRAMKEY || MESSAGE.PROGRAMKEY;
+      var PROGSOURCE = MESSAGE.PROGRAMSOURCE || MESSAGE.PROGRAMSOURCE;
+      if (!HYPERSLICE.PROGRAMS) HYPERSLICE.PROGRAMS = {};
+      HYPERSLICE.PROGRAMS[PROGKEY] = PROGSOURCE;
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
-    case MESSAGETYPES.GET_PROGRAM:
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, hyperSlice.programs && message.programKey ? (hyperSlice.programs[message.programKey] || null) : null, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      return ENV;
+    }
+    case MESSAGETYPES.GETPROGRAM:
+    case MESSAGETYPES.GET_PROGRAM: {
+      var PKEY = MESSAGE.PROGRAMKEY || MESSAGE.PROGRAMKEY;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, HYPERSLICE.PROGRAMS && PKEY ? (HYPERSLICE.PROGRAMS[PKEY] || null) : null, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
+    }
+    case MESSAGETYPES.MARKBOOT:
     case MESSAGETYPES.MARK_BOOT:
-      hyperSlice.boot = message.boot !== false;
+      HYPERSLICE.BOOT = MESSAGE.BOOT !== false;
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
-      return env;
+      return ENV;
+    case MESSAGETYPES.EVENTTRIGGERED:
     case MESSAGETYPES.EVENT_TRIGGERED: {
-      var pipelineId = message.pipelineId;
-      var stageId = message.stageId;
-      var stagePath = message.stagePath || ['pipeline', 'elements', -1];
+      var STAGEID = MESSAGE.STAGEID || MESSAGE.STAGEID;
+      var STAGEPATH = MESSAGE.STAGEPATH || MESSAGE.STAGEPATH || ['pipeline', 'elements', -1];
 
-      var loadedEntry = hyperSlice.loadedPipelines && hyperSlice.loadedPipelines[pipelineId];
-      if (!loadedEntry || !loadedEntry.dna) {
-        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: 'missing loaded pipeline DNA' }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-        return env;
+      var LOADEDMAP = HYPERSLICE.LOADEDPIPELINES || HYPERSLICE.LOADEDPIPELINES;
+      var LOADEDENTRY = LOADEDMAP && LOADEDMAP[PIPELINEID];
+      if (!LOADEDENTRY || !LOADEDENTRY.DNA) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: 'missing loaded pipeline DNA' }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+        return ENV;
       }
 
-      loginfo(env, '[HYPERVISOR]', 'EVENT_TRIGGERED compiling stage:', pipelineId, stageId, stagePath);
+      LOGINFO(ENV, '[HYPERVISOR]', 'EVENTTRIGGERED COMPILING STAGE:', PIPELINEID, STAGEID, STAGEPATH);
 
-      var eventOptions = loadedEntry.options || {};
-      eventOptions.isEventTrigger = true;
+      var EVENTOPTIONS = LOADEDENTRY.OPTIONS || {};
+      EVENTOPTIONS.ISEVENTTRIGGER = true;
 
-      COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, {}, eventOptions)
+      COMPILESTAGEFROMSTOREDDNA(HYPERSLICE, PIPELINEID, STAGEPATH, {}, EVENTOPTIONS)
         .then(function() {
-          if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { started: true }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+          if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STARTED: true }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
         })
-        .catch(function(err) {
-          logwarn(env, '[HYPERVISOR]', 'EVENT_TRIGGERED compilation failed:', err);
-          if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: err.message || String(err) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+        .catch(function(ERR) {
+          LOGWARN(ENV, '[HYPERVISOR]', 'EVENTTRIGGERED COMPILATION FAILED:', ERR);
+          if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: ERR.MESSAGE || String(ERR) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
         });
-      return env;
+      return ENV;
     }
     case MESSAGETYPES.PING:
-      if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, true, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      return env;
+      if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      return ENV;
     case MESSAGETYPES.RECOVER:
-      DBRESTORE('actor:state:hypervisor').then(function(saved) {
-        if (saved && typeof saved === 'object') env.hypervisor = saved;
-        else env.hypervisor = {
-          boot: true, envByPipeline: {}, renderHtml: '', executionStack: [],
-          routes: {}, activePipelines: [], programs: {}, loadedPipelines: {}, nextStageMessages: {}
+      DBRESTORE('actor:state:hypervisor').then(function(SAVED) {
+        if (SAVED && typeof SAVED === 'object') ENV.HYPERVISOR = SAVED;
+        else ENV.HYPERVISOR = {
+          BOOT: true, ENVBYPIPELINE: {}, RENDERHTML: '', EXECUTIONSTACK: [],
+          ROUTES: {}, ACTIVEPIPELINES: [], PROGRAMS: {}, LOADEDPIPELINES: {}, NEXTSTAGEMESSAGES: {}
         };
         SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-          updates: [{ path: 'hypervisor', value: env.hypervisor }]
+          UPDATES: [{ PATH: 'hypervisor', VALUE: ENV.HYPERVISOR }]
         }, GENERATETAG(), 'HYPERVISORACTOR');
-        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, env, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      }).catch(function(e) {
-        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: e.message || String(e) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      }).catch(function(E) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: E.MESSAGE || String(E) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
       });
-      return env;
+      return ENV;
+    case MESSAGETYPES.ACTIVATEACTORS:
     case MESSAGETYPES.ACTIVATE_ACTORS:
-      return env;
+      return ENV;
+    case MESSAGETYPES.BOOTPIPELINE:
     case MESSAGETYPES.BOOT_PIPELINE: {
-      var bootOptions = message.options || {};
-      if (bootOptions.autorun === undefined) bootOptions.autorun = true;
-      if (bootOptions.verbosity === undefined && env.verbosity !== undefined) bootOptions.verbosity = env.verbosity;
+      var BOOTOPTIONS = MESSAGE.OPTIONS || {};
+      if (BOOTOPTIONS.AUTORUN === undefined) BOOTOPTIONS.AUTORUN = true;
+      if (BOOTOPTIONS.VERBOSITY === undefined && ENV.VERBOSITY !== undefined) BOOTOPTIONS.VERBOSITY = ENV.VERBOSITY;
 
-      var pipelineId = message.pipelineId;
-      var dnaEnvelope = message.dna;
-      if (!dnaEnvelope || !dnaEnvelope.definition) {
-        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: '[HYPERVISOR] missing DNA envelope' }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
-        return env;
+      var DNAENVELOPE = MESSAGE.DNA;
+      var BOOTEDTYPE = MESSAGETYPES.PIPELINEBOOTED || MESSAGETYPES.PIPELINE_BOOTED;
+      if (!DNAENVELOPE || !DNAENVELOPE.DEFINITION) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: '[HYPERVISOR] missing DNA envelope' }, 'HYPERVISORACTOR', BOOTEDTYPE);
+        return ENV;
       }
 
-      // P56: If pipeline already loaded and env exists, skip re-registration/recompilation
-      var alreadyLoaded = hyperSlice.loadedPipelines && hyperSlice.loadedPipelines[pipelineId] && hyperSlice.loadedPipelines[pipelineId].dna;
-      var hasEnvState = hyperSlice.envByPipeline && hyperSlice.envByPipeline[pipelineId] && hyperSlice.envByPipeline[pipelineId].env;
+      var LOADEDMAP2 = HYPERSLICE.LOADEDPIPELINES || HYPERSLICE.LOADEDPIPELINES;
+      var ALREADYLOADED = LOADEDMAP2 && LOADEDMAP2[PIPELINEID] && LOADEDMAP2[PIPELINEID].DNA;
+      var ENVMAP3 = HYPERSLICE.ENVBYPIPELINE || HYPERSLICE.ENVBYPIPELINE;
+      var HASENVSTATE = ENVMAP3 && ENVMAP3[PIPELINEID] && ENVMAP3[PIPELINEID].ENV;
 
-      if (alreadyLoaded && hasEnvState) {
-        loginfo(env, '[HYPERVISOR]', 'BOOT_PIPELINE skipped (state already present):', pipelineId);
-        if (message.sender && message.tag) {
-          SENDRESPONSE(message.sender, message.tag, { started: true, pipelineId: pipelineId, reused: true }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
+      if (ALREADYLOADED && HASENVSTATE) {
+        LOGINFO(ENV, '[HYPERVISOR]', 'BOOTPIPELINE SKIPPED (STATE ALREADY PRESENT):', PIPELINEID);
+        if (MESSAGE.SENDER && MESSAGE.TAG) {
+          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STARTED: true, PIPELINEID: PIPELINEID, REUSED: true }, 'HYPERVISORACTOR', BOOTEDTYPE);
         }
-        return env;
+        return ENV;
       }
 
-      hyperSlice.loadedPipelines = hyperSlice.loadedPipelines || {};
-      hyperSlice.loadedPipelines[pipelineId] = {
-        dna: dnaEnvelope,
-        options: bootOptions,
-        accessors: message.accessors || null,
-        sinks: message.sinks || []
+      if (!HYPERSLICE.LOADEDPIPELINES) HYPERSLICE.LOADEDPIPELINES = {};
+      HYPERSLICE.LOADEDPIPELINES[PIPELINEID] = {
+        DNA: DNAENVELOPE,
+        OPTIONS: BOOTOPTIONS,
+        ACCESSORS: MESSAGE.ACCESSORS || null,
+        SINKS: MESSAGE.SINKS || []
       };
 
-      REGISTERHYPERVISORPIPELINE(hyperSlice, pipelineId);
-      SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.PIPELINE_LOADED, { pipelineid: pipelineId, env: {} }, null, 'HYPERVISORACTOR');
-      SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.REGISTER_PIPELINE, { pipelineid: pipelineId, dna: null, env: {} }, null, 'HYPERVISORACTOR');
+      REGISTERHYPERVISORPIPELINE(HYPERSLICE, PIPELINEID);
+      var LOADEDMSGTYPE = MESSAGETYPES.PIPELINELOADED || MESSAGETYPES.PIPELINE_LOADED;
+      var REGMSGTYPE = MESSAGETYPES.REGISTERPIPELINE || MESSAGETYPES.REGISTER_PIPELINE;
+      SENDINSTRUCTION('EXECUTIONACTOR', LOADEDMSGTYPE, { PIPELINEID: PIPELINEID, ENV: {} }, null, 'HYPERVISORACTOR');
+      SENDINSTRUCTION('EXECUTIONACTOR', REGMSGTYPE, { PIPELINEID: PIPELINEID, DNA: null, ENV: {} }, null, 'HYPERVISORACTOR');
 
-      if (message.sender && message.tag) {
-        SENDRESPONSE(message.sender, message.tag, { started: true, pipelineId: pipelineId }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINE_BOOTED);
+      if (MESSAGE.SENDER && MESSAGE.TAG) {
+        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STARTED: true, PIPELINEID: PIPELINEID }, 'HYPERVISORACTOR', BOOTEDTYPE);
       }
 
-      var stagePath = message.stagePath || ['pipeline', 'elements', 0];
-      COMPILESTAGEFROMSTOREDDNA(hyperSlice, pipelineId, stagePath, bootOptions.baseEnv || {}, bootOptions)
+      var STAGEPATH2 = MESSAGE.STAGEPATH || MESSAGE.STAGEPATH || ['pipeline', 'elements', 0];
+      COMPILESTAGEFROMSTOREDDNA(HYPERSLICE, PIPELINEID, STAGEPATH2, BOOTOPTIONS.BASEENV || BOOTOPTIONS.BASEENV || {}, BOOTOPTIONS)
         .then(function() {})
-        .catch(function(err) {
-          logwarn(env, '[HYPERVISOR]', 'boot pipeline orchestration failed:', err);
+        .catch(function(ERR) {
+          LOGWARN(ENV, '[HYPERVISOR]', 'BOOT PIPELINE ORCHESTRATION FAILED:', ERR);
         });
 
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'hypervisor', value: hyperSlice }]
+        UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
       }, GENERATETAG(), 'HYPERVISORACTOR');
 
-      return env;
+      return ENV;
     }
+    case MESSAGETYPES.COMPILESTAGE:
     case MESSAGETYPES.COMPILE_STAGE: {
-      logdebug(env, '[HYPERVISOR]', 'action COMPILE_STAGE:', message.pipelineId, 'stagePath:', JSON.stringify(message.stagePath));
+      var SP3 = MESSAGE.STAGEPATH || MESSAGE.STAGEPATH || ['pipeline', 'elements', 0];
+      LOGDEBUG(ENV, '[HYPERVISOR]', 'ACTION COMPILESTAGE:', PIPELINEID, 'STAGEPATH:', JSON.stringify(SP3));
       COMPILESTAGEFROMSTOREDDNA(
-        hyperSlice,
-        message.pipelineId,
-        message.stagePath || ['pipeline','elements',0],
-        message.env || {},
-        message.options || {}
-      ).then(function(res) {
-        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, res, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
-      }).catch(function(err) {
-        if (message.sender && message.tag) SENDRESPONSE(message.sender, message.tag, { error: err.message || String(err) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+        HYPERSLICE,
+        PIPELINEID,
+        SP3,
+        MESSAGE.ENV || {},
+        MESSAGE.OPTIONS || {}
+      ).then(function(RES) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RES, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      }).catch(function(ERR) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: ERR.MESSAGE || String(ERR) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
       });
-      return env;
+      return ENV;
     }
+    case MESSAGETYPES.STAGECOMPLETED:
     case MESSAGETYPES.STAGE_COMPLETED: {
-      HANDLESTAGECOMPLETED(hyperSlice, message);
-      return env;
+      HANDLESTAGECOMPLETED(HYPERSLICE, MESSAGE);
+      return ENV;
     }
     default:
-      logwarn(env, '[HYPERVISOR]', 'unknown message type:', message.type);
-      return env;
+      LOGWARN(ENV, '[HYPERVISOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
+      return ENV;
   }
 }
 
-function ENQUEUEHYPERVISOR(type, payload, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('HYPERVISORACTOR', type, payload || {}, tag, 'system', responseSpec);
+function ENQUEUEHYPERVISOR(TYPE, PAYLOAD, RESPONSESPEC) {
+  var TAG = GENERATETAG();
+  SENDINSTRUCTION('HYPERVISORACTOR', TYPE, PAYLOAD || {}, TAG, 'system', RESPONSESPEC);
 }
 
-function ENQUEUEHYPERVISORLOAD(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.LOAD, {}, responseSpec); }
-function ENQUEUEHYPERVISORSAVE(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SAVE, {}, responseSpec); }
-function ENQUEUEHYPERVISORGETENV(pipelineId, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_ENV, { pipelineId: pipelineId }, responseSpec); }
-function ENQUEUEHYPERVISORSETENV(pipelineId, env, stageId, elementId, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SET_ENV, { pipelineId: pipelineId, env: env, stageId: stageId, elementId: elementId }, responseSpec); }
-function ENQUEUEHYPERVISORGETLATESTENV(pipelineId, stageId, elementId, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_LATEST_ENV, { pipelineId: pipelineId, stageId: stageId, elementId: elementId }, responseSpec); }
-function ENQUEUEHYPERVISORGETRENDERHTML(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_RENDER_HTML, {}, responseSpec); }
-function ENQUEUEHYPERVISORSETRENDERHTML(html, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SET_RENDER_HTML, { html: html }, responseSpec); }
-function ENQUEUEHYPERVISORGETEXECUTIONSTACK(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_EXECUTION_STACK, {}, responseSpec); }
-function ENQUEUEHYPERVISORSETEXECUTIONSTACK(stack, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SET_EXECUTION_STACK, { stack: stack }, responseSpec); }
-function ENQUEUEHYPERVISORGETROUTE(key, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_ROUTE, { key: key }, responseSpec); }
-function ENQUEUEHYPERVISORSETROUTE(key, route, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SET_ROUTE, { key: key, route: route }, responseSpec); }
-function ENQUEUEHYPERVISORGETACTIVEPIPELINES(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_ACTIVE_PIPELINES, {}, responseSpec); }
-function ENQUEUEHYPERVISORREGISTERPIPELINE(pipelineId, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.REGISTER_PIPELINE, { pipelineId: pipelineId }, responseSpec); }
-function ENQUEUEHYPERVISORUNREGISTERPIPELINE(pipelineId, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.UNREGISTER_PIPELINE, { pipelineId: pipelineId }, responseSpec); }
-function ENQUEUEHYPERVISORSETPROGRAM(programKey, programSource, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SET_PROGRAM, { programKey: programKey, programSource: programSource }, responseSpec); }
-function ENQUEUEHYPERVISORGETPROGRAM(programKey, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.GET_PROGRAM, { programKey: programKey }, responseSpec); }
-function ENQUEUEHYPERVISORMARKBOOT(boot, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.MARK_BOOT, { boot: boot }, responseSpec); }
-function ENQUEUEHYPERVISORPING(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.PING, {}, responseSpec); }
-function ENQUEUEHYPERVISORACTIVATEACTORS(responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.ACTIVATE_ACTORS, {}, responseSpec); }
-function ENQUEUEHYPERVISORBOOTPIPELINE(payload, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.BOOT_PIPELINE, payload, responseSpec); }
-function ENQUEUEHYPERVISORSTAGECOMPLETED(pipelineId, stageId, nextStageMessage, env, responseSpec) { return ENQUEUEHYPERVISOR(MESSAGETYPES.STAGE_COMPLETED, { pipelineId: pipelineId, stageId: stageId, nextStageMessage: nextStageMessage, env: env }, responseSpec); }
+function ENQUEUEHYPERVISORLOAD(RESPONSESPEC) { return ENQUEUEHYPERVISOR(MESSAGETYPES.LOAD, {}, RESPONSESPEC); }
+function ENQUEUEHYPERVISORSAVE(RESPONSESPEC) { return ENQUEUEHYPERVISOR(MESSAGETYPES.SAVE, {}, RESPONSESPEC); }
+function ENQUEUEHYPERVISORGETENV(PIPELINEID, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.GETENV || MESSAGETYPES.GET_ENV;
+  return ENQUEUEHYPERVISOR(TYPE, { PIPELINEID: PIPELINEID }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORSETENV(PIPELINEID, ENV, STAGEID, ELEMENTID, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.SETENV || MESSAGETYPES.SET_ENV;
+  return ENQUEUEHYPERVISOR(TYPE, { PIPELINEID: PIPELINEID, ENV: ENV, STAGEID: STAGEID, ELEMENTID: ELEMENTID }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORGETLATESTENV(PIPELINEID, STAGEID, ELEMENTID, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.GETLATESTENV || MESSAGETYPES.GET_LATEST_ENV;
+  return ENQUEUEHYPERVISOR(TYPE, { PIPELINEID: PIPELINEID, STAGEID: STAGEID, ELEMENTID: ELEMENTID }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORGETRENDERHTML(RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.GETRENDERHTML || MESSAGETYPES.GET_RENDER_HTML;
+  return ENQUEUEHYPERVISOR(TYPE, {}, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORSETRENDERHTML(HTML, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.SETRENDERHTML || MESSAGETYPES.SET_RENDER_HTML;
+  return ENQUEUEHYPERVISOR(TYPE, { HTML: HTML }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORGETEXECUTIONSTACK(RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.GETEXECUTIONSTACK || MESSAGETYPES.GET_EXECUTION_STACK;
+  return ENQUEUEHYPERVISOR(TYPE, {}, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORSETEXECUTIONSTACK(STACK, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.SETEXECUTIONSTACK || MESSAGETYPES.SET_EXECUTION_STACK;
+  return ENQUEUEHYPERVISOR(TYPE, { STACK: STACK }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORGETROUTE(KEY, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.GETROUTE || MESSAGETYPES.GET_ROUTE;
+  return ENQUEUEHYPERVISOR(TYPE, { KEY: KEY }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORSETROUTE(KEY, ROUTE, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.SETROUTE || MESSAGETYPES.SET_ROUTE;
+  return ENQUEUEHYPERVISOR(TYPE, { KEY: KEY, ROUTE: ROUTE }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORGETACTIVEPIPELINES(RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.GETACTIVEPIPELINES || MESSAGETYPES.GET_ACTIVE_PIPELINES;
+  return ENQUEUEHYPERVISOR(TYPE, {}, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORREGISTERPIPELINE(PIPELINEID, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.REGISTERPIPELINE || MESSAGETYPES.REGISTER_PIPELINE;
+  return ENQUEUEHYPERVISOR(TYPE, { PIPELINEID: PIPELINEID }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORUNREGISTERPIPELINE(PIPELINEID, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.UNREGISTERPIPELINE || MESSAGETYPES.UNREGISTER_PIPELINE;
+  return ENQUEUEHYPERVISOR(TYPE, { PIPELINEID: PIPELINEID }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORSETPROGRAM(PROGRAMKEY, PROGRAMSOURCE, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.SETPROGRAM || MESSAGETYPES.SET_PROGRAM;
+  return ENQUEUEHYPERVISOR(TYPE, { PROGRAMKEY: PROGRAMKEY, PROGRAMSOURCE: PROGRAMSOURCE }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORGETPROGRAM(PROGRAMKEY, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.GETPROGRAM || MESSAGETYPES.GET_PROGRAM;
+  return ENQUEUEHYPERVISOR(TYPE, { PROGRAMKEY: PROGRAMKEY }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORMARKBOOT(BOOT, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.MARKBOOT || MESSAGETYPES.MARK_BOOT;
+  return ENQUEUEHYPERVISOR(TYPE, { BOOT: BOOT }, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORPING(RESPONSESPEC) { return ENQUEUEHYPERVISOR(MESSAGETYPES.PING, {}, RESPONSESPEC); }
+function ENQUEUEHYPERVISORACTIVATEACTORS(RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.ACTIVATEACTORS || MESSAGETYPES.ACTIVATE_ACTORS;
+  return ENQUEUEHYPERVISOR(TYPE, {}, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORBOOTPIPELINE(PAYLOAD, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.BOOTPIPELINE || MESSAGETYPES.BOOT_PIPELINE;
+  return ENQUEUEHYPERVISOR(TYPE, PAYLOAD, RESPONSESPEC);
+}
+function ENQUEUEHYPERVISORSTAGECOMPLETED(PIPELINEID, STAGEID, NEXTSTAGEMESSAGE, ENV, RESPONSESPEC) {
+  var TYPE = MESSAGETYPES.STAGECOMPLETED || MESSAGETYPES.STAGE_COMPLETED;
+  return ENQUEUEHYPERVISOR(TYPE, { PIPELINEID: PIPELINEID, STAGEID: STAGEID, NEXTSTAGEMESSAGE: NEXTSTAGEMESSAGE, ENV: ENV }, RESPONSESPEC);
+}
 
-function STARTHYPERVISORACTOR(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options :
-      (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-    if (lvl !== undefined) {
-      var env = GETACTORSTATE('WORLDMAPACTOR');
-      if (env) env.verbosity = lvl;
+function STARTHYPERVISORACTOR(OPTIONS) {
+  if (OPTIONS !== undefined) {
+    var LVL = typeof OPTIONS === 'number' ? OPTIONS :
+      (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
+    if (LVL !== undefined) {
+      var ENV = GETACTORSTATE('WORLDMAPACTOR');
+      if (ENV) ENV.VERBOSITY = LVL;
     }
   }
   return {
-    getstate: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    dispatch: function(message) { return DISPATCHTOACTOR('HYPERVISORACTOR', HYPERVISORBEHAVIOR, message); }
+    GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
+    DISPATCH: function(MESSAGE) { return DISPATCHTOACTOR('HYPERVISORACTOR', HYPERVISORBEHAVIOR, MESSAGE); }
+  };
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    HYPERVISORVERBOSITYCONSTANTS: HYPERVISORVERBOSITYCONSTANTS,
+    ENSUREHYPERVISORSLICE: ENSUREHYPERVISORSLICE,
+    CREATEHYPERVISORERRORCONTEXT: CREATEHYPERVISORERRORCONTEXT,
+    REGISTERHYPERVISORPIPELINE: REGISTERHYPERVISORPIPELINE,
+    COMPILESTAGEFROMSTOREDDNA: COMPILESTAGEFROMSTOREDDNA,
+    HANDLESTAGECOMPLETED: HANDLESTAGECOMPLETED,
+    HYPERVISORBEHAVIOR: HYPERVISORBEHAVIOR,
+    ENQUEUEHYPERVISOR: ENQUEUEHYPERVISOR,
+    ENQUEUEHYPERVISORLOAD: ENQUEUEHYPERVISORLOAD,
+    ENQUEUEHYPERVISORSAVE: ENQUEUEHYPERVISORSAVE,
+    ENQUEUEHYPERVISORGETENV: ENQUEUEHYPERVISORGETENV,
+    ENQUEUEHYPERVISORSETENV: ENQUEUEHYPERVISORSETENV,
+    ENQUEUEHYPERVISORGETLATESTENV: ENQUEUEHYPERVISORGETLATESTENV,
+    ENQUEUEHYPERVISORGETRENDERHTML: ENQUEUEHYPERVISORGETRENDERHTML,
+    ENQUEUEHYPERVISORSETRENDERHTML: ENQUEUEHYPERVISORSETRENDERHTML,
+    ENQUEUEHYPERVISORGETEXECUTIONSTACK: ENQUEUEHYPERVISORGETEXECUTIONSTACK,
+    ENQUEUEHYPERVISORSETEXECUTIONSTACK: ENQUEUEHYPERVISORSETEXECUTIONSTACK,
+    ENQUEUEHYPERVISORGETROUTE: ENQUEUEHYPERVISORGETROUTE,
+    ENQUEUEHYPERVISORSETROUTE: ENQUEUEHYPERVISORSETROUTE,
+    ENQUEUEHYPERVISORGETACTIVEPIPELINES: ENQUEUEHYPERVISORGETACTIVEPIPELINES,
+    ENQUEUEHYPERVISORREGISTERPIPELINE: ENQUEUEHYPERVISORREGISTERPIPELINE,
+    ENQUEUEHYPERVISORUNREGISTERPIPELINE: ENQUEUEHYPERVISORUNREGISTERPIPELINE,
+    ENQUEUEHYPERVISORSETPROGRAM: ENQUEUEHYPERVISORSETPROGRAM,
+    ENQUEUEHYPERVISORGETPROGRAM: ENQUEUEHYPERVISORGETPROGRAM,
+    ENQUEUEHYPERVISORMARKBOOT: ENQUEUEHYPERVISORMARKBOOT,
+    ENQUEUEHYPERVISORPING: ENQUEUEHYPERVISORPING,
+    ENQUEUEHYPERVISORACTIVATEACTORS: ENQUEUEHYPERVISORACTIVATEACTORS,
+    ENQUEUEHYPERVISORBOOTPIPELINE: ENQUEUEHYPERVISORBOOTPIPELINE,
+    ENQUEUEHYPERVISORSTAGECOMPLETED: ENQUEUEHYPERVISORSTAGECOMPLETED,
+    STARTHYPERVISORACTOR: STARTHYPERVISORACTOR
   };
 }

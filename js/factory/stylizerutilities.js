@@ -1,50 +1,39 @@
-// ============================================================
-// UPDATED FILE: js/factory/stylizerutilities.js
-// Change applied: ES5 module conversion (imports → require,
-// export → module.exports). Body already ES5 (var/function) with
-// injected-parameter method style — portable surface per P-6.
-// DOMParser impurity isolated here (Kleisli verdict).
-// ============================================================
-
-
-// scanNumberEnd — scan digits and '.' from index i; returns end index.
-// Shared by parseLength (functional-recursive).
-function scanNumberEnd(str, i) {
+function scannumberend(str, i) {
   if (i >= str.length) return i;
   var c = str.charAt(i);
-  if ((c >= '0' && c <= '9') || c === '.') return scanNumberEnd(str, i + 1);
+  if ((c >= '0' && c <= '9') || c === '.') return scannumberend(str, i + 1);
   return i;
 }
 
-var defaultVerbosityState = Object.freeze({ level: createVerbosityConstants().DEBUG });
+var defaultverbositystate = Object.freeze({ level: createverbosityconstants().DEBUG });
 
-var StylizerCore = {
+var stylizercore = {
   has: function(obj, key) {
     return Object.prototype.hasOwnProperty.call(obj, key);
   },
 
-  isArray: function(value) {
+  isarray: function(value) {
     return Object.prototype.toString.call(value) === '[object Array]';
   },
 
-  createStylizerConstants: function() {
+  createstylizerconstants: function() {
     return Object.freeze({
-      SAFE_PROPS: Object.freeze([
+      safeprops: Object.freeze([
         'color', 'font-family', 'font-size', 'font-weight', 'font-style',
         'line-height', 'text-align', 'cursor', 'letter-spacing', 'word-spacing',
         'text-transform', 'text-decoration', 'font-variant'
       ]),
-      BLOCK_DISPLAY_VALUES: Object.freeze(['block', 'flex', 'grid']),
-      BLOCK_TAGS: Object.freeze([
+      blockdisplayvalues: Object.freeze(['block', 'flex', 'grid']),
+      blocktags: Object.freeze([
         'div', 'section', 'article', 'header', 'footer', 'nav', 'p',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li'
       ]),
-      DEFAULT_MIN_GAP: 12,
-      DEFAULT_MIN_RATIO: 4.5
+      defaultmingap: 12,
+      defaultminratio: 4.5
     });
   },
 
-  camelToKebab: function(str) {
+  cameltokebab: function(str) {
     if (typeof str !== 'string') return str;
     return str.split('').reduce(function(out, ch) {
       if (ch >= 'A' && ch <= 'Z') {
@@ -54,7 +43,7 @@ var StylizerCore = {
     }, '');
   },
 
-  kebabToCamel: function(str) {
+  kebabcamel: function(str) {
     if (typeof str !== 'string') return str;
     function scan(i, out) {
       if (i >= str.length) return out;
@@ -70,7 +59,7 @@ var StylizerCore = {
     return scan(0, '');
   },
 
-  tokenizeWhitespace: function(str) {
+  tokenizewhitespace: function(str) {
     var s = String(str);
 
     function scan(i, current, tokens) {
@@ -81,7 +70,7 @@ var StylizerCore = {
       var ch = s.charAt(i);
 
       if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' ||
-          ch === '\v' || ch === '\f' || ch === '\uFEFF') {
+          ch === '\v' || ch === '\f' || ch === '\ufeff') {
         if (current !== '') {
           tokens.push(current);
           current = '';
@@ -94,30 +83,30 @@ var StylizerCore = {
     return scan(0, '', []);
   },
 
-  parseLength: function(value, referencePx) {
-    if (referencePx === undefined) referencePx = 16;
+  parselength: function(value, referencepx) {
+    if (referencepx === undefined) referencepx = 16;
 
-    var KEYWORD_LENGTHS = {
+    var keywordlengths = {
       auto: 1, medium: 1.3, large: 1.5, small: 0.7, tiny: 0.5
     };
 
-    var LENGTH_FACTORS = {
+    var lengthfactors = {
       px: 1, '': 1,
       '%': function(n, ref) { return (n / 100) * ref; },
-      "em": function(n, ref) { return n * ref; },
-      "rem": function(n) { return n * 16; },
-      "pt": function(n) { return n * (96 / 72); },
-      "pc": function(n) { return n * 16; },
-      "in": function(n) { return n * 96; },
-      "cm": function(n) { return n * (96 / 2.54); },
-      "mm": function(n) { return n * (96 / 25.4); },
-      "q": function(n) { return n * (96 / 101.6); }
+      em: function(n, ref) { return n * ref; },
+      rem: function(n) { return n * 16; },
+      pt: function(n) { return n * (96 / 72); },
+      pc: function(n) { return n * 16; },
+      in: function(n) { return n * 96; },
+      cm: function(n) { return n * (96 / 2.54); },
+      mm: function(n) { return n * (96 / 25.4); },
+      q: function(n) { return n * (96 / 101.6); }
     };
 
     if (typeof value === 'number') return value;
     if (!value) return 0;
-    if (KEYWORD_LENGTHS[value] !== undefined) {
-      value = referencePx * KEYWORD_LENGTHS[value];
+    if (keywordlengths[value] !== undefined) {
+      value = referencepx * keywordlengths[value];
     }
 
     var str = String(value).trim();
@@ -125,56 +114,56 @@ var StylizerCore = {
     if (str.charAt(i) === '+' || str.charAt(i) === '-') i += 1;
 
     var start = i;
-    var end = scanNumberEnd(str, i);
+    var end = scannumberend(str, i);
 
-    var numStr = str.slice(start, end);
+    var numstr = str.slice(start, end);
     var unit = str.slice(end).toLowerCase();
-    var num = parseFloat(numStr);
+    var num = parseFloat(numstr);
 
-    var factor = LENGTH_FACTORS[unit];
+    var factor = lengthfactors[unit];
     if (factor === undefined) {
-      throw new Error('[parseLength] Unknown unit: ' + unit);
+      throw new Error('[parselength] Unknown unit: ' + unit);
     }
 
-    return typeof factor === 'function' ? factor(num, referencePx) : num * factor;
+    return typeof factor === 'function' ? factor(num, referencepx) : num * factor;
   },
 
-  computeBaseSpacing: function(viewportWidth, baseFontSize) {
-    if (baseFontSize === undefined) baseFontSize = 16;
-    var scale = Math.min(1, (viewportWidth || 960) / 960);
+  computebasespacing: function(viewportwidth, basefontsize) {
+    if (basefontsize === undefined) basefontsize = 16;
+    var scale = Math.min(1, (viewportwidth || 960) / 960);
 
     function round(v) { return Math.round(v); }
 
     return {
       pad: round(16 * scale),
       margin: round(8 * scale),
-      listIndent: round(24 * scale),
-      codePad: round(12 * scale),
-      cardPad: round(12 * scale),
-      btnPadV: round(8 * scale),
-      btnPadH: round(16 * scale),
+      listindent: round(24 * scale),
+      codepad: round(12 * scale),
+      cardpad: round(12 * scale),
+      btnpadv: round(8 * scale),
+      btnpadh: round(16 * scale),
       gap: round(8 * scale),
       scale: scale
     };
   },
 
-  parseShorthandLengths: function(value, referencePx, StylizerCore) {
+  parseshorthandlengths: function(value, referencepx, stylizercore) {
     if (!value) return null;
-    var tokens = StylizerCore.tokenizeWhitespace(String(value));
+    var tokens = stylizercore.tokenizewhitespace(String(value));
     if (!tokens.length) return null;
 
-    var t = StylizerCore.parseLength(tokens[0], referencePx);
-    var r = tokens[1] !== undefined ? StylizerCore.parseLength(tokens[1], referencePx) : t;
-    var b = tokens[2] !== undefined ? StylizerCore.parseLength(tokens[2], referencePx) : t;
-    var l = tokens[3] !== undefined ? StylizerCore.parseLength(tokens[3], referencePx) : r;
+    var t = stylizercore.parselength(tokens[0], referencepx);
+    var r = tokens[1] !== undefined ? stylizercore.parselength(tokens[1], referencepx) : t;
+    var b = tokens[2] !== undefined ? stylizercore.parselength(tokens[2], referencepx) : t;
+    var l = tokens[3] !== undefined ? stylizercore.parselength(tokens[3], referencepx) : r;
 
     return { top: t, right: r, bottom: b, left: l };
   },
 
-  applyStep: function(nodes, step, filterFn, StylizerCore) {
-    if (filterFn === undefined) filterFn = null;
+  applystep: function(nodes, step, filterfn, stylizercore) {
+    if (filterfn === undefined) filterfn = null;
 
-    function getAncestors(el) {
+    function getancestors(el) {
       function climb(p, acc) {
         if (!p || p.nodeType !== 1) return acc;
         return climb(p.parentNode, acc.concat([p]));
@@ -182,7 +171,7 @@ var StylizerCore = {
       return climb(el.parentNode, []);
     }
 
-    function getSiblings(el, dir) {
+    function getsiblings(el, dir) {
       function walk(s, acc) {
         if (!s) return acc;
         return walk(s[dir], s.nodeType === 1 ? acc.concat([s]) : acc);
@@ -190,10 +179,10 @@ var StylizerCore = {
       return walk(el[dir], []);
     }
 
-    function getDepth(ancestor, descendant) {
+    function getdepth(ancestor, descendant) {
       if (!descendant || descendant === ancestor) return 0;
-      if (descendant.nodeType !== 1) return getDepth(ancestor, descendant.parentNode);
-      return 1 + getDepth(ancestor, descendant.parentNode);
+      if (descendant.nodeType !== 1) return getdepth(ancestor, descendant.parentNode);
+      return 1 + getdepth(ancestor, descendant.parentNode);
     }
 
     return nodes.reduce(function(next, node) {
@@ -202,11 +191,11 @@ var StylizerCore = {
       switch (step.axis || 'child') {
         case 'self': candidates = [node]; break;
         case 'parent': if (node.parentNode) candidates = [node.parentNode]; break;
-        case 'ancestor': candidates = getAncestors(node); break;
+        case 'ancestor': candidates = getancestors(node); break;
         case 'child': candidates = Array.prototype.slice.call(node.children || []); break;
-        case 'descendant': candidates = StylizerCore.getAllDescendants(node, StylizerCore); break;
-        case 'nextSibling': candidates = getSiblings(node, 'nextSibling'); break;
-        case 'previousSibling': candidates = getSiblings(node, 'previousSibling'); break;
+        case 'descendant': candidates = stylizercore.getalldescendants(node, stylizercore); break;
+        case 'nextsibling': candidates = getsiblings(node, 'nextSibling'); break;
+        case 'previoussibling': candidates = getsiblings(node, 'previousSibling'); break;
         default: throw new Error('Unknown axis: ' + step.axis);
       }
 
@@ -228,25 +217,25 @@ var StylizerCore = {
       }
       if (step.depth !== undefined && step.axis === 'descendant') {
         candidates = candidates.filter(function(el) {
-          return getDepth(node, el) === step.depth;
+          return getdepth(node, el) === step.depth;
         });
       }
-      if (step.skip !== undefined && (step.axis === 'nextSibling' || step.axis === 'previousSibling')) {
+      if (step.skip !== undefined && (step.axis === 'nextsibling' || step.axis === 'previoussibling')) {
         candidates = candidates.length > step.skip ? [candidates[step.skip]] : [];
       }
       if (step.content) {
         var text = step.content.text || '';
         var mode = step.content.mode || 'substring';
-        var caseSensitive = step.content.caseSensitive || false;
-        var search = caseSensitive ? text : text.toLowerCase();
+        var casesensitive = step.content.casesensitive || false;
+        var search = casesensitive ? text : text.toLowerCase();
         candidates = candidates.filter(function(el) {
-          var elText = caseSensitive ? el.textContent : el.textContent.toLowerCase();
-          if (mode === 'exact') return elText.trim() === search.trim();
-          return elText.indexOf(search) !== -1;
+          var eltext = casesensitive ? el.textContent : el.textContent.toLowerCase();
+          if (mode === 'exact') return eltext.trim() === search.trim();
+          return eltext.indexOf(search) !== -1;
         });
       }
 
-      if (typeof filterFn === 'function') candidates = candidates.filter(filterFn);
+      if (typeof filterfn === 'function') candidates = candidates.filter(filterfn);
 
       candidates.forEach(function(c) {
         if (next.indexOf(c) === -1) next.push(c);
@@ -256,106 +245,106 @@ var StylizerCore = {
     }, []);
   },
 
-  getAllDescendants: function(el, StylizerCore) {
+  getalldescendants: function(el, stylizercore) {
     var children = Array.prototype.slice.call(el.children || []);
     return children.reduce(function(all, child) {
-      return all.concat(child, StylizerCore.getAllDescendants(child, StylizerCore));
+      return all.concat(child, stylizercore.getalldescendants(child, stylizercore));
     }, []);
   },
 
-  buildLayoutPropertyMap: function(rootEl, viewportWidth, inheritedFontSize, StylizerCore) {
-    if (inheritedFontSize === undefined) inheritedFontSize = 16;
+  buildlayoutpropertymap: function(rootel, viewportwidth, inheritedfontsize, stylizercore) {
+    if (inheritedfontsize === undefined) inheritedfontsize = 16;
 
-    function walk(el, parentAvailableWidth, parentFontSize, acc) {
+    function walk(el, parentavailablewidth, parentfontsize, acc) {
       var style = el.style || {};
       var props = {
-        fontSize: parentFontSize,
+        fontsize: parentfontsize,
         width: null,
-        maxWidth: null,
-        minWidth: null,
+        maxwidth: null,
+        minwidth: null,
         height: null,
-        marginTop: 0,
-        marginBottom: 0,
-        marginLeft: 0,
-        marginRight: 0,
-        paddingTop: 0,
-        paddingBottom: 0,
-        paddingLeft: 0,
-        paddingRight: 0,
-        borderTopWidth: 0,
-        borderBottomWidth: 0,
-        borderLeftWidth: 0,
-        borderRightWidth: 0,
-        availableWidth: parentAvailableWidth
+        margintop: 0,
+        marginbottom: 0,
+        marginleft: 0,
+        marginright: 0,
+        paddingtop: 0,
+        paddingbottom: 0,
+        paddingleft: 0,
+        paddingright: 0,
+        bordertopwidth: 0,
+        borderbottomwidth: 0,
+        borderleftwidth: 0,
+        borderrightwidth: 0,
+        availablewidth: parentavailablewidth
       };
 
-      var propNames = [
-        'fontSize', 'width', 'maxWidth', 'minWidth', 'height',
-        'marginTop', 'marginBottom', 'marginLeft', 'marginRight',
-        'paddingTop', 'paddingBottom', 'paddingLeft', 'paddingRight',
-        'borderTopWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderRightWidth'
+      var propnames = [
+        'fontsize', 'width', 'maxwidth', 'minwidth', 'height',
+        'margintop', 'marginbottom', 'marginleft', 'marginright',
+        'paddingtop', 'paddingbottom', 'paddingleft', 'paddingright',
+        'bordertopwidth', 'borderbottomwidth', 'borderleftwidth', 'borderrightwidth'
       ];
 
-      propNames.forEach(function(prop) {
+      propnames.forEach(function(prop) {
         if (style[prop]) {
-          props[prop] = StylizerCore.parseLength(
+          props[prop] = stylizercore.parselength(
             style[prop],
-            prop === 'fontSize' ? parentFontSize : parentAvailableWidth
+            prop === 'fontsize' ? parentfontsize : parentavailablewidth
           );
         }
       });
 
       if (style.margin) {
-        var sh = StylizerCore.parseShorthandLengths(style.margin, parentAvailableWidth, StylizerCore);
+        var sh = stylizercore.parseshorthandlengths(style.margin, parentavailablewidth, stylizercore);
         if (sh) {
-          props.marginTop = sh.top;
-          props.marginRight = sh.right;
-          props.marginBottom = sh.bottom;
-          props.marginLeft = sh.left;
+          props.margintop = sh.top;
+          props.marginright = sh.right;
+          props.marginbottom = sh.bottom;
+          props.marginleft = sh.left;
         }
       }
       if (style.padding) {
-        var sh2 = StylizerCore.parseShorthandLengths(style.padding, parentAvailableWidth, StylizerCore);
+        var sh2 = stylizercore.parseshorthandlengths(style.padding, parentavailablewidth, stylizercore);
         if (sh2) {
-          props.paddingTop = sh2.top;
-          props.paddingRight = sh2.right;
-          props.paddingBottom = sh2.bottom;
-          props.paddingLeft = sh2.left;
+          props.paddingtop = sh2.top;
+          props.paddingright = sh2.right;
+          props.paddingbottom = sh2.bottom;
+          props.paddingleft = sh2.left;
         }
       }
 
-      var contentWidth = Math.max(
+      var contentwidth = Math.max(
         0,
-        parentAvailableWidth -
-          props.paddingLeft - props.paddingRight -
-          props.borderLeftWidth - props.borderRightWidth
+        parentavailablewidth -
+          props.paddingleft - props.paddingright -
+          props.borderleftwidth - props.borderrightwidth
       );
 
-      var selfAvailable = contentWidth;
-      if (props.maxWidth !== null) selfAvailable = Math.min(selfAvailable, props.maxWidth);
-      if (props.width !== null) selfAvailable = Math.min(selfAvailable, props.width);
-      if (props.minWidth !== null) selfAvailable = Math.max(selfAvailable, props.minWidth);
-      props.availableWidth = selfAvailable;
+      var selfavailable = contentwidth;
+      if (props.maxwidth !== null) selfavailable = Math.min(selfavailable, props.maxwidth);
+      if (props.width !== null) selfavailable = Math.min(selfavailable, props.width);
+      if (props.minwidth !== null) selfavailable = Math.max(selfavailable, props.minwidth);
+      props.availablewidth = selfavailable;
 
-      var nextAcc = acc.concat([{ element: el, props: props }]);
-      var children = StylizerCore.applyStep([el], { axis: 'child' }, null, StylizerCore);
+      var nextacc = acc.concat([{ element: el, props: props }]);
+      var children = stylizercore.applystep([el], { axis: 'child' }, null, stylizercore);
 
-      return children.reduce(function(innerAcc, child) {
-        return walk(child, selfAvailable, props.fontSize, innerAcc);
-      }, nextAcc);
+      return children.reduce(function(inneracc, child) {
+        return walk(child, selfavailable, props.fontsize, inneracc);
+      }, nextacc);
     }
 
-    return walk(rootEl, viewportWidth, inheritedFontSize, []);
+    return walk(rootel, viewportwidth, inheritedfontsize, []);
   },
 
-  getPropsFromMap: function(propsMap, el, StylizerCore) {
-    var entry = propsMap.filter(function(item) { return item.element === el; })[0];
+  getpropsfrommap: function(propsmap, el, stylizercore) {
+    var entry = propsmap.filter(function(item) { return item.element === el; })[0];
     return entry ? entry.props : null;
   },
 
-  computeIntrinsicSize: function(node, propertyMap, inheritedProps, StylizerCore) {
-    if (inheritedProps === undefined) inheritedProps = {};
-    var DEFAULT_LINE_HEIGHT_FACTOR = 1.2;
+  computeintrinsicsize: function(node, propertymap, inheritedprops, stylizercore) {
+    if (inheritedprops === undefined) inheritedprops = {};
+    var defaultlineheightfactor = 1.2;
 
     if (!node) return { width: 0, height: 0 };
 
@@ -363,90 +352,90 @@ var StylizerCore = {
       var txt = node.nodeValue.trim();
       if (!txt) return { width: 0, height: 0 };
 
-      var fontSize = inheritedProps.fontSize || 16;
+      var fontsize = inheritedprops.fontsize || 16;
       var lines = txt.split('\n');
-      var isNowrap = inheritedProps.whiteSpace === 'nowrap' || inheritedProps.whiteSpace === 'pre';
-      var maxLineLen = Math.max.apply(null, lines.map(function(line) {
-        var words = isNowrap ? [line] : StylizerCore.tokenizeWhitespace(line);
+      var isnowrap = inheritedprops.whitespace === 'nowrap' || inheritedprops.whitespace === 'pre';
+      var maxlinelen = Math.max.apply(null, lines.map(function(line) {
+        var words = isnowrap ? [line] : stylizercore.tokenizewhitespace(line);
         return words.reduce(function(len, w, i) {
-          return len + w.length * fontSize + (i > 0 ? fontSize : 0);
+          return len + w.length * fontsize + (i > 0 ? fontsize : 0);
         }, 0);
       }));
-      var lineHeight = inheritedProps.lineHeight || fontSize * DEFAULT_LINE_HEIGHT_FACTOR;
-      return { width: maxLineLen, height: lines.length * lineHeight };
+      var lineheight = inheritedprops.lineheight || fontsize * defaultlineheightfactor;
+      return { width: maxlinelen, height: lines.length * lineheight };
     }
 
     if (node.nodeType !== 1) return { width: 0, height: 0 };
 
-    var props = StylizerCore.getPropsFromMap(propertyMap, node, StylizerCore);
+    var props = stylizercore.getpropsfrommap(propertymap, node, stylizercore);
     if (!props) {
-      logerror(defaultVerbosityState, '[STYLIZERCORE]', '[computeIntrinsicSize] Missing property map entry:', node.tagName);
-      throw new Error('[computeIntrinsicSize] Missing property map entry: ' + node.tagName);
+      logerror(defaultverbositystate, '[stylizercore]', '[computeintrinsicsize] Missing property map entry:', node.tagName);
+      throw new Error('[computeintrinsicsize] Missing property map entry: ' + node.tagName);
     }
 
     var tag = node.tagName.toLowerCase();
-    var padH = (props.paddingLeft || 0) + (props.paddingRight || 0) +
-      (props.borderLeftWidth || 0) + (props.borderRightWidth || 0);
-    var padV = (props.paddingTop || 0) + (props.paddingBottom || 0);
+    var padh = (props.paddingleft || 0) + (props.paddingright || 0) +
+      (props.borderleftwidth || 0) + (props.borderrightwidth || 0);
+    var padv = (props.paddingtop || 0) + (props.paddingbottom || 0);
 
     if (tag === 'img' || tag === 'svg') {
       if (props.width !== null) {
         return { width: props.width, height: props.height || (props.width * 0.75) };
       }
-      logerror(defaultVerbosityState, '[STYLIZERCORE]', '[computeIntrinsicSize] Image without explicit width:', tag);
-      throw new Error('[computeIntrinsicSize] Image without explicit width');
+      logerror(defaultverbositystate, '[stylizercore]', '[computeintrinsicsize] Image without explicit width:', tag);
+      throw new Error('[computeintrinsicsize] Image without explicit width');
     }
 
     if (tag === 'table') {
       if (props.width !== null) return { width: props.width, height: props.height || 0 };
-      var rows = StylizerCore.applyStep([node], { axis: 'descendant', tag: 'tr' }, null, StylizerCore);
-      var colMax = {};
-      var totalH = 0;
+      var rows = stylizercore.applystep([node], { axis: 'descendant', tag: 'tr' }, null, stylizercore);
+      var colmax = {};
+      var totalh = 0;
 
       rows.forEach(function(row) {
-        var rowH = 0;
-        StylizerCore.applyStep([row], { axis: 'child' }, null, StylizerCore).forEach(function(cell, idx) {
-          var s = StylizerCore.computeIntrinsicSize(cell, propertyMap, props, StylizerCore);
-          colMax[idx] = Math.max(colMax[idx] || 0, s.width);
-          rowH = Math.max(rowH, s.height);
+        var rowh = 0;
+        stylizercore.applystep([row], { axis: 'child' }, null, stylizercore).forEach(function(cell, idx) {
+          var s = stylizercore.computeintrinsicsize(cell, propertymap, props, stylizercore);
+          colmax[idx] = Math.max(colmax[idx] || 0, s.width);
+          rowh = Math.max(rowh, s.height);
         });
-        totalH += rowH;
+        totalh += rowh;
       });
 
-      var colVals = Object.keys(colMax).map(function(k) { return colMax[k]; });
-      var totalW = colVals.reduce(function(sum, w) { return sum + w; }, 0) + padH;
-      return { width: totalW, height: totalH + padV };
+      var colvals = Object.keys(colmax).map(function(k) { return colmax[k]; });
+      var totalw = colvals.reduce(function(sum, w) { return sum + w; }, 0) + padh;
+      return { width: totalw, height: totalh + padv };
     }
 
     var children = Array.prototype.slice.call(node.childNodes);
-    if (!children.length) return { width: padH, height: padV };
+    if (!children.length) return { width: padh, height: padv };
 
-    var isFlexRow = node.style && node.style.display === 'flex' &&
+    var isflexrow = node.style && node.style.display === 'flex' &&
       (node.style.flexDirection === 'row' || !node.style.flexDirection);
 
-    var totalW = 0, maxW = 0, totalH = 0;
+    var totalw = 0, maxw = 0, totalh = 0;
 
     children.forEach(function(child) {
-      var s = StylizerCore.computeIntrinsicSize(child, propertyMap, props, StylizerCore);
-      if (isFlexRow) {
-        totalW += s.width;
-        totalH = Math.max(totalH, s.height);
+      var s = stylizercore.computeintrinsicsize(child, propertymap, props, stylizercore);
+      if (isflexrow) {
+        totalw += s.width;
+        totalh = Math.max(totalh, s.height);
       } else {
-        maxW = Math.max(maxW, s.width);
-        totalH += s.height;
+        maxw = Math.max(maxw, s.width);
+        totalh += s.height;
       }
     });
 
-    return { width: (isFlexRow ? totalW : maxW) + padH, height: totalH + padV };
+    return { width: (isflexrow ? totalw : maxw) + padh, height: totalh + padv };
   },
 
-  estimateRecursiveBounds: function(node, StylizerCore) {
+  estimaterecursivebounds: function(node, stylizercore) {
     if (node.nodeType === 3) {
       var txt = node.nodeValue.trim();
       if (!txt) return 0;
 
-      var fSize = 16;
-      var isNowrap = false;
+      var fsize = 16;
+      var isnowrap = false;
 
       function climb(p, size, nowrap) {
         if (!p || !p.style) return { size: size, nowrap: nowrap };
@@ -462,16 +451,16 @@ var StylizerCore = {
         return climb(p.parentElement, size, nowrap || p.style.whiteSpace === 'nowrap');
       }
 
-      var resolved = climb(node.parentElement, fSize, isNowrap);
-      fSize = resolved.size;
-      isNowrap = resolved.nowrap;
+      var resolved = climb(node.parentElement, fsize, isnowrap);
+      fsize = resolved.size;
+      isnowrap = resolved.nowrap;
 
-      var charPx = fSize * 0.6;
-      if (isNowrap) return txt.length * charPx;
+      var charpx = fsize * 0.6;
+      if (isnowrap) return txt.length * charpx;
 
-      var words = StylizerCore.tokenizeWhitespace(txt);
-      var maxWordLen = Math.max.apply(null, words.map(function(w) { return w.length; }));
-      return maxWordLen * charPx;
+      var words = stylizercore.tokenizewhitespace(txt);
+      var maxwordlen = Math.max.apply(null, words.map(function(w) { return w.length; }));
+      return maxwordlen * charpx;
     }
 
     if (node.nodeType === 1) {
@@ -479,35 +468,35 @@ var StylizerCore = {
         return parseFloat(node.style.width || node.getAttribute('width') || 24);
       }
 
-      var isFlexRow = node.style.display === 'flex' &&
+      var isflexrow = node.style.display === 'flex' &&
         (node.style.flexDirection === 'row' || !node.style.flexDirection);
-      var totalW = 0;
+      var totalw = 0;
 
       Array.prototype.slice.call(node.childNodes).forEach(function(child) {
-        var w = StylizerCore.estimateRecursiveBounds(child, StylizerCore);
-        totalW = isFlexRow ? totalW + w : Math.max(totalW, w);
+        var w = stylizercore.estimaterecursivebounds(child, stylizercore);
+        totalw = isflexrow ? totalw + w : Math.max(totalw, w);
       });
 
-      return totalW;
+      return totalw;
     }
 
     return 0;
   },
 
-  getEffectiveBackground: function(el, StylizerCore) {
-    function isHexDigit(ch) {
+  geteffectivebackground: function(el, stylizercore) {
+    function ishexdigit(ch) {
       return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
     }
 
-    function findHexColor(str) {
-      function scanHex(j, count) {
-        if (j < str.length && isHexDigit(str.charAt(j))) return scanHex(j + 1, count + 1);
+    function findhexcolor(str) {
+      function scanhex(j, count) {
+        if (j < str.length && ishexdigit(str.charAt(j))) return scanhex(j + 1, count + 1);
         return { j: j, count: count };
       }
       function scan(i) {
         if (i >= str.length) return null;
         if (str.charAt(i) === '#') {
-          var res = scanHex(i + 1, 0);
+          var res = scanhex(i + 1, 0);
           if (res.count === 3 || res.count === 6) {
             return str.slice(i, res.j);
           }
@@ -517,7 +506,7 @@ var StylizerCore = {
       return scan(0);
     }
 
-    function findRgbColor(str) {
+    function findrgbcolor(str) {
       var idx = str.indexOf('rgb(');
       if (idx === -1) return null;
 
@@ -527,55 +516,55 @@ var StylizerCore = {
       return str.slice(idx, end + 1);
     }
 
-    function extractBgFromShorthand(node) {
+    function extractbgfromshorthand(node) {
       if (node.style.backgroundColor) return node.style.backgroundColor;
 
       var bg = node.style.background;
       if (!bg) return null;
 
-      return findHexColor(bg) || findRgbColor(bg) || null;
+      return findhexcolor(bg) || findrgbcolor(bg) || null;
     }
 
-    function climbBg(curr) {
+    function climbbg(curr) {
       if (!curr || curr.nodeType !== 1) return '';
-      var bg = extractBgFromShorthand(curr);
+      var bg = extractbgfromshorthand(curr);
       if (bg) return bg;
-      return climbBg(curr.parentNode);
+      return climbbg(curr.parentNode);
     }
 
-    return climbBg(el);
+    return climbbg(el);
   },
 
   debug: function() {
     var args = Array.prototype.slice.call(arguments);
-    logdebug.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
+    logdebug.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
   },
   warn: function() {
     var args = Array.prototype.slice.call(arguments);
-    logwarn.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
+    logwarn.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
   },
   error: function() {
     var args = Array.prototype.slice.call(arguments);
-    logerror.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
+    logerror.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
   },
   info: function() {
     var args = Array.prototype.slice.call(arguments);
-    loginfo.apply(null, [defaultVerbosityState, '[STYLIZERCORE]'].concat(args));
+    loginfo.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
   }
 };
 
-// ATTACH COLOR UTILITIES TO StylizerCore
-StylizerCore.color = {
-  core: ColorCore,
-  harmony: ColorHarmony,
-  contrast: ColorContrast
+// Attach color utilities to stylizercore
+stylizercore.color = {
+  core: colorcore,
+  harmony: colorharmony,
+  contrast: colorcontrast
 };
 
-var StylizerRewrite = {
-  rewritestyleattrs: function(html, rules, StylizerCore) {
+var stylizerrewrite = {
+  rewritestyleattrs: function(html, rules, stylizercore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
-    function applyRules(el) {
+    function applyrules(el) {
       rules.forEach(function(rule) {
         if (rule.id && el.id === rule.id) {
           Object.keys(rule.style || {}).forEach(function(prop) {
@@ -590,22 +579,22 @@ var StylizerRewrite = {
             el.style[prop] = rule.style[prop];
           });
         } else if (rule.path && Array.isArray(rule.path)) {
-          function walkPath(stepIndex, currentNodes) {
-            if (stepIndex >= rule.path.length) return currentNodes;
-            var step = rule.path[stepIndex];
-            var nextNodes = [];
+          function walkpath(stepindex, currentnodes) {
+            if (stepindex >= rule.path.length) return currentnodes;
+            var step = rule.path[stepindex];
+            var nextnodes = [];
 
-            currentNodes.forEach(function(node) {
-              var matches = StylizerCore.applyStep([node], step, null, StylizerCore);
-              matches.forEach(function(m) { if (nextNodes.indexOf(m) === -1) nextNodes.push(m); });
+            currentnodes.forEach(function(node) {
+              var matches = stylizercore.applystep([node], step, null, stylizercore);
+              matches.forEach(function(m) { if (nextnodes.indexOf(m) === -1) nextnodes.push(m); });
             });
 
-            if (!nextNodes.length) return [];
-            return walkPath(stepIndex + 1, nextNodes);
+            if (!nextnodes.length) return [];
+            return walkpath(stepindex + 1, nextnodes);
           }
 
-          var pathResult = walkPath(0, [el]);
-          if (pathResult.indexOf(el) !== -1) {
+          var pathresult = walkpath(0, [el]);
+          if (pathresult.indexOf(el) !== -1) {
             Object.keys(rule.style || {}).forEach(function(prop) {
               el.style[prop] = rule.style[prop];
             });
@@ -613,28 +602,28 @@ var StylizerRewrite = {
         }
       });
 
-      Array.prototype.slice.call(el.children).forEach(applyRules);
+      Array.prototype.slice.call(el.children).forEach(applyrules);
     }
 
-    applyRules(doc.body);
+    applyrules(doc.body);
     return doc.body.innerHTML;
   },
 
-  injectResponsiveStyles: function(html, breakpointRules, StylizerCore) {
-    if (!breakpointRules || !breakpointRules.length) return html;
+  injectresponsivestyles: function(html, breakpointrules, stylizercore) {
+    if (!breakpointrules || !breakpointrules.length) return html;
 
     var css = '<style data-responsive="true">';
 
-    breakpointRules.forEach(function(bp) {
-      var min = bp.minWidth !== undefined ? '(min-width: ' + bp.minWidth + 'px)' : '';
-      var max = bp.maxWidth !== undefined ? '(max-width: ' + bp.maxWidth + 'px)' : '';
+    breakpointrules.forEach(function(bp) {
+      var min = bp.minwidth !== undefined ? '(min-width: ' + bp.minwidth + 'px)' : '';
+      var max = bp.maxwidth !== undefined ? '(max-width: ' + bp.maxwidth + 'px)' : '';
       css += '@media ' + [min, max].filter(Boolean).join(' and ') + ' {\n';
 
       bp.rules.forEach(function(rule) {
         var sel = rule.id ? '#' + rule.id : rule.class ? '.' + rule.class : rule.tag || '*';
         css += '  ' + sel + ' {\n';
         Object.keys(rule.style).forEach(function(prop) {
-          css += '    ' + StylizerCore.camelToKebab(prop) + ': ' + rule.style[prop] + ';\n';
+          css += '    ' + stylizercore.cameltokebab(prop) + ': ' + rule.style[prop] + ';\n';
         });
         css += '  }\n';
       });
@@ -643,25 +632,25 @@ var StylizerRewrite = {
     });
 
     css += '</style>';
-    var lastDiv = html.lastIndexOf('</div>');
-    return lastDiv !== -1 ? html.slice(0, lastDiv) + css + html.slice(lastDiv) : html + css;
+    var lastdiv = html.lastIndexOf('</div>');
+    return lastdiv !== -1 ? html.slice(0, lastdiv) + css + html.slice(lastdiv) : html + css;
   },
 
-  extractAllTagStyles: function(referenceHTML, StylizerCore) {
-    var doc = new DOMParser().parseFromString(referenceHTML, 'text/html');
-    var refRoot = doc.getElementById('theme-reference');
-    if (!refRoot) return {};
+  extractalltagstyles: function(referencehtml, stylizercore) {
+    var doc = new DOMParser().parseFromString(referencehtml, 'text/html');
+    var refroot = doc.getElementById('theme-reference');
+    if (!refroot) return {};
 
     var map = {};
 
-    if (refRoot.style.length) {
-      map['root'] = Array.prototype.slice.call(refRoot.style).reduce(function(acc, prop) {
-        acc[prop] = refRoot.style[prop];
+    if (refroot.style.length) {
+      map['root'] = Array.prototype.slice.call(refroot.style).reduce(function(acc, prop) {
+        acc[prop] = refroot.style[prop];
         return acc;
       }, {});
     }
 
-    Array.prototype.slice.call(refRoot.children).forEach(function(el) {
+    Array.prototype.slice.call(refroot.children).forEach(function(el) {
       var tag = el.tagName.toLowerCase();
       var s = Array.prototype.slice.call(el.style).reduce(function(acc, prop) {
         acc[prop] = el.style[prop];
@@ -677,17 +666,17 @@ var StylizerRewrite = {
     return map;
   },
 
-  consolidateStyles: function(html, StylizerCore) {
-    var constants = StylizerCore.createStylizerConstants();
+  consolidatestyles: function(html, stylizercore) {
+    var constants = stylizercore.createstylizerconstants();
     var doc = new DOMParser().parseFromString(html, 'text/html');
-    var safeProps = constants.SAFE_PROPS;
+    var safeprops = constants.safeprops;
 
     function walk(el) {
       Array.prototype.slice.call(el.children).forEach(function(child) {
         if (child.style) {
-          var styleProps = Array.prototype.slice.call(child.style);
-          styleProps.reduceRight(function(_, prop) {
-            if (safeProps.indexOf(prop) !== -1 && el.style[prop] === child.style[prop]) {
+          var styleprops = Array.prototype.slice.call(child.style);
+          styleprops.reduceRight(function(_, prop) {
+            if (safeprops.indexOf(prop) !== -1 && el.style[prop] === child.style[prop]) {
               child.style.removeProperty(prop);
             }
             return null;
@@ -701,15 +690,15 @@ var StylizerRewrite = {
     return doc.body.innerHTML;
   },
 
-  computecolorscheme: function(pos, tilecols, cellw, cellh, gridcols, StylizerCore) {
+  computecolorscheme: function(pos, tilecols, cellw, cellh, gridcols, stylizercore) {
     var colstart = Math.max(0, Math.min(Math.floor((pos.clientx || 0) / cellw), gridcols - 1));
     var rowstart = Math.max(0, Math.min(Math.floor((pos.clienty || 0) / cellh), gridcols - 1));
     var colend = Math.max(1, Math.min(Math.ceil(((pos.clientx || 0) + (pos.width || cellw)) / cellw), gridcols));
     var rowend = Math.max(1, Math.min(Math.ceil(((pos.clienty || 0) + (pos.height || cellh)) / cellh), gridcols));
 
-    function rowsRange(r, acc) {
+    function rowsrange(r, acc) {
       if (r >= rowend) return acc;
-      function colsRange(c, inner) {
+      function colsrange(c, inner) {
         if (c >= colend) return inner;
         var idx = r * gridcols + c;
         if (idx < tilecols.length) {
@@ -718,12 +707,12 @@ var StylizerRewrite = {
           inner.suml += tilecols[idx].l;
           inner.count++;
         }
-        return colsRange(c + 1, inner);
+        return colsrange(c + 1, inner);
       }
-      return rowsRange(r + 1, colsRange(colstart, acc));
+      return rowsrange(r + 1, colsrange(colstart, acc));
     }
 
-    var totals = rowsRange(rowstart, { sumh: 0, sums: 0, suml: 0, count: 0 });
+    var totals = rowsrange(rowstart, { sumh: 0, sums: 0, suml: 0, count: 0 });
     var sumh = totals.sumh, sums = totals.sums, suml = totals.suml, count = totals.count;
 
     var avgh = count ? (sumh / count) % 360 : 0;
@@ -742,128 +731,128 @@ var StylizerRewrite = {
     };
   },
 
-  optimizeStyleHTML: function(html, goals, themeStyles, maxIterations, StylizerCore) {
-    if (themeStyles === undefined) themeStyles = {};
-    if (maxIterations === undefined) maxIterations = 5;
+  optimizestylehtml: function(html, goals, themestyles, maxiterations, stylizercore) {
+    if (themestyles === undefined) themestyles = {};
+    if (maxiterations === undefined) maxiterations = 5;
 
     var doc = new DOMParser().parseFromString(html, 'text/html');
-    var allRules = [];
+    var allrules = [];
 
-    function getRgbHex(input) {
-      var core = StylizerCore.color.core;
-      var rgb = core.hexToRgb(input, core);
-      return core.rgbToHex(rgb[0], rgb[1], rgb[2], core);
+    function getrgbhex(input) {
+      var core = stylizercore.color.core;
+      var rgb = core.hextorgb(input, core);
+      return core.rgbtohex(rgb[0], rgb[1], rgb[2], core);
     }
 
-    function harmonyScore(fg, bg) {
-      var fgHsl = StylizerCore.color.core.rgbToHsl.apply(null, StylizerCore.color.core.hexToRgb(fg, StylizerCore.color.core));
-      var bgHsl = StylizerCore.color.core.rgbToHsl.apply(null, StylizerCore.color.core.hexToRgb(bg, StylizerCore.color.core));
-      var hueDist = Math.abs(fgHsl.h - bgHsl.h);
-      var normalizedDist = hueDist > 180 ? 360 - hueDist : hueDist;
+    function harmonyscore(fg, bg) {
+      var fghsl = stylizercore.color.core.rgbtohsl.apply(null, stylizercore.color.core.hextorgb(fg, stylizercore.color.core));
+      var bghsl = stylizercore.color.core.rgbtohsl.apply(null, stylizercore.color.core.hextorgb(bg, stylizercore.color.core));
+      var huedist = Math.abs(fghsl.h - bghsl.h);
+      var normalizeddist = huedist > 180 ? 360 - huedist : huedist;
 
-      if (normalizedDist < 30) return 1;
-      if (normalizedDist < 60) return 0.9;
-      if (normalizedDist > 150 && normalizedDist < 180) return 0.95;
-      if (normalizedDist > 90 && normalizedDist < 120) return 0.4;
+      if (normalizeddist < 30) return 1;
+      if (normalizeddist < 60) return 0.9;
+      if (normalizeddist > 150 && normalizeddist < 180) return 0.95;
+      if (normalizeddist > 90 && normalizeddist < 120) return 0.4;
       return 0.7;
     }
 
-    function runIteration(iter) {
-      if (iter >= maxIterations) return;
-      var anyCorrection = false;
+    function runiteration(iter) {
+      if (iter >= maxiterations) return;
+      var anycorrection = false;
 
       goals.forEach(function(goal) {
         var els = Array.prototype.slice.call(doc.getElementsByTagName('*'));
 
         if (goal.type === 'contrast') {
-          var minRatio = goal.options && goal.options.minRatio != null ? goal.options.minRatio : 4.5;
+          var minratio = goal.options && goal.options.minratio != null ? goal.options.minratio : 4.5;
 
           els.forEach(function(el) {
             if (el.textContent.trim() && el.style.color) {
-              var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+              var bg = stylizercore.geteffectivebackground(el, stylizercore);
               if (!bg) return;
 
-              var fgHex = getRgbHex(el.style.color);
-              var bgHex = getRgbHex(bg);
+              var fghex = getrgbhex(el.style.color);
+              var bghex = getrgbhex(bg);
 
-              if (StylizerCore.color.contrast.contrastRatio(fgHex, bgHex, StylizerCore.color.core) < minRatio) {
-                var newFg = StylizerCore.color.contrast.getOptimalForeground(
-                  bgHex,
-                  minRatio,
+              if (stylizercore.color.contrast.contrastratio(fghex, bghex, stylizercore.color.core) < minratio) {
+                var newfg = stylizercore.color.contrast.getoptimalforeground(
+                  bghex,
+                  minratio,
                   { scheme: 'complementary' },
-                  StylizerCore.color.harmony,
-                  StylizerCore.color.contrast,
-                  StylizerCore.color.core
+                  stylizercore.color.harmony,
+                  stylizercore.color.contrast,
+                  stylizercore.color.core
                 );
-                el.style.color = newFg;
-                allRules.push({
+                el.style.color = newfg;
+                allrules.push({
                   selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() },
-                  styles: { color: newFg }
+                  styles: { color: newfg }
                 });
-                anyCorrection = true;
+                anycorrection = true;
               }
             }
           });
         } else if (goal.type === 'harmony') {
           els.forEach(function(el) {
             if (el.textContent.trim() && el.style.color) {
-              var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+              var bg = stylizercore.geteffectivebackground(el, stylizercore);
               if (!bg) return;
 
-              var fg = getRgbHex(el.style.color);
-              var bgHex = getRgbHex(bg);
+              var fg = getrgbhex(el.style.color);
+              var bghex = getrgbhex(bg);
 
-              if (harmonyScore(fg, bgHex) < 0.5) {
-                var pal = StylizerCore.color.harmony.getHarmoniousPalette(
-                  bgHex,
+              if (harmonyscore(fg, bghex) < 0.5) {
+                var pal = stylizercore.color.harmony.getharmoniouspalette(
+                  bghex,
                   3,
                   { scheme: 'analogous' },
-                  StylizerCore.color.harmony,
-                  StylizerCore.color.core
+                  stylizercore.color.harmony,
+                  stylizercore.color.core
                 );
                 if (pal.length) {
                   el.style.color = pal[0];
-                  allRules.push({
+                  allrules.push({
                     selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() },
                     styles: { color: pal[0] }
                   });
-                  anyCorrection = true;
+                  anycorrection = true;
                 }
               }
             }
           });
-        } else if (goal.type === 'textVisibility') {
-          var minLh = goal.options && goal.options.minLineHeight != null ? goal.options.minLineHeight : 1.2;
+        } else if (goal.type === 'textvisibility') {
+          var minlh = goal.options && goal.options.minlineheight != null ? goal.options.minlineheight : 1.2;
 
           els.forEach(function(el) {
             if (el.textContent.trim()) {
               var tag = el.tagName.toLowerCase();
-              var minSize = StylizerCore.parseLength(
-                themeStyles[tag] && themeStyles[tag].fontSize ||
-                themeStyles['p'] && themeStyles['p'].fontSize ||
+              var minsize = stylizercore.parselength(
+                themestyles[tag] && themestyles[tag].fontsize ||
+                themestyles['p'] && themestyles['p'].fontsize ||
                 '12px',
                 16
               );
-              var curSize = StylizerCore.parseLength(el.style.fontSize, 16) || 0;
-              var curLh = parseFloat(el.style.lineHeight) || 0;
+              var cursize = stylizercore.parselength(el.style.fontSize, 16) || 0;
+              var curlh = parseFloat(el.style.lineHeight) || 0;
               var styles = {};
 
-              if (curSize > 0 && curSize < minSize) styles.fontSize = minSize + 'px';
-              if (curLh && curLh < minLh) styles.lineHeight = String(minLh);
+              if (cursize > 0 && cursize < minsize) styles.fontSize = minsize + 'px';
+              if (curlh && curlh < minlh) styles.lineHeight = String(minlh);
 
               if (Object.keys(styles).length) {
                 Object.keys(styles).forEach(function(prop) {
                   el.style[prop] = styles[prop];
                 });
-                allRules.push({
+                allrules.push({
                   selector: el.id ? { id: el.id } : { tag: tag },
                   styles: styles
                 });
-                anyCorrection = true;
+                anycorrection = true;
               }
             }
           });
-        } else if (goal.type === 'buttonVisibility') {
+        } else if (goal.type === 'buttonvisibility') {
           els.filter(function(el) {
             var tag = el.tagName.toLowerCase();
             return tag === 'button' ||
@@ -873,9 +862,9 @@ var StylizerRewrite = {
             var w = parseFloat(btn.style.width) || 0;
             var h = parseFloat(btn.style.height) || 0;
             var styles = {};
-            var minW = Math.max(44, StylizerCore.estimateRecursiveBounds(btn, StylizerCore) + 24);
+            var minw = Math.max(44, stylizercore.estimaterecursivebounds(btn, stylizercore) + 24);
 
-            if (w < minW) styles.minWidth = minW + 'px';
+            if (w < minw) styles.minWidth = minw + 'px';
             if (h < 44) styles.minHeight = '44px';
             if (!btn.style.cursor) styles.cursor = 'pointer';
 
@@ -883,52 +872,52 @@ var StylizerRewrite = {
               Object.keys(styles).forEach(function(prop) {
                 btn.style[prop] = styles[prop];
               });
-              allRules.push({
+              allrules.push({
                 selector: btn.id ? { id: btn.id } : { tag: btn.tagName.toLowerCase() },
                 styles: styles
               });
-              anyCorrection = true;
+              anycorrection = true;
             }
           });
         }
       });
 
-      if (anyCorrection) runIteration(iter + 1);
+      if (anycorrection) runiteration(iter + 1);
     }
 
-    runIteration(0);
+    runiteration(0);
 
-    return { html: doc.body.innerHTML, rules: allRules };
+    return { html: doc.body.innerHTML, rules: allrules };
   }
 };
 
-var StylizerVerify = {
-  verifyContrast: function(html, minRatio, StylizerCore) {
-    if (minRatio === undefined) minRatio = 4.5;
+var stylizerverify = {
+  verifycontrast: function(html, minratio, stylizercore) {
+    if (minratio === undefined) minratio = 4.5;
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
-    function getRgbHex(input) {
-      var core = StylizerCore.color.core;
-      var rgb = core.hexToRgb(input, core);
-      return core.rgbToHex(rgb[0], rgb[1], rgb[2], core);
+    function getrgbhex(input) {
+      var core = stylizercore.color.core;
+      var rgb = core.hextorgb(input, core);
+      return core.rgbtohex(rgb[0], rgb[1], rgb[2], core);
     }
 
     function walk(el) {
       if (el.nodeType === 1 && el.textContent.trim() && el.style.color) {
-        var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+        var bg = stylizercore.geteffectivebackground(el, stylizercore);
         if (!bg) return;
 
-        var fgHex = getRgbHex(el.style.color);
-        var bgHex = getRgbHex(bg);
+        var fghex = getrgbhex(el.style.color);
+        var bghex = getrgbhex(bg);
 
-        if (StylizerCore.color.contrast.contrastRatio(fgHex, bgHex, StylizerCore.color.core) < minRatio) {
-          el.style.color = StylizerCore.color.contrast.getOptimalForeground(
-            bgHex,
-            minRatio,
+        if (stylizercore.color.contrast.contrastratio(fghex, bghex, stylizercore.color.core) < minratio) {
+          el.style.color = stylizercore.color.contrast.getoptimalforeground(
+            bghex,
+            minratio,
             { scheme: 'complementary' },
-            StylizerCore.color.harmony,
-            StylizerCore.color.contrast,
-            StylizerCore.color.core
+            stylizercore.color.harmony,
+            stylizercore.color.contrast,
+            stylizercore.color.core
           );
         }
       }
@@ -940,18 +929,18 @@ var StylizerVerify = {
     return doc.body.innerHTML;
   },
 
-  verifyTextVisibility: function(html, StylizerCore) {
+  verifytextvisibility: function(html, stylizercore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
     function walk(el) {
       if (el.nodeType === 1 && el.textContent.trim()) {
-        var fSize = StylizerCore.parseLength(el.style.fontSize, 16) || 0;
+        var fsize = stylizercore.parselength(el.style.fontSize, 16) || 0;
         var lh = parseFloat(el.style.lineHeight) || 0;
         var col = el.style.color;
         var id = el.tagName + (el.id ? '#' + el.id : '');
 
-        if (fSize && fSize < 12) violations.push({ element: id, issue: 'font-size too small', value: fSize });
+        if (fsize && fsize < 12) violations.push({ element: id, issue: 'font-size too small', value: fsize });
         if (lh && lh < 1.2) violations.push({ element: id, issue: 'line-height too tight', value: lh });
         if (!col || col === 'transparent') violations.push({ element: id, issue: 'text color not set or transparent' });
       }
@@ -963,7 +952,7 @@ var StylizerVerify = {
     return violations;
   },
 
-  verifyButtonVisibility: function(html, StylizerCore) {
+  verifybuttonvisibility: function(html, stylizercore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
@@ -984,26 +973,26 @@ var StylizerVerify = {
     return violations;
   },
 
-  verifyHarmony: function(html, options, StylizerCore) {
+  verifyharmony: function(html, options, stylizercore) {
     if (options === undefined) options = {};
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
-    function getRgbHex(input) {
-      var core = StylizerCore.color.core;
-      var rgb = core.hexToRgb(input, core);
-      return core.rgbToHex(rgb[0], rgb[1], rgb[2], core);
+    function getrgbhex(input) {
+      var core = stylizercore.color.core;
+      var rgb = core.hextorgb(input, core);
+      return core.rgbtohex(rgb[0], rgb[1], rgb[2], core);
     }
 
     Array.prototype.slice.call(doc.getElementsByTagName('*')).forEach(function(el) {
       if (!el.textContent.trim() || !el.style.color) return;
 
-      var bg = StylizerCore.getEffectiveBackground(el, StylizerCore);
+      var bg = stylizercore.geteffectivebackground(el, stylizercore);
       if (!bg) return;
 
-      var fg = getRgbHex(el.style.color);
-      var bgHex = getRgbHex(bg);
-      var score = StylizerCore.color.harmony.colorHarmonyScore(fg, bgHex, StylizerCore.color.core);
+      var fg = getrgbhex(el.style.color);
+      var bghex = getrgbhex(bg);
+      var score = stylizercore.color.harmony.colorharmonyscore(fg, bghex, stylizercore.color.core);
 
       if (score < 0.5) {
         violations.push({
@@ -1013,13 +1002,13 @@ var StylizerVerify = {
           bg: bg
         });
 
-        if (options.autoCorrect) {
-          var pal = StylizerCore.color.harmony.getHarmoniousPalette(
-            bgHex,
+        if (options.autocorrect) {
+          var pal = stylizercore.color.harmony.getharmoniouspalette(
+            bghex,
             3,
             { scheme: 'analogous' },
-            StylizerCore.color.harmony,
-            StylizerCore.color.core
+            stylizercore.color.harmony,
+            stylizercore.color.core
           );
           if (pal.length) el.style.color = pal[0];
         }
@@ -1027,39 +1016,36 @@ var StylizerVerify = {
     });
 
     return {
-      html: options.autoCorrect ? doc.body.innerHTML : html,
+      html: options.autocorrect ? doc.body.innerHTML : html,
       violations: violations
     };
   },
 
-  // P10: fixed recursion to visit all children, not only second of each pair
-  checkSpacing: function(html, minGap, StylizerCore) {
-    if (minGap === undefined) minGap = 12;
+  checkspacing: function(html, mingap, stylizercore) {
+    if (mingap === undefined) mingap = 12;
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
     function walk(parent) {
       var children = Array.prototype.slice.call(parent.children);
 
-      // First check gaps between adjacent children
-      function checkAdjacent(i) {
+      function checkadjacent(i) {
         if (i >= children.length - 1) return;
         var a = children[i];
         var b = children[i + 1];
         var gap = (parseFloat(a.style.marginBottom) || 0) + (parseFloat(b.style.marginTop) || 0);
 
-        if (gap < minGap) {
+        if (gap < mingap) {
           violations.push({
-            elementA: a.tagName + (a.id ? '#' + a.id : ''),
-            elementB: b.tagName + (b.id ? '#' + b.id : ''),
+            elementa: a.tagName + (a.id ? '#' + a.id : ''),
+            elementb: b.tagName + (b.id ? '#' + b.id : ''),
             gap: gap
           });
         }
-        checkAdjacent(i + 1);
+        checkadjacent(i + 1);
       }
-      checkAdjacent(0);
+      checkadjacent(0);
 
-      // Recurse into every child, not just the second of each pair
       children.forEach(function(child) {
         walk(child);
       });
@@ -1069,35 +1055,35 @@ var StylizerVerify = {
     return violations;
   },
 
-  checkOverlap: function(html, StylizerCore) {
+  checkoverlap: function(html, stylizercore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
     var pos = Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       return el.style && ['absolute', 'fixed'].indexOf(el.style.position) !== -1;
     });
 
     var violations = pos.reduce(function(acc, a, i) {
-      return pos.slice(i + 1).reduce(function(innerAcc, b) {
-        var aT = parseFloat(a.style.top) || 0, aL = parseFloat(a.style.left) || 0,
-            aW = parseFloat(a.style.width) || 0, aH = parseFloat(a.style.height) || 0;
-        var bT = parseFloat(b.style.top) || 0, bL = parseFloat(b.style.left) || 0,
-            bW = parseFloat(b.style.width) || 0, bH = parseFloat(b.style.height) || 0;
+      return pos.slice(i + 1).reduce(function(inneracc, b) {
+        var at = parseFloat(a.style.top) || 0, al = parseFloat(a.style.left) || 0,
+            aw = parseFloat(a.style.width) || 0, ah = parseFloat(a.style.height) || 0;
+        var bt = parseFloat(b.style.top) || 0, bl = parseFloat(b.style.left) || 0,
+            bw = parseFloat(b.style.width) || 0, bh = parseFloat(b.style.height) || 0;
 
-        if (aW && aH && bW && bH &&
-            aL < bL + bW && aL + aW > bL &&
-            aT < bT + bH && aT + aH > bT) {
-          return innerAcc.concat([{
-            elementA: a.tagName + (a.id ? '#' + a.id : ''),
-            elementB: b.tagName + (b.id ? '#' + b.id : '')
+        if (aw && ah && bw && bh &&
+            al < bl + bw && al + aw > bl &&
+            at < bt + bh && at + ah > bt) {
+          return inneracc.concat([{
+            elementa: a.tagName + (a.id ? '#' + a.id : ''),
+            elementb: b.tagName + (b.id ? '#' + b.id : '')
           }]);
         }
-        return innerAcc;
+        return inneracc;
       }, acc);
     }, []);
 
     return violations;
   },
 
-  checkOverflow: function(html, StylizerCore) {
+  checkoverflow: function(html, stylizercore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
@@ -1120,7 +1106,7 @@ var StylizerVerify = {
     return violations;
   },
 
-  checkScrollability: function(html, StylizerCore) {
+  checkscrollability: function(html, stylizercore) {
     var violations = [];
     var doc = new DOMParser().parseFromString(html, 'text/html');
 
@@ -1140,7 +1126,7 @@ var StylizerVerify = {
     return violations;
   },
 
-  checkControlledOverlay: function(html, StylizerCore) {
+  checkcontrolledoverlay: function(html, stylizercore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
     return Array.prototype.slice.call(doc.getElementsByTagName('*'))
       .filter(function(el) {
@@ -1154,7 +1140,7 @@ var StylizerVerify = {
       });
   },
 
-  checkFocusVisibility: function(html, StylizerCore) {
+  checkfocusvisibility: function(html, stylizercore) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
     return Array.prototype.slice.call(doc.getElementsByTagName('*')).filter(function(el) {
       var tag = el.tagName.toLowerCase();
@@ -1172,17 +1158,17 @@ var StylizerVerify = {
     });
   },
 
-  runVerification: function(html, goals, StylizerCore) {
+  runverification: function(html, goals, stylizercore) {
     if (goals === undefined) goals = [];
-    var result = { passed: true, violations: [], correctedHtml: html };
+    var result = { passed: true, violations: [], correctedhtml: html };
 
     goals.forEach(function(goal) {
       switch (goal) {
         case 'contrast':
-          result.correctedHtml = StylizerVerify.verifyContrast(result.correctedHtml, undefined, StylizerCore);
+          result.correctedhtml = stylizerverify.verifycontrast(result.correctedhtml, undefined, stylizercore);
           break;
         case 'spacing': {
-          var v = StylizerVerify.checkSpacing(result.correctedHtml, undefined, StylizerCore);
+          var v = stylizerverify.checkspacing(result.correctedhtml, undefined, stylizercore);
           if (v.length) {
             result.passed = false;
             result.violations = result.violations.concat(v);
@@ -1190,7 +1176,7 @@ var StylizerVerify = {
           break;
         }
         case 'overlap': {
-          var v2 = StylizerVerify.checkOverlap(result.correctedHtml, StylizerCore);
+          var v2 = stylizerverify.checkoverlap(result.correctedhtml, stylizercore);
           if (v2.length) {
             result.passed = false;
             result.violations = result.violations.concat(v2);
@@ -1198,7 +1184,7 @@ var StylizerVerify = {
           break;
         }
         case 'overflow': {
-          var v3 = StylizerVerify.checkOverflow(result.correctedHtml, StylizerCore);
+          var v3 = stylizerverify.checkoverflow(result.correctedhtml, stylizercore);
           if (v3.length) {
             result.passed = false;
             result.violations = result.violations.concat(v3);
@@ -1206,7 +1192,7 @@ var StylizerVerify = {
           break;
         }
         case 'scrollability': {
-          var v4 = StylizerVerify.checkScrollability(result.correctedHtml, StylizerCore);
+          var v4 = stylizerverify.checkscrollability(result.correctedhtml, stylizercore);
           if (v4.length) {
             result.passed = false;
             result.violations = result.violations.concat(v4);
@@ -1214,7 +1200,7 @@ var StylizerVerify = {
           break;
         }
         case 'overlay': {
-          var v5 = StylizerVerify.checkControlledOverlay(result.correctedHtml, StylizerCore);
+          var v5 = stylizerverify.checkcontrolledoverlay(result.correctedhtml, stylizercore);
           if (v5.length) {
             result.passed = false;
             result.violations = result.violations.concat(v5);
@@ -1222,7 +1208,7 @@ var StylizerVerify = {
           break;
         }
         case 'textvisibility': {
-          var v6 = StylizerVerify.verifyTextVisibility(result.correctedHtml, StylizerCore);
+          var v6 = stylizerverify.verifytextvisibility(result.correctedhtml, stylizercore);
           if (v6.length) {
             result.passed = false;
             result.violations = result.violations.concat(v6);
@@ -1230,7 +1216,7 @@ var StylizerVerify = {
           break;
         }
         case 'buttonvisibility': {
-          var v7 = StylizerVerify.verifyButtonVisibility(result.correctedHtml, StylizerCore);
+          var v7 = stylizerverify.verifybuttonvisibility(result.correctedhtml, stylizercore);
           if (v7.length) {
             result.passed = false;
             result.violations = result.violations.concat(v7);
@@ -1238,8 +1224,8 @@ var StylizerVerify = {
           break;
         }
         case 'harmony': {
-          var res = StylizerVerify.verifyHarmony(result.correctedHtml, { autoCorrect: true }, StylizerCore);
-          result.correctedHtml = res.html;
+          var res = stylizerverify.verifyharmony(result.correctedhtml, { autocorrect: true }, stylizercore);
+          result.correctedhtml = res.html;
           if (res.violations.length) {
             result.passed = false;
             result.violations = result.violations.concat(res.violations);
@@ -1252,3 +1238,11 @@ var StylizerVerify = {
     return result;
   }
 };
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    stylizercore: stylizercore,
+    stylizerrewrite: stylizerrewrite,
+    stylizerverify: stylizerverify
+  };
+}

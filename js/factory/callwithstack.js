@@ -7,7 +7,7 @@ function safeshallowclone(obj) {
         keys.forEach(function(key) {
             var val = obj[key];
             if (typeof val === 'function') clone[key] = '[FUNCTION]';
-            else if (typeof HTMLElement !== 'undefined' && (val instanceof HTMLElement || val instanceof Node)) clone[key] = '[DOM_NODE]';
+            else if (typeof HTMLELEMENT !== 'undefined' && (val instanceof HTMLELEMENT || val instanceof NODE)) clone[key] = '[DOM_NODE]';
             else if (typeof val === 'object' && val !== null) {
                 try { JSON.stringify(val); clone[key] = safeshallowclone(val); }
                 catch (e2) { clone[key] = '[NON_SERIALIZABLE]'; }
@@ -60,7 +60,7 @@ function callwithstack(evalstack, label, type, fn, args, options) {
     var errk = options.errk;
     var context = options.context;
     var capturecontinuation = options.capturecontinuation !== undefined ? options.capturecontinuation : true;
-    var attachContinuation = options.attachContinuation !== false; // P36-rev
+    var attachcontinuation = (options.attachcontinuation !== undefined ? options.attachcontinuation : options.attachContinuation) !== false;
     var typecheck = options.typecheck;
     var wrappedfn = applyccc(fn, typecheck);
     var captured = null;
@@ -89,8 +89,8 @@ function callwithstack(evalstack, label, type, fn, args, options) {
 
         var onsuccess = function(result) {
             evalstack.popframe();
-            if (captured && attachContinuation && result && typeof result === 'object' && !Array.isArray(result)) {
-                result.continuation = captured; // only if allowed
+            if (captured && attachcontinuation && result && typeof result === 'object' && !Array.isArray(result)) {
+                result.continuation = captured;
             }
             if (thenfn) thenfn(result, context);
             k(result);
@@ -101,16 +101,15 @@ function callwithstack(evalstack, label, type, fn, args, options) {
             if (captured && !err.diagnostic.continuation) err.diagnostic.continuation = captured;
             evalstack.popframe();
 
-            // P35: Auto-invoke debug actor on error
-            if (typeof sendInstruction === 'function' && typeof MESSAGETYPES !== 'undefined') {
+            var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : (typeof SENDINSTRUCTION === 'function' ? SENDINSTRUCTION : null);
+            var gentagfn = (typeof GENERATETAG === 'function') ? GENERATETAG : (typeof GENERATETAG === 'function' ? GENERATETAG : function() { return 'tag'; });
+            if (sendinstfn && typeof MESSAGETYPES !== 'undefined') {
                 try {
-                    sendInstruction('debugactor', MESSAGETYPES.SHOW, {
+                    sendinstfn('DEBUGACTOR', MESSAGETYPES.SHOW, {
                         error: err,
                         continuation: (err.diagnostic && err.diagnostic.continuation) || null
-                    }, generateTag(), 'callwithstack');
-                } catch (notifyErr) {
-                    // Avoid recursion if debugactor fails
-                }
+                    }, gentagfn(), 'callwithstack');
+                } catch (notifyerr) {}
             }
 
             if (catchfn) catchfn(err, context);
@@ -136,3 +135,12 @@ function callwithstack(evalstack, label, type, fn, args, options) {
 }
 
 function runwithstack(p) { return p; }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    safeshallowclone: safeshallowclone,
+    applyccc: applyccc,
+    callwithstack: callwithstack,
+    runwithstack: runwithstack
+  };
+}

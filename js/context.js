@@ -1,16 +1,15 @@
 var createinitialworldmap = function(envoverrides) {
   envoverrides = envoverrides !== undefined ? envoverrides : {};
-  var baseEnv = {
-    locale: document.documentElement.lang || 'en',
-    theme: document.documentElement.getAttribute('data-theme') || 'dark',
-    dpr: window.devicePixelRatio || 1,
+  var baseenv = {
+    locale: (typeof document !== 'undefined' && document.documentElement && document.documentElement.lang) || 'en',
+    theme: (typeof document !== 'undefined' && document.documentElement && document.documentElement.getAttribute('data-theme')) || 'dark',
+    dpr: (typeof window !== 'undefined' && window.devicePixelRatio) || 1,
     breakpoint: 'desktop'
   };
-  // Merge overrides into base env
   var env = Object.keys(envoverrides).reduce(function(acc, k) {
     acc[k] = envoverrides[k];
     return acc;
-  }, baseEnv);
+  }, baseenv);
   return {
     env: env,
     entropy: { seed: null, bits: 0, iscomplete: false },
@@ -20,7 +19,6 @@ var createinitialworldmap = function(envoverrides) {
   };
 };
 
-// Functional update: if passed a function, use UPDATEWORLDMAPFN; otherwise patch.
 var updateworldmap = function(update) {
   if (typeof update === 'function') {
     return UPDATEWORLDMAPFN(update);
@@ -29,3 +27,11 @@ var updateworldmap = function(update) {
 };
 
 var select = function(selectorfn) { return function(state) { return selectorfn(state); }; };
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    createinitialworldmap: createinitialworldmap,
+    updateworldmap: updateworldmap,
+    select: select
+  };
+}

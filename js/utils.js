@@ -1,8 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/utils.js
-// Change applied: ES5 syntax, functional paradigm, require/module.exports
-// ============================================================
-
 var deepmerge = function(target, source) {
   if (!target || typeof target !== 'object' || Array.isArray(target)) return source;
   if (!source || typeof source !== 'object' || Array.isArray(source)) return source;
@@ -18,63 +13,94 @@ var deepmerge = function(target, source) {
   }, out);
 };
 
-
-
-function createApiConstants() {
+function createapiconstants() {
   return Object.freeze({
-    APIBASE: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1'
+    apibase: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1'
   });
 }
 
 function escapehtml(str) {
   if (typeof str !== 'string') return '';
-  return str.replace(/[&<>'"]/g, function(tag) {
-    var entities = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      "'": '&#39;',
-      '"': '&quot;'
-    };
-    return entities[tag] || tag;
-  });
+  return str.split('').map(function(ch) {
+    if (ch === '&') return '&amp;';
+    if (ch === '<') return '&lt;';
+    if (ch === '>') return '&gt;';
+    if (ch === "'") return '&#39;';
+    if (ch === '"') return '&quot;';
+    return ch;
+  }).join('');
+}
+
+function formatinlinetext(text) {
+  if (!text) return '';
+  function replacepairs(input, delim, opentag, closetag) {
+    var parts = input.split(delim);
+    if (parts.length < 3) return input;
+    return parts.reduce(function(acc, part, idx) {
+      if (idx === 0) return part;
+      return acc + (idx % 2 === 1 ? opentag : closetag) + part;
+    }, '');
+  }
+  var res = replacepairs(text, '***', '<strong><em>', '</em></strong>');
+  res = replacepairs(res, '**', '<strong>', '</strong>');
+  res = replacepairs(res, '*', '<em>', '</em>');
+  return res;
+}
+
+function parseline(line) {
+  var trimmed = line.trim();
+  if (trimmed.indexOf('### ') === 0) {
+    return '<h4>' + trimmed.slice(4) + '</h4>';
+  }
+  if (trimmed.indexOf('## ') === 0) {
+    return '<h3>' + trimmed.slice(3) + '</h3>';
+  }
+  if (trimmed.indexOf('# ') === 0) {
+    return '<h2>' + trimmed.slice(2) + '</h2>';
+  }
+  if (trimmed.indexOf('- ') === 0 || trimmed.indexOf('* ') === 0 || trimmed.indexOf('+ ') === 0) {
+    return '<li>' + trimmed.slice(2) + '</li>';
+  }
+  return trimmed;
 }
 
 function markdowntohtml(md) {
   if (!md) return '';
-  var html = escapehtml(md);
+  var raw = escapehtml(md);
+  var lines = raw.split('\n').map(function(l) { return l.trim(); });
+  var processed = lines.map(function(l) {
+    return formatinlinetext(parseline(l));
+  });
+  var blocks = processed.reduce(function(acc, line) {
+    if (line === '') {
+      acc.push([]);
+    } else {
+      if (acc.length === 0) acc.push([]);
+      acc[acc.length - 1].push(line);
+    }
+    return acc;
+  }, [[]]).filter(function(b) { return b.length > 0; });
 
-  html = html.replace(/^### (.*$)/gim, '<h4>$1</h4>');
-  html = html.replace(/^## (.*$)/gim, '<h3>$1</h3>');
-  html = html.replace(/^# (.*$)/gim, '<h2>$1</h2>');
-
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-  html = html.replace(/^\s*[-*+]\s+(.*)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-
-  var paragraphs = html.split(/\n\s*\n/);
-  html = paragraphs.map(function(p) {
-    if (p.indexOf('<h') === 0 || p.indexOf('<ul') === 0 || p.indexOf('<ol') === 0) return p;
-    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+  return blocks.map(function(group) {
+    var first = group[0];
+    if (first.indexOf('<h2') === 0 || first.indexOf('<h3') === 0 || first.indexOf('<h4') === 0) {
+      return group.join('\n');
+    }
+    if (first.indexOf('<li>') === 0) {
+      return '<ul>' + group.join('') + '</ul>';
+    }
+    return '<p>' + group.join('<br>') + '</p>';
   }).join('\n');
-
-  return html;
 }
 
 function formataitext(text) {
   if (!text) return '';
-  return text
-    .split(/\n\n+/)
-    .map(function(para) { return para.trim(); })
-    .filter(function(para) { return para.length > 0; })
-    .map(function(para) {
-      var content = para.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      return '<p>' + content.replace(/\n/g, '<br>') + '</p>';
-    })
-    .join('');
+  var raw = escapehtml(text);
+  var paras = raw.split('\n\n').map(function(p) { return p.trim(); }).filter(function(p) { return p.length > 0; });
+  return paras.map(function(p) {
+    var content = formatinlinetext(p).split('\n').join('<br>');
+    return '<p>' + content + '</p>';
+  }).join('');
 }
 
 function resolvepath(path, source) {
@@ -92,9 +118,10 @@ function getprop(path, source, schemaname) {
   if (schemaname === undefined) schemaname = null;
   var value = resolvepath(path, source);
   if (schemaname) {
-    var result = validate(value, schemaname);
+    var validatefn = (typeof validate === 'function') ? validate : function() { return { tag: 'success' }; };
+    var result = validatefn(value, schemaname);
     if (result.tag === 'failure') {
-      throw new Error('[TypeSystem] Property "' + path + '" failed validation: ' + result.message);
+      throw new Error('[typesystem] Property "' + path + '" failed validation: ' + result.message);
     }
   }
   return value;
@@ -102,16 +129,16 @@ function getprop(path, source, schemaname) {
 
 function getproperty(obj, prop) {
   if (obj && prop in obj && typeof obj[prop] !== 'function') {
-    return JUST(obj[prop]);
+    return (typeof just === 'function') ? just(obj[prop]) : { tag: 'JUST', value: obj[prop] };
   }
-  return NOTHING();
+  return (typeof nothing === 'function') ? nothing() : { tag: 'NOTHING' };
 }
 
 function getfunction(obj, prop) {
   if (obj && typeof obj[prop] === 'function') {
-    return JUST(obj[prop]);
+    return (typeof just === 'function') ? just(obj[prop]) : { tag: 'JUST', value: obj[prop] };
   }
-  return NOTHING();
+  return (typeof nothing === 'function') ? nothing() : { tag: 'NOTHING' };
 }
 
 function setproperty(obj, prop, value) {
@@ -123,12 +150,11 @@ function setproperty(obj, prop, value) {
   return out;
 }
 
-// P11: Inject DOM dependency; optional doc parameter defaults to global document
 function createnodefromtemplate(templateobj, doc) {
-  if (!templateobj) return NOTHING();
+  if (!templateobj) return (typeof nothing === 'function') ? nothing() : { tag: 'NOTHING' };
 
-  var documentRef = doc || (typeof document !== 'undefined' ? document : null);
-  if (!documentRef || typeof documentRef.createElement !== 'function') {
+  var documentref = doc || (typeof document !== 'undefined' ? document : null);
+  if (!documentref || typeof documentref.createElement !== 'function') {
     throw new Error('[createnodefromtemplate] Document object not available; provide a valid DOM document.');
   }
 
@@ -136,9 +162,8 @@ function createnodefromtemplate(templateobj, doc) {
   var tagname = templateobj.tagname || 'div';
   var attributes = templateobj.attributes || {};
 
-  var container = documentRef.createElement(tagname);
+  var container = documentref.createElement(tagname);
 
-  // DOM mutation via forEach is acceptable for side-effect-only DOM operations
   Object.keys(attributes).forEach(function(k) {
     var v = attributes[k];
     if (k === 'class') {
@@ -149,5 +174,23 @@ function createnodefromtemplate(templateobj, doc) {
   });
 
   if (html) container.innerHTML = html;
-  return JUST(container);
+  return (typeof just === 'function') ? just(container) : { tag: 'JUST', value: container };
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    deepmerge: deepmerge,
+    createapiconstants: createapiconstants,
+    escapehtml: escapehtml,
+    formatinlinetext: formatinlinetext,
+    parseline: parseline,
+    markdowntohtml: markdowntohtml,
+    formataitext: formataitext,
+    resolvepath: resolvepath,
+    getprop: getprop,
+    getproperty: getproperty,
+    getfunction: getfunction,
+    setproperty: setproperty,
+    createnodefromtemplate: createnodefromtemplate
+  };
 }

@@ -1,143 +1,170 @@
-var WORLDMAPVERBOSITYCONSTANTS = createVerbosityConstants();
-var WORLDMAPSTATE = Object.freeze({ level: WORLDMAPVERBOSITYCONSTANTS.DEBUG });
+var WORLDMAPVERBOSITYCONSTANTS = CREATEVERBOSITYCONSTANTS();
+var WORLDMAPSTATE = Object.freeze({ LEVEL: WORLDMAPVERBOSITYCONSTANTS.DEBUG });
 
-// Immutable path setter and value set application remain.
-function SETINPATH(obj, path, value) {
-  var keys = path.split('.');
-  if (keys.length === 0) return value;
-  var key = keys[0];
-  var rest = keys.slice(1).join('.');
-  var nextObj = obj && typeof obj === 'object' ? obj : {};
-  var updatedChild = rest ? SETINPATH(nextObj[key], rest, value) : value;
-  var newObj = Array.isArray(nextObj) ? nextObj.slice() : Object.assign({}, nextObj);
-  newObj[key] = updatedChild;
-  return newObj;
+// Immutable path setter and value set application
+function SETINPATH(OBJ, PATH, VALUE) {
+  var KEYS = PATH.split('.');
+  if (KEYS.length === 0) return VALUE;
+  var KEY = KEYS[0];
+  var REST = KEYS.slice(1).join('.');
+  var NEXTOBJ = OBJ && typeof OBJ === 'object' ? OBJ : {};
+  var UPDATEDCHILD = REST ? SETINPATH(NEXTOBJ[KEY], REST, VALUE) : VALUE;
+  var NEWOBJ = Array.isArray(NEXTOBJ) ? NEXTOBJ.slice() : Object.keys(NEXTOBJ).reduce(function(ACC, K) {
+    ACC[K] = NEXTOBJ[K];
+    return ACC;
+  }, {});
+  NEWOBJ[KEY] = UPDATEDCHILD;
+  return NEWOBJ;
 }
 
-function APPLYVALUESET(env, updates) {
-  return updates.reduce(function(acc, update) {
-    return SETINPATH(acc, update.path, update.value);
-  }, env);
+function APPLYVALUESET(ENV, UPDATES) {
+  return UPDATES.reduce(function(ACC, UPDATE) {
+    return SETINPATH(ACC, UPDATE.PATH, UPDATE.VALUE);
+  }, ENV);
 }
 
-function PERSISTENV(env) {
-  logdebug(env, '[WORLDMAPACTOR]', 'persistEnv saving ENV to db');
-  DB_STORE('actor:state:env', env).then(function(success) {
-    if (success === false) {
-      logwarn(env, '[WORLDMAPACTOR]', 'state persist failed');
+function PERSISTENV(ENV) {
+  LOGDEBUG(ENV, '[WORLDMAPACTOR]', 'PERSISTENV SAVING ENV TO DB');
+  var STOREFN = (typeof DBSTORE === 'function') ? DBSTORE : (typeof DB_STORE === 'function' ? DB_STORE : function() { return Promise.resolve(true); });
+  STOREFN('actor:state:env', ENV).then(function(SUCCESS) {
+    if (SUCCESS === false) {
+      LOGWARN(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED');
     }
-  }).catch(function(e) {
-    logwarn(env, '[WORLDMAPACTOR]', 'state persist failed:', e);
+  }).catch(function(E) {
+    LOGWARN(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED:', E);
   });
 }
 
 function RECOVERENV() {
-  logdebug({}, '[WORLDMAPACTOR]', 'recoverEnv start');
-  return DB_RESTORE('actor:state:env').then(function(saved) {
-    if (saved !== null && saved !== undefined) {
-      loginfo(saved, '[WORLDMAPACTOR]', 'recoverEnv restored ENV');
-      return saved;
+  LOGDEBUG({}, '[WORLDMAPACTOR]', 'RECOVERENV START');
+  var RESTOREFN = (typeof DBRESTORE === 'function') ? DBRESTORE : (typeof DB_RESTORE === 'function' ? DB_RESTORE : function() { return Promise.resolve(null); });
+  return RESTOREFN('actor:state:env').then(function(SAVED) {
+    if (SAVED !== null && SAVED !== undefined) {
+      LOGINFO(SAVED, '[WORLDMAPACTOR]', 'RECOVERENV RESTORED ENV');
+      return SAVED;
     }
-    loginfo({}, '[WORLDMAPACTOR]', 'recoverEnv no saved ENV, using empty container');
+    LOGINFO({}, '[WORLDMAPACTOR]', 'RECOVERENV NO SAVED ENV, USING EMPTY CONTAINER');
     return {};
   });
 }
 
 // Pure behavior function: (env, message) -> env
-function WORLDMAPBEHAVIOR(env, message) {
-  logdebug(env, '[WORLDMAPACTOR]', 'behavior handling action:', message.type);
+function WORLDMAPBEHAVIOR(ENV, MESSAGE) {
+  LOGDEBUG(ENV, '[WORLDMAPACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
-  switch (message.type) {
+  switch (MESSAGE.TYPE) {
     case MESSAGETYPES.UPDATE: {
-      if (!message.updates || !Array.isArray(message.updates)) {
-        logwarn(env, '[WORLDMAPACTOR]', 'UPDATE missing updates array');
-        return env;
+      if (!MESSAGE.UPDATES || !Array.isArray(MESSAGE.UPDATES)) {
+        LOGWARN(ENV, '[WORLDMAPACTOR]', 'UPDATE MISSING UPDATES ARRAY');
+        return ENV;
       }
-      var newEnv = APPLYVALUESET(env, message.updates);
-      (newEnv.observers || []).forEach(function(observer) {
-        try { observer(newEnv); } catch (err) { logwarn(newEnv, '[WORLDMAPACTOR]', 'observer notification failed:', err); }
+      var NEWENV = APPLYVALUESET(ENV, MESSAGE.UPDATES);
+      (NEWENV.OBSERVERS || []).forEach(function(OBSERVER) {
+        try { OBSERVER(NEWENV); } catch (ERR) { LOGWARN(NEWENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
       });
-      PERSISTENV(newEnv);
-      return newEnv;
+      PERSISTENV(NEWENV);
+      return NEWENV;
     }
+    case MESSAGETYPES.UPDATEFN:
     case MESSAGETYPES.UPDATE_FN: {
-      var nextEnv = message.fn(env);
-      if (nextEnv === undefined) nextEnv = env;
-      (nextEnv.observers || []).forEach(function(observer) {
-        try { observer(nextEnv); } catch (err) { logwarn(nextEnv, '[WORLDMAPACTOR]', 'observer notification failed:', err); }
+      var NEXTENV = MESSAGE.FN(ENV);
+      if (NEXTENV === undefined) NEXTENV = ENV;
+      (NEXTENV.OBSERVERS || []).forEach(function(OBSERVER) {
+        try { OBSERVER(NEXTENV); } catch (ERR) { LOGWARN(NEXTENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
       });
-      PERSISTENV(nextEnv);
-      return nextEnv;
+      PERSISTENV(NEXTENV);
+      return NEXTENV;
     }
     case MESSAGETYPES.OBSERVE: {
-      var newObservers = (env.observers || []).concat([message.observer]);
-      return SETINPATH(env, 'observers', newObservers);
+      var NEWOBSERVERS = (ENV.OBSERVERS || []).concat([MESSAGE.OBSERVER]);
+      return SETINPATH(ENV, 'observers', NEWOBSERVERS);
     }
     case MESSAGETYPES.UNOBSERVE: {
-      var filtered = (env.observers || []).filter(function(obs) { return obs !== message.observer; });
-      return SETINPATH(env, 'observers', filtered);
+      var FILTERED = (ENV.OBSERVERS || []).filter(function(OBS) { return OBS !== MESSAGE.OBSERVER; });
+      return SETINPATH(ENV, 'observers', FILTERED);
     }
+    case MESSAGETYPES.GETWORLDMAP:
     case MESSAGETYPES.GET_WORLDMAP:
+    case MESSAGETYPES.GETENV:
     case MESSAGETYPES.GET_ENV: {
-      if (message.sender && message.tag) {
-        SENDRESPONSE(message.sender, message.tag, env, 'WORLDMAPACTOR');
+      if (MESSAGE.SENDER && MESSAGE.TAG) {
+        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'WORLDMAPACTOR');
       }
-      return env;
+      return ENV;
     }
     default:
-      logwarn(env, '[WORLDMAPACTOR]', 'unknown message type:', message.type);
-      return env;
+      LOGWARN(ENV, '[WORLDMAPACTOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
+      return ENV;
   }
 }
 
 // Initial state is empty object; actors own their slices.
 REGISTERACTORSTATE('WORLDMAPACTOR', {});
 
-function STARTWORLDMAPACTOR(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options : (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-    if (lvl !== undefined) {
-      WORLDMAPSTATE = Object.freeze({ level: lvl });
-      var envForVerbosity = GETACTORSTATE('WORLDMAPACTOR');
-      if (envForVerbosity) {
-        SETACTORSTATE('WORLDMAPACTOR', SETINPATH(envForVerbosity, 'verbosity', lvl));
+function STARTWORLDMAPACTOR(OPTIONS) {
+  if (OPTIONS !== undefined) {
+    var LVL = typeof OPTIONS === 'number' ? OPTIONS : (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
+    if (LVL !== undefined) {
+      WORLDMAPSTATE = Object.freeze({ LEVEL: LVL });
+      var ENVFORVERBOSITY = GETACTORSTATE('WORLDMAPACTOR');
+      if (ENVFORVERBOSITY) {
+        SETACTORSTATE('WORLDMAPACTOR', SETINPATH(ENVFORVERBOSITY, 'verbosity', LVL));
       }
     }
   }
-  var currentEnv = GETACTORSTATE('WORLDMAPACTOR') || {};
-  // Return promise that resolves after recovery and state set.
-  return RECOVERENV().then(function(saved) {
-    SETACTORSTATE('WORLDMAPACTOR', saved);
-    return saved;
-  }).catch(function(err) {
-    logwarn(currentEnv, '[WORLDMAPACTOR]', 'state restore failed:', err);
-    return currentEnv;
+  var CURRENTENV = GETACTORSTATE('WORLDMAPACTOR') || {};
+  return RECOVERENV().then(function(SAVED) {
+    SETACTORSTATE('WORLDMAPACTOR', SAVED);
+    return SAVED;
+  }).catch(function(ERR) {
+    LOGWARN(CURRENTENV, '[WORLDMAPACTOR]', 'STATE RESTORE FAILED:', ERR);
+    return CURRENTENV;
   });
 }
 
-function SENDWORLDMAPPATCH(patch, responseSpec) {
-  if (patch && patch.updates) {
-    var tag = GENERATETAG();
-    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { updates: patch.updates }, tag, 'system', responseSpec);
+function SENDWORLDMAPPATCH(PATCH, RESPONSESPEC) {
+  if (PATCH && PATCH.UPDATES) {
+    var TAG = GENERATETAG();
+    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { UPDATES: PATCH.UPDATES }, TAG, 'system', RESPONSESPEC);
   }
 }
 
-function UPDATEWORLDMAPFN(fn, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE_FN, { fn: fn }, tag, 'system', responseSpec);
+function UPDATEWORLDMAPFN(FN, RESPONSESPEC) {
+  var TAG = GENERATETAG();
+  var TYPE = MESSAGETYPES.UPDATEFN || MESSAGETYPES.UPDATE_FN;
+  SENDINSTRUCTION('WORLDMAPACTOR', TYPE, { FN: FN }, TAG, 'system', RESPONSESPEC);
 }
 
-function OBSERVEWORLDMAP(observer, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { observer: observer }, tag, 'system', responseSpec);
+function OBSERVEWORLDMAP(OBSERVER, RESPONSESPEC) {
+  var TAG = GENERATETAG();
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { OBSERVER: OBSERVER }, TAG, 'system', RESPONSESPEC);
 }
 
-function UNOBSERVEWORLDMAP(observer, responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { observer: observer }, tag, 'system', responseSpec);
+function UNOBSERVEWORLDMAP(OBSERVER, RESPONSESPEC) {
+  var TAG = GENERATETAG();
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { OBSERVER: OBSERVER }, TAG, 'system', RESPONSESPEC);
 }
 
-function GETWORLDMAP(responseSpec) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.GET_WORLDMAP, {}, tag, 'system', responseSpec);
+function GETWORLDMAP(RESPONSESPEC) {
+  var TAG = GENERATETAG();
+  var TYPE = MESSAGETYPES.GETWORLDMAP || MESSAGETYPES.GET_WORLDMAP;
+  SENDINSTRUCTION('WORLDMAPACTOR', TYPE, {}, TAG, 'system', RESPONSESPEC);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    WORLDMAPVERBOSITYCONSTANTS: WORLDMAPVERBOSITYCONSTANTS,
+    WORLDMAPSTATE: WORLDMAPSTATE,
+    SETINPATH: SETINPATH,
+    APPLYVALUESET: APPLYVALUESET,
+    PERSISTENV: PERSISTENV,
+    RECOVERENV: RECOVERENV,
+    WORLDMAPBEHAVIOR: WORLDMAPBEHAVIOR,
+    STARTWORLDMAPACTOR: STARTWORLDMAPACTOR,
+    SENDWORLDMAPPATCH: SENDWORLDMAPPATCH,
+    UPDATEWORLDMAPFN: UPDATEWORLDMAPFN,
+    OBSERVEWORLDMAP: OBSERVEWORLDMAP,
+    UNOBSERVEWORLDMAP: UNOBSERVEWORLDMAP,
+    GETWORLDMAP: GETWORLDMAP
+  };
 }

@@ -1,9 +1,11 @@
-// ============================================================
-// UPDATED FILE: js/factory/domqueryconstants.js
-// Change applied: leaf interface module (ES5). Extracted from
-// renderactor.js so interfaces (typesystem) never import an actor.
-// ============================================================
+var domquerygetters = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
+var domquerysetters = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
+var domquerymessages = Object.freeze(domquerygetters.concat(domquerysetters));
 
-var DOMQUERYGETTERS = Object.freeze(['gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout']);
-var DOMQUERYSETTERS = Object.freeze(['sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'toggleclass']);
-var DOMQUERYMESSAGES = Object.freeze(DOMQUERYGETTERS.concat(DOMQUERYSETTERS));
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    domquerygetters: domquerygetters,
+    domquerysetters: domquerysetters,
+    domquerymessages: domquerymessages
+  };
+}

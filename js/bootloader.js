@@ -1,43 +1,42 @@
-var PIPELINES_MANIFEST = [
-  { src: 'messageregistry.js', provides: ['MESSAGEREGISTRY', 'MESSAGETYPES'] },
-  { src: 'verbosity.js', provides: ['createVerbosityConstants', 'createVerbosityFunctions', 'getverbosity', 'setverbosity', 'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'] },
-  { src: 'functorial/maybe.js', provides: ['JUST', 'NOTHING', 'of', 'fromnullable', 'getorelselazy', 'MAYBEALGEBRA'] },
-  { src: 'evalstack.js', provides: ['createevalstack', 'EVALSTACK', 'frames', 'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack', 'currentcontinuation', 'chaincontinuations'] },
+var pipelinesmanifest = [
+  { src: 'messageregistry.js', provides: ['messageregistry', 'MESSAGETYPES'] },
+  { src: 'verbosity.js', provides: ['createverbosityconstants', 'createverbosityfunctions', 'getverbosity', 'setverbosity', 'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'] },
+  { src: 'functorial/maybe.js', provides: ['just', 'nothing', 'of', 'fromnullable', 'getorelselazy', 'maybealgebra'] },
+  { src: 'evalstack.js', provides: ['createevalstack', 'evalstack', 'frames', 'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack', 'currentcontinuation', 'chaincontinuations'] },
   { src: 'factory/callwithstack.js', provides: ['callwithstack', 'runwithstack'] },
-  { src: 'factory/colorutils.js', provides: ['ColorCore', 'ColorHarmony', 'ColorContrast'] },
-  { src: 'factory/closureconsolidator.js', provides: ['consolidateClosures'] },
-  { src: 'factory/freevarparser.js', provides: ['detectFreeIdentifiers', 'isIdentifierStart', 'isIdentifierPart', 'containsIdentifier', 'findMatchingParen', 'findBodyBrace'] },
-  { src: 'factory/domqueryconstants.js', provides: ['DOMQUERYGETTERS', 'DOMQUERYSETTERS', 'DOMQUERYMESSAGES'] },
-  { src: 'actors/actorgc.js', provides: ['createGarbageCollector', 'registerObject', 'updateStatus', 'incrementSent', 'incrementReceived', 'collectEnded', 'listObjects'] },
-  { src: 'actors/actorregistry.js', provides: ['createActorRegistry', 'setRenderActor', 'getRenderActor'] },
-  { src: 'actors/trigerregistry.js', provides: ['createTriggerRegistry', 'registerTrigger', 'unregisterTrigger', 'revalidateAll', 'getTriggerMap'] },
-  { src: 'factory/layoutdirectives.js', provides: ['createLayoutDirectives'] },
-  { src: 'fundamental/domref.js', provides: ['GETRAWELEMENT', 'CREATEDOMREF', 'REMOVEREF', 'ISVALIDDOMREF'] },
-  { src: 'typesystem.js', provides: ['TYPESCHEMA', 'validateFields', 'validate', 'validatecall', 'validateschema', 'validateformalblock', 'validatestageflow', 'validatemonadalgebra', 'validateblockio', 'validateblockfnio', 'validatecontainerrefs', 'validatespawncontracts', 'validateblocktype', 'validatedomqueryblock', 'validateexecutionqueryblock', 'validatestorequeryblock', 'validateblockproperties', 'validateeventstage'] },
-  { src: 'factory/stylizerutilities.js', provides: ['StylizerCore', 'StylizerRewrite', 'StylizerVerify'] },
-  { src: 'factory/dnaserializer.js', provides: ['createDnaSerializerConstants', 'validaterevivablefunctionblock', 'validaterevivableobject', 'resolveFromBriefcase', 'prepareFunctionForSerialization', 'serializeSelfContainedClosure'] },
+  { src: 'factory/colorutils.js', provides: ['colorcore', 'colorharmony', 'colorcontrast'] },
+  { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
+  { src: 'factory/freevarparser.js', provides: ['detectfreeidentifiers', 'isidentifierstart', 'isidentifierpart', 'containsidentifier', 'findmatchingparen', 'findbodybrace'] },
+  { src: 'factory/domqueryconstants.js', provides: ['domquerygetters', 'domquerysetters', 'domquerymessages'] },
+  { src: 'actors/actorcore.js', provides: ['CREATEGARBAGECOLLECTOR', 'REGISTEROBJECT', 'UPDATESTATUS', 'INCREMENTSENT', 'INCREMENTRECEIVED', 'COLLECTENDED', 'LISTOBJECTS', 'REGISTERACTORSTATE', 'GETACTORSTATE', 'SETACTORSTATE', 'DISPATCHIMMUTABLE', 'DISPATCHTOACTOR', 'ENSUREENVSLICE', 'CREATEMESSAGEVALIDATOR', 'PINGACTOR', 'GETACTORREGISTRY', 'CREATEACTORREGISTRY', 'SETRENDERACTOR', 'GETRENDERACTOR', 'CREATETRIGGERREGISTRY', 'REGISTERTRIGGER', 'UNREGISTERTRIGGER', 'REVALIDATEALL', 'GETTRIGGERMAP'] },
+  { src: 'factory/layoutdirectives.js', provides: ['createlayoutdirectives'] },
+  { src: 'fundamental/domref.js', provides: ['getrawelement', 'createdomref', 'removeref', 'isvaliddomref'] },
+  { src: 'typesystem.js', provides: ['typeschema', 'validatefields', 'validate', 'validatecall', 'validateschema', 'validateformalblock', 'validatestageflow', 'validatemonadalgebra', 'validateblockio', 'validateblockfnio', 'validatecontainerrefs', 'validatespawncontracts', 'validateblocktype', 'validatedomqueryblock', 'validateexecutionqueryblock', 'validatestorequeryblock', 'validateblockproperties', 'validateeventstage'] },
+  { src: 'factory/stylizerutilities.js', provides: ['stylizercore', 'stylizerrewrite', 'stylizerverify'] },
+  { src: 'factory/dnaserializer.js', provides: ['creatednaserializerconstants', 'validaterevivablefunctionblock', 'validaterevivableobject', 'resolvefrombriefcase', 'preparefunctionforserialization', 'serializeselfcontainedclosure'] },
   { src: 'debugformatter.js', provides: ['formatdebugtrace'] },
-  { src: 'actors/actorkernel.js', provides: ['REGISTERACTORSTATE', 'GETACTORSTATE', 'SETACTORSTATE', 'DISPATCHIMMUTABLE', 'DISPATCHTOACTOR', 'ENSUREENVSLICE', 'CREATEMESSAGEVALIDATOR', 'PINGACTOR', 'GETACTORREGISTRY'] },
-  { src: 'utils.js', provides: ['createApiConstants', 'escapehtml', 'markdowntohtml', 'formataitext', 'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty', 'createnodefromtemplate', 'deepmerge'] },
-  { src: 'actors/dbactor.js', provides: ['DBBEHAVIOR', 'STORESEND', 'STOREWAIT', 'DB_STORE', 'DB_RESTORE', 'DB_LIST', 'DB_DELETE', 'STARTDBACTOR'] },
+  { src: 'utils.js', provides: ['createapiconstants', 'escapehtml', 'markdowntohtml', 'formataitext', 'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty', 'createnodefromtemplate', 'deepmerge'] },
+  { src: 'actors/dbactor.js', provides: ['DBBEHAVIOR', 'STORESEND', 'STOREWAIT', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE', 'STARTDBACTOR'] },
   { src: 'actors/mailactor.js', provides: ['MAILBEHAVIOR', 'GENERATETAG', 'SENDINSTRUCTION', 'SENDRESPONSE', 'QUERYMAILBOX', 'WAITFORMAILBOX', 'STARTMAILACTOR'], owner: 'MAILACTOR', types: ['send', 'ack'] },
-  { src: 'actors/worldmapactor.js', provides: ['WORLDMAPBEHAVIOR', 'STARTWORLDMAPACTOR', 'SENDWORLDMAPPATCH', 'UPDATEWORLDMAPFN', 'OBSERVEWORLDMAP', 'UNOBSERVEWORLDMAP', 'GETWORLDMAP'], owner: 'WORLDMAPACTOR', types: ['update', 'update_fn', 'observe', 'unobserve', 'get_worldmap'] },
+  { src: 'actors/worldmapactor.js', provides: ['WORLDMAPBEHAVIOR', 'STARTWORLDMAPACTOR', 'SENDWORLDMAPPATCH', 'UPDATEWORLDMAPFN', 'OBSERVEWORLDMAP', 'UNOBSERVEWORLDMAP', 'GETWORLDMAP'], owner: 'WORLDMAPACTOR', types: ['update', 'updatefn', 'observe', 'unobserve', 'getworldmap'] },
   { src: 'actors/apiactor.js', provides: ['APIBEHAVIOR', 'ENQUEUEAPI', 'ENQUEUEFETCH'], owner: 'APIACTOR', types: ['api', 'fetch'] },
-  { src: 'actors/debugactor.js', provides: ['DEBUGBEHAVIOR', 'ENQUEUEDEBUGPING', 'ENQUEUEDEBUGRECOVER'], owner: 'DEBUGACTOR', types: ['init_overlay', 'show', 'hide', 'recover', 'ping'] },
-  { src: 'actors/executionactor.js', provides: ['EXECUTIONBEHAVIOR', 'ENQUEUEEXECUTIONPIPELINELOADED', 'ENQUEUEEXECUTIONSUBMIT', 'ENQUEUEEXECUTIONAWAITTASK', 'ENQUEUEEXECUTIONGETTASKS', 'ENQUEUEEXECUTIONGETTASKSTATUS', 'ENQUEUEEXECUTIONCANCELTASK', 'ENQUEUEEXECUTIONSTOPTASK', 'ENQUEUEEXECUTIONGETSTATUS', 'ENQUEUEEXECUTIONENVUPDATED', 'ENQUEUEEXECUTIONCCCABORT', 'ENQUEUEEXECUTIONCCCCONTINUE', 'ENQUEUEEXECUTIONCCCRETRY', 'ENQUEUEEXECUTIONREGISTERPIPELINE', 'ENQUEUEEXECUTIONRECOVER', 'ENQUEUEEXECUTIONPING', 'STARTEXECUTIONACTOR', 'ENSUREEXECUTIONACTORREADY'], owner: 'EXECUTIONACTOR', types: ['pipeline_loaded', 'env_updated', 'get_status', 'execute_element', 'await_task', 'get_tasks', 'get_task_status', 'cancel_task', 'stop_task', 'ccc_abort', 'ccc_continue', 'ccc_retry', 'task_settled', 'recover', 'register_pipeline', 'ping'] },
+  { src: 'actors/debugactor.js', provides: ['DEBUGBEHAVIOR', 'ENQUEUEDEBUGPING', 'ENQUEUEDEBUGRECOVER'], owner: 'DEBUGACTOR', types: ['initoverlay', 'show', 'hide', 'recover', 'ping'] },
+  { src: 'actors/executionactor.js', provides: ['EXECUTIONBEHAVIOR', 'ENQUEUEEXECUTIONPIPELINELOADED', 'ENQUEUEEXECUTIONSUBMIT', 'ENQUEUEEXECUTIONAWAITTASK', 'ENQUEUEEXECUTIONGETTASKS', 'ENQUEUEEXECUTIONGETTASKSTATUS', 'ENQUEUEEXECUTIONCANCELTASK', 'ENQUEUEEXECUTIONSTOPTASK', 'ENQUEUEEXECUTIONGETSTATUS', 'ENQUEUEEXECUTIONENVUPDATED', 'ENQUEUEEXECUTIONCCCABORT', 'ENQUEUEEXECUTIONCCCCONTINUE', 'ENQUEUEEXECUTIONCCCRETRY', 'ENQUEUEEXECUTIONREGISTERPIPELINE', 'ENQUEUEEXECUTIONRECOVER', 'ENQUEUEEXECUTIONPING', 'STARTEXECUTIONACTOR', 'ENSUREEXECUTIONACTORREADY'], owner: 'EXECUTIONACTOR', types: ['pipelineloaded', 'envupdated', 'getstatus', 'executeelement', 'awaittask', 'gettasks', 'gettaskstatus', 'canceltask', 'stoptask', 'cccabort', 'ccccontinue', 'cccretry', 'tasksettled', 'recover', 'registerpipeline', 'ping'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
-  { src: 'actors/renderactor.js', provides: ['RENDERBEHAVIOR', 'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE', 'ENQUEUESTYLES', 'ENQUEUESETATTR', 'ENQUEUETOGGLECLASS', 'ENQUEUECREATEELEMENT', 'ENQUEUECREATECONTAINER', 'ENQUEUECREATEFROMHTML', 'ENQUEUEGETHTML', 'ENQUEUEGETVALUE', 'ENQUEUEGETSTYLE', 'ENQUEUEGETPOSITION', 'ENQUEUEGETLAYOUT', 'ENQUEUESETHTML', 'ENQUEUESETPOSITION', 'ENQUEUESETSTYLE', 'ENQUEUESETVALUE', 'ENQUEUEPROPERTY', 'ENQUEUESETLAYOUT', 'ENQUEUEGETVIEWPORT', 'ENQUEUEGETSCREEN', 'ENQUEUEMATCHMEDIA', 'STARTRENDERACTOR', 'EXPECTELEMENT', 'HANDLEFILEREADERREQUEST'], owner: 'RENDERACTOR', types: ['render', 'clear', 'html', 'remove', 'setstyles', 'setattr', 'toggleclass', 'crypto', 'geolocation', 'persistence', 'createelement', 'createcontainer', 'createfromhtml', 'property', 'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout', 'sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'getviewport', 'getscreen', 'matchmedia', 'get_body_html', 'restore_body_html', 'recover', 'ping', 'register_event_listener'] },
-  { src: 'factory/blockcompiler.js', provides: ['loadPipeline', 'compileStage', 'resolveNextElement', 'orchestrateStage', 'validatePipelineBriefcase'] },
-  { src: 'actors/hypervisoractor.js', provides: ['HYPERVISORBEHAVIOR', 'ENQUEUEHYPERVISORLOAD', 'ENQUEUEHYPERVISORSAVE', 'ENQUEUEHYPERVISORGETENV', 'ENQUEUEHYPERVISORSETENV', 'ENQUEUEHYPERVISORGETLATESTENV', 'ENQUEUEHYPERVISORGETRENDERHTML', 'ENQUEUEHYPERVISORSETRENDERHTML', 'ENQUEUEHYPERVISORGETEXECUTIONSTACK', 'ENQUEUEHYPERVISORSETEXECUTIONSTACK', 'ENQUEUEHYPERVISORGETROUTE', 'ENQUEUEHYPERVISORSETROUTE', 'ENQUEUEHYPERVISORGETACTIVEPIPELINES', 'ENQUEUEHYPERVISORREGISTERPIPELINE', 'ENQUEUEHYPERVISORUNREGISTERPIPELINE', 'ENQUEUEHYPERVISORSETPROGRAM', 'ENQUEUEHYPERVISORGETPROGRAM', 'ENQUEUEHYPERVISORMARKBOOT', 'ENQUEUEHYPERVISORPING', 'ENQUEUEHYPERVISORACTIVATEACTORS', 'ENQUEUEHYPERVISORBOOTPIPELINE', 'ENQUEUEHYPERVISORSTAGECOMPLETED', 'STARTHYPERVISORACTOR'], owner: 'HYPERVISORACTOR', types: ['load', 'save', 'get_env', 'set_env', 'get_latest_env', 'get_render_html', 'set_render_html', 'get_execution_stack', 'set_execution_stack', 'get_route', 'set_route', 'get_active_pipelines', 'register_pipeline', 'unregister_pipeline', 'set_program', 'get_program', 'mark_boot', 'event_triggered', 'ping', 'recover', 'activate_actors', 'boot_pipeline', 'compile_stage', 'stage_completed'] },
-  { src: 'registerconsumers.js', provides: ['REGISTERED_CONSUMERS'] }
+  { src: 'actors/renderactor.js', provides: ['RENDERBEHAVIOR', 'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE', 'ENQUEUESTYLES', 'ENQUEUESETATTR', 'ENQUEUETOGGLECLASS', 'ENQUEUECREATEELEMENT', 'ENQUEUECREATECONTAINER', 'ENQUEUECREATEFROMHTML', 'ENQUEUEGETHTML', 'ENQUEUEGETVALUE', 'ENQUEUEGETSTYLE', 'ENQUEUEGETPOSITION', 'ENQUEUEGETLAYOUT', 'ENQUEUESETHTML', 'ENQUEUESETPOSITION', 'ENQUEUESETSTYLE', 'ENQUEUESETVALUE', 'ENQUEUEPROPERTY', 'ENQUEUESETLAYOUT', 'ENQUEUEGETVIEWPORT', 'ENQUEUEGETSCREEN', 'ENQUEUEMATCHMEDIA', 'STARTRENDERACTOR', 'EXPECTELEMENT', 'HANDLEFILEREADERREQUEST'], owner: 'RENDERACTOR', types: ['render', 'clear', 'html', 'remove', 'setstyles', 'setattr', 'toggleclass', 'crypto', 'geolocation', 'persistence', 'createelement', 'createcontainer', 'createfromhtml', 'property', 'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout', 'sethtml', 'setposition', 'setstyle', 'setvalue', 'setlayout', 'getviewport', 'getscreen', 'matchmedia', 'getbodyhtml', 'restorebodyhtml', 'recover', 'ping', 'registereventlistener'] },
+  { src: 'factory/blockcompiler.js', provides: ['loadpipeline', 'compilestage', 'resolvenextelement', 'orchestratestage', 'validatepipelinebriefcase'] },
+  { src: 'actors/hypervisoractor.js', provides: ['HYPERVISORBEHAVIOR', 'ENQUEUEHYPERVISORLOAD', 'ENQUEUEHYPERVISORSAVE', 'ENQUEUEHYPERVISORGETENV', 'ENQUEUEHYPERVISORSETENV', 'ENQUEUEHYPERVISORGETLATESTENV', 'ENQUEUEHYPERVISORGETRENDERHTML', 'ENQUEUEHYPERVISORSETRENDERHTML', 'ENQUEUEHYPERVISORGETEXECUTIONSTACK', 'ENQUEUEHYPERVISORSETEXECUTIONSTACK', 'ENQUEUEHYPERVISORGETROUTE', 'ENQUEUEHYPERVISORSETROUTE', 'ENQUEUEHYPERVISORGETACTIVEPIPELINES', 'ENQUEUEHYPERVISORREGISTERPIPELINE', 'ENQUEUEHYPERVISORUNREGISTERPIPELINE', 'ENQUEUEHYPERVISORSETPROGRAM', 'ENQUEUEHYPERVISORGETPROGRAM', 'ENQUEUEHYPERVISORMARKBOOT', 'ENQUEUEHYPERVISORPING', 'ENQUEUEHYPERVISORACTIVATEACTORS', 'ENQUEUEHYPERVISORBOOTPIPELINE', 'ENQUEUEHYPERVISORSTAGECOMPLETED', 'STARTHYPERVISORACTOR'], owner: 'HYPERVISORACTOR', types: ['load', 'save', 'getenv', 'setenv', 'getlatestenv', 'getrenderhtml', 'setrenderhtml', 'getexecutionstack', 'setexecutionstack', 'getroute', 'setroute', 'getactivepipelines', 'registerpipeline', 'unregisterpipeline', 'setprogram', 'getprogram', 'markboot', 'eventtriggered', 'ping', 'recover', 'activateactors', 'bootpipeline', 'compilestage', 'stagecompleted'] },
+  { src: 'registerconsumers.js', provides: ['registeredconsumers'] }
 ];
 
-function getRoot() {
-  return (typeof window !== 'undefined') ? window : globalThis;
+var PIPELINES_MANIFEST = pipelinesmanifest;
+
+function getroot() {
+  return (typeof window !== 'undefined') ? window : globalthis;
 }
 
-function checkExistence(entry) {
-  var root = getRoot();
+function checkexistence(entry) {
+  var root = getroot();
   var missing = [];
   entry.provides.forEach(function(name) {
     if (typeof root[name] === 'undefined') missing.push(name);
@@ -45,46 +44,49 @@ function checkExistence(entry) {
   return { ok: missing.length === 0, missing: missing };
 }
 
-function checkRegistration(entry) {
+function checkregistration(entry) {
   if (!entry.owner) return { ok: true, missing: [] };
   var missing = [];
+  var reg = (typeof messageregistry !== 'undefined') ? messageregistry : null;
+  if (!reg) return { ok: false, missing: entry.types };
+  var gethandlerfn = reg.gethandler || reg.gethandler;
   entry.types.forEach(function(type) {
-    if (typeof MESSAGEREGISTRY.getHandler(entry.owner, type) !== 'function') missing.push(type);
+    if (typeof gethandlerfn.call(reg, entry.owner, type) !== 'function') missing.push(type);
   });
   return { ok: missing.length === 0, missing: missing };
 }
 
-function checkStateRegistration(entry) {
+function checkstateregistration(entry) {
   if (!entry.owner) return { ok: true };
   if (entry.owner !== 'WORLDMAPACTOR') return { ok: true };
   var state = GETACTORSTATE('WORLDMAPACTOR');
   return { ok: state !== undefined, missing: state === undefined ? 'WORLDMAPACTOR' : null };
 }
 
-function runPipelineBoot(loadProgram, report, manifest) {
-  var list = manifest || PIPELINES_MANIFEST;
+function runpipelineboot(loadprogram, report, manifest) {
+  var list = manifest || pipelinesmanifest;
   var index = 0;
   var entries = list.slice();
-  var loadFailures = [];
+  var loadfailures = [];
 
-  function loadNext() {
+  function loadnext() {
     if (index >= entries.length) {
-      var regFailures = [];
+      var regfailures = [];
       entries.forEach(function(entry) {
         if (entry.owner) {
-          var reg = checkRegistration(entry);
+          var reg = checkregistration(entry);
           if (!reg.ok) {
-            regFailures.push({ src: entry.src, missingTypes: reg.missing });
+            regfailures.push({ src: entry.src, missingtypes: reg.missing });
           }
-          var st = checkStateRegistration(entry);
+          var st = checkstateregistration(entry);
           if (!st.ok) {
-            regFailures.push({ src: entry.src, missingState: st.missing });
+            regfailures.push({ src: entry.src, missingstate: st.missing });
           }
         }
       });
 
-      if (regFailures.length) {
-        report({ ok: false, failures: regFailures, loaded: entries.length });
+      if (regfailures.length) {
+        report({ ok: false, failures: regfailures, loaded: entries.length });
       } else {
         report({ ok: true, failures: [], loaded: entries.length });
       }
@@ -92,44 +94,63 @@ function runPipelineBoot(loadProgram, report, manifest) {
     }
 
     var entry = entries[index];
-    loadProgram(entry, function(err) {
+    loadprogram(entry, function(err) {
       if (err) {
-        loadFailures.push({ src: entry.src, error: err });
-        report({ ok: false, failures: loadFailures, loaded: index });
+        loadfailures.push({ src: entry.src, error: err });
+        report({ ok: false, failures: loadfailures, loaded: index });
         return;
       }
-      var exists = checkExistence(entry);
+      var exists = checkexistence(entry);
       if (!exists.ok) {
-        loadFailures.push({ src: entry.src, missingGlobals: exists.missing });
-        report({ ok: false, failures: loadFailures, loaded: index });
+        loadfailures.push({ src: entry.src, missingglobals: exists.missing });
+        report({ ok: false, failures: loadfailures, loaded: index });
         return;
       }
       index = index + 1;
-      loadNext();
+      loadnext();
     });
   }
 
-  loadNext();
+  loadnext();
 }
 
-var PIPELINES_BASE = (typeof document !== 'undefined' && document.currentScript && document.currentScript.src)
-  ? document.currentScript.src.slice(0, document.currentScript.src.lastIndexOf('/') + 1)
+var pipelinesbase = (typeof document !== 'undefined' && document.currentscript && document.currentscript.src)
+  ? document.currentscript.src.slice(0, document.currentscript.src.lastIndexOf('/') + 1)
   : '';
 
-function bootPipeline(onDone) {
-  function loadScript(entry, done) {
+function bootpipeline(ondone) {
+  function loadscript(entry, done) {
     var s = document.createElement('script');
-    s.src = PIPELINES_BASE + entry.src;
+    s.src = pipelinesbase + entry.src;
     s.onload = function() { done(null); };
     s.onerror = function() { done(new Error('failed to load ' + entry.src)); };
     document.head.appendChild(s);
   }
-  runPipelineBoot(loadScript, function(result) {
+  runpipelineboot(loadscript, function(result) {
     if (result.ok) {
       console.log('[BOOTLOADER] all ' + result.loaded + ' programs loaded, existence tests passed');
     } else {
       console.error('[BOOTLOADER] BOOT FAILED after ' + result.loaded + ' programs:', JSON.stringify(result.failures));
     }
-    if (typeof onDone === 'function') onDone(result);
+    if (typeof ondone === 'function') ondone(result);
   });
+}
+
+var runpipelinebootalias = runpipelineboot;
+var bootpipelinealias = bootpipeline;
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    pipelinesmanifest: pipelinesmanifest,
+    PIPELINES_MANIFEST: pipelinesmanifest,
+    getroot: getroot,
+    checkexistence: checkexistence,
+    checkregistration: checkregistration,
+    checkstateregistration: checkstateregistration,
+    runpipelineboot: runpipelineboot,
+    runpipelinebootalias: runpipelinebootalias,
+    pipelinesbase: pipelinesbase,
+    bootpipeline: bootpipeline,
+    bootpipelinealias: bootpipelinealias
+  };
 }

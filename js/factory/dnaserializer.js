@@ -1,140 +1,128 @@
-// ============================================================
-// UPDATED FILE: js/factory/dnaserializer.js
-// Change applied: SERIALIZATION-FRIENDLY DEPS
-//   - serializeSelfContainedClosure now captures dependencies from
-//     the block's `deps` object when serializing.
-//   - prepareFunctionForSerialization and prepareDnaForSerialization
-//     now accept an optional `deps` object and use it to resolve
-//     free identifiers.
-//   - No functional changes to other parts.
-// ============================================================
-
-
-function createDnaSerializerConstants() {
+function creatednaserializerconstants() {
   return Object.freeze({
-    DEFAULT_FN_KEYS: Object.freeze(['length', 'name', 'prototype'])
+    defaultfnkeys: Object.freeze(['length', 'name', 'prototype'])
   });
 }
 
-// skipSpaces — recursive whitespace scanner (functional-recursive P3).
-function skipSpaces(source, i, len) {
-  if (i < len && source[i] === ' ') return skipSpaces(source, i + 1, len);
+// skipspaces — recursive whitespace scanner (functional-recursive P3).
+function skipspaces(source, i, len) {
+  if (i < len && source[i] === ' ') return skipspaces(source, i + 1, len);
   return i;
 }
 
-// skipIdentifierPart — recursive identifier-part scanner.
-function skipIdentifierPart(source, i, len) {
-  if (i < len && isIdentifierPart(source[i])) return skipIdentifierPart(source, i + 1, len);
+// skipidentifierpart — recursive identifier-part scanner.
+function skipidentifierpart(source, i, len) {
+  if (i < len && isidentifierpart(source[i])) return skipidentifierpart(source, i + 1, len);
   return i;
 }
 
-// readIdentifier — collects identifier chars; returns { word, end }.
-function readIdentifier(source, i, len) {
+// readidentifier — collects identifier chars; returns { word, end }.
+function readidentifier(source, i, len) {
   function scan(pos, word) {
-    if (pos < len && isIdentifierPart(source[pos])) return scan(pos + 1, word + source[pos]);
+    if (pos < len && isidentifierpart(source[pos])) return scan(pos + 1, word + source[pos]);
     return { word: word, end: pos };
   }
   return scan(i, '');
 }
 
-function rewriteFunctionSource(source, destructure) {
+function rewritefunctionsource(source, destructure) {
   var len = source.length;
 
-  var i = skipSpaces(source, 0, len);
+  var i = skipspaces(source, 0, len);
   if (source.slice(i, i + 5) === 'async') {
     i += 5;
-    i = skipSpaces(source, i, len);
+    i = skipspaces(source, i, len);
   }
 
   var start = i;
-  var idResult = readIdentifier(source, i, len);
-  var nextWord = idResult.word;
-  var j = idResult.end;
+  var idresult = readidentifier(source, i, len);
+  var nextword = idresult.word;
+  var j = idresult.end;
 
-  if (nextWord === 'function') {
-    i = skipSpaces(source, j, len);
-    if (isIdentifierStart(source[i])) {
-      i = skipIdentifierPart(source, i, len);
-      i = skipSpaces(source, i, len);
+  if (nextword === 'function') {
+    i = skipspaces(source, j, len);
+    if (isidentifierstart(source[i])) {
+      i = skipidentifierpart(source, i, len);
+      i = skipspaces(source, i, len);
     }
     if (source[i] !== '(') throw new Error('[dnaserializer] invalid function signature');
-    var openParen = i;
-    var closeParen = findMatchingParen(source, openParen);
-    if (closeParen === -1) throw new Error('[dnaserializer] unmatched paren');
-    var params = source.slice(openParen + 1, closeParen).trim();
-    var newParams = params.length === 0 ? '__deps' : params + ', __deps';
-    var newSource = source.slice(0, openParen + 1) + newParams + source.slice(closeParen);
+    var openparen = i;
+    var closeparen = findmatchingparen(source, openparen);
+    if (closeparen === -1) throw new Error('[dnaserializer] unmatched paren');
+    var params = source.slice(openparen + 1, closeparen).trim();
+    var newparams = params.length === 0 ? '__deps' : params + ', __deps';
+    var newsource = source.slice(0, openparen + 1) + newparams + source.slice(closeparen);
 
-    var newCloseParen = findMatchingParen(newSource, openParen);
-    if (newCloseParen === -1) throw new Error('[dnaserializer] unmatched paren after injection');
+    var newcloseparen = findmatchingparen(newsource, openparen);
+    if (newcloseparen === -1) throw new Error('[dnaserializer] unmatched paren after injection');
 
-    var bodyBrace = findBodyBrace(newSource, newCloseParen + 1);
-    if (bodyBrace === -1) throw new Error('[dnaserializer] function body not found');
+    var bodybrace = findbodybrace(newsource, newcloseparen + 1);
+    if (bodybrace === -1) throw new Error('[dnaserializer] function body not found');
 
-    return newSource.slice(0, bodyBrace + 1) + destructure + newSource.slice(bodyBrace + 1);
+    return newsource.slice(0, bodybrace + 1) + destructure + newsource.slice(bodybrace + 1);
   }
 
   if (source[i] === '(') {
-    var openParen2 = i;
-    var closeParen2 = findMatchingParen(source, openParen2);
-    if (closeParen2 === -1) throw new Error('[dnaserializer] unmatched paren');
-    var params2 = source.slice(openParen2 + 1, closeParen2).trim();
-    var newParams2 = params2.length === 0 ? '__deps' : params2 + ', __deps';
-    var newSource2 = source.slice(0, openParen2 + 1) + newParams2 + source.slice(closeParen2);
+    var openparen2 = i;
+    var closeparen2 = findmatchingparen(source, openparen2);
+    if (closeparen2 === -1) throw new Error('[dnaserializer] unmatched paren');
+    var params2 = source.slice(openparen2 + 1, closeparen2).trim();
+    var newparams2 = params2.length === 0 ? '__deps' : params2 + ', __deps';
+    var newsource2 = source.slice(0, openparen2 + 1) + newparams2 + source.slice(closeparen2);
 
-    var newCloseParen2 = findMatchingParen(newSource2, openParen2);
-    if (newCloseParen2 === -1) throw new Error('[dnaserializer] unmatched paren after injection');
+    var newcloseparen2 = findmatchingparen(newsource2, openparen2);
+    if (newcloseparen2 === -1) throw new Error('[dnaserializer] unmatched paren after injection');
 
-    var arrowIndex = newSource2.indexOf('=>', newCloseParen2 + 1);
-    if (arrowIndex === -1) throw new Error('[dnaserializer] arrow not found');
+    var arrowindex = newsource2.indexOf('=>', newcloseparen2 + 1);
+    if (arrowindex === -1) throw new Error('[dnaserializer] arrow not found');
 
-    var afterArrow = skipSpaces(newSource2, arrowIndex + 2, newSource2.length);
-    if (newSource2[afterArrow] !== '{') {
+    var afterarrow = skipspaces(newsource2, arrowindex + 2, newsource2.length);
+    if (newsource2[afterarrow] !== '{') {
       if (destructure) {
-        var exprBody = newSource2.slice(afterArrow);
-        return newSource2.slice(0, afterArrow) + '{' + destructure + '\n    return ' + exprBody + ';\n  }';
+        var exprbody = newsource2.slice(afterarrow);
+        return newsource2.slice(0, afterarrow) + '{' + destructure + '\n    return ' + exprbody + ';\n  }';
       }
       return source;
     }
 
-    var bodyBrace2 = afterArrow;
-    return newSource2.slice(0, bodyBrace2 + 1) + destructure + newSource2.slice(bodyBrace2 + 1);
+    var bodybrace2 = afterarrow;
+    return newsource2.slice(0, bodybrace2 + 1) + destructure + newsource2.slice(bodybrace2 + 1);
   }
 
-  if (isIdentifierStart(source[i])) {
-    var identStart = i;
-    i = skipIdentifierPart(source, i, len);
-    var ident = source.slice(identStart, i);
-    i = skipSpaces(source, i, len);
+  if (isidentifierstart(source[i])) {
+    var identstart = i;
+    i = skipidentifierpart(source, i, len);
+    var ident = source.slice(identstart, i);
+    i = skipspaces(source, i, len);
     if (source.slice(i, i + 2) !== '=>') return source;
 
-    var newParams3 = '(' + ident + ', __deps) =>';
-    var beforeArrow3 = source.slice(0, identStart);
-    var afterIdent3 = source.slice(i);
-    var newSource3 = beforeArrow3 + newParams3 + afterIdent3;
+    var newparams3 = '(' + ident + ', __deps) =>';
+    var beforearrow3 = source.slice(0, identstart);
+    var afterident3 = source.slice(i);
+    var newsource3 = beforearrow3 + newparams3 + afterident3;
 
-    var arrowPos3 = newSource3.indexOf('=>');
-    if (arrowPos3 === -1) return source;
+    var arrowpos3 = newsource3.indexOf('=>');
+    if (arrowpos3 === -1) return source;
 
-    var afterArrow3 = skipSpaces(newSource3, arrowPos3 + 2, newSource3.length);
-    if (newSource3[afterArrow3] !== '{') {
+    var afterarrow3 = skipspaces(newsource3, arrowpos3 + 2, newsource3.length);
+    if (newsource3[afterarrow3] !== '{') {
       if (destructure) {
-        var exprBody3 = newSource3.slice(afterArrow3);
-        return newSource3.slice(0, afterArrow3) + '{' + destructure + '\n    return ' + exprBody3 + ';\n  }';
+        var exprbody3 = newsource3.slice(afterarrow3);
+        return newsource3.slice(0, afterarrow3) + '{' + destructure + '\n    return ' + exprbody3 + ';\n  }';
       }
       return source;
     }
 
-    var bodyBrace3 = afterArrow3;
-    return newSource3.slice(0, bodyBrace3 + 1) + destructure + newSource3.slice(bodyBrace3 + 1);
+    var bodybrace3 = afterarrow3;
+    return newsource3.slice(0, bodybrace3 + 1) + destructure + newsource3.slice(bodybrace3 + 1);
   }
 
   return source;
 }
 
-function validaterevivablefunctionblock(block, BLOCKTYPES, constants) {
-  if (block.type !== BLOCKTYPES.FN && block.type !== BLOCKTYPES.WRITER) return [];
-  var fn = block.type === BLOCKTYPES.FN ? block.fn : (block.fn || block.ref);
+function validaterevivablefunctionblock(block, blocktypes, constants) {
+  if (block.type !== blocktypes.fn && block.type !== blocktypes.writer) return [];
+  var fn = block.type === blocktypes.fn ? block.fn : (block.fn || block.ref);
   if (typeof fn !== 'function') return [];
 
   var errors = [];
@@ -148,14 +136,14 @@ function validaterevivablefunctionblock(block, BLOCKTYPES, constants) {
     errors.push('[REVIVABILITY] block "' + block.id + '" contains a bound function');
   }
 
-  if (containsIdentifier(src, 'this')) {
+  if (containsidentifier(src, 'this')) {
     errors.push('[REVIVABILITY] block "' + block.id + '" uses "this"');
   }
 
-  var defaultFnKeys = constants.DEFAULT_FN_KEYS;
-  var customKeys = Object.getOwnPropertyNames(fn).filter(function(k) { return defaultFnKeys.indexOf(k) === -1; });
-  if (customKeys.length > 0) {
-    errors.push('[REVIVABILITY] block "' + block.id + '" has custom function properties: ' + customKeys.join(', '));
+  var defaultfnkeys = constants.defaultfnkeys;
+  var customkeys = Object.getOwnPropertyNames(fn).filter(function(k) { return defaultfnkeys.indexOf(k) === -1; });
+  if (customkeys.length > 0) {
+    errors.push('[REVIVABILITY] block "' + block.id + '" has custom function properties: ' + customkeys.join(', '));
   }
 
   return errors;
@@ -171,10 +159,10 @@ function validaterevivableobject(obj, label, constants) {
       var src = value.toString();
       if (src.indexOf('[native code]') !== -1) errors.push('[REVIVABILITY] ' + label + '.' + key + ' contains a native function');
       if (value.name === 'bound ') errors.push('[REVIVABILITY] ' + label + '.' + key + ' contains a bound function');
-      if (containsIdentifier(src, 'this')) errors.push('[REVIVABILITY] ' + label + '.' + key + ' uses "this"');
-      var defaultFnKeys = constants.DEFAULT_FN_KEYS;
-      var customKeys = Object.getOwnPropertyNames(value).filter(function(k) { return defaultFnKeys.indexOf(k) === -1; });
-      if (customKeys.length > 0) errors.push('[REVIVABILITY] ' + label + '.' + key + ' has custom function properties: ' + customKeys.join(', '));
+      if (containsidentifier(src, 'this')) errors.push('[REVIVABILITY] ' + label + '.' + key + ' uses "this"');
+      var defaultfnkeys = constants.defaultfnkeys;
+      var customkeys = Object.getOwnPropertyNames(value).filter(function(k) { return defaultfnkeys.indexOf(k) === -1; });
+      if (customkeys.length > 0) errors.push('[REVIVABILITY] ' + label + '.' + key + ' has custom function properties: ' + customkeys.join(', '));
     } else if (typeof value === 'object' && value !== null) {
       errors = errors.concat(validaterevivableobject(value, label + '.' + key, constants));
     }
@@ -182,7 +170,7 @@ function validaterevivableobject(obj, label, constants) {
   return errors;
 }
 
-function resolveFromBriefcase(id, container) {
+function resolvefrombriefcase(id, container) {
   if (container === null || typeof container !== 'object') {
     return { found: false, value: undefined };
   }
@@ -196,7 +184,7 @@ function resolveFromBriefcase(id, container) {
     if (i >= values.length) return { found: false, value: undefined };
     var value = values[i];
     if (value && typeof value === 'object') {
-      var result = resolveFromBriefcase(id, value);
+      var result = resolvefrombriefcase(id, value);
       if (result.found) return result;
     }
     return scan(i + 1);
@@ -204,30 +192,29 @@ function resolveFromBriefcase(id, container) {
   return scan(0);
 }
 
-function prepareFunctionForSerialization(fn, env, briefcase, deps) {
+function preparefunctionforserialization(fn, env, briefcase, deps) {
   if (deps === undefined) deps = briefcase;
   var source = fn.toString();
-  var freeIds = detectFreeIdentifiers(source);
-  var resolvedDeps = {};
+  var freeids = detectfreeidentifiers(source);
+  var resolveddeps = {};
   var missing = [];
 
-  freeIds.forEach(function(id) {
-    var resolved = resolveFromBriefcase(id, deps);
+  freeids.forEach(function(id) {
+    var resolved = resolvefrombriefcase(id, deps);
     if (resolved.found) {
-      resolvedDeps[id] = resolved.value;
+      resolveddeps[id] = resolved.value;
     } else if (deps !== briefcase) {
-      // fallback to briefcase if not found in deps
-      var fb = resolveFromBriefcase(id, briefcase);
+      var fb = resolvefrombriefcase(id, briefcase);
       if (fb.found) {
-        resolvedDeps[id] = fb.value;
+        resolveddeps[id] = fb.value;
       } else if (env && env[id] !== undefined) {
-        resolvedDeps[id] = env[id];
+        resolveddeps[id] = env[id];
         if (briefcase) briefcase[id] = env[id];
       } else {
         missing.push(id);
       }
     } else if (env && env[id] !== undefined) {
-      resolvedDeps[id] = env[id];
+      resolveddeps[id] = env[id];
       if (briefcase) briefcase[id] = env[id];
     } else {
       missing.push(id);
@@ -235,17 +222,17 @@ function prepareFunctionForSerialization(fn, env, briefcase, deps) {
   });
 
   if (missing.length > 0) {
-    throw new Error('[prepareDnaForSerialization] Missing dependencies for function ' + (fn.name || '<anonymous>') + ': ' + missing.join(', ') + '. Add them to the briefcase or deps.');
+    throw new Error('[preparednaforserialization] Missing dependencies for function ' + (fn.name || '<anonymous>') + ': ' + missing.join(', ') + '. Add them to the briefcase or deps.');
   }
 
-  var depKeys = Object.keys(resolvedDeps);
-  var destructure = depKeys.length ? '\n    const { ' + depKeys.join(', ') + ' } = __deps;' : '';
-  var rewritten = depKeys.length ? rewriteFunctionSource(source, destructure) : source;
+  var depkeys = Object.keys(resolveddeps);
+  var destructure = depkeys.length ? '\n    ' + depkeys.map(function(k) { return 'var ' + k + ' = __deps.' + k + ';'; }).join('\n    ') : '';
+  var rewritten = depkeys.length ? rewritefunctionsource(source, destructure) : source;
 
-  return { __fn__: true, source: rewritten, deps: resolvedDeps };
+  return { __fn__: true, source: rewritten, deps: resolveddeps };
 }
 
-function safeLiteral(value) {
+function safeliteral(value) {
   if (value === undefined) return 'undefined';
   if (typeof value === 'function') return 'null';
   try {
@@ -256,77 +243,108 @@ function safeLiteral(value) {
   }
 }
 
-function serializeSelfContainedClosure(fn, actualArgs, capturedEnv, deps) {
+function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps) {
   if (typeof fn !== 'function') return null;
 
   var src = fn.toString();
   if (src.indexOf('[native code]') !== -1) {
-    throw new Error('[serializeSelfContainedClosure] native function not serializable');
+    throw new Error('[serializeselfcontainedclosure] native function not serializable');
   }
 
-  var freeIds = detectFreeIdentifiers(src);
+  var freeids = detectfreeidentifiers(src);
   var bindings = {};
   var order = [];
 
-  freeIds.forEach(function(id) {
+  freeids.forEach(function(id) {
     if (deps && deps[id] !== undefined) {
       bindings[id] = deps[id];
       order.push(id);
-    } else if (capturedEnv && capturedEnv[id] !== undefined) {
-      bindings[id] = capturedEnv[id];
+    } else if (capturedenv && capturedenv[id] !== undefined) {
+      bindings[id] = capturedenv[id];
       order.push(id);
     }
   });
 
-  if (actualArgs) {
-    actualArgs.forEach(function(arg, i) {
+  if (actualargs) {
+    actualargs.forEach(function(arg, i) {
       var name = '__arg' + i;
       bindings[name] = arg;
       order.push(name);
     });
   }
 
-  var bindingLines = order.map(function(name) {
-    return '  const ' + name + ' = ' + safeLiteral(bindings[name]) + ';';
+  var bindinglines = order.map(function(name) {
+    return '  var ' + name + ' = ' + safeliteral(bindings[name]) + ';';
   }).join('\n');
 
-  var openParen = src.indexOf('(');
-  var closeParen = openParen === -1 ? -1 : findMatchingParen(src, openParen);
-  if (openParen === -1 || closeParen === -1) {
+  var openparen = src.indexOf('(');
+  var closeparen = openparen === -1 ? -1 : findmatchingparen(src, openparen);
+  if (openparen === -1 || closeparen === -1) {
     return { __fn__: true, source: '(' + src + ')' };
   }
 
-  var bodyBrace = findBodyBrace(src, closeParen + 1);
-  if (bodyBrace === -1) {
-    var afterArrowMaybe = closeParen + 1;
-    var arrowIdx = src.indexOf('=>', afterArrowMaybe);
-    if (arrowIdx === -1) return { __fn__: true, source: '(' + src + ')' };
-    var afterArrow = skipSpaces(src, arrowIdx + 2, src.length);
-    var expr = src.slice(afterArrow);
-    var zeroArgSource = '(function() {\n' + bindingLines + '\n  return (' + expr + ');\n})';
-    return { __fn__: true, source: zeroArgSource };
+  var bodybrace = findbodybrace(src, closeparen + 1);
+  if (bodybrace === -1) {
+    var afterarrowmaybe = closeparen + 1;
+    var arrowidx = src.indexOf('=>', afterarrowmaybe);
+    if (arrowidx === -1) return { __fn__: true, source: '(' + src + ')' };
+    var afterarrow = skipspaces(src, arrowidx + 2, src.length);
+    var expr = src.slice(afterarrow);
+    var zeroargsource = '(function() {\n' + bindinglines + '\n  return (' + expr + ');\n})';
+    return { __fn__: true, source: zeroargsource };
   }
 
-  var bodyStart = bodyBrace + 1;
-  var bodyEnd = src.lastIndexOf('}');
-  var innerBody = src.slice(bodyStart, bodyEnd);
-  var zeroArgSource = 'function() {\n' + (bindingLines ? bindingLines + '\n' : '') + innerBody + '\n}';
-  return { __fn__: true, source: zeroArgSource };
+  var bodystart = bodybrace + 1;
+  var bodyend = src.lastIndexOf('}');
+  var innerbody = src.slice(bodystart, bodyend);
+  var zeroargsource = 'function() {\n' + (bindinglines ? bindinglines + '\n' : '') + innerbody + '\n}';
+  return { __fn__: true, source: zeroargsource };
 }
 
-function prepareDnaForSerialization(node, env, briefcase, deps) {
+function preparednaforserialization(node, env, briefcase, deps) {
   if (typeof node === 'function') {
-    return prepareFunctionForSerialization(node, env, briefcase, deps);
+    return preparefunctionforserialization(node, env, briefcase, deps);
   }
   if (Array.isArray(node)) {
-    return node.map(function(item) { return prepareDnaForSerialization(item, env, briefcase, deps); });
+    return node.map(function(item) { return preparednaforserialization(item, env, briefcase, deps); });
   }
   if (node && typeof node === 'object') {
     var out = {};
     Object.keys(node).forEach(function(key) {
-      out[key] = prepareDnaForSerialization(node[key], env, briefcase, deps);
+      out[key] = preparednaforserialization(node[key], env, briefcase, deps);
     });
     return out;
   }
   return node;
+}
+
+// aliases (lowercase)
+var creatednaserializerconstantsalias = creatednaserializerconstants;
+var rewritefunctionsourcealias = rewritefunctionsource;
+var validaterevivablefunctionblockalias = validaterevivablefunctionblock;
+var validaterevivableobjectalias = validaterevivableobject;
+var resolvefrombriefcasealias = resolvefrombriefcase;
+var preparefunctionforserializationalias = preparefunctionforserialization;
+var serializeselfcontainedclosurealias = serializeselfcontainedclosure;
+var preparednaforserializationalias = preparednaforserialization;
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    creatednaserializerconstants: creatednaserializerconstants,
+    creatednaserializerconstantsalias: creatednaserializerconstantsalias,
+    rewritefunctionsource: rewritefunctionsource,
+    rewritefunctionsourcealias: rewritefunctionsourcealias,
+    validaterevivablefunctionblock: validaterevivablefunctionblock,
+    validaterevivablefunctionblockalias: validaterevivablefunctionblockalias,
+    validaterevivableobject: validaterevivableobject,
+    validaterevivableobjectalias: validaterevivableobjectalias,
+    resolvefrombriefcase: resolvefrombriefcase,
+    resolvefrombriefcasealias: resolvefrombriefcasealias,
+    preparefunctionforserialization: preparefunctionforserialization,
+    preparefunctionforserializationalias: preparefunctionforserializationalias,
+    serializeselfcontainedclosure: serializeselfcontainedclosure,
+    serializeselfcontainedclosurealias: serializeselfcontainedclosurealias,
+    preparednaforserialization: preparednaforserialization,
+    preparednaforserializationalias: preparednaforserializationalias
+  };
 }

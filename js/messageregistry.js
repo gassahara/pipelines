@@ -1,142 +1,133 @@
 var MESSAGETYPES = Object.freeze({
-  // renderactor (33)
-  RENDER: 'render',
-  CLEAR: 'clear',
-  HTML: 'html',
-  REMOVE: 'remove',
-  SETSTYLES: 'setstyles',
-  SETATTR: 'setattr',
-  TOGGLECLASS: 'toggleclass',
-  CRYPTO: 'crypto',
-  GEOLOCATION: 'geolocation',
-  PERSISTENCE: 'persistence',
-  CREATEELEMENT: 'createelement',
-  CREATECONTAINER: 'createcontainer',
-  CREATEFROMHTML: 'createfromhtml',
-  PROPERTY: 'property',
-  GETHTML: 'gethtml',
-  GETVALUE: 'getvalue',
-  GETSTYLE: 'getstyle',
-  GETPOSITION: 'getposition',
-  GETLAYOUT: 'getlayout',
-  SETHTML: 'sethtml',
-  SETPOSITION: 'setposition',
-  SETSTYLE: 'setstyle',
-  SETVALUE: 'setvalue',
-  SETLAYOUT: 'setlayout',
-  GETVIEWPORT: 'getviewport',
-  GETSCREEN: 'getscreen',
-  MATCHMEDIA: 'matchmedia',
-  GET_BODY_HTML: 'get_body_html',
-  RESTORE_BODY_HTML: 'restore_body_html',
-  RECOVER: 'recover',
-  PING: 'ping',
-  REGISTER_EVENT_LISTENER: 'register_event_listener',   // new
-  // apiactor (2)
-  API: 'api',
-  FETCH: 'fetch',
-  // mailactor (2) — POLL removed
-  SEND: 'send',
-  ACK: 'ack',
-  // dbactor (4)
-  STORE: 'store',
-  RESTORE: 'restore',
-  LIST: 'list',
-  DELETE: 'delete',
-  // debugactor (5)
-  INIT_OVERLAY: 'init_overlay',
-  SHOW: 'show',
-  HIDE: 'hide',
-  // executionactor (16)
-  PIPELINE_LOADED: 'pipeline_loaded',
-  ENV_UPDATED: 'env_updated',
-  GET_STATUS: 'get_status',
-  EXECUTE_ELEMENT: 'execute_element',
-  AWAIT_TASK: 'await_task',
-  GET_TASKS: 'get_tasks',
-  GET_TASK_STATUS: 'get_task_status',
-  CANCEL_TASK: 'cancel_task',
-  STOP_TASK: 'stop_task',
-  CCC_ABORT: 'ccc_abort',
-  CCC_CONTINUE: 'ccc_continue',
-  CCC_RETRY: 'ccc_retry',
-  TASK_SETTLED: 'task_settled',
-  REGISTER_PIPELINE: 'register_pipeline',
-  // hypervisoractor (26)
-  LOAD: 'load',
-  SAVE: 'save',
-  GET_ENV: 'get_env',
-  SET_ENV: 'set_env',
-  GET_LATEST_ENV: 'get_latest_env',
-  GET_RENDER_HTML: 'get_render_html',
-  SET_RENDER_HTML: 'set_render_html',
-  GET_EXECUTION_STACK: 'get_execution_stack',
-  SET_EXECUTION_STACK: 'set_execution_stack',
-  GET_ROUTE: 'get_route',
-  SET_ROUTE: 'set_route',
-  GET_ACTIVE_PIPELINES: 'get_active_pipelines',
-  UNREGISTER_PIPELINE: 'unregister_pipeline',
-  SET_PROGRAM: 'set_program',
-  GET_PROGRAM: 'get_program',
-  MARK_BOOT: 'mark_boot',
-  SET_STAGE_DESCRIPTOR: 'set_stage_descriptor',
-  GET_TRIGGER_RECIPIENT_STATUS: 'get_trigger_recipient_status',   // kept for compatibility? no, removed? We'll keep but not used.
-  EVENT_TRIGGERED: 'event_triggered',   // new
-  ACTIVATE_ACTORS: 'activate_actors',
-  BOOT_PIPELINE: 'boot_pipeline',
-  COMPILE_STAGE: 'compile_stage',
-  STAGE_COMPLETED: 'stage_completed',
-  // worldmapactor (5)
-  UPDATE: 'update',
-  UPDATE_FN: 'update_fn',
-  OBSERVE: 'observe',
-  UNOBSERVE: 'unobserve',
-  GET_WORLDMAP: 'get_worldmap',
-  // response types (NEW)
-  RESPONSE: 'response',
-  API_RESULT: 'api_result',
-  FETCH_RESULT: 'fetch_result',
-  TASK_RESULT: 'task_result',
-  PIPELINE_BOOTED: 'pipeline_booted',
-  DOM_RESULT: 'dom_result',
-  STAGE_COMPLETED_ACK: 'stage_completed_ack',
-  DB_RESULT: 'db_result',
-  EVENT_LISTENER_REGISTERED: 'event_listener_registered'   // new response type
+  RENDER: 'RENDER',
+  CLEAR: 'CLEAR',
+  HTML: 'HTML',
+  REMOVE: 'REMOVE',
+  SETSTYLES: 'SETSTYLES',
+  SETATTR: 'SETATTR',
+  TOGGLECLASS: 'TOGGLECLASS',
+  CRYPTO: 'CRYPTO',
+  GEOLOCATION: 'GEOLOCATION',
+  PERSISTENCE: 'PERSISTENCE',
+  CREATEELEMENT: 'CREATEELEMENT',
+  CREATECONTAINER: 'CREATECONTAINER',
+  CREATEFROMHTML: 'CREATEFROMHTML',
+  PROPERTY: 'PROPERTY',
+  GETHTML: 'GETHTML',
+  GETVALUE: 'GETVALUE',
+  GETSTYLE: 'GETSTYLE',
+  GETPOSITION: 'GETPOSITION',
+  GETLAYOUT: 'GETLAYOUT',
+  SETHTML: 'SETHTML',
+  SETPOSITION: 'SETPOSITION',
+  SETSTYLE: 'SETSTYLE',
+  SETVALUE: 'SETVALUE',
+  SETLAYOUT: 'SETLAYOUT',
+  GETVIEWPORT: 'GETVIEWPORT',
+  GETSCREEN: 'GETSCREEN',
+  MATCHMEDIA: 'MATCHMEDIA',
+  GETBODYHTML: 'GETBODYHTML',
+  RESTOREBODYHTML: 'RESTOREBODYHTML',
+  RECOVER: 'RECOVER',
+  PING: 'PING',
+  REGISTEREVENTLISTENER: 'REGISTEREVENTLISTENER',
+  API: 'API',
+  FETCH: 'FETCH',
+  SEND: 'SEND',
+  ACK: 'ACK',
+  STORE: 'STORE',
+  RESTORE: 'RESTORE',
+  LIST: 'LIST',
+  DELETE: 'DELETE',
+  INITOVERLAY: 'INITOVERLAY',
+  SHOW: 'SHOW',
+  HIDE: 'HIDE',
+  PIPELINELOADED: 'PIPELINELOADED',
+  ENVUPDATED: 'ENVUPDATED',
+  GETSTATUS: 'GETSTATUS',
+  EXECUTEELEMENT: 'EXECUTEELEMENT',
+  AWAITTASK: 'AWAITTASK',
+  GETTASKS: 'GETTASKS',
+  GETTASKSTATUS: 'GETTASKSTATUS',
+  CANCELTASK: 'CANCELTASK',
+  STOPTASK: 'STOPTASK',
+  CCCABORT: 'CCCABORT',
+  CCCCONTINUE: 'CCCCONTINUE',
+  CCCRETRY: 'CCCRETRY',
+  TASKSETTLED: 'TASKSETTLED',
+  REGISTERPIPELINE: 'REGISTERPIPELINE',
+  LOAD: 'LOAD',
+  SAVE: 'SAVE',
+  GETENV: 'GETENV',
+  SETENV: 'SETENV',
+  GETLATESTENV: 'GETLATESTENV',
+  GETRENDERHTML: 'GETRENDERHTML',
+  SETRENDERHTML: 'SETRENDERHTML',
+  GETEXECUTIONSTACK: 'GETEXECUTIONSTACK',
+  SETEXECUTIONSTACK: 'SETEXECUTIONSTACK',
+  GETROUTE: 'GETROUTE',
+  SETROUTE: 'SETROUTE',
+  GETACTIVEPIPELINES: 'GETACTIVEPIPELINES',
+  UNREGISTERPIPELINE: 'UNREGISTERPIPELINE',
+  SETPROGRAM: 'SETPROGRAM',
+  GETPROGRAM: 'GETPROGRAM',
+  MARKBOOT: 'MARKBOOT',
+  SETSTAGEDESCRIPTOR: 'SETSTAGEDESCRIPTOR',
+  GETTRIGGERRECIPIENTSTATUS: 'GETTRIGGERRECIPIENTSTATUS',
+  EVENTTRIGGERED: 'EVENTTRIGGERED',
+  ACTIVATEACTORS: 'ACTIVATEACTORS',
+  BOOTPIPELINE: 'BOOTPIPELINE',
+  COMPILESTAGE: 'COMPILESTAGE',
+  STAGECOMPLETED: 'STAGECOMPLETED',
+  UPDATE: 'UPDATE',
+  UPDATEFN: 'UPDATEFN',
+  OBSERVE: 'OBSERVE',
+  UNOBSERVE: 'UNOBSERVE',
+  GETWORLDMAP: 'GETWORLDMAP',
+  RESPONSE: 'RESPONSE',
+  APIRESULT: 'APIRESULT',
+  FETCHRESULT: 'FETCHRESULT',
+  TASKRESULT: 'TASKRESULT',
+  PIPELINEBOOTED: 'PIPELINEBOOTED',
+  DOMRESULT: 'DOMRESULT',
+  STAGECOMPLETEDACK: 'STAGECOMPLETEDACK',
+  DBRESULT: 'DBRESULT',
+  EVENTLISTENERREGISTERED: 'EVENTLISTENERREGISTERED'
 });
 
-var MAILBOX_FILTER_TYPES = Object.freeze({
+var mailboxfiltertypes = Object.freeze({
   RESPONSE: MESSAGETYPES.RESPONSE,
-  API_RESULT: MESSAGETYPES.API_RESULT,
-  FETCH_RESULT: MESSAGETYPES.FETCH_RESULT,
-  TASK_RESULT: MESSAGETYPES.TASK_RESULT,
-  PIPELINE_BOOTED: MESSAGETYPES.PIPELINE_BOOTED,
-  DOM_RESULT: MESSAGETYPES.DOM_RESULT,
-  STAGE_COMPLETED_ACK: MESSAGETYPES.STAGE_COMPLETED_ACK,
-  DB_RESULT: MESSAGETYPES.DB_RESULT,
-  EVENT_LISTENER_REGISTERED: MESSAGETYPES.EVENT_LISTENER_REGISTERED   // added
+  APIRESULT: MESSAGETYPES.APIRESULT,
+  FETCHRESULT: MESSAGETYPES.FETCHRESULT,
+  TASKRESULT: MESSAGETYPES.TASKRESULT,
+  PIPELINEBOOTED: MESSAGETYPES.PIPELINEBOOTED,
+  DOMRESULT: MESSAGETYPES.DOMRESULT,
+  STAGECOMPLETEDACK: MESSAGETYPES.STAGECOMPLETEDACK,
+  DBRESULT: MESSAGETYPES.DBRESULT,
+  EVENTLISTENERREGISTERED: MESSAGETYPES.EVENTLISTENERREGISTERED
 });
 
-var MESSAGEREGISTRY_STORE = {};
+var messageregistrystore = {};
 
-var MESSAGEREGISTRY = {
+var messageregistry = {
   register: function(owner, type, iface, handler) {
-    var entry = MESSAGEREGISTRY_STORE[owner];
+    var entry = messageregistrystore[owner];
     if (!entry) {
       entry = {};
-      MESSAGEREGISTRY_STORE[owner] = entry;
+      messageregistrystore[owner] = entry;
     }
     entry[type] = { iface: iface, handler: handler };
   },
-  getInterfaces: function(owner) {
-    var entry = MESSAGEREGISTRY_STORE[owner] || {};
+  getinterfaces: function(owner) {
+    var entry = messageregistrystore[owner] || {};
     var map = {};
     Object.keys(entry).forEach(function(type) {
       map[type] = entry[type].iface;
     });
     return map;
   },
-  getHandler: function(owner, type) {
-    var entry = MESSAGEREGISTRY_STORE[owner];
+  gethandler: function(owner, type) {
+    var entry = messageregistrystore[owner];
     if (entry && entry[type]) return entry[type].handler;
     return undefined;
   },
@@ -144,11 +135,11 @@ var MESSAGEREGISTRY = {
     if (!message || typeof message !== 'object') {
       return { valid: false, error: 'message must be a non-null object', type: 'null' };
     }
-    var type = message.type;
+    var type = message.TYPE || message.type;
     if (!type || typeof type !== 'string') {
       return { valid: false, error: 'message type must be a string, got: ' + typeof type, type: String(type) };
     }
-    var entry = MESSAGEREGISTRY_STORE[owner];
+    var entry = messageregistrystore[owner];
     var iface = (entry && entry[type]) ? entry[type].iface : null;
     if (!iface) {
       return { valid: false, error: 'unknown message type: ' + type, type: type };
@@ -160,7 +151,8 @@ var MESSAGEREGISTRY = {
       var spec = iface[key];
       var optional = spec.charAt(spec.length - 1) === '?';
       var expectedtype = optional ? spec.slice(0, -1) : spec;
-      if (message[key] === undefined || message[key] === null) {
+      var val = message[key] !== undefined ? message[key] : message[key.toLowerCase()];
+      if (val === undefined || val === null) {
         if (!optional) {
           invalid = { valid: false, error: 'type "' + type + '" missing required field "' + key + '" (' + expectedtype + ')', type: type };
         }
@@ -168,15 +160,15 @@ var MESSAGEREGISTRY = {
       }
       if (expectedtype === 'any') return;
       if (expectedtype === 'array') {
-        if (!Array.isArray(message[key])) {
-          invalid = { valid: false, error: 'type "' + type + '" field "' + key + '" expected array got ' + (Array.isArray(message[key]) ? 'array' : typeof message[key]), type: type };
+        if (!Array.isArray(val)) {
+          invalid = { valid: false, error: 'type "' + type + '" field "' + key + '" expected array got ' + (Array.isArray(val) ? 'array' : typeof val), type: type };
         }
       } else if (expectedtype === 'object') {
-        if (message[key] === null || typeof message[key] !== 'object') {
-          invalid = { valid: false, error: 'type "' + type + '" field "' + key + '" expected object got ' + (message[key] === null ? 'null' : typeof message[key]), type: type };
+        if (val === null || typeof val !== 'object') {
+          invalid = { valid: false, error: 'type "' + type + '" field "' + key + '" expected object got ' + (val === null ? 'null' : typeof val), type: type };
         }
       } else {
-        var actualtype = typeof message[key];
+        var actualtype = typeof val;
         if (actualtype !== expectedtype) {
           invalid = { valid: false, error: 'type "' + type + '" field "' + key + '" expected ' + expectedtype + ' got ' + actualtype, type: type };
         }
@@ -186,3 +178,11 @@ var MESSAGEREGISTRY = {
     return { valid: true, error: null, type: type };
   }
 };
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    MESSAGETYPES: MESSAGETYPES,
+    mailboxfiltertypes: mailboxfiltertypes,
+    messageregistry: messageregistry
+  };
+}

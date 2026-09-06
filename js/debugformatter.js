@@ -1,16 +1,8 @@
-// ============================================================
-// UPDATED FILE: js/debugformatter.js
-// Change applied: ES5 rewrite — require/module.exports, var,
-// function expressions, no optional chaining, no default params,
-// no optional catch binding, HTMLElement guard for node safety.
-// ============================================================
-
-
 function formatdebugtrace(error, framelist) {
   if (framelist === undefined) framelist = frames;
 
   var err = error || {};
-  var message = (typeof err === 'string') ? err : (err.message || 'Unknown error');
+  var message = (typeof err === 'string') ? err : (err.message || 'unknown error');
   var list = Array.isArray(framelist) ? framelist : [];
   var framelistcopy = list.slice();
 
@@ -33,7 +25,7 @@ function formatdebugtrace(error, framelist) {
         try {
           var str = JSON.stringify(a, function(key, value) {
             if (key === 'container' || key === 'canvas' ||
-                (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement)) return '[DOM_NODE]';
+                (typeof HTMLELEMENT !== 'undefined' && value instanceof HTMLELEMENT)) return '[DOM_NODE]';
             return value;
           });
           return str.length > 120 ? str.slice(0, 120) + '...' : str;
@@ -56,4 +48,10 @@ function formatdebugtrace(error, framelist) {
 
   html += '</ul></div>';
   return html;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    formatdebugtrace: formatdebugtrace
+  };
 }

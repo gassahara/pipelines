@@ -1,562 +1,644 @@
-var RENDERVERBOSITYCONSTANTS = createVerbosityConstants();
+var RENDERVERBOSITYCONSTANTS = CREATEVERBOSITYCONSTANTS();
 
-function ENSURERENDERSLICE(env) {
-  return ENSUREENVSLICE(env, 'render', function() {
+function ENSURERENDERSLICE(ENV) {
+  return ENSUREENVSLICE(ENV, 'RENDER', function() {
     return {
-      html: '',
-      viewport: null,
-      actorRegistry: null,
-      _gc: createGarbageCollector(),
-      _triggerObserverInstalled: false,
-      _triggerGcScheduled: false,
-      scriptTags: []
+      HTML: '',
+      VIEWPORT: null,
+      ACTORREGISTRY: null,
+      GC: (typeof CREATEGARBAGECOLLECTOR === 'function' ? CREATEGARBAGECOLLECTOR() : (typeof CREATEGARBAGECOLLECTOR === 'function' ? CREATEGARBAGECOLLECTOR() : {})),
+      TRIGGEROBSERVERINSTALLED: false,
+      TRIGGERGCSCHEDULED: false,
+      SCRIPTTAGS: []
     };
   });
 }
 
-function CREATERENDERERRORCONTEXT(label) {
-  return function(err) {
-    if (!err) err = new Error('unknown render error');
-    if (!err.diagnostic) err.diagnostic = {};
-    err.diagnostic.renderstage = label;
-    throw err;
+function CREATERENDERERRORCONTEXT(LABEL) {
+  return function(ERR) {
+    if (!ERR) ERR = new Error('unknown render error');
+    if (!ERR.DIAGNOSTIC) ERR.DIAGNOSTIC = {};
+    ERR.DIAGNOSTIC.RENDERSTAGE = LABEL;
+    throw ERR;
   };
 }
 
-function WITHELEMENT(id, reject, fn) {
-  if (!id || typeof id !== 'string') {
-    if (typeof reject === 'function') reject(new Error('[RENDERACTOR] id must be a non-empty string'));
+function WITHELEMENT(ID, REJECT, FN) {
+  if (!ID || typeof ID !== 'string') {
+    if (typeof REJECT === 'function') REJECT(new Error('[RENDERACTOR] id must be a non-empty string'));
     return null;
   }
-  var el = document.getElementById(id);
-  if (!el) {
-    if (typeof reject === 'function') reject(new Error('[RENDERACTOR] element not found: ' + id));
+  var EL = DOCUMENT.GETELEMENTBYID(ID);
+  if (!EL) {
+    if (typeof REJECT === 'function') REJECT(new Error('[RENDERACTOR] element not found: ' + ID));
     return null;
   }
-  return fn(el);
+  return FN(EL);
 }
 
-function WITHELEMENTRETRY(id, reject, fn, timeout) {
-  if (timeout === undefined) timeout = 5000;
-  var existing = document.getElementById(id);
-  if (existing) return fn(existing);
-  return new Promise(function(resolve, rejectPromise) {
-    var observer = null;
-    var timeoutId = setTimeout(function() {
-      if (observer) observer.disconnect();
-      rejectPromise(new Error('[RENDERACTOR] element not found after timeout: ' + id));
-    }, timeout);
-    observer = new MutationObserver(function() {
-      var el = document.getElementById(id);
-      if (el) {
-        clearTimeout(timeoutId);
-        observer.disconnect();
-        try { resolve(fn(el)); } catch (err) { rejectPromise(err); }
+function WITHELEMENTRETRY(ID, REJECT, FN, TIMEOUT) {
+  if (TIMEOUT === undefined) TIMEOUT = 5000;
+  var EXISTING = DOCUMENT.GETELEMENTBYID(ID);
+  if (EXISTING) return FN(EXISTING);
+  return new Promise(function(RESOLVE, REJECTPROMISE) {
+    var OBSERVER = null;
+    var TIMEOUTID = setTimeout(function() {
+      if (OBSERVER) OBSERVER.DISCONNECT();
+      REJECTPROMISE(new Error('[RENDERACTOR] element not found after timeout: ' + ID));
+    }, TIMEOUT);
+    OBSERVER = new MUTATIONOBSERVER(function() {
+      var EL = DOCUMENT.GETELEMENTBYID(ID);
+      if (EL) {
+        clearTimeout(TIMEOUTID);
+        OBSERVER.DISCONNECT();
+        try { RESOLVE(FN(EL)); } catch (ERR) { REJECTPROMISE(ERR); }
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    OBSERVER.OBSERVE(DOCUMENT.BODY, { CHILDLIST: true, SUBTREE: true });
   });
 }
 
 function WAITFORDOMREADY() {
-  if (typeof document === 'undefined') return Promise.resolve();
-  if (document.readyState === 'loading') {
-    return new Promise(function(resolve) { document.addEventListener('DOMContentLoaded', resolve, { once: true }); });
+  if (typeof DOCUMENT === 'undefined') return Promise.resolve();
+  if (DOCUMENT.READYSTATE === 'loading') {
+    return new Promise(function(RESOLVE) { DOCUMENT.ADDEVENTLISTENER('DOMContentLoaded', RESOLVE, { ONCE: true }); });
   }
-  if (document.readyState !== 'complete') {
-    return new Promise(function(resolve) { window.addEventListener('load', resolve, { once: true }); });
+  if (DOCUMENT.READYSTATE !== 'complete') {
+    return new Promise(function(RESOLVE) { WINDOW.ADDEVENTLISTENER('load', RESOLVE, { ONCE: true }); });
   }
   return Promise.resolve();
 }
 
-function CREATEEVENTPRODUCERCONSUMER(msg) {
+function CREATEEVENTPRODUCERCONSUMER(MSG) {
   return {
-    producer: { type: 'dom-event', id: msg.sourceid, event: msg.event },
-    consumer: { type: 'event-trigger', pipelineId: msg.pipelineId, stageId: msg.stageId },
-    metadata: { stagePath: msg.stagePath || [], control: msg.control, children: msg.elements, env: msg.env || {} }
+    PRODUCER: { TYPE: 'domevent', ID: MSG.SOURCEID, EVENT: MSG.EVENT },
+    CONSUMER: { TYPE: 'eventtrigger', PIPELINEID: MSG.PIPELINEID || MSG.PIPELINEID, STAGEID: MSG.STAGEID || MSG.STAGEID },
+    METADATA: { STAGEPATH: MSG.STAGEPATH || MSG.STAGEPATH || [], CONTROL: MSG.CONTROL, CHILDREN: MSG.ELEMENTS, ENV: MSG.ENV || {} }
   };
 }
 
-function SCHEDULEGCCYCLE(renderSlice) {
-  if (!renderSlice) return;
-  if (renderSlice._triggerGcScheduled) return;
-  renderSlice._triggerGcScheduled = true;
+function SCHEDULEGCCYCLE(RENDERSLICE) {
+  if (!RENDERSLICE) return;
+  var SCHEDULED = RENDERSLICE.TRIGGERGCSCHEDULED || RENDERSLICE._TRIGGERGCSCHEDULED;
+  if (SCHEDULED) return;
+  RENDERSLICE.TRIGGERGCSCHEDULED = true;
+  RENDERSLICE._TRIGGERGCSCHEDULED = true;
   setTimeout(function() {
-    renderSlice._triggerGcScheduled = false;
-    if (renderSlice._gc) {
-      collectEnded(renderSlice._gc);
+    RENDERSLICE.TRIGGERGCSCHEDULED = false;
+    RENDERSLICE._TRIGGERGCSCHEDULED = false;
+    var GC = RENDERSLICE.GC || RENDERSLICE._GC;
+    if (GC) {
+      if (typeof COLLECTENDED === 'function') COLLECTENDED(GC);
+      else if (typeof COLLECTENDED === 'function') COLLECTENDED(GC);
     }
   }, 0);
 }
 
-function ENSUREEVENTOBSERVER(renderSlice) {
-  if (!renderSlice || renderSlice._triggerObserverInstalled) return;
-  if (typeof document === 'undefined') return;
-  renderSlice._triggerObserverInstalled = true;
-  loginfo(renderSlice, '[RENDERACTOR]', 'Installing global DOM event observer for EVENT stages');
+function ENSUREEVENTOBSERVER(RENDERSLICE) {
+  var INSTALLED = RENDERSLICE && (RENDERSLICE.TRIGGEROBSERVERINSTALLED || RENDERSLICE._TRIGGEROBSERVERINSTALLED);
+  if (!RENDERSLICE || INSTALLED) return;
+  if (typeof DOCUMENT === 'undefined') return;
+  RENDERSLICE.TRIGGEROBSERVERINSTALLED = true;
+  RENDERSLICE._TRIGGEROBSERVERINSTALLED = true;
+  LOGINFO(RENDERSLICE, '[RENDERACTOR]', 'INSTALLING GLOBAL DOM EVENT OBSERVER FOR EVENT STAGES');
 
-  var handler = function(event) {
-    var target = event.target;
-    var targetId = target && target.id;
-    if (!targetId || !renderSlice._gc) return;
+  var HANDLER = function(EVENT) {
+    var TARGET = EVENT.TARGET;
+    var TARGETID = TARGET && TARGET.ID;
+    var GC = RENDERSLICE.GC || RENDERSLICE._GC;
+    if (!TARGETID || !GC) return;
 
-    var matchingObjects = listObjects(renderSlice._gc).filter(function(gcObj) {
-      var producer = gcObj.producer || {};
-      return producer.type === 'dom-event' &&
-             producer.id === targetId &&
-             producer.event === event.type;
+    var LISTFN = (typeof LISTOBJECTS === 'function') ? LISTOBJECTS : LISTOBJECTS;
+    var INCSENTFN = (typeof INCREMENTSENT === 'function') ? INCREMENTSENT : INCREMENTSENT;
+    var MATCHINGOBJECTS = LISTFN(GC).filter(function(GCOBJ) {
+      var PRODUCER = GCOBJ.PRODUCER || {};
+      return (PRODUCER.TYPE === 'domevent' || PRODUCER.TYPE === 'DOM-EVENT') &&
+             PRODUCER.ID === TARGETID &&
+             PRODUCER.EVENT === EVENT.TYPE;
     });
 
-    if (matchingObjects.length === 0) return;
+    if (MATCHINGOBJECTS.length === 0) return;
 
-    loginfo(renderSlice, '[RENDERACTOR]', 'EVENT observed:', {
-      sourceid: targetId,
-      event: event.type,
-      pipelineId: matchingObjects[0].consumer && matchingObjects[0].consumer.pipelineId,
-      stageId: matchingObjects[0].consumer && matchingObjects[0].consumer.stageId
+    var FIRSTCONSUMER = MATCHINGOBJECTS[0].CONSUMER || {};
+    LOGINFO(RENDERSLICE, '[RENDERACTOR]', 'EVENT OBSERVED:', {
+      SOURCEID: TARGETID,
+      EVENT: EVENT.TYPE,
+      PIPELINEID: FIRSTCONSUMER.PIPELINEID || FIRSTCONSUMER.PIPELINEID,
+      STAGEID: FIRSTCONSUMER.STAGEID || FIRSTCONSUMER.STAGEID
     });
 
-    matchingObjects.forEach(function(gcObj) {
-      incrementSent(renderSlice._gc, gcObj.id, 1);
+    MATCHINGOBJECTS.forEach(function(GCOBJ) {
+      INCSENTFN(GC, GCOBJ.ID, 1);
 
-      var consumer = gcObj.consumer || {};
-      var metadata = gcObj.metadata || {};
+      var CONSUMER = GCOBJ.CONSUMER || {};
+      var METADATA = GCOBJ.METADATA || {};
+      var PIPELINEID = CONSUMER.PIPELINEID || CONSUMER.PIPELINEID;
+      var STAGEID = CONSUMER.STAGEID || CONSUMER.STAGEID;
+      var STAGEPATH = METADATA.STAGEPATH || METADATA.STAGEPATH || [STAGEID];
 
-      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.EVENT_TRIGGERED, {
-        pipelineId: consumer.pipelineId,
-        stageId: consumer.stageId,
-        stagePath: metadata.stagePath || [consumer.stageId],
-        eventPayload: { type: event.type, targetId: targetId }
-      }, null, 'RENDERACTOR');
+      var EVENTTRIGGERPAYLOAD = {
+        PIPELINEID: PIPELINEID,
+        STAGEID: STAGEID,
+        STAGEPATH: STAGEPATH,
+        EVENTPAYLOAD: { TYPE: EVENT.TYPE, TARGETID: TARGETID }
+      };
 
-      logdebug(renderSlice, '[RENDERACTOR]', 'EVENT_TRIGGERED sent to HYPERVISORACTOR for', consumer.stageId);
+      var MSGTYPE = MESSAGETYPES.EVENTTRIGGERED || MESSAGETYPES.EVENT_TRIGGERED;
+      SENDINSTRUCTION('HYPERVISORACTOR', MSGTYPE, EVENTTRIGGERPAYLOAD, null, 'RENDERACTOR');
+
+      LOGDEBUG(RENDERSLICE, '[RENDERACTOR]', 'EVENTTRIGGERED SENT TO HYPERVISORACTOR FOR', STAGEID);
     });
   };
 
-  document.addEventListener('click', handler, true);
-  document.addEventListener('input', handler, true);
-  document.addEventListener('change', handler, true);
-  loginfo(renderSlice, '[RENDERACTOR]', 'Global event observer installed for click/input/change');
+  DOCUMENT.ADDEVENTLISTENER('click', HANDLER, true);
+  DOCUMENT.ADDEVENTLISTENER('input', HANDLER, true);
+  DOCUMENT.ADDEVENTLISTENER('change', HANDLER, true);
+  LOGINFO(RENDERSLICE, '[RENDERACTOR]', 'GLOBAL EVENT OBSERVER INSTALLED FOR CLICK/INPUT/CHANGE');
 }
 
 var HANDLERS = {};
-HANDLERS[MESSAGETYPES.RENDER] = function(env, msg) {
-  var target = msg.id ? document.getElementById(msg.id) : null;
-  if (typeof msg.renderer === 'function') {
-    try { msg.renderer(target, msg.data, msg.env || {}); } catch (err) { console.error('[RENDERACTOR] Renderer error:', err); throw err; }
+HANDLERS[MESSAGETYPES.RENDER] = function(ENV, MSG) {
+  var TARGET = MSG.ID ? DOCUMENT.GETELEMENTBYID(MSG.ID) : null;
+  if (typeof MSG.RENDERER === 'function') {
+    try { MSG.RENDERER(TARGET, MSG.DATA, MSG.ENV || {}); } catch (ERR) { CONSOLE.ERROR('[RENDERACTOR] Renderer error:', ERR); throw ERR; }
   }
   return true;
 };
-HANDLERS[MESSAGETYPES.CLEAR] = function(env, msg) {
-  WITHELEMENT(msg.id, null, function(el) { el.innerHTML = ''; });
+HANDLERS[MESSAGETYPES.CLEAR] = function(ENV, MSG) {
+  WITHELEMENT(MSG.ID, null, function(EL) { EL.INNERHTML = ''; });
   return true;
 };
-HANDLERS[MESSAGETYPES.HTML] = function(env, msg) {
+HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
-    WITHELEMENTRETRY(msg.id, null, function(el) {
-      if (msg.append) el.insertAdjacentHTML('beforeend', msg.markup);
-      else el.innerHTML = msg.markup;
+    WITHELEMENTRETRY(MSG.ID, null, function(EL) {
+      if (MSG.APPEND) EL.INSERTADJACENTHTML('beforeend', MSG.MARKUP);
+      else EL.INNERHTML = MSG.MARKUP;
     });
-    RESPONDIFNEEDED(env, msg, true);
-  }).catch(function(err) {
-    RESPONDIFNEEDED(env, msg, { error: err.message || String(err) });
+    RESPONDIFNEEDED(ENV, MSG, true);
+  }).catch(function(ERR) {
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
   });
 };
-HANDLERS[MESSAGETYPES.REMOVE] = function(env, msg) {
-  WITHELEMENT(msg.id, null, function(el) { el.remove(); });
+HANDLERS[MESSAGETYPES.REMOVE] = function(ENV, MSG) {
+  WITHELEMENT(MSG.ID, null, function(EL) { EL.REMOVE(); });
   return true;
 };
-HANDLERS[MESSAGETYPES.SETSTYLES] = function(env, msg) {
-  WITHELEMENTRETRY(msg.id, null, function(el) {
-    Object.keys(msg.styles || {}).forEach(function(prop) { el.style[prop] = msg.styles[prop]; });
+HANDLERS[MESSAGETYPES.SETSTYLES] = function(ENV, MSG) {
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) {
+    Object.keys(MSG.STYLES || {}).forEach(function(PROP) { EL.STYLE[PROP] = MSG.STYLES[PROP]; });
   });
-  RESPONDIFNEEDED(env, msg, true);
+  RESPONDIFNEEDED(ENV, MSG, true);
 };
-HANDLERS[MESSAGETYPES.SETATTR] = function(env, msg) {
-  WITHELEMENTRETRY(msg.id, null, function(el) { el.setAttribute(msg.name, msg.value); });
-  RESPONDIFNEEDED(env, msg, true);
+HANDLERS[MESSAGETYPES.SETATTR] = function(ENV, MSG) {
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.SETATTRIBUTE(MSG.NAME, MSG.VALUE); });
+  RESPONDIFNEEDED(ENV, MSG, true);
 };
-HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(env, msg) {
-  WITHELEMENTRETRY(msg.id, null, function(el) { el.classList.toggle(msg.classname, msg.force); });
-  RESPONDIFNEEDED(env, msg, true);
+HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(ENV, MSG) {
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.CLASSLIST.TOGGLE(MSG.CLASSNAME, MSG.FORCE); });
+  RESPONDIFNEEDED(ENV, MSG, true);
 };
-HANDLERS[MESSAGETYPES.CRYPTO] = function(env, msg) {
-  var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-  var array = new Uint8Array(msg.bytes);
-  win.crypto.getRandomValues(array);
-  return Array.prototype.slice.call(array);
+HANDLERS[MESSAGETYPES.CRYPTO] = function(ENV, MSG) {
+  var WIN = typeof WINDOW !== 'undefined' ? WINDOW : (typeof SELF !== 'undefined' ? SELF : (typeof GLOBAL !== 'undefined' ? GLOBAL : null));
+  var ARRAY = new Uint8Array(MSG.BYTES);
+  WIN.CRYPTO.GETRANDOMVALUES(ARRAY);
+  return Array.prototype.slice.call(ARRAY);
 };
-HANDLERS[MESSAGETYPES.GEOLOCATION] = function(env, msg) {
-  var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-  var geo = win.navigator && win.navigator.geolocation;
-  if (!geo) {
-    RESPONDIFNEEDED(env, msg, { error: 'geolocation API unavailable' });
+HANDLERS[MESSAGETYPES.GEOLOCATION] = function(ENV, MSG) {
+  var WIN = typeof WINDOW !== 'undefined' ? WINDOW : (typeof SELF !== 'undefined' ? SELF : (typeof GLOBAL !== 'undefined' ? GLOBAL : null));
+  var GEO = WIN.NAVIGATOR && WIN.NAVIGATOR.GEOLOCATION;
+  if (!GEO) {
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: 'geolocation API unavailable' });
     return;
   }
-  geo.getCurrentPosition(
-    function(pos) { RESPONDIFNEEDED(env, msg, { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }); },
-    function(err) { RESPONDIFNEEDED(env, msg, { error: 'geolocation failed: ' + err.message }); },
-    { enablehighaccuracy: msg.enablehighaccuracy || false, timeout: msg.timeout || 5000 }
+  GEO.GETCURRENTPOSITION(
+    function(POS) { RESPONDIFNEEDED(ENV, MSG, { LATITUDE: POS.COORDS.LATITUDE, LONGITUDE: POS.COORDS.LONGITUDE, ACCURACY: POS.COORDS.ACCURACY }); },
+    function(ERR) { RESPONDIFNEEDED(ENV, MSG, { ERROR: 'geolocation failed: ' + ERR.MESSAGE }); },
+    { ENABLEHIGHACCURACY: MSG.ENABLEHIGHACCURACY || false, TIMEOUT: MSG.TIMEOUT || 5000 }
   );
 };
-HANDLERS[MESSAGETYPES.PERSISTENCE] = function(env, msg) {
-  var win = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-  var storage = win.localStorage;
-  if (!storage) return { error: 'localStorage unavailable' };
+HANDLERS[MESSAGETYPES.PERSISTENCE] = function(ENV, MSG) {
+  var WIN = typeof WINDOW !== 'undefined' ? WINDOW : (typeof SELF !== 'undefined' ? SELF : (typeof GLOBAL !== 'undefined' ? GLOBAL : null));
+  var STORAGE = WIN.LOCALSTORAGE;
+  if (!STORAGE) return { ERROR: 'localStorage unavailable' };
   try {
-    if (msg.action === 'getItem') return { value: storage.getItem(msg.key) };
-    else if (msg.action === 'setItem') { storage.setItem(msg.key, msg.value); return { success: true }; }
-    else if (msg.action === 'removeItem') { storage.removeItem(msg.key); return { success: true }; }
-    else if (msg.action === 'clear') { storage.clear(); return { success: true }; }
-    else return { error: 'unknown persistence action: ' + msg.action };
-  } catch (err) { return { error: err.message }; }
+    if (MSG.ACTION === 'getItem') return { VALUE: STORAGE.GETITEM(MSG.KEY) };
+    else if (MSG.ACTION === 'setItem') { STORAGE.SETITEM(MSG.KEY, MSG.VALUE); return { SUCCESS: true }; }
+    else if (MSG.ACTION === 'removeItem') { STORAGE.REMOVEITEM(MSG.KEY); return { SUCCESS: true }; }
+    else if (MSG.ACTION === 'clear') { STORAGE.CLEAR(); return { SUCCESS: true }; }
+    else return { ERROR: 'unknown persistence action: ' + MSG.ACTION };
+  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
 };
-HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(env, msg) {
+HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
   try {
-    var el = document.createElement(msg.tag);
-    if (msg.props) Object.keys(msg.props).forEach(function(prop) { el[prop] = msg.props[prop]; });
-    return CREATEDOMREF(el, env.render.actorRegistry);
-  } catch (err) { return { error: err.message }; }
+    var EL = DOCUMENT.CREATEELEMENT(MSG.TAG);
+    if (MSG.PROPS) Object.keys(MSG.PROPS).forEach(function(PROP) { EL[PROP] = MSG.PROPS[PROP]; });
+    var REG = ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
+    var DOMREFFN = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
+    return DOMREFFN(EL, REG);
+  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
 };
-HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(env, msg) {
-  try { return CREATEDOMREF(document.createElement('div'), env.render.actorRegistry); } catch (err) { return { error: err.message }; }
-};
-HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(env, msg) {
+HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(ENV, MSG) {
   try {
-    var wrapper = document.createElement('div');
-    wrapper.innerHTML = msg.html;
-    var child = wrapper.firstElementChild || wrapper;
-    return CREATEDOMREF(child, env.render.actorRegistry);
-  } catch (err) { return { error: err.message }; }
+    var REG2 = ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
+    var DOMREFFN2 = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
+    return DOMREFFN2(DOCUMENT.CREATEELEMENT('div'), REG2);
+  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
 };
-HANDLERS[MESSAGETYPES.PROPERTY] = function(env, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  var fn = el[msg.name];
-  if (typeof fn !== 'function') return { error: 'property "' + msg.name + '" is not a function' };
-  try { return fn.apply(el, msg.arguments || []); } catch (e) { return { error: e.message }; }
+HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(ENV, MSG) {
+  try {
+    var WRAPPER = DOCUMENT.CREATEELEMENT('div');
+    WRAPPER.INNERHTML = MSG.HTML;
+    var CHILD = WRAPPER.FIRSTELEMENTCHILD || WRAPPER;
+    var REG3 = ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
+    var DOMREFFN3 = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
+    return DOMREFFN3(CHILD, REG3);
+  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
 };
-HANDLERS[MESSAGETYPES.GETHTML] = function(env, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  return { tag: el.tagName.toLowerCase(), innerHTML: el.innerHTML };
+HANDLERS[MESSAGETYPES.PROPERTY] = function(ENV, MSG) {
+  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  var FN = EL[MSG.NAME];
+  if (typeof FN !== 'function') return { ERROR: 'property "' + MSG.NAME + '" is not a function' };
+  try { return FN.APPLY(EL, MSG.ARGUMENTS || []); } catch (E) { return { ERROR: E.MESSAGE }; }
 };
-HANDLERS[MESSAGETYPES.GETVALUE] = function(env, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  return el.value;
+HANDLERS[MESSAGETYPES.GETHTML] = function(ENV, MSG) {
+  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  return { TAG: EL.TAGNAME.TOLOWERCASE(), INNERHTML: EL.INNERHTML };
 };
-HANDLERS[MESSAGETYPES.GETSTYLE] = function(env, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  var computed = window.getComputedStyle(el);
-  var styleobj = Array.prototype.slice.call(computed).reduce(function(acc, prop) {
-    acc[prop] = computed.getPropertyValue(prop);
-    return acc;
+HANDLERS[MESSAGETYPES.GETVALUE] = function(ENV, MSG) {
+  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  return EL.VALUE;
+};
+HANDLERS[MESSAGETYPES.GETSTYLE] = function(ENV, MSG) {
+  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  var COMPUTED = WINDOW.GETCOMPUTEDSTYLE(EL);
+  var STYLEOBJ = Array.prototype.slice.call(COMPUTED).reduce(function(ACC, PROP) {
+    ACC[PROP] = COMPUTED.GETPROPERTYVALUE(PROP);
+    return ACC;
   }, {});
-  return styleobj;
+  return STYLEOBJ;
 };
-HANDLERS[MESSAGETYPES.GETPOSITION] = function(env, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
-  var rect = el.getBoundingClientRect();
-  return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+HANDLERS[MESSAGETYPES.GETPOSITION] = function(ENV, MSG) {
+  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  var RECT = EL.GETBOUNDINGCLIENTRECT();
+  return { X: RECT.X, Y: RECT.Y, WIDTH: RECT.WIDTH, HEIGHT: RECT.HEIGHT, TOP: RECT.TOP, RIGHT: RECT.RIGHT, BOTTOM: RECT.BOTTOM, LEFT: RECT.LEFT };
 };
-HANDLERS[MESSAGETYPES.GETLAYOUT] = function(env, msg) {
-  var el = document.getElementById(msg.id);
-  if (!el) return { error: 'element not found: ' + msg.id };
+HANDLERS[MESSAGETYPES.GETLAYOUT] = function(ENV, MSG) {
+  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
   return {
-    offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight,
-    offsetLeft: el.offsetLeft, offsetTop: el.offsetTop,
-    scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight,
-    clientWidth: el.clientWidth, clientHeight: el.clientHeight
+    OFFSETWIDTH: EL.OFFSETWIDTH, OFFSETHEIGHT: EL.OFFSETHEIGHT,
+    OFFSETLEFT: EL.OFFSETLEFT, OFFSETTOP: EL.OFFSETTOP,
+    SCROLLWIDTH: EL.SCROLLWIDTH, SCROLLHEIGHT: EL.SCROLLHEIGHT,
+    CLIENTWIDTH: EL.CLIENTWIDTH, CLIENTHEIGHT: EL.CLIENTHEIGHT
   };
 };
-HANDLERS[MESSAGETYPES.SETHTML] = function(env, msg) {
+HANDLERS[MESSAGETYPES.SETHTML] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
-    WITHELEMENTRETRY(msg.id, null, function(el) { el.innerHTML = msg.value; });
-    RESPONDIFNEEDED(env, msg, true);
-  }).catch(function(err) {
-    RESPONDIFNEEDED(env, msg, { error: err.message || String(err) });
+    WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.INNERHTML = MSG.VALUE; });
+    RESPONDIFNEEDED(ENV, MSG, true);
+  }).catch(function(ERR) {
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
   });
 };
-HANDLERS[MESSAGETYPES.SETPOSITION] = function(env, msg) {
-  WITHELEMENTRETRY(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  RESPONDIFNEEDED(env, msg, true);
+HANDLERS[MESSAGETYPES.SETPOSITION] = function(ENV, MSG) {
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.STYLE[PROP] = MSG.VALUE[PROP]; }); });
+  RESPONDIFNEEDED(ENV, MSG, true);
 };
-HANDLERS[MESSAGETYPES.SETSTYLE] = function(env, msg) {
-  WITHELEMENTRETRY(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el.style[prop] = msg.value[prop]; }); });
-  RESPONDIFNEEDED(env, msg, true);
+HANDLERS[MESSAGETYPES.SETSTYLE] = function(ENV, MSG) {
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.STYLE[PROP] = MSG.VALUE[PROP]; }); });
+  RESPONDIFNEEDED(ENV, MSG, true);
 };
-HANDLERS[MESSAGETYPES.SETVALUE] = function(env, msg) {
-  WITHELEMENTRETRY(msg.id, null, function(el) { el.value = msg.value; });
-  RESPONDIFNEEDED(env, msg, true);
+HANDLERS[MESSAGETYPES.SETVALUE] = function(ENV, MSG) {
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.VALUE = MSG.VALUE; });
+  RESPONDIFNEEDED(ENV, MSG, true);
 };
-HANDLERS[MESSAGETYPES.SETLAYOUT] = function(env, msg) {
-  WITHELEMENTRETRY(msg.id, null, function(el) { Object.keys(msg.value || {}).forEach(function(prop) { el[prop] = msg.value[prop]; }); });
-  RESPONDIFNEEDED(env, msg, true);
+HANDLERS[MESSAGETYPES.SETLAYOUT] = function(ENV, MSG) {
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL[PROP] = MSG.VALUE[PROP]; }); });
+  RESPONDIFNEEDED(ENV, MSG, true);
 };
-HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(env, msg) {
-  var doc = document.documentElement;
-  return { viewportWidth: doc.clientWidth, viewportHeight: doc.clientHeight };
+HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(ENV, MSG) {
+  var DOC = DOCUMENT.DOCUMENTELEMENT;
+  return { VIEWPORTWIDTH: DOC.CLIENTWIDTH, VIEWPORTHEIGHT: DOC.CLIENTHEIGHT };
 };
-HANDLERS[MESSAGETYPES.GETSCREEN] = function(env, msg) {
-  var scr = window.screen;
-  return { screenWidth: scr.width, screenHeight: scr.height, availWidth: scr.availWidth, availHeight: scr.availHeight };
+HANDLERS[MESSAGETYPES.GETSCREEN] = function(ENV, MSG) {
+  var SCR = WINDOW.SCREEN;
+  return { SCREENWIDTH: SCR.WIDTH, SCREENHEIGHT: SCR.HEIGHT, AVAILWIDTH: SCR.AVAILWIDTH, AVAILHEIGHT: SCR.AVAILHEIGHT };
 };
-HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(env, msg) {
-  return { matches: window.matchMedia(msg.query).matches };
+HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(ENV, MSG) {
+  return { MATCHES: WINDOW.MATCHMEDIA(MSG.QUERY).MATCHES };
 };
-HANDLERS[MESSAGETYPES.GET_BODY_HTML] = function(env, msg) {
-  return document.body ? document.body.innerHTML : '';
+HANDLERS[MESSAGETYPES.GETBODYHTML || MESSAGETYPES.GET_BODY_HTML] = function(ENV, MSG) {
+  return DOCUMENT.BODY ? DOCUMENT.BODY.INNERHTML : '';
 };
-HANDLERS[MESSAGETYPES.RESTORE_BODY_HTML] = function(env, msg) {
+HANDLERS[MESSAGETYPES.RESTOREBODYHTML || MESSAGETYPES.RESTORE_BODY_HTML] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
-    if (document.body) document.body.innerHTML = msg.html;
-    RESPONDIFNEEDED(env, msg, true);
-  }).catch(function(err) {
-    RESPONDIFNEEDED(env, msg, { error: err.message || String(err) });
+    if (DOCUMENT.BODY) DOCUMENT.BODY.INNERHTML = MSG.HTML;
+    RESPONDIFNEEDED(ENV, MSG, true);
+  }).catch(function(ERR) {
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
   });
 };
-HANDLERS[MESSAGETYPES.RECOVER] = function(env, msg) {
+HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
-    return DBRESTORE('actor:state:render').then(function(saved) {
-      if (saved !== null && saved !== undefined) {
-        env.render = saved;
+    return DBRESTORE('ACTOR:STATE:RENDER').then(function(SAVED) {
+      if (SAVED !== null && SAVED !== undefined) {
+        ENV.RENDER = SAVED;
       } else {
-        env.render = { html: '', viewport: null, actorRegistry: null, scriptTags: [] };
+        ENV.RENDER = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
       }
-      SCHEDULEGCCYCLE(env.render);
-      // P57: Re-inject missing script tags after restore
-      reinjectScriptTags(env.render.scriptTags || []);
+      SCHEDULEGCCYCLE(ENV.RENDER);
+      REINJECTSCRIPTTAGS(ENV.RENDER.SCRIPTTAGS || ENV.RENDER.SCRIPTTAGS || []);
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'render', value: env.render }]
+        UPDATES: [{ PATH: 'RENDER', VALUE: ENV.RENDER }]
       }, GENERATETAG(), 'RENDERACTOR');
-      RESPONDIFNEEDED(env, msg, env);
-    }).catch(function(e) {
-      env.render = { html: '', viewport: null, actorRegistry: null, scriptTags: [] };
+      RESPONDIFNEEDED(ENV, MSG, ENV);
+    }).catch(function(E) {
+      ENV.RENDER = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        updates: [{ path: 'render', value: env.render }]
+        UPDATES: [{ PATH: 'RENDER', VALUE: ENV.RENDER }]
       }, GENERATETAG(), 'RENDERACTOR');
-      RESPONDIFNEEDED(env, msg, { error: e.message || String(e) });
+      RESPONDIFNEEDED(ENV, MSG, { ERROR: E.MESSAGE || String(E) });
     });
-  }).catch(function(err) {
-    RESPONDIFNEEDED(env, msg, { error: err.message || String(err) });
+  }).catch(function(ERR) {
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
   });
 };
-HANDLERS[MESSAGETYPES.PING] = function(env, msg) { return true; };
-HANDLERS[MESSAGETYPES.REGISTER_EVENT_LISTENER] = function(env, msg) {
-  var renderSlice = ENSURERENDERSLICE(env);
-  if (!renderSlice._gc) renderSlice._gc = createGarbageCollector();
+HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
 
-  loginfo(env, '[RENDERACTOR]', 'REGISTER_EVENT_LISTENER start:', {
-    sourceid: msg.sourceid,
-    event: msg.event,
-    pipelineId: msg.pipelineId,
-    stageId: msg.stageId
-  });
-
-  var pc = CREATEEVENTPRODUCERCONSUMER(msg);
-
-  var existing = listObjects(renderSlice._gc).filter(function(obj) {
-    return obj.producer.id === pc.producer.id && obj.producer.event === pc.producer.event &&
-      obj.consumer.pipelineId === pc.consumer.pipelineId && obj.consumer.stageId === pc.consumer.stageId;
-  })[0];
-
-  if (existing) {
-    loginfo(env, '[RENDERACTOR]', 'EVENT listener already registered for', msg.sourceid, msg.event);
-    existing.metadata = pc.metadata;
-    existing.status = 'EXPECTING';
-    existing.sentCount = 0;
-    existing.receivedCount = 1;
-  } else {
-    var gcObject = {
-      producer: pc.producer,
-      consumer: pc.consumer,
-      metadata: pc.metadata,
-      status: 'EXPECTING',
-      sentCount: 0,
-      receivedCount: 0
-    };
-    registerObject(renderSlice._gc, gcObject);
-    incrementReceived(renderSlice._gc, gcObject.id, 1);
-    ENSUREEVENTOBSERVER(renderSlice);
-    loginfo(env, '[RENDERACTOR]', 'EVENT listener registered:', msg.sourceid, msg.event, 'for stage', msg.stageId);
+var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER || MESSAGETYPES.REGISTER_EVENT_LISTENER;
+HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
+  var RENDERSLICE = ENSURERENDERSLICE(ENV);
+  var GC = RENDERSLICE.GC || RENDERSLICE._GC;
+  if (!GC) {
+    GC = (typeof CREATEGARBAGECOLLECTOR === 'function') ? CREATEGARBAGECOLLECTOR() : CREATEGARBAGECOLLECTOR();
+    RENDERSLICE.GC = GC;
   }
 
-  SCHEDULEGCCYCLE(renderSlice);
+  LOGINFO(ENV, '[RENDERACTOR]', 'REGISTEREVENTLISTENER START:', {
+    SOURCEID: MSG.SOURCEID,
+    EVENT: MSG.EVENT,
+    PIPELINEID: MSG.PIPELINEID || MSG.PIPELINEID,
+    STAGEID: MSG.STAGEID || MSG.STAGEID
+  });
+
+  var PC = CREATEEVENTPRODUCERCONSUMER(MSG);
+  var LISTFN = (typeof LISTOBJECTS === 'function') ? LISTOBJECTS : LISTOBJECTS;
+  var REGOBJFN = (typeof REGISTEROBJECT === 'function') ? REGISTEROBJECT : REGISTEROBJECT;
+  var INCRECVFN = (typeof INCREMENTRECEIVED === 'function') ? INCREMENTRECEIVED : INCREMENTRECEIVED;
+
+  var EXISTING = LISTFN(GC).filter(function(OBJ) {
+    var P = OBJ.PRODUCER || {};
+    var C = OBJ.CONSUMER || {};
+    return P.ID === PC.PRODUCER.ID && P.EVENT === PC.PRODUCER.EVENT &&
+      (C.PIPELINEID || C.PIPELINEID) === (PC.CONSUMER.PIPELINEID || PC.CONSUMER.PIPELINEID) &&
+      (C.STAGEID || C.STAGEID) === (PC.CONSUMER.STAGEID || PC.CONSUMER.STAGEID);
+  })[0];
+
+  if (EXISTING) {
+    LOGINFO(ENV, '[RENDERACTOR]', 'EVENT LISTENER ALREADY REGISTERED FOR', MSG.SOURCEID, MSG.EVENT);
+    EXISTING.METADATA = PC.METADATA;
+    EXISTING.STATUS = 'EXPECTING';
+    EXISTING.SENTCOUNT = 0;
+    EXISTING.RECEIVEDCOUNT = 1;
+  } else {
+    var GCOBJECT = {
+      PRODUCER: PC.PRODUCER,
+      CONSUMER: PC.CONSUMER,
+      METADATA: PC.METADATA,
+      STATUS: 'EXPECTING',
+      SENTCOUNT: 0,
+      RECEIVEDCOUNT: 0
+    };
+    REGOBJFN(GC, GCOBJECT);
+    INCRECVFN(GC, GCOBJECT.ID, 1);
+    ENSUREEVENTOBSERVER(RENDERSLICE);
+    LOGINFO(ENV, '[RENDERACTOR]', 'EVENT LISTENER REGISTERED:', MSG.SOURCEID, MSG.EVENT, 'FOR STAGE', MSG.STAGEID || MSG.STAGEID);
+  }
+
+  SCHEDULEGCCYCLE(RENDERSLICE);
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-    updates: [{ path: 'render', value: renderSlice }]
+    UPDATES: [{ PATH: 'RENDER', VALUE: RENDERSLICE }]
   }, GENERATETAG(), 'RENDERACTOR');
 
-  return { registered: true, sourceid: msg.sourceid, event: msg.event };
+  return { REGISTERED: true, SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT };
 };
 
-function RESPONDIFNEEDED(env, message, result) {
-  if (message.sender && message.tag) {
-    var responseType = (message.responseSpec && message.responseSpec.responseType) || MESSAGETYPES.DOM_RESULT;
-    SENDRESPONSE(message.sender, message.tag, result, 'RENDERACTOR', responseType);
+function RESPONDIFNEEDED(ENV, MESSAGE, RESULT) {
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+    var DOMRESULTTYPE = MESSAGETYPES.DOMRESULT || MESSAGETYPES.DOM_RESULT;
+    var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.RESPONSETYPE || RESPONSESPEC.RESPONSETYPE)) || DOMRESULTTYPE;
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESULT, 'RENDERACTOR', RESPONSETYPE);
   }
 }
 
-// P57: Reinject script tags from saved state
-function reinjectScriptTags(scriptTags) {
-  if (!scriptTags || !scriptTags.length || typeof document === 'undefined') return;
-  var existingSrcs = {};
-  Array.prototype.slice.call(document.head.getElementsByTagName('script')).forEach(function(s) {
-    if (s.src) existingSrcs[s.src] = true;
+function REINJECTSCRIPTTAGS(SCRIPTTAGS) {
+  if (!SCRIPTTAGS || !SCRIPTTAGS.length || typeof DOCUMENT === 'undefined') return;
+  var EXISTINGSRCS = {};
+  Array.prototype.slice.call(DOCUMENT.HEAD.GETELEMENTSBYTAGNAME('script')).forEach(function(S) {
+    if (S.SRC) EXISTINGSRCS[S.SRC] = true;
   });
-  scriptTags.forEach(function(src) {
-    if (!existingSrcs[src]) {
-      var script = document.createElement('script');
-      script.src = src;
-      document.head.appendChild(script);
-      loginfo({}, '[RENDERACTOR]', 'Re-injected script tag:', src);
+  SCRIPTTAGS.forEach(function(SRC) {
+    if (!EXISTINGSRCS[SRC]) {
+      var SCRIPT = DOCUMENT.CREATEELEMENT('script');
+      SCRIPT.SRC = SRC;
+      DOCUMENT.HEAD.APPENDCHILD(SCRIPT);
+      LOGINFO({}, '[RENDERACTOR]', 'RE-INJECTED SCRIPT TAG:', SRC);
     }
   });
 }
 
 // Pure behavior function: (env, message) -> env
-function RENDERBEHAVIOR(env, message) {
-  logdebug(env, '[RENDERACTOR]', 'behavior handling action:', message.type, message.id || '');
-  var renderSlice = ENSURERENDERSLICE(env);
-  var handler = HANDLERS[message.type];
-  if (handler) {
-    var result = handler(env, message);
-    if (result !== undefined) {
-      RESPONDIFNEEDED(env, message, result);
+function RENDERBEHAVIOR(ENV, MESSAGE) {
+  LOGDEBUG(ENV, '[RENDERACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE, MESSAGE.ID || '');
+  var RENDERSLICE = ENSURERENDERSLICE(ENV);
+  var HANDLER = HANDLERS[MESSAGE.TYPE];
+  if (HANDLER) {
+    var RESULT = HANDLER(ENV, MESSAGE);
+    if (RESULT !== undefined) {
+      RESPONDIFNEEDED(ENV, MESSAGE, RESULT);
     }
   }
-  return env;
+  return ENV;
 }
 
-function CREATEENQUEUER(type, idRequired, extraPayloadFn) {
+function CREATEENQUEUER(TYPE, IDREQUIRED, EXTRAPAYLOADFN) {
   return function() {
-    var args = Array.prototype.slice.call(arguments);
-    var id, rest;
-    if (idRequired) { id = args[0]; rest = args.slice(1); } else { id = undefined; rest = args; }
-    var tag = GENERATETAG();
-    var payload = idRequired ? { id: id } : {};
-    if (extraPayloadFn) {
-      var extra = extraPayloadFn(rest);
-      Object.keys(extra).forEach(function(key) { payload[key] = extra[key]; });
+    var ARGS = Array.prototype.slice.call(arguments);
+    var ID, REST;
+    if (IDREQUIRED) { ID = ARGS[0]; REST = ARGS.slice(1); } else { ID = undefined; REST = ARGS; }
+    var TAG = GENERATETAG();
+    var PAYLOAD = IDREQUIRED ? { ID: ID } : {};
+    if (EXTRAPAYLOADFN) {
+      var EXTRA = EXTRAPAYLOADFN(REST);
+      Object.keys(EXTRA).forEach(function(KEY) { PAYLOAD[KEY] = EXTRA[KEY]; });
     }
-    var responseSpec = undefined;
+    var RESPONSESPEC = undefined;
     if (arguments.length > 0) {
-      var lastArg = arguments[arguments.length - 1];
-      if (lastArg && typeof lastArg === 'object' && lastArg.responseType) {
-        responseSpec = lastArg;
+      var LASTARG = arguments[arguments.length - 1];
+      if (LASTARG && typeof LASTARG === 'object' && (LASTARG.RESPONSETYPE || LASTARG.RESPONSETYPE)) {
+        RESPONSESPEC = LASTARG;
       }
     }
-    SENDINSTRUCTION('RENDERACTOR', type, payload, tag, 'system', responseSpec);
+    SENDINSTRUCTION('RENDERACTOR', TYPE, PAYLOAD, TAG, 'system', RESPONSESPEC);
   };
 }
 
-var ENQUEUERENDER = CREATEENQUEUER(MESSAGETYPES.RENDER, true, function(rest) { return { renderer: rest[0], data: rest[1], env: rest[2] }; });
+var ENQUEUERENDER = CREATEENQUEUER(MESSAGETYPES.RENDER, true, function(REST) { return { RENDERER: REST[0], DATA: REST[1], ENV: REST[2] }; });
 var ENQUEUECLEAR = CREATEENQUEUER(MESSAGETYPES.CLEAR, true);
-var ENQUEUEHTML = CREATEENQUEUER(MESSAGETYPES.HTML, true, function(rest) { return { markup: rest[0], append: rest[1] }; });
+var ENQUEUEHTML = CREATEENQUEUER(MESSAGETYPES.HTML, true, function(REST) { return { MARKUP: REST[0], APPEND: REST[1] }; });
 var ENQUEUEREMOVE = CREATEENQUEUER(MESSAGETYPES.REMOVE, true);
-var ENQUEUESTYLES = CREATEENQUEUER(MESSAGETYPES.SETSTYLES, true, function(rest) { return { styles: rest[0] }; });
-var ENQUEUESETATTR = CREATEENQUEUER(MESSAGETYPES.SETATTR, true, function(rest) { return { name: rest[0], value: rest[1] }; });
-var ENQUEUETOGGLECLASS = CREATEENQUEUER(MESSAGETYPES.TOGGLECLASS, true, function(rest) { return { classname: rest[0], force: rest[1] }; });
-var ENQUEUECREATEELEMENT = CREATEENQUEUER(MESSAGETYPES.CREATEELEMENT, false, function(rest) { return { tag: rest[0], props: rest[1] }; });
+var ENQUEUESTYLES = CREATEENQUEUER(MESSAGETYPES.SETSTYLES, true, function(REST) { return { STYLES: REST[0] }; });
+var ENQUEUESETATTR = CREATEENQUEUER(MESSAGETYPES.SETATTR, true, function(REST) { return { NAME: REST[0], VALUE: REST[1] }; });
+var ENQUEUETOGGLECLASS = CREATEENQUEUER(MESSAGETYPES.TOGGLECLASS, true, function(REST) { return { CLASSNAME: REST[0], FORCE: REST[1] }; });
+var ENQUEUECREATEELEMENT = CREATEENQUEUER(MESSAGETYPES.CREATEELEMENT, false, function(REST) { return { TAG: REST[0], PROPS: REST[1] }; });
 var ENQUEUECREATECONTAINER = CREATEENQUEUER(MESSAGETYPES.CREATECONTAINER, false);
-var ENQUEUECREATEFROMHTML = CREATEENQUEUER(MESSAGETYPES.CREATEFROMHTML, false, function(rest) { return { html: rest[0] }; });
+var ENQUEUECREATEFROMHTML = CREATEENQUEUER(MESSAGETYPES.CREATEFROMHTML, false, function(REST) { return { HTML: REST[0] }; });
 var ENQUEUEGETHTML = CREATEENQUEUER(MESSAGETYPES.GETHTML, true);
 var ENQUEUEGETVALUE = CREATEENQUEUER(MESSAGETYPES.GETVALUE, true);
 var ENQUEUEGETSTYLE = CREATEENQUEUER(MESSAGETYPES.GETSTYLE, true);
 var ENQUEUEGETPOSITION = CREATEENQUEUER(MESSAGETYPES.GETPOSITION, true);
 var ENQUEUEGETLAYOUT = CREATEENQUEUER(MESSAGETYPES.GETLAYOUT, true);
-var ENQUEUESETHTML = CREATEENQUEUER(MESSAGETYPES.SETHTML, true, function(rest) { return { value: rest[0] }; });
-var ENQUEUESETPOSITION = CREATEENQUEUER(MESSAGETYPES.SETPOSITION, true, function(rest) { return { value: rest[0] }; });
-var ENQUEUESETSTYLE = CREATEENQUEUER(MESSAGETYPES.SETSTYLE, true, function(rest) { return { value: rest[0] }; });
-var ENQUEUESETVALUE = CREATEENQUEUER(MESSAGETYPES.SETVALUE, true, function(rest) { return { value: rest[0] }; });
-var ENQUEUEPROPERTY = CREATEENQUEUER(MESSAGETYPES.PROPERTY, true, function(rest) { return { name: rest[0], arguments: rest[1] }; });
-var ENQUEUESETLAYOUT = CREATEENQUEUER(MESSAGETYPES.SETLAYOUT, true, function(rest) { return { value: rest[0] }; });
+var ENQUEUESETHTML = CREATEENQUEUER(MESSAGETYPES.SETHTML, true, function(REST) { return { VALUE: REST[0] }; });
+var ENQUEUESETPOSITION = CREATEENQUEUER(MESSAGETYPES.SETPOSITION, true, function(REST) { return { VALUE: REST[0] }; });
+var ENQUEUESETSTYLE = CREATEENQUEUER(MESSAGETYPES.SETSTYLE, true, function(REST) { return { VALUE: REST[0] }; });
+var ENQUEUESETVALUE = CREATEENQUEUER(MESSAGETYPES.SETVALUE, true, function(REST) { return { VALUE: REST[0] }; });
+var ENQUEUEPROPERTY = CREATEENQUEUER(MESSAGETYPES.PROPERTY, true, function(REST) { return { NAME: REST[0], ARGUMENTS: REST[1] }; });
+var ENQUEUESETLAYOUT = CREATEENQUEUER(MESSAGETYPES.SETLAYOUT, true, function(REST) { return { VALUE: REST[0] }; });
 var ENQUEUEGETVIEWPORT = CREATEENQUEUER(MESSAGETYPES.GETVIEWPORT, false);
 var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
-var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(rest) { return { query: rest[0] }; });
+var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(REST) { return { QUERY: REST[0] }; });
 
-// Compatibility aliases for removed enqueuers (deprecated)
-function ENQUEUERENDERREGISTERTRIGGER(registration, responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERREGISTERTRIGGER; use blockcompiler REGISTER_EVENT_LISTENER instead');
+function ENQUEUERENDERREGISTERTRIGGER(REGISTRATION, RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREGISTERTRIGGER; USE BLOCKCOMPILER REGISTER_EVENT_LISTENER INSTEAD');
   return undefined;
 }
-function ENQUEUERENDERREGISTERTRIGGEREXPECTATION(registration, responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERREGISTERTRIGGEREXPECTATION; use blockcompiler REGISTER_EVENT_LISTENER instead');
+function ENQUEUERENDERREGISTERTRIGGEREXPECTATION(REGISTRATION, RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREGISTERTRIGGEREXPECTATION; USE BLOCKCOMPILER REGISTER_EVENT_LISTENER INSTEAD');
   return undefined;
 }
-function ENQUEUERENDERREVALIDATETRIGGERS(responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERREVALIDATETRIGGERS; no longer needed');
+function ENQUEUERENDERREVALIDATETRIGGERS(RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREVALIDATETRIGGERS; NO LONGER NEEDED');
   return undefined;
 }
-function ENQUEUERENDERPING(responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERPING; use ENQUEUERENDER... or direct message');
+function ENQUEUERENDERPING(RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERPING; USE ENQUEUERENDER... OR DIRECT MESSAGE');
   return undefined;
 }
-function ENQUEUERENDERGETBODYHTML(responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERGETBODYHTML; use GET_BODY_HTML message directly');
+function ENQUEUERENDERGETBODYHTML(RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERGETBODYHTML; USE GET_BODY_HTML MESSAGE DIRECTLY');
   return undefined;
 }
-function ENQUEUERENDERRESTOREBODYHTML(html, responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERRESTOREBODYHTML; use RESTORE_BODY_HTML message directly');
+function ENQUEUERENDERRESTOREBODYHTML(HTML, RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERRESTOREBODYHTML; USE RESTORE_BODY_HTML MESSAGE DIRECTLY');
   return undefined;
 }
-function ENQUEUERENDERRECOVER(responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERRECOVER; use RECOVER message directly');
+function ENQUEUERENDERRECOVER(RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERRECOVER; USE RECOVER MESSAGE DIRECTLY');
   return undefined;
 }
-function ENQUEUERENDERCRYPTO(bytes, responseSpec) {
-  logwarn({}, '[RENDERACTOR]', 'Deprecated enqueuer called: ENQUEUERENDERCRYPTO; use CRYPTO message directly');
+function ENQUEUERENDERCRYPTO(BYTES, RESPONSESPEC) {
+  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERCRYPTO; USE CRYPTO MESSAGE DIRECTLY');
   return undefined;
 }
 
-var STARTRENDERACTOR = function(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options :
-      (options && options.verbosity !== undefined ? options.verbosity : options.verbosityLevel);
-    if (lvl !== undefined) {
-      var env = GETACTORSTATE('WORLDMAPACTOR');
-      if (env) env.verbosity = lvl;
+var STARTRENDERACTOR = function(OPTIONS) {
+  if (OPTIONS !== undefined) {
+    var LVL = typeof OPTIONS === 'number' ? OPTIONS :
+      (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
+    if (LVL !== undefined) {
+      var ENV = GETACTORSTATE('WORLDMAPACTOR');
+      if (ENV) ENV.VERBOSITY = LVL;
     }
   }
   return {
-    getstate: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    dispatch: function(message) { return DISPATCHTOACTOR('RENDERACTOR', RENDERBEHAVIOR, message); }
+    GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
+    DISPATCH: function(MESSAGE) { return DISPATCHTOACTOR('RENDERACTOR', RENDERBEHAVIOR, MESSAGE); }
   };
 };
 
-var EXPECTELEMENT = function(id, timeout) {
-  if (timeout === undefined) timeout = 30000;
-  return new Promise(function(resolve, reject) {
-    var existing = document.getElementById(id);
-    if (existing) {
-      var env = GETACTORSTATE('WORLDMAPACTOR');
-      return resolve(CREATEDOMREF(existing, env.render.actorRegistry));
+var EXPECTELEMENT = function(ID, TIMEOUT) {
+  if (TIMEOUT === undefined) TIMEOUT = 30000;
+  return new Promise(function(RESOLVE, REJECT) {
+    var EXISTING = DOCUMENT.GETELEMENTBYID(ID);
+    var DOMREFFN = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
+    if (EXISTING) {
+      var ENV = GETACTORSTATE('WORLDMAPACTOR');
+      var REG = ENV && ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
+      return RESOLVE(DOMREFFN(EXISTING, REG));
     }
-    var observer = null;
-    var timeoutid = setTimeout(function() { if (observer) observer.disconnect(); reject(new Error('[expectelement] element not found: ' + id)); }, timeout);
-    observer = new MutationObserver(function() {
-      var el = document.getElementById(id);
-      if (el) {
-        clearTimeout(timeoutid);
-        observer.disconnect();
-        var envNow = GETACTORSTATE('WORLDMAPACTOR');
-        resolve(CREATEDOMREF(el, envNow.render.actorRegistry));
+    var OBSERVER = null;
+    var TIMEOUTID = setTimeout(function() { if (OBSERVER) OBSERVER.DISCONNECT(); REJECT(new Error('[EXPECTELEMENT] ELEMENT NOT FOUND: ' + ID)); }, TIMEOUT);
+    OBSERVER = new MUTATIONOBSERVER(function() {
+      var EL = DOCUMENT.GETELEMENTBYID(ID);
+      if (EL) {
+        clearTimeout(TIMEOUTID);
+        OBSERVER.DISCONNECT();
+        var ENVNOW = GETACTORSTATE('WORLDMAPACTOR');
+        var REGNOW = ENVNOW && ENVNOW.RENDER && (ENVNOW.RENDER.ACTORREGISTRY || ENVNOW.RENDER.ACTORREGISTRY);
+        RESOLVE(DOMREFFN(EL, REGNOW));
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    OBSERVER.OBSERVE(DOCUMENT.BODY, { CHILDLIST: true, SUBTREE: true });
   });
 };
 
-// Alias for blockcompiler.js which expects lowercase expectelement
-var expectelement = EXPECTELEMENT;
+var EXPECTELEMENTALIAS = EXPECTELEMENT;
 
-var HANDLEFILEREADERREQUEST = function(payload) {
-  return new Promise(function(resolve, reject) {
-    var reader = new FileReader();
-    reader.onload = function(e) { resolve({ text: e.target.result }); };
-    reader.onerror = function() { reject(new Error('[RENDERACTOR] FileReader error')); };
-    reader.readAsText(payload.file);
+var HANDLEFILEREADERREQUEST = function(PAYLOAD) {
+  return new Promise(function(RESOLVE, REJECT) {
+    var READER = new FILEREADER();
+    READER.ONLOAD = function(E) { RESOLVE({ TEXT: E.TARGET.RESULT }); };
+    READER.ONERROR = function() { REJECT(new Error('[RENDERACTOR] FileReader error')); };
+    READER.READASTEXT(PAYLOAD.FILE);
   });
 };
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    RENDERVERBOSITYCONSTANTS: RENDERVERBOSITYCONSTANTS,
+    ENSURERENDERSLICE: ENSURERENDERSLICE,
+    CREATERENDERERRORCONTEXT: CREATERENDERERRORCONTEXT,
+    WITHELEMENT: WITHELEMENT,
+    WITHELEMENTRETRY: WITHELEMENTRETRY,
+    WAITFORDOMREADY: WAITFORDOMREADY,
+    CREATEEVENTPRODUCERCONSUMER: CREATEEVENTPRODUCERCONSUMER,
+    SCHEDULEGCCYCLE: SCHEDULEGCCYCLE,
+    ENSUREEVENTOBSERVER: ENSUREEVENTOBSERVER,
+    RENDERBEHAVIOR: RENDERBEHAVIOR,
+    CREATEENQUEUER: CREATEENQUEUER,
+    ENQUEUERENDER: ENQUEUERENDER,
+    ENQUEUECLEAR: ENQUEUECLEAR,
+    ENQUEUEHTML: ENQUEUEHTML,
+    ENQUEUEREMOVE: ENQUEUEREMOVE,
+    ENQUEUESTYLES: ENQUEUESTYLES,
+    ENQUEUESETATTR: ENQUEUESETATTR,
+    ENQUEUETOGGLECLASS: ENQUEUETOGGLECLASS,
+    ENQUEUECREATEELEMENT: ENQUEUECREATEELEMENT,
+    ENQUEUECREATECONTAINER: ENQUEUECREATECONTAINER,
+    ENQUEUECREATEFROMHTML: ENQUEUECREATEFROMHTML,
+    ENQUEUEGETHTML: ENQUEUEGETHTML,
+    ENQUEUEGETVALUE: ENQUEUEGETVALUE,
+    ENQUEUEGETSTYLE: ENQUEUEGETSTYLE,
+    ENQUEUEGETPOSITION: ENQUEUEGETPOSITION,
+    ENQUEUEGETLAYOUT: ENQUEUEGETLAYOUT,
+    ENQUEUESETHTML: ENQUEUESETHTML,
+    ENQUEUESETPOSITION: ENQUEUESETPOSITION,
+    ENQUEUESETSTYLE: ENQUEUESETSTYLE,
+    ENQUEUESETVALUE: ENQUEUESETVALUE,
+    ENQUEUEPROPERTY: ENQUEUEPROPERTY,
+    ENQUEUESETLAYOUT: ENQUEUESETLAYOUT,
+    ENQUEUEGETVIEWPORT: ENQUEUEGETVIEWPORT,
+    ENQUEUEGETSCREEN: ENQUEUEGETSCREEN,
+    ENQUEUEMATCHMEDIA: ENQUEUEMATCHMEDIA,
+    STARTRENDERACTOR: STARTRENDERACTOR,
+    EXPECTELEMENT: EXPECTELEMENT,
+    EXPECTELEMENTALIAS: EXPECTELEMENTALIAS,
+    HANDLEFILEREADERREQUEST: HANDLEFILEREADERREQUEST
+  };
+}

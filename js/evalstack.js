@@ -1,8 +1,3 @@
-// ============================================================
-// UPDATED FILE: js/evalstack.js
-// Change applied: ES5 syntax, no arrow functions, no const, module.exports
-// ============================================================
-
 function createevalstack() {
     var stack = [];
     var identity = function(v) { return v; };
@@ -30,12 +25,27 @@ function createevalstack() {
     };
 }
 
-var EVALSTACK = createevalstack();
-var frames = EVALSTACK.getframes();
-var pushframe = function(fn, args, pipestate, cont, meta) { return EVALSTACK.pushframe(fn, args, pipestate, cont, meta); };
-var popframe = function() { return EVALSTACK.popframe(); };
-var peekframe = function() { return EVALSTACK.peekframe(); };
-var snapshotstack = function() { return EVALSTACK.snapshot(); };
-var restorestack = function(saved) { return EVALSTACK.restore(saved); };
-var currentcontinuation = function() { return EVALSTACK.currentcontinuation(); };
-var chaincontinuations = function() { return EVALSTACK.chaincontinuations(); };
+var evalstack = createevalstack();
+var frames = evalstack.getframes();
+var pushframe = function(fn, args, pipestate, cont, meta) { return evalstack.pushframe(fn, args, pipestate, cont, meta); };
+var popframe = function() { return evalstack.popframe(); };
+var peekframe = function() { return evalstack.peekframe(); };
+var snapshotstack = function() { return evalstack.snapshot(); };
+var restorestack = function(saved) { return evalstack.restore(saved); };
+var currentcontinuation = function() { return evalstack.currentcontinuation(); };
+var chaincontinuations = function() { return evalstack.chaincontinuations(); };
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    createevalstack: createevalstack,
+    evalstack: evalstack,
+    frames: frames,
+    pushframe: pushframe,
+    popframe: popframe,
+    peekframe: peekframe,
+    snapshotstack: snapshotstack,
+    restorestack: restorestack,
+    currentcontinuation: currentcontinuation,
+    chaincontinuations: chaincontinuations
+  };
+}
