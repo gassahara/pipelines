@@ -121,6 +121,18 @@ function createverbosityfunctions() {
   });
 }
 
+// UPPERCASE aliases for actor files
+var CREATEVERBOSITYCONSTANTS = createverbosityconstants;
+var GETVERBOSITY = getverbosity;
+var SETVERBOSITY = setverbosity;
+var LOGCRITICAL = logcritical;
+var LOGERROR = logerror;
+var LOGWARN = logwarn;
+var LOGINFO = loginfo;
+var LOGDEBUG = logdebug;
+var GETVERBOSITYNAME = getverbosityname;
+var CREATEVERBOSITYFUNCTIONS = createverbosityfunctions;
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     createverbosityconstants: createverbosityconstants,
@@ -132,6 +144,16 @@ if (typeof module !== 'undefined' && module.exports) {
     loginfo: loginfo,
     logdebug: logdebug,
     getverbosityname: getverbosityname,
-    createverbosityfunctions: createverbosityfunctions
+    createverbosityfunctions: createverbosityfunctions,
+    CREATEVERBOSITYCONSTANTS: CREATEVERBOSITYCONSTANTS,
+    GETVERBOSITY: GETVERBOSITY,
+    SETVERBOSITY: SETVERBOSITY,
+    LOGCRITICAL: LOGCRITICAL,
+    LOGERROR: LOGERROR,
+    LOGWARN: LOGWARN,
+    LOGINFO: LOGINFO,
+    LOGDEBUG: LOGDEBUG,
+    GETVERBOSITYNAME: GETVERBOSITYNAME,
+    CREATEVERBOSITYFUNCTIONS: CREATEVERBOSITYFUNCTIONS
   };
 }

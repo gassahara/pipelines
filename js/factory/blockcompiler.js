@@ -1,8 +1,3 @@
-// blockcompiler.js
-// Pipeline stage compiler and block execution orchestrator.
-// Nomenclature: non-actor identifiers lowercase; actor globals remain UPPERCASE.
-// Code style: ES5, functional recursive, no regex.
-
 var blockcompilerstate = Object.freeze({ level: createverbosityconstants().DEBUG });
 
 var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
@@ -633,13 +628,13 @@ function processelement(el, pipelineid, stagepath, inheritedbriefcase, constants
 function loadpipelinedependencies(container, options) {
   var libs = (container && container.libs) || [];
   var deps = (container && container.deps) || (container && container.programs) || [];
-  var frameworkbase = (typeof PIPELINES_BASE !== 'undefined') ? PIPELINES_BASE : '';
-  var frontendbase = options && options.frontendbase ? options.frontendbase : (typeof FRONTEND_BASE !== 'undefined' ? FRONTEND_BASE : '');
+  var frameworkbase = (typeof pipelinesbase !== 'undefined') ? pipelinesbase : '';
+  var frontbase = options && options.frontendbase ? options.frontendbase : (typeof frontendbase !== 'undefined' ? frontendbase : '');
   var witnesstimeout = options && options.witnesstimeout ? options.witnesstimeout : scriptwitnesstimeout;
 
   return loadframeworklibs(libs, frameworkbase, witnesstimeout)
     .then(function() {
-      return loadfrontendprograms(deps, frontendbase, witnesstimeout);
+      return loadfrontendprograms(deps, frontbase, witnesstimeout);
     })
     .then(function() {
       return builddependenciesregistry(deps);
@@ -1137,47 +1132,46 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
   return wrapper;
 }
 
-var loadpipelinealias = loadpipeline;
-var compilestagealias = compilestage;
-var resolvenextelementalias = resolvenextelement;
-var orchestratestagealias = orchestratestage;
-var validatepipelinebriefcasealias = validatepipelinebriefcase;
-var blockcompilercompilestagealias = blockcompilercompilestage;
-var createblockcompilerconstantsalias = createblockcompilerconstants;
-var buildblockpropertiesalias = buildblockproperties;
-var processelementalias = processelement;
-var processpipelineelementalias = processpipelineelement;
-var registereventstagealias = registereventstage;
-var processnestedstagealias = processnestedstage;
-var createpersistentelementwrapperalias = createpersistentelementwrapper;
+// UPPERCASE aliases for actor files
+var BLOCKCOMPILERCOMPILESTAGE = blockcompilercompilestage;
+var COMPILESTAGE = compilestage;
+var LOADPIPELINE = loadpipeline;
+var RESOLVENEXTELEMENT = resolvenextelement;
+var ORCHESTRATESTAGE = orchestratestage;
+var VALIDATEPIPELINEBRIEFCASE = validatepipelinebriefcase;
+var BUILD_BLOCK_PROPERTIES = buildblockproperties;
+var PROCESS_ELEMENT = processelement;
+var PROCESS_PIPELINE_ELEMENT = processpipelineelement;
+var REGISTER_EVENT_STAGE = registereventstage;
+var PROCESS_NESTED_STAGE = processnestedstage;
+var CREATE_PERSISTENT_ELEMENT_WRAPPER = createpersistentelementwrapper;
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     loadpipeline: loadpipeline,
-    loadpipelinealias: loadpipelinealias,
     compilestage: compilestage,
-    compilestagealias: compilestagealias,
     resolvenextelement: resolvenextelement,
-    resolvenextelementalias: resolvenextelementalias,
     orchestratestage: orchestratestage,
-    orchestratestagealias: orchestratestagealias,
     validatepipelinebriefcase: validatepipelinebriefcase,
-    validatepipelinebriefcasealias: validatepipelinebriefcasealias,
     blockcompilercompilestage: blockcompilercompilestage,
-    blockcompilercompilestagealias: blockcompilercompilestagealias,
     createblockcompilerconstants: createblockcompilerconstants,
-    createblockcompilerconstantsalias: createblockcompilerconstantsalias,
     buildblockproperties: buildblockproperties,
-    buildblockpropertiesalias: buildblockpropertiesalias,
     processelement: processelement,
-    processelementalias: processelementalias,
     processpipelineelement: processpipelineelement,
-    processpipelineelementalias: processpipelineelementalias,
     registereventstage: registereventstage,
-    registereventstagealias: registereventstagealias,
     processnestedstage: processnestedstage,
-    processnestedstagealias: processnestedstagealias,
     createpersistentelementwrapper: createpersistentelementwrapper,
-    createpersistentelementwrapperalias: createpersistentelementwrapperalias
+    BLOCKCOMPILERCOMPILESTAGE: BLOCKCOMPILERCOMPILESTAGE,
+    COMPILESTAGE: COMPILESTAGE,
+    LOADPIPELINE: LOADPIPELINE,
+    RESOLVENEXTELEMENT: RESOLVENEXTELEMENT,
+    ORCHESTRATESTAGE: ORCHESTRATESTAGE,
+    VALIDATEPIPELINEBRIEFCASE: VALIDATEPIPELINEBRIEFCASE,
+    BUILD_BLOCK_PROPERTIES: BUILD_BLOCK_PROPERTIES,
+    PROCESS_ELEMENT: PROCESS_ELEMENT,
+    PROCESS_PIPELINE_ELEMENT: PROCESS_PIPELINE_ELEMENT,
+    REGISTER_EVENT_STAGE: REGISTER_EVENT_STAGE,
+    PROCESS_NESTED_STAGE: PROCESS_NESTED_STAGE,
+    CREATE_PERSISTENT_ELEMENT_WRAPPER: CREATE_PERSISTENT_ELEMENT_WRAPPER
   };
 }

@@ -80,6 +80,12 @@ function isvaliddomref(ref) {
   return ref && typeof ref === 'object' && typeof ref.project === 'function';
 }
 
+// UPPERCASE aliases for actor files
+var CREATEDOMREF = createdomref;
+var GETRAWELEMENT = getrawelement;
+var REMOVEREF = removeref;
+var ISVALIDDOMREF = isvaliddomref;
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     rawmap: rawmap,
@@ -89,6 +95,10 @@ if (typeof module !== 'undefined' && module.exports) {
     removerawelementref: removerawelementref,
     createdomref: createdomref,
     removeref: removeref,
-    isvaliddomref: isvaliddomref
+    isvaliddomref: isvaliddomref,
+    CREATEDOMREF: CREATEDOMREF,
+    GETRAWELEMENT: GETRAWELEMENT,
+    REMOVEREF: REMOVEREF,
+    ISVALIDDOMREF: ISVALIDDOMREF
   };
 }
