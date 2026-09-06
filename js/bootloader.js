@@ -29,8 +29,6 @@ var pipelinesmanifest = [
   { src: 'registerconsumers.js', provides: ['registeredconsumers'] }
 ];
 
-var PIPELINES_MANIFEST = pipelinesmanifest;
-
 function getroot() {
   return (typeof window !== 'undefined') ? window : globalthis;
 }
@@ -114,9 +112,7 @@ function runpipelineboot(loadprogram, report, manifest) {
   loadnext();
 }
 
-var pipelinesbase = (typeof document !== 'undefined' && document.currentscript && document.currentscript.src)
-  ? document.currentscript.src.slice(0, document.currentscript.src.lastIndexOf('/') + 1)
-  : '';
+var pipelinesbase = 'https://gassahara.github.io/pipelines/';
 
 function bootpipeline(ondone) {
   function loadscript(entry, done) {
@@ -128,29 +124,23 @@ function bootpipeline(ondone) {
   }
   runpipelineboot(loadscript, function(result) {
     if (result.ok) {
-      console.log('[BOOTLOADER] all ' + result.loaded + ' programs loaded, existence tests passed');
+      console.log('[bootloader] all ' + result.loaded + ' programs loaded, existence tests passed');
     } else {
-      console.error('[BOOTLOADER] BOOT FAILED after ' + result.loaded + ' programs:', JSON.stringify(result.failures));
+      console.error('[bootloader] boot failed after ' + result.loaded + ' programs:', JSON.stringify(result.failures));
     }
     if (typeof ondone === 'function') ondone(result);
   });
 }
 
-var runpipelinebootalias = runpipelineboot;
-var bootpipelinealias = bootpipeline;
-
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     pipelinesmanifest: pipelinesmanifest,
-    PIPELINES_MANIFEST: pipelinesmanifest,
     getroot: getroot,
     checkexistence: checkexistence,
     checkregistration: checkregistration,
     checkstateregistration: checkstateregistration,
     runpipelineboot: runpipelineboot,
-    runpipelinebootalias: runpipelinebootalias,
     pipelinesbase: pipelinesbase,
-    bootpipeline: bootpipeline,
-    bootpipelinealias: bootpipelinealias
+    bootpipeline: bootpipeline
   };
 }
