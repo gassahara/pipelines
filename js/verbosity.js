@@ -123,6 +123,7 @@ function createverbosityfunctions() {
 
 // UPPERCASE aliases for actor files
 var CREATEVERBOSITYCONSTANTS = createverbosityconstants;
+var CREATECONSTANTS = createverbosityconstants;   // <-- missing alias now added
 var GETVERBOSITY = getverbosity;
 var SETVERBOSITY = setverbosity;
 var LOGCRITICAL = logcritical;
@@ -146,6 +147,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getverbosityname: getverbosityname,
     createverbosityfunctions: createverbosityfunctions,
     CREATEVERBOSITYCONSTANTS: CREATEVERBOSITYCONSTANTS,
+    CREATECONSTANTS: CREATECONSTANTS,
     GETVERBOSITY: GETVERBOSITY,
     SETVERBOSITY: SETVERBOSITY,
     LOGCRITICAL: LOGCRITICAL,

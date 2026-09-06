@@ -4,7 +4,8 @@ var pipelinesmanifest = [
       'createverbosityconstants', 'createverbosityfunctions', 'getverbosity', 'setverbosity',
       'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname',
       'CREATEVERBOSITYCONSTANTS', 'CREATEVERBOSITYFUNCTIONS', 'GETVERBOSITY', 'SETVERBOSITY',
-      'LOGCRITICAL', 'LOGERROR', 'LOGWARN', 'LOGINFO', 'LOGDEBUG', 'GETVERBOSITYNAME'
+      'LOGCRITICAL', 'LOGERROR', 'LOGWARN', 'LOGINFO', 'LOGDEBUG', 'GETVERBOSITYNAME',
+      'CREATECONSTANTS'
     ] },
   { src: 'functorial/maybe.js', provides: ['just', 'nothing', 'of', 'fromnullable', 'getorelselazy', 'maybealgebra'] },
   { src: 'evalstack.js', provides: ['createevalstack', 'evalstack', 'frames', 'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack', 'currentcontinuation', 'chaincontinuations'] },
