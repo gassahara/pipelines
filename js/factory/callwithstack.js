@@ -7,10 +7,10 @@ function safeshallowclone(obj) {
         keys.forEach(function(key) {
             var val = obj[key];
             if (typeof val === 'function') clone[key] = '[FUNCTION]';
-            else if (typeof HTMLELEMENT !== 'undefined' && (val instanceof HTMLELEMENT || val instanceof Node)) clone[key] = '[DOM_NODE]';
+            else if (typeof HTMLELEMENT !== 'undefined' && (val instanceof HTMLELEMENT || val instanceof Node)) clone[key] = '[DOMNODE]';
             else if (typeof val === 'object' && val !== null) {
                 try { JSON.stringify(val); clone[key] = safeshallowclone(val); }
-                catch (e2) { clone[key] = '[NON_SERIALIZABLE]'; }
+                catch (e2) { clone[key] = '[NONSERIALIZABLE]'; }
             } else clone[key] = val;
         });
         return clone;
@@ -26,7 +26,7 @@ function applyccc(fn, typecheck) {
         if (argrules) {
             argrules.forEach(function(rule, ri) {
                 if (rule && !rule(args[ri])) {
-                    var err = new Error('[CCC:TYPE_VIOLATION] argument ' + ri + ' failed type check');
+                    var err = new Error('[CCC:TYPEVIOLATION] argument ' + ri + ' failed type check');
                     err.diagnostic = { typecheck: 'arg', index: ri, value: args[ri], rule: rule.name || 'custom' };
                     throw err;
                 }
@@ -36,7 +36,7 @@ function applyccc(fn, typecheck) {
         if (!resultrule) return result;
         var check = function(v) {
             if (!resultrule(v)) {
-                var err2 = new Error('[CCC:TYPE_VIOLATION] return value failed type check');
+                var err2 = new Error('[CCC:TYPEVIOLATION] return value failed type check');
                 err2.diagnostic = { typecheck: 'result', value: v, rule: resultrule.name || 'custom' };
                 throw err2;
             }

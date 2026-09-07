@@ -324,7 +324,7 @@ function compilehttpblock(merged, id, sig, istextual, options) {
     });
 
     var tag = GENERATETAG();
-    var responsetype = istextual ? 'fetch_result' : 'api_result';
+    var responsetype = istextual ? 'fetchresult' : 'apiresult';
     var sender = 'APIACTOR';
 
     SENDINSTRUCTION('APIACTOR', istextual ? MESSAGETYPES.FETCH : MESSAGETYPES.API, {
@@ -335,7 +335,7 @@ function compilehttpblock(merged, id, sig, istextual, options) {
     }, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
 
     var timeout = merged.timeout || mailboxwaittimeout;
-    return WAITFORMAILBOX({ tag: tag, sender: sender, type: istextual ? MESSAGETYPES.FETCH_RESULT : MESSAGETYPES.API_RESULT }, timeout)
+    return WAITFORMAILBOX({ tag: tag, sender: sender, type: istextual ? MESSAGETYPES.FETCHRESULT : MESSAGETYPES.APIRESULT }, timeout)
       .then(function(mailboxmessage) {
         var response = mailboxmessage.payload;
         var result = response && response.result ? response.result : response;
@@ -408,9 +408,9 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
           id: target,
           markup: result.html,
           append: !merged.replace
-        }, tag, 'BLOCKCOMPILER', { responsetype: 'dom_result' });
+        }, tag, 'BLOCKCOMPILER', { responsetype: 'domresult' });
 
-        return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, mailboxwaittimeout)
+        return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
           .then(function() {
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
               return expectelement(result.id, result.timeout || 5000).then(function(domref) {
@@ -474,7 +474,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       }
 
       var tag = GENERATETAG();
-      var responsetype = 'dom_result';
+      var responsetype = 'domresult';
       var msgtype;
       switch (cmd) {
         case 'gethtml': msgtype = MESSAGETYPES.GETHTML; break;
@@ -504,7 +504,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         name: props.name
       }, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, mailboxwaittimeout)
+      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
           return response && response.result !== undefined ? response.result : response;
@@ -528,8 +528,8 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
       var tag = GENERATETAG();
-      SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responsetype: 'dom_result' });
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOM_RESULT }, mailboxwaittimeout)
+      SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responsetype: 'domresult' });
+      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           return mailboxmessage.payload && mailboxmessage.payload.result !== undefined ? mailboxmessage.payload.result : mailboxmessage.payload;
         });
@@ -568,19 +568,19 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       var cmd = command.COMMAND;
       var args = command.args || {};
       var tag = GENERATETAG();
-      var responsetype = 'task_result';
+      var responsetype = 'taskresult';
       var msgtype;
       switch (cmd) {
-        case 'get': msgtype = MESSAGETYPES.GET_STATUS; break;
-        case 'tasks': msgtype = MESSAGETYPES.GET_TASKS; break;
-        case 'task_status': msgtype = MESSAGETYPES.GET_TASK_STATUS; break;
-        case 'await_task': msgtype = MESSAGETYPES.AWAIT_TASK; break;
-        case 'cancel_task': msgtype = MESSAGETYPES.CANCEL_TASK; break;
-        case 'stop_task': msgtype = MESSAGETYPES.STOP_TASK; break;
+        case 'get': msgtype = MESSAGETYPES.GETSTATUS; break;
+        case 'tasks': msgtype = MESSAGETYPES.GETTASKS; break;
+        case 'taskstatus': msgtype = MESSAGETYPES.GETTASKSTATUS; break;
+        case 'awaittask': msgtype = MESSAGETYPES.AWAITTASK; break;
+        case 'canceltask': msgtype = MESSAGETYPES.CANCELTASK; break;
+        case 'stoptask': msgtype = MESSAGETYPES.STOPTASK; break;
         default: throw new Error('[executionquery] unknown command: ' + cmd);
       }
       SENDINSTRUCTION('EXECUTIONACTOR', msgtype, args, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
-      return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, mailboxwaittimeout)
+      return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
           return response && response.result !== undefined ? response.result : response;
@@ -642,7 +642,7 @@ function loadpipelinedependencies(container, options) {
 }
 
 function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, dependencies, options) {
-  var elementid = el.id || 'pipeline_unknown';
+  var elementid = el.id || 'pipelineunknown';
   logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'processpipelineelement:', elementid, 'pipeline:', el.pipeline);
 
   var resolvedpipeline = null;
@@ -673,7 +673,7 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
       var parentenv = env;
       var childenv = cloneobject(parentenv);
       childenv.containerid = el.container || null;
-      childenv.pipelineid = el.pipelineidoverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline_' + elementid;
+      childenv.pipelineid = el.pipelineidoverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline' + elementid;
 
       var inputkeys = el.inputs || [];
       inputkeys.forEach(function(key) {
@@ -701,10 +701,10 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
       };
 
       var tag = GENERATETAG();
-      var responsetype = 'pipeline_booted';
-      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, bootmessage, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
+      var responsetype = 'pipelinebooted';
+      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOTPIPELINE, bootmessage, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, mailboxwaittimeout)
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINEBOOTED }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
           var result = response && response.result ? response.result : response;
@@ -744,8 +744,8 @@ function registereventstage(stage, pipelineid, stagepath, options) {
     briefcase: stage.briefcase || {},
     options: options || {}
   };
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTER_EVENT_LISTENER, payload, tag, 'BLOCKCOMPILER', { responsetype: MESSAGETYPES.EVENT_LISTENER_REGISTERED });
-  return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENT_LISTENER_REGISTERED }, mailboxwaittimeout)
+  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, payload, tag, 'BLOCKCOMPILER', { responsetype: MESSAGETYPES.EVENTLISTENERREGISTERED });
+  return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENTLISTENERREGISTERED }, mailboxwaittimeout)
     .then(function(mailboxmessage) {
       var response = mailboxmessage.payload;
       if (response && response.error) {
@@ -815,7 +815,7 @@ function buildnextstagemessage(pipeline, stageindex, pipelineid, env, options) {
   var nextindex = stageindex + 1;
   if (!pipeline || !pipeline.elements || nextindex >= pipeline.elements.length) return null;
   return {
-    type: 'compile_stage',
+    type: 'compilestage',
     pipeline: pipeline,
     pipelineid: pipelineid,
     stageindex: nextindex,
@@ -828,13 +828,13 @@ function buildnextstagemessage(pipeline, stageindex, pipelineid, env, options) {
 
 function sendstagecompleted(pipelineid, stageid, nextstagemessage, env) {
   var tag = GENERATETAG();
-  SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.STAGE_COMPLETED, {
+  SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETED, {
     pipelineid: pipelineid,
     stageid: stageid,
     nextstagemessage: nextstagemessage,
     env: env || {}
-  }, tag, 'BLOCKCOMPILER', { responsetype: 'stage_completed_ack' });
-  return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGE_COMPLETED_ACK }, mailboxwaittimeout)
+  }, tag, 'BLOCKCOMPILER', { responsetype: 'stagecompletedack' });
+  return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGECOMPLETEDACK }, mailboxwaittimeout)
     .then(function() { return; });
 }
 
@@ -1018,7 +1018,7 @@ function blockcompilercompilestage(dnaenvelope, stagepath, env, options) {
 
 function loadpipeline(pipelinedefinition, pipelineid, options) {
   if (options === undefined) options = {};
-  var id = pipelineid || pipelinedefinition.id || (pipelinedefinition.identity && pipelinedefinition.identity.id) || 'default_pipeline';
+  var id = pipelineid || pipelinedefinition.id || (pipelinedefinition.identity && pipelinedefinition.identity.id) || 'defaultpipeline';
   loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'loadpipeline start for pipeline:', id);
 
   return loadpipelinedependencies(pipelinedefinition, options)
@@ -1033,7 +1033,7 @@ function loadpipeline(pipelinedefinition, pipelineid, options) {
       };
 
       var tag = GENERATETAG();
-      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOT_PIPELINE, {
+      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOTPIPELINE, {
         pipelineid: id,
         dna: dnaenvelope,
         stagepath: ['pipeline', 'elements', 0],
@@ -1046,10 +1046,10 @@ function loadpipeline(pipelinedefinition, pipelineid, options) {
           verbosity: options.verbosity
         }
       }, tag, 'BLOCKCOMPILER', {
-        responsetype: 'pipeline_booted'
+        responsetype: 'pipelinebooted'
       });
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINE_BOOTED }, mailboxwaittimeout)
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINEBOOTED }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
           if (response && response.error) throw new Error(response.error);
@@ -1085,7 +1085,7 @@ function validatepipelinebriefcase(briefcase) {
 }
 
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelineid, options) {
-  var elementid = elementdef.id || compiledelement.id || 'element_unknown';
+  var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
     var path = stagepath.concat([elementid]);
     var execenv = env;
@@ -1114,9 +1114,9 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       elementid: elementid
     };
 
-    SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTE_ELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'task_result' });
+    SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'taskresult' });
 
-    return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASK_RESULT }, mailboxwaittimeout)
+    return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
       .then(function(mailboxmessage) {
         var payload = mailboxmessage.payload;
         var outerresult = payload && payload.result !== undefined ? payload.result : payload;
