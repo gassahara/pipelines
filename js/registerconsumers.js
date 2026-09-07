@@ -1,4 +1,5 @@
 var registeredconsumers = true;
+
 // APIACTOR
 messageregistry.register('APIACTOR', MESSAGETYPES.API, {
   endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
@@ -33,7 +34,7 @@ messageregistry.register('DEBUGACTOR', MESSAGETYPES.PING, { sender: 'string?', t
 ACTORCONSUMERS['DEBUGACTOR:PING'] = DEBUGBEHAVIOR;
 ACTORCONSUMERS['DEBUGACTOR:ping'] = DEBUGBEHAVIOR;
 
-// ==== ADDED: LOGLINE handler ====
+// LOGLINE (added earlier)
 messageregistry.register('DEBUGACTOR', MESSAGETYPES.LOGLINE, {
   level: 'string',
   message: 'string',
@@ -43,7 +44,6 @@ messageregistry.register('DEBUGACTOR', MESSAGETYPES.LOGLINE, {
 }, DEBUGBEHAVIOR);
 ACTORCONSUMERS['DEBUGACTOR:LOGLINE'] = DEBUGBEHAVIOR;
 ACTORCONSUMERS['DEBUGACTOR:logline'] = DEBUGBEHAVIOR;
-// ==== END ADDED ====
 
 // EXECUTIONACTOR
 messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.PIPELINELOADED, { pipelineid: 'string', env: 'object?' }, EXECUTIONBEHAVIOR);
@@ -181,7 +181,7 @@ messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.UNREGISTERPIPELINE, { p
 ACTORCONSUMERS['HYPERVISORACTOR:UNREGISTERPIPELINE'] = HYPERVISORBEHAVIOR;
 ACTORCONSUMERS['HYPERVISORACTOR:unregister_pipeline'] = HYPERVISORBEHAVIOR;
 
-// ==== ADDED: BOOTDNA handler ====
+// ===== BOOTDNA consumer (added earlier) =====
 messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
   dna: 'object',
   pipelineId: 'string',
@@ -191,7 +191,15 @@ messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
 }, HYPERVISORBEHAVIOR);
 ACTORCONSUMERS['HYPERVISORACTOR:BOOTDNA'] = HYPERVISORBEHAVIOR;
 ACTORCONSUMERS['HYPERVISORACTOR:bootdna'] = HYPERVISORBEHAVIOR;
-// ==== END ADDED ====
+// ===== END =====
+
+// ==== REMOVED: BOOTPIPELINE consumer (no longer used) ====
+// messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.BOOTPIPELINE, {
+//   dna: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', firstStage: 'object?'
+// }, HYPERVISORBEHAVIOR);
+// ACTORCONSUMERS['HYPERVISORACTOR:BOOTPIPELINE'] = HYPERVISORBEHAVIOR;
+// ACTORCONSUMERS['HYPERVISORACTOR:boot_pipeline'] = HYPERVISORBEHAVIOR;
+// ==== END REMOVED ====
 
 messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.SETPROGRAM, { programKey: 'string', programSource: 'string' }, HYPERVISORBEHAVIOR);
 ACTORCONSUMERS['HYPERVISORACTOR:SETPROGRAM'] = HYPERVISORBEHAVIOR;
@@ -223,11 +231,7 @@ messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.ACTIVATEACTORS, {}, HYP
 ACTORCONSUMERS['HYPERVISORACTOR:ACTIVATEACTORS'] = HYPERVISORBEHAVIOR;
 ACTORCONSUMERS['HYPERVISORACTOR:activate_actors'] = HYPERVISORBEHAVIOR;
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.BOOTPIPELINE, {
-  dna: 'object', accessors: 'object?', sinks: 'array', pipelineId: 'string', options: 'object?', firstStage: 'object?'
-}, HYPERVISORBEHAVIOR);
-ACTORCONSUMERS['HYPERVISORACTOR:BOOTPIPELINE'] = HYPERVISORBEHAVIOR;
-ACTORCONSUMERS['HYPERVISORACTOR:boot_pipeline'] = HYPERVISORBEHAVIOR;
+// BOOTPIPELINE is removed; kept only for reference comment above.
 
 messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.COMPILESTAGE, {
   pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', options: 'object?'

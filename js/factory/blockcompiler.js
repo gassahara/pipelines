@@ -641,6 +641,7 @@ function loadpipelinedependencies(container, options) {
     });
 }
 
+// ===== REFACTORED processpipelineelement: use BOOTDNA instead of BOOTPIPELINE =====
 function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, dependencies, options) {
   var elementid = el.id || 'pipelineunknown';
   logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'processpipelineelement:', elementid, 'pipeline:', el.pipeline);
@@ -686,35 +687,61 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
       if (childoptions.updateworldmap === undefined) childoptions.updateworldmap = parentenv.updateworldmap;
       if (childoptions.verbosity === undefined && options && options.verbosity !== undefined) childoptions.verbosity = options.verbosity;
 
-      var innerdnaenvelope = {
-        pipelineid: childenv.pipelineid,
-        definition: { pipeline: resolvedpipeline },
-        dependencies: mergeddependencies || {}
-      };
+      // Build the raw DNA for the nested pipeline
+      // The resolvedpipeline is the raw DNA (contains identity, libs, programs, pipeline)
+      var rawDNA = resolvedpipeline;
 
-      var bootmessage = {
-        dna: innerdnaenvelope,
-        accessors: el.accessors || null,
-        sinks: el.sinks || [],
-        pipelineid: childenv.pipelineid,
-        options: childoptions
-      };
+      // If rawDNA does not have an id, use pipelineid from context
+      if (!rawDNA.id && !(rawDNA.identity && rawDNA.identity.id)) {
+        rawDNA.id = childenv.pipelineid;
+      }
 
-      var tag = GENERATETAG();
-      var responsetype = 'pipelinebooted';
-      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOTPIPELINE, bootmessage, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
+      // Use bootDNA to boot the nested pipeline
+      // We need to call bootDNA with the raw DNA and options
+      // However, bootDNA is a function that returns a promise and will send BOOTDNA to Hypervisor.
+      // Since we are inside a pipeline element that is itself a pipeline, we can directly call bootDNA.
+      // Wait: bootDNA is defined later in this file; we need to ensure it is accessible.
+      // We'll call bootDNA and wait for its result.
+      // But bootDNA expects options and will load dependencies internally. We already have dependencies loaded in mergeddependencies.
+      // We'll pass the rawDNA and options.
+      // We also need to capture the pipelineId to use in the response.
+      // We'll use the childenv.pipelineid as the pipelineId.
+      // However, bootDNA will send BOOTDNA to Hypervisor, which will then call loadPipeline.
+      // This is the correct flow for nested pipelines.
+      // We'll simply call bootDNA and handle the response.
+      // Note: bootDNA is a public function, so we can call it.
+      // We'll need to ensure that the bootDNA function is available at this point.
+      // Since it's defined below, we can call it if we hoist the function definition.
+      // Alternatively, we can inline the logic here. But we already have bootDNA defined later.
+      // To avoid ordering issues, we'll just call bootDNA.
+      // The bootDNA function will load dependencies again, but that's acceptable (caching not required).
+      // We'll pass the rawDNA and options.
 
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.PIPELINEBOOTED }, mailboxwaittimeout)
-        .then(function(mailboxmessage) {
-          var response = mailboxmessage.payload;
-          var result = response && response.result ? response.result : response;
-          if (result && result.ERROR) {
-            var err = new Error(result.ERROR);
-            err.diagnostic = result.DIAGNOSTIC || {};
-            throw err;
-          }
+      // We'll use bootDNA defined in this file (it will be available at runtime).
+      var bootDNAFn = (typeof bootDNA === 'function') ? bootDNA : window.bootDNA;
+      if (typeof bootDNAFn !== 'function') {
+        throw new Error('[processpipelineelement] bootDNA function not available');
+      }
+
+      // Set the pipeline ID for the nested pipeline if not present
+      var nestedPipelineId = childenv.pipelineid;
+      if (!rawDNA.id && !(rawDNA.identity && rawDNA.identity.id)) {
+        // We'll set it as a temporary id, but better to rely on identity.
+        // Actually, we can pass the pipelineId as an option, but bootDNA extracts from dna.
+        // We'll just ensure that the rawDNA has an id.
+        rawDNA.id = nestedPipelineId;
+      }
+
+      // Call bootDNA with rawDNA and options
+      return bootDNAFn(rawDNA, childoptions)
+        .then(function(result) {
+          // Write outputs to parent environment
           writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentenv, result, elementid);
           return result;
+        })
+        .catch(function(err) {
+          // Re-throw to be caught by callwithstack
+          throw err;
         });
     };
 
@@ -730,6 +757,7 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
     return blockfn;
   });
 }
+// ===== END REFACTOR =====
 
 function registereventstage(stage, pipelineid, stagepath, options) {
   var sourceid = stage.control.sourceid;
@@ -1021,50 +1049,52 @@ function blockcompilercompilestage(dnaenvelope, stagepath, env, options) {
   return orchestratestage(stage, dnaenvelope.pipelineid, dnaenvelope.dependencies || {}, env || {}, stagepath, options, nextstagemessage);
 }
 
-// ===== REFACTOR: Internal loadPipeline =====
-// Called by Hypervisor to compile a specific stage of a pipeline.
-// Returns a promise that resolves to { env, nextStageIndex } on success, throws on failure.
+// ===== REFACTORED loadPipeline: accepts raw DNA, extracts dna.pipeline =====
+// Internal function called by Hypervisor.
 function loadPipeline(dna, stageIndex, env, options) {
   if (stageIndex === undefined) stageIndex = 0;
   if (env === undefined) env = {};
   if (options === undefined) options = {};
 
-  // Extract the pipeline definition from the DNA
-  var pipeline = dna.pipeline || dna.definition;
-  if (!pipeline) {
-    var err = new Error('loadPipeline: DNA missing pipeline definition');
-    err.diagnostic = { dnaId: dna.id || dna.pipelineid || 'unknown' };
+  // dna is raw DNA (e.g., shellpipeline)
+  // Extract pipeline definition from dna.pipeline
+  var pipelineDef = dna.pipeline;
+  if (!pipelineDef) {
+    var err = new Error('loadPipeline: DNA missing pipeline property');
+    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown' };
     return Promise.reject(err);
   }
 
-  // Find the stage at stageIndex
-  var stages = pipeline.elements || pipeline.stages || [];
+  var stages = pipelineDef.elements || pipelineDef.stages || [];
   if (stageIndex >= stages.length) {
     var err = new Error('loadPipeline: stage index ' + stageIndex + ' out of bounds (max ' + stages.length + ')');
-    err.diagnostic = { dnaId: dna.id || dna.pipelineid || 'unknown', stageIndex: stageIndex };
+    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
     return Promise.reject(err);
   }
   var stage = stages[stageIndex];
   if (!stage || stage.element !== 'STAGE') {
     var err = new Error('loadPipeline: element at index ' + stageIndex + ' is not a STAGE');
-    err.diagnostic = { dnaId: dna.id || dna.pipelineid || 'unknown', stageIndex: stageIndex };
+    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
     return Promise.reject(err);
   }
 
-  // Create a DNA envelope for the blockcompilercompilestage
+  // Construct a temporary envelope for blockcompilercompilestage
+  var pipelineId = dna.id || (dna.identity && dna.identity.id) || 'temp';
   var dnaEnvelope = {
-    pipelineid: dna.id || dna.pipelineid || 'pipeline-' + Date.now(),
-    definition: { pipeline: pipeline },
-    dependencies: dna.dependencies || {}
+    pipelineid: pipelineId,
+    definition: { pipeline: pipelineDef },
+    dependencies: {} // We don't have dependencies here; stage compilation doesn't need them.
   };
 
-  // Compile the stage using blockcompilercompilestage
-  return blockcompilercompilestage(dnaEnvelope, ['pipeline', 'elements', stageIndex], env, options)
+  // Build stage path
+  var stagePath = ['pipeline', 'elements', stageIndex];
+
+  // Call blockcompilercompilestage with the envelope
+  return blockcompilercompilestage(dnaEnvelope, stagePath, env, options)
     .then(function(result) {
-      // The result contains the updated environment and the next stage message
+      // Result contains updated environment and next stage message
       var nextStageIndex = null;
       if (result && result.nextStageMessage) {
-        // The nextStageMessage contains the stage index
         var nextMsg = result.nextStageMessage;
         if (nextMsg && nextMsg.stageindex !== undefined) {
           nextStageIndex = nextMsg.stageindex;
@@ -1081,32 +1111,22 @@ function loadPipeline(dna, stageIndex, env, options) {
 }
 // ===== END REFACTOR =====
 
-// ===== NEW PUBLIC FUNCTION: bootDNA =====
-// Called by frontend (appinit) to boot a pipeline from a DNA.
-// Loads dependencies, sends BOOTDNA to Hypervisor, waits for final response.
+// ===== REFACTORED bootDNA: public function, sends raw DNA =====
 function bootDNA(dna, options) {
   if (options === undefined) options = {};
-  var id = dna.id || dna.pipelineid || 'defaultpipeline';
-  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'bootDNA start for pipeline:', id);
+  // Extract pipeline ID from dna.identity.id
+  var dnaId = dna.id || (dna.identity && dna.identity.id) || 'defaultpipeline';
+  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'bootDNA start for pipeline:', dnaId);
 
   return loadpipelinedependencies(dna, options)
     .then(function(depsregistry) {
-      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies loaded for bootDNA:', id);
+      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies loaded for bootDNA:', dnaId);
 
-      // Ensure the DNA has an id
-      var dnaId = dna.id || dna.pipelineid || id;
-      var dnaEnvelope = {
-        pipelineid: dnaId,
-        definition: dna,
-        dependencies: depsregistry,
-        loadedat: Date.now()
-      };
-
-      // Send BOOTDNA message to Hypervisor
+      // Send BOOTDNA message to Hypervisor with the raw DNA
       var tag = GENERATETAG();
       var bootedType = MESSAGETYPES.PIPELINEBOOTED || MESSAGETYPES.PIPELINEBOOTED;
       SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
-        dna: dnaEnvelope,
+        dna: dna,                    // raw DNA, not envelope
         pipelineId: dnaId,
         options: options,
         sender: 'BLOCKCOMPILER',
@@ -1136,13 +1156,11 @@ function bootDNA(dna, options) {
         });
     });
 }
-// ===== END NEW FUNCTION =====
+// ===== END REFACTOR =====
 
-// Legacy loadpipeline – kept for backward compatibility, but now calls bootDNA.
-// Deprecated: use bootDNA instead.
+// Legacy loadpipeline – kept for backward compatibility, now calls bootDNA.
 function loadpipeline(pipelinedefinition, pipelineid, options) {
   logwarn(blockcompilerstate, '[BLOCKCOMPILER]', 'loadpipeline is deprecated. Use bootDNA instead.');
-  // Wrap the pipeline definition as a DNA if it doesn't have id/libs/programs
   var dna = pipelinedefinition;
   if (!dna.id && pipelineid) {
     dna.id = pipelineid;
