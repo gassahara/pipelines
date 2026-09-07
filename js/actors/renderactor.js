@@ -1,7 +1,7 @@
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
 function ENSURERENDERSLICE(ENV) {
-  return ensureenvslice(ENV, 'render', function() {
+  return ENSUREENVSLICE(ENV, 'render', function() {
     return {
       HTML: '',
       VIEWPORT: null,

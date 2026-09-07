@@ -132,7 +132,7 @@ function REJECTEXPECTATION(TAG, ERROR) {
 function MAILBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE || MESSAGE.type);
 
-  var MAILSLICE = ensureenvslice(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
+  var MAILSLICE = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
 
   var MSGTYPE = MESSAGE.TYPE || MESSAGE.type;
   if (MSGTYPE === MESSAGETYPES.SEND) {

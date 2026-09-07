@@ -24,7 +24,7 @@ function SANITIZEFORSTATE(VALUE, SEEN) {
 }
 
 function ENSUREEXECUTIONSLICE(ENV) {
-  return ensureenvslice(ENV, 'execution', function() {
+  return ENSUREENVSLICE(ENV, 'execution', function() {
     return {
       PIPELINES: {},
       TASKS: {},

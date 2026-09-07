@@ -39,7 +39,7 @@ function ENSUREOVERLAY(DEBUGSLICE) {
 }
 
 function ENSUREDEBUGSLICE(ENV) {
-  return ensureenvslice(ENV, 'debug', function() {
+  return ENSUREENVSLICE(ENV, 'debug', function() {
     return {
       OVERLAY: null,
       CURRENTCONTINUATION: null,
