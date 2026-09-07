@@ -130,7 +130,7 @@ function runpipelineboot(loadprogram, report, manifest) {
   loadnext();
 }
 
-var pipelinesbase = 'https://gassahara.github.io/pipelines/';
+var pipelinesbase = 'https://gassahara.github.io/pipelines/js/';
 
 function bootpipeline(ondone) {
   function loadscript(entry, done) {
