@@ -17,463 +17,463 @@ var DBACTOR_CONSUMERS = DBACTORCONSUMERS;
 // Storage helpers
 // ------------------------------------------------------------------
 
-function getstorage() {
+function GETSTORAGE() {
   try {
-    var storage = typeof localStorage !== 'undefined' ? localStorage :
+    var STORAGE = typeof localStorage !== 'undefined' ? localStorage :
       (typeof globalthis !== 'undefined' ? globalthis.localStorage : null);
-    if (storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function') {
-      return storage;
+    if (STORAGE && typeof STORAGE.getItem === 'function' && typeof STORAGE.setItem === 'function') {
+      return STORAGE;
     }
-  } catch (e) {}
+  } catch (E) {}
   return null;
 }
 
-function ensuredbslice(env) {
-  return ensureenvslice(env, 'db', function() { return { store: {} }; });
+function ENSUREDBSLICE(ENV) {
+  return ENSUREENVSLICE(ENV, 'db', function() { return { STORE: {} }; });
 }
 
 // full recursive serializer with per-case handlers and deduplication
-function serializeforpersistence(value, seen, refmap) {
-  if (seen === undefined) seen = [];
-  if (refmap === undefined) refmap = [];
-  if (value === null) return null;
-  var t = typeof value;
-  if (t === 'string' || t === 'boolean') return value;
-  if (t === 'number') {
-    return (isNaN(value) || !isFinite(value)) ? String(value) : value;
+function SERIALIZEFORPERSISTENCE(VALUE, SEEN, REFMAP) {
+  if (SEEN === undefined) SEEN = [];
+  if (REFMAP === undefined) REFMAP = [];
+  if (VALUE === null) return null;
+  var T = typeof VALUE;
+  if (T === 'string' || T === 'boolean') return VALUE;
+  if (T === 'number') {
+    return (isNaN(VALUE) || !isFinite(VALUE)) ? String(VALUE) : VALUE;
   }
-  if (t === 'undefined') return { typemarker: 'undefined' };
-  if (t === 'function') return { typemarker: 'function', source: value.toString() };
-  if (typeof HTMLELEMENT !== 'undefined' && value instanceof HTMLELEMENT) {
-    return { typemarker: 'dom', tag: value.tagName, id: value.id || null };
+  if (T === 'undefined') return { TYPEMARKER: 'undefined' };
+  if (T === 'function') return { TYPEMARKER: 'function', SOURCE: VALUE.toString() };
+  if (typeof HTMLELEMENT !== 'undefined' && VALUE instanceof HTMLELEMENT) {
+    return { TYPEMARKER: 'dom', TAG: VALUE.tagName, ID: VALUE.id || null };
   }
-  if (typeof Node !== 'undefined' && value instanceof Node) {
-    return { typemarker: 'node', nodename: value.nodeName };
+  if (typeof Node !== 'undefined' && VALUE instanceof Node) {
+    return { TYPEMARKER: 'node', NODENAME: VALUE.nodeName };
   }
-  if (typeof EventTarget !== 'undefined' && value instanceof EventTarget) {
-    return { typemarker: 'eventtarget' };
+  if (typeof EventTarget !== 'undefined' && VALUE instanceof EventTarget) {
+    return { TYPEMARKER: 'eventtarget' };
   }
-  if (value instanceof Date) return { typemarker: 'date', iso: value.toISOString() };
-  if (Object.prototype.toString.call(value) === '[object RegExp]') {
-    return { typemarker: 'regexp', source: value.source, flags: value.flags || '' };
+  if (VALUE instanceof Date) return { TYPEMARKER: 'date', ISO: VALUE.toISOString() };
+  if (Object.prototype.toString.call(VALUE) === '[object RegExp]') {
+    return { TYPEMARKER: 'regexp', SOURCE: VALUE.source, FLAGS: VALUE.flags || '' };
   }
-  if (value instanceof Error) {
-    return { typemarker: 'error', name: value.name, message: value.message, stack: value.stack };
+  if (VALUE instanceof Error) {
+    return { TYPEMARKER: 'error', NAME: VALUE.name, MESSAGE: VALUE.message, STACK: VALUE.stack };
   }
-  if (typeof Map !== 'undefined' && value instanceof Map) {
-    var mapobj = { typemarker: 'map', entries: [] };
-    value.forEach(function(val, key) {
-      mapobj.entries.push([serializeforpersistence(key, seen, refmap), serializeforpersistence(val, seen, refmap)]);
+  if (typeof Map !== 'undefined' && VALUE instanceof Map) {
+    var MAPOBJ = { TYPEMARKER: 'map', ENTRIES: [] };
+    VALUE.forEach(function(VAL, KEY) {
+      MAPOBJ.ENTRIES.push([SERIALIZEFORPERSISTENCE(KEY, SEEN, REFMAP), SERIALIZEFORPERSISTENCE(VAL, SEEN, REFMAP)]);
     });
-    return mapobj;
+    return MAPOBJ;
   }
-  if (typeof Set !== 'undefined' && value instanceof Set) {
-    var setarr = [];
-    value.forEach(function(item) { setarr.push(serializeforpersistence(item, seen, refmap)); });
-    return { typemarker: 'set', values: setarr };
+  if (typeof Set !== 'undefined' && VALUE instanceof Set) {
+    var SETARR = [];
+    VALUE.forEach(function(ITEM) { SETARR.push(SERIALIZEFORPERSISTENCE(ITEM, SEEN, REFMAP)); });
+    return { TYPEMARKER: 'set', VALUES: SETARR };
   }
-  if (typeof value === 'object') {
-    var refindex = refmap.indexOf(value);
-    if (refindex !== -1) return { typemarker: 'ref', refindex: refindex };
-    if (seen.indexOf(value) !== -1) return { typemarker: 'circular' };
-    refmap.push(value);
-    seen.push(value);
-    var result;
-    if (Array.isArray(value)) {
-      result = value.map(function(item) { return serializeforpersistence(item, seen, refmap); });
+  if (typeof VALUE === 'object') {
+    var REFINDEX = REFMAP.indexOf(VALUE);
+    if (REFINDEX !== -1) return { TYPEMARKER: 'ref', REFINDEX: REFINDEX };
+    if (SEEN.indexOf(VALUE) !== -1) return { TYPEMARKER: 'circular' };
+    REFMAP.push(VALUE);
+    SEEN.push(VALUE);
+    var RESULT;
+    if (Array.isArray(VALUE)) {
+      RESULT = VALUE.map(function(ITEM) { return SERIALIZEFORPERSISTENCE(ITEM, SEEN, REFMAP); });
     } else {
-      result = {};
-      Object.keys(value).forEach(function(key) {
-        result[key] = serializeforpersistence(value[key], seen, refmap);
+      RESULT = {};
+      Object.keys(VALUE).forEach(function(KEY) {
+        RESULT[KEY] = SERIALIZEFORPERSISTENCE(VALUE[KEY], SEEN, REFMAP);
       });
     }
-    seen.pop();
-    return result;
+    SEEN.pop();
+    return RESULT;
   }
-  return value;
+  return VALUE;
 }
 
-function persistattempt(store, root, storage, attempt) {
-  if (attempt > 2) return false;
+function PERSISTATTEMPT(STORE, ROOT, STORAGE, ATTEMPT) {
+  if (ATTEMPT > 2) return false;
   try {
-    storage.setItem(ROOTKEY, JSON.stringify(serializeforpersistence(root)));
+    STORAGE.setItem(ROOTKEY, JSON.stringify(SERIALIZEFORPERSISTENCE(ROOT)));
     return true;
-  } catch (err) {
-    var keys = Object.keys(store);
-    if (!keys.length) return false;
-    var removecount = Math.max(1, Math.floor(keys.length * 0.25));
-    keys.slice(0, removecount).forEach(function(key) { delete store[key]; });
-    root.keys = store;
-    return persistattempt(store, root, storage, attempt + 1);
+  } catch (ERR) {
+    var KEYS = Object.keys(STORE);
+    if (!KEYS.length) return false;
+    var REMOVECOUNT = Math.max(1, Math.floor(KEYS.length * 0.25));
+    KEYS.slice(0, REMOVECOUNT).forEach(function(KEY) { delete STORE[KEY]; });
+    ROOT.KEYS = STORE;
+    return PERSISTATTEMPT(STORE, ROOT, STORAGE, ATTEMPT + 1);
   }
 }
 
-function persist(store) {
-  var root = { namespace: 'FRAMEWORK_DBACTOR_V1', updatedat: Date.now(), keys: store };
-  var storage = getstorage();
-  if (!storage) return false;
-  return persistattempt(store, root, storage, 0);
+function PERSIST(STORE) {
+  var ROOT = { NAMESPACE: 'FRAMEWORK_DBACTOR_V1', UPDATEDAT: Date.now(), KEYS: STORE };
+  var STORAGE = GETSTORAGE();
+  if (!STORAGE) return false;
+  return PERSISTATTEMPT(STORE, ROOT, STORAGE, 0);
 }
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
 
-var fntag = 'serializedfunction';
+var FNTAG = 'serializedfunction';
 
-function dnareplacer(key, value) {
-  if (typeof value === 'function') {
-    return { serializedfunction: true, source: value.toString() };
+function DNAREPLACER(KEY, VALUE) {
+  if (typeof VALUE === 'function') {
+    return { SERIALIZEDFUNCTION: true, SOURCE: VALUE.toString() };
   }
-  return value;
+  return VALUE;
 }
 
-function dnareviver(key, value) {
-  if (value && typeof value === 'object' && (value.serializedfunction === true || value.serializedFunction === true)) {
+function DNAREVIVER(KEY, VALUE) {
+  if (VALUE && typeof VALUE === 'object' && (VALUE.SERIALIZEDFUNCTION === true || VALUE.serializedFunction === true)) {
     try {
-      if (value.deps) {
-        var deps = value.deps;
-        var revived = new Function('return (' + value.source + ')')();
+      if (VALUE.DEPS) {
+        var DEPS = VALUE.DEPS;
+        var REVIVED = new Function('return (' + VALUE.SOURCE + ')')();
         return function() {
-          var args = Array.prototype.slice.call(arguments);
-          return revived.apply(null, args.concat([deps]));
+          var ARGS = Array.prototype.slice.call(arguments);
+          return REVIVED.apply(null, ARGS.concat([DEPS]));
         };
       }
-      return new Function('return (' + value.source + ')')();
-    } catch (err) {
-      logwarn(DBSTATE, '[DBACTOR]', '[DNA] failed to revive function using new Function:', err);
+      return new Function('return (' + VALUE.SOURCE + ')')();
+    } catch (ERR) {
+      LOGWARN(DBSTATE, '[DBACTOR]', '[DNA] failed to revive function using new Function:', ERR);
       return function() { throw new Error('revived function failed'); };
     }
   }
-  return value;
+  return VALUE;
 }
 
-var serializedna = function(dna) { return JSON.stringify(dna, dnareplacer); };
-var deserializedna = function(json) { return JSON.parse(json, dnareviver); };
+var SERIALIZEDNA = function(DNA) { return JSON.stringify(DNA, DNAREPLACER); };
+var DESERIALIZEDNA = function(JSONSTR) { return JSON.parse(JSONSTR, DNAREVIVER); };
 
 // ==================== PROPERTY PAIR STORE ====================
 
-var pairstore = {};
-var paircounter = 0;
+var PAIRSTORE = {};
+var PAIRCOUNTER = 0;
 
-function pairidentity(key, value) {
-  var normalized;
-  if (typeof value === 'function') normalized = 'function:' + value.toString();
-  else if (typeof value === 'object' && value !== null) {
-    try { normalized = 'json:' + JSON.stringify(value); }
-    catch (e) { normalized = 'object:' + (value.constructor && value.constructor.name ? value.constructor.name : 'Object'); }
-  } else normalized = typeof value + ':' + String(value);
-  return key + '\u0000' + normalized;
+function PAIRIDENTITY(KEY, VALUE) {
+  var NORMALIZED;
+  if (typeof VALUE === 'function') NORMALIZED = 'function:' + VALUE.toString();
+  else if (typeof VALUE === 'object' && VALUE !== null) {
+    try { NORMALIZED = 'json:' + JSON.stringify(VALUE); }
+    catch (E) { NORMALIZED = 'object:' + (VALUE.constructor && VALUE.constructor.name ? VALUE.constructor.name : 'Object'); }
+  } else NORMALIZED = typeof VALUE + ':' + String(VALUE);
+  return KEY + '\u0000' + NORMALIZED;
 }
 
-function storepair(key, value) {
-  var identity = pairidentity(key, value);
-  var refid = pairstore[identity];
-  if (!refid) {
-    paircounter += 1;
-    refid = 'pair' + paircounter;
-    pairstore[identity] = refid;
-    pairstore['ref:' + refid] = { key: key, value: value };
+function STOREPAIR(KEY, VALUE) {
+  var IDENTITY = PAIRIDENTITY(KEY, VALUE);
+  var REFID = PAIRSTORE[IDENTITY];
+  if (!REFID) {
+    PAIRCOUNTER += 1;
+    REFID = 'PAIR' + PAIRCOUNTER;
+    PAIRSTORE[IDENTITY] = REFID;
+    PAIRSTORE['REF:' + REFID] = { KEY: KEY, VALUE: VALUE };
   }
-  return refid;
+  return REFID;
 }
 
-function consolidategraph(node) {
-  if (node === null || node === undefined) return node;
-  if (typeof node === 'object') {
-    if (node.pairreference || node.pairReference) return node;
-    if (Array.isArray(node)) return node.map(consolidategraph);
-    if (node.briefcase && typeof node.briefcase === 'object') {
-      var briefcase = node.briefcase;
-      Object.keys(briefcase).forEach(function(key) {
-        var refid = storepair(key, briefcase[key]);
-        briefcase[key] = { pairreference: refid };
+function CONSOLIDATEGRAPH(NODE) {
+  if (NODE === null || NODE === undefined) return NODE;
+  if (typeof NODE === 'object') {
+    if (NODE.PAIRREFERENCE || NODE.pairReference) return NODE;
+    if (Array.isArray(NODE)) return NODE.map(CONSOLIDATEGRAPH);
+    if (NODE.BRIEFCASE && typeof NODE.BRIEFCASE === 'object') {
+      var BRIEFCASE = NODE.BRIEFCASE;
+      Object.keys(BRIEFCASE).forEach(function(KEY) {
+        var REFID = STOREPAIR(KEY, BRIEFCASE[KEY]);
+        BRIEFCASE[KEY] = { PAIRREFERENCE: REFID };
       });
     }
-    if (node.element === 'BLOCK') {
-      Object.keys(node).forEach(function(key) {
-        if (key === 'elements') return;
-        var refid = storepair(key, node[key]);
-        node[key] = { pairreference: refid };
+    if (NODE.ELEMENT === 'BLOCK') {
+      Object.keys(NODE).forEach(function(KEY) {
+        if (KEY === 'ELEMENTS') return;
+        var REFID = STOREPAIR(KEY, NODE[KEY]);
+        NODE[KEY] = { PAIRREFERENCE: REFID };
       });
-      return node;
+      return NODE;
     }
-    Object.keys(node).forEach(function(key) { node[key] = consolidategraph(node[key]); });
-    return node;
+    Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = CONSOLIDATEGRAPH(NODE[KEY]); });
+    return NODE;
   }
-  return node;
+  return NODE;
 }
 
-function restoregraph(node) {
-  if (node === null || node === undefined) return node;
-  if (typeof node === 'object') {
-    var refid = node.pairreference || node.pairReference;
-    if (refid) {
-      var entry = pairstore['ref:' + refid];
-      return entry ? entry.value : undefined;
+function RESTOREGRAPH(NODE) {
+  if (NODE === null || NODE === undefined) return NODE;
+  if (typeof NODE === 'object') {
+    var REFID = NODE.PAIRREFERENCE || NODE.pairReference;
+    if (REFID) {
+      var ENTRY = PAIRSTORE['REF:' + REFID];
+      return ENTRY ? ENTRY.VALUE : undefined;
     }
-    if (Array.isArray(node)) return node.map(restoregraph);
-    Object.keys(node).forEach(function(key) { node[key] = restoregraph(node[key]); });
-    return node;
+    if (Array.isArray(NODE)) return NODE.map(RESTOREGRAPH);
+    Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = RESTOREGRAPH(NODE[KEY]); });
+    return NODE;
   }
-  return node;
+  return NODE;
 }
 
-function serializepairstore() {
-  var output = {};
-  Object.keys(pairstore).forEach(function(key) { output[key] = pairstore[key]; });
-  return JSON.stringify(output, dnareplacer);
+function SERIALIZEPAIRSTORE() {
+  var OUTPUT = {};
+  Object.keys(PAIRSTORE).forEach(function(KEY) { OUTPUT[KEY] = PAIRSTORE[KEY]; });
+  return JSON.stringify(OUTPUT, DNAREPLACER);
 }
 
-function deserializepairstore(json) {
-  if (!json) return;
-  var parsed;
-  try { parsed = JSON.parse(json, dnareviver); }
-  catch (err) { logwarn(DBSTATE, '[DBACTOR]', 'deserializepairstore failed:', err); return; }
-  Object.keys(pairstore).forEach(function(key) { delete pairstore[key]; });
-  Object.keys(parsed || {}).forEach(function(key) { pairstore[key] = parsed[key]; });
+function DESERIALIZEPAIRSTORE(JSONSTR) {
+  if (!JSONSTR) return;
+  var PARSED;
+  try { PARSED = JSON.parse(JSONSTR, DNAREVIVER); }
+  catch (ERR) { LOGWARN(DBSTATE, '[DBACTOR]', 'DESERIALIZEPAIRSTORE FAILED:', ERR); return; }
+  Object.keys(PAIRSTORE).forEach(function(KEY) { delete PAIRSTORE[KEY]; });
+  Object.keys(PARSED || {}).forEach(function(KEY) { PAIRSTORE[KEY] = PARSED[KEY]; });
 }
 
 // ==================== POST-SERIALIZATION OPTIMIZATION ====================
 
-function measurelength(obj) { return JSON.stringify(obj).length; }
+function MEASURELENGTH(OBJ) { return JSON.stringify(OBJ).length; }
 
-function optimizeserializeddna(jsonstring) {
-  Object.keys(pairstore).forEach(function(key) { delete pairstore[key]; });
-  paircounter = 0;
-  logdebug(DBSTATE, '[DBACTOR]', 'optimizeserializeddna start, input length:', jsonstring.length);
-  var obj = JSON.parse(jsonstring);
+function OPTIMIZESERIALIZEDDNA(JSONSTRING) {
+  Object.keys(PAIRSTORE).forEach(function(KEY) { delete PAIRSTORE[KEY]; });
+  PAIRCOUNTER = 0;
+  LOGDEBUG(DBSTATE, '[DBACTOR]', 'OPTIMIZESERIALIZEDDNA START, INPUT LENGTH:', JSONSTRING.length);
+  var OBJ = JSON.parse(JSONSTRING);
 
-  var passobjectpairdedup = function(node) {
-    if (Array.isArray(node)) return node.map(passobjectpairdedup);
-    if (node && typeof node === 'object') {
-      if (node.pairreference || node.pairReference) return node;
-      if (node.element === 'BLOCK') {
-        Object.keys(node).forEach(function(key) {
-          if (key === 'elements') return;
-          var identity = pairidentity(key, node[key]);
-          var refid = pairstore[identity];
-          if (!refid) {
-            paircounter += 1;
-            refid = 'pair' + paircounter;
-            pairstore[identity] = refid;
-            pairstore['ref:' + refid] = { key: key, value: node[key] };
+  var PASSOBJECTPAIRDEDUP = function(NODE) {
+    if (Array.isArray(NODE)) return NODE.map(PASSOBJECTPAIRDEDUP);
+    if (NODE && typeof NODE === 'object') {
+      if (NODE.PAIRREFERENCE || NODE.pairReference) return NODE;
+      if (NODE.ELEMENT === 'BLOCK') {
+        Object.keys(NODE).forEach(function(KEY) {
+          if (KEY === 'ELEMENTS') return;
+          var IDENTITY = PAIRIDENTITY(KEY, NODE[KEY]);
+          var REFID = PAIRSTORE[IDENTITY];
+          if (!REFID) {
+            PAIRCOUNTER += 1;
+            REFID = 'PAIR' + PAIRCOUNTER;
+            PAIRSTORE[IDENTITY] = REFID;
+            PAIRSTORE['REF:' + REFID] = { KEY: KEY, VALUE: NODE[KEY] };
           }
-          node[key] = { pairreference: refid };
+          NODE[KEY] = { PAIRREFERENCE: REFID };
         });
-        return node;
+        return NODE;
       }
-      if (node.briefcase && typeof node.briefcase === 'object') {
-        Object.keys(node.briefcase).forEach(function(key) {
-          var identity = pairidentity(key, node.briefcase[key]);
-          var refid = pairstore[identity];
-          if (!refid) {
-            paircounter += 1;
-            refid = 'pair' + paircounter;
-            pairstore[identity] = refid;
-            pairstore['ref:' + refid] = { key: key, value: node.briefcase[key] };
+      if (NODE.BRIEFCASE && typeof NODE.BRIEFCASE === 'object') {
+        Object.keys(NODE.BRIEFCASE).forEach(function(KEY) {
+          var IDENTITY = PAIRIDENTITY(KEY, NODE.BRIEFCASE[KEY]);
+          var REFID = PAIRSTORE[IDENTITY];
+          if (!REFID) {
+            PAIRCOUNTER += 1;
+            REFID = 'PAIR' + PAIRCOUNTER;
+            PAIRSTORE[IDENTITY] = REFID;
+            PAIRSTORE['REF:' + REFID] = { KEY: KEY, VALUE: NODE.BRIEFCASE[KEY] };
           }
-          node.briefcase[key] = { pairreference: refid };
+          NODE.BRIEFCASE[KEY] = { PAIRREFERENCE: REFID };
         });
       }
-      Object.keys(node).forEach(function(key) { node[key] = passobjectpairdedup(node[key]); });
-      return node;
+      Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = PASSOBJECTPAIRDEDUP(NODE[KEY]); });
+      return NODE;
     }
-    return node;
+    return NODE;
   };
 
-  var passinnerdedup = function(node) {
-    if (Array.isArray(node)) return node.map(passinnerdedup);
-    if (node && typeof node === 'object') {
-      if ((node.serializedfunction === true || node.serializedFunction === true) && typeof node.source === 'string') return node;
-      Object.keys(node).forEach(function(key) { node[key] = passinnerdedup(node[key]); });
-      return node;
+  var PASSINNERDEDUP = function(NODE) {
+    if (Array.isArray(NODE)) return NODE.map(PASSINNERDEDUP);
+    if (NODE && typeof NODE === 'object') {
+      if ((NODE.SERIALIZEDFUNCTION === true || NODE.serializedFunction === true) && typeof NODE.SOURCE === 'string') return NODE;
+      Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = PASSINNERDEDUP(NODE[KEY]); });
+      return NODE;
     }
-    return node;
+    return NODE;
   };
 
-  function optimizecycle(current) {
-    var before = measurelength(current);
-    var candidate = passinnerdedup(passobjectpairdedup(JSON.parse(JSON.stringify(current))));
-    if (measurelength(candidate) < before) {
-      return optimizecycle(candidate);
+  function OPTIMIZECYCLE(CURRENT) {
+    var BEFORE = MEASURELENGTH(CURRENT);
+    var CANDIDATE = PASSINNERDEDUP(PASSOBJECTPAIRDEDUP(JSON.parse(JSON.stringify(CURRENT))));
+    if (MEASURELENGTH(CANDIDATE) < BEFORE) {
+      return OPTIMIZECYCLE(CANDIDATE);
     }
-    return current;
+    return CURRENT;
   }
 
-  var optimized = optimizecycle(obj);
-  optimized.frameworkpairstore = serializepairstore();
-  var finalresult = JSON.stringify(optimized);
-  logdebug(DBSTATE, '[DBACTOR]', 'optimizeserializeddna completed, output length:', finalresult.length);
-  return finalresult;
+  var OPTIMIZED = OPTIMIZECYCLE(OBJ);
+  OPTIMIZED.FRAMEWORKPAIRSTORE = SERIALIZEPAIRSTORE();
+  var FINALRESULT = JSON.stringify(OPTIMIZED);
+  LOGDEBUG(DBSTATE, '[DBACTOR]', 'OPTIMIZESERIALIZEDDNA COMPLETED, OUTPUT LENGTH:', FINALRESULT.length);
+  return FINALRESULT;
 }
 
-function deoptimizeserializeddna(jsonstring) {
-  logdebug(DBSTATE, '[DBACTOR]', 'deoptimizeserializeddna start, input length:', jsonstring.length);
-  var obj = JSON.parse(jsonstring);
-  var storedata = obj.frameworkpairstore || obj.frameworkPairStore;
-  if (storedata) {
-    deserializepairstore(storedata);
-    delete obj.frameworkpairstore;
-    delete obj.frameworkPairStore;
+function DEOPTIMIZESERIALIZEDDNA(JSONSTRING) {
+  LOGDEBUG(DBSTATE, '[DBACTOR]', 'DEOPTIMIZESERIALIZEDDNA START, INPUT LENGTH:', JSONSTRING.length);
+  var OBJ = JSON.parse(JSONSTRING);
+  var STOREDATA = OBJ.FRAMEWORKPAIRSTORE || OBJ.frameworkPairStore;
+  if (STOREDATA) {
+    DESERIALIZEPAIRSTORE(STOREDATA);
+    delete OBJ.FRAMEWORKPAIRSTORE;
+    delete OBJ.frameworkPairStore;
   }
-  var resolvenode = function(node) {
-    if (Array.isArray(node)) return node.map(resolvenode);
-    if (node && typeof node === 'object') {
-      var refid = node.pairreference || node.pairReference;
-      if (refid) {
-        var entry = pairstore['ref:' + refid];
-        return entry ? entry.value : undefined;
+  var RESOLVENODE = function(NODE) {
+    if (Array.isArray(NODE)) return NODE.map(RESOLVENODE);
+    if (NODE && typeof NODE === 'object') {
+      var REFID = NODE.PAIRREFERENCE || NODE.pairReference;
+      if (REFID) {
+        var ENTRY = PAIRSTORE['REF:' + REFID];
+        return ENTRY ? ENTRY.VALUE : undefined;
       }
-      Object.keys(node).forEach(function(key) { node[key] = resolvenode(node[key]); });
-      return node;
+      Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = RESOLVENODE(NODE[KEY]); });
+      return NODE;
     }
-    return node;
+    return NODE;
   };
-  var finalresult = JSON.stringify(resolvenode(obj));
-  logdebug(DBSTATE, '[DBACTOR]', 'deoptimizeserializeddna completed, output length:', finalresult.length);
-  return finalresult;
+  var FINALRESULT = JSON.stringify(RESOLVENODE(OBJ));
+  LOGDEBUG(DBSTATE, '[DBACTOR]', 'DEOPTIMIZESERIALIZEDDNA COMPLETED, OUTPUT LENGTH:', FINALRESULT.length);
+  return FINALRESULT;
 }
 
 // ==================== STORE MAILBOX & WAIT ====================
 
-function storesend(recipient, type, payload, tag, sender) {
-  var envelope = {
-    id: 'store' + Date.now() + Math.random().toString(36).slice(2, 8),
-    recipient: recipient,
-    type: type,
-    payload: payload,
-    tag: tag,
-    sender: sender,
-    read: 'UNREAD',
-    timestamp: Date.now()
+function STORESEND(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER) {
+  var ENVELOPE = {
+    ID: 'STORE' + Date.now() + Math.random().toString(36).slice(2, 8),
+    RECIPIENT: RECIPIENT,
+    TYPE: TYPE,
+    PAYLOAD: PAYLOAD,
+    TAG: TAG,
+    SENDER: SENDER,
+    READ: 'UNREAD',
+    TIMESTAMP: Date.now()
   };
-  STOREMAILBOX.push(envelope);
-  return envelope;
+  STOREMAILBOX.push(ENVELOPE);
+  return ENVELOPE;
 }
 
-function storewait(filter, timeout) {
-  if (timeout === undefined) timeout = 20000;
-  return new Promise(function(resolve, reject) {
-    var start = Date.now();
-    function poll() {
-      var matches = STOREMAILBOX.filter(function(item) {
-        if (filter.tag !== undefined && item.tag !== filter.tag) return false;
-        if (filter.sender !== undefined && item.sender !== filter.sender) return false;
-        if (filter.recipient !== undefined && item.recipient !== filter.recipient) return false;
-        if (filter.type !== undefined && item.type !== filter.type) return false;
-        if (filter.read !== undefined && item.read !== filter.read) return false;
-        if (item.read === 'READ') return false;
+function STOREWAIT(FILTER, TIMEOUT) {
+  if (TIMEOUT === undefined) TIMEOUT = 20000;
+  return new Promise(function(RESOLVE, REJECT) {
+    var START = Date.now();
+    function POLL() {
+      var MATCHES = STOREMAILBOX.filter(function(ITEM) {
+        if (FILTER.TAG !== undefined && ITEM.TAG !== FILTER.TAG) return false;
+        if (FILTER.SENDER !== undefined && ITEM.SENDER !== FILTER.SENDER) return false;
+        if (FILTER.RECIPIENT !== undefined && ITEM.RECIPIENT !== FILTER.RECIPIENT) return false;
+        if (FILTER.TYPE !== undefined && ITEM.TYPE !== FILTER.TYPE) return false;
+        if (FILTER.READ !== undefined && ITEM.READ !== FILTER.READ) return false;
+        if (ITEM.READ === 'READ') return false;
         return true;
       });
-      if (matches.length > 0) {
-        var item = matches[0];
-        item.read = 'READ';
-        resolve(item);
+      if (MATCHES.length > 0) {
+        var ITEM = MATCHES[0];
+        ITEM.READ = 'READ';
+        RESOLVE(ITEM);
         return;
       }
-      if (Date.now() - start > timeout) {
-        reject(new Error('STORE wait timeout for filter: ' + JSON.stringify(filter)));
+      if (Date.now() - START > TIMEOUT) {
+        REJECT(new Error('STORE wait timeout for filter: ' + JSON.stringify(FILTER)));
         return;
       }
-      setTimeout(poll, 50);
+      setTimeout(POLL, 50);
     }
-    poll();
+    POLL();
   });
 }
 
 // ==================== DBACTOR BEHAVIOR ====================
 
-var DBBEHAVIOR = function(env, message) {
-  logdebug(env, '[DBACTOR]', 'behavior handling action:', message.type);
-  var dbslice = ensuredbslice(env);
-  var store = dbslice.store;
+var DBBEHAVIOR = function(ENV, MESSAGE) {
+  LOGDEBUG(ENV, '[DBACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
+  var DBSLICE = ENSUREDBSLICE(ENV);
+  var STORE = DBSLICE.STORE;
 
-  switch (message.type) {
+  switch (MESSAGE.TYPE) {
     case MESSAGETYPES.STORE:
-      logdebug(env, '[DBACTOR]', 'action STORE key:', message.key);
+      LOGDEBUG(ENV, '[DBACTOR]', 'ACTION STORE KEY:', MESSAGE.KEY);
       try {
-        var serialized = JSON.stringify(serializeforpersistence(message.value));
-        if (serialized.length > MAXENTRYBYTES) {
-          logwarn(env, '[DBACTOR]', 'value too large for key:', message.key, 'bytes:', serialized.length);
-          storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { error: 'value too large' }, message.tag, 'DBACTOR');
-          return env;
+        var SERIALIZED = JSON.stringify(SERIALIZEFORPERSISTENCE(MESSAGE.VALUE));
+        if (SERIALIZED.length > MAXENTRYBYTES) {
+          LOGWARN(ENV, '[DBACTOR]', 'VALUE TOO LARGE FOR KEY:', MESSAGE.KEY, 'BYTES:', SERIALIZED.length);
+          STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { ERROR: 'value too large' }, MESSAGE.TAG, 'DBACTOR');
+          return ENV;
         }
-      } catch (e) {
-        storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { error: e.message || String(e) }, message.tag, 'DBACTOR');
-        return env;
+      } catch (E) {
+        STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { ERROR: E.message || String(E) }, MESSAGE.TAG, 'DBACTOR');
+        return ENV;
       }
-      var keys = Object.keys(store);
-      if (keys.length >= MAXKEYS && !store[message.key]) {
-        var oldest = keys[0];
-        if (oldest) delete store[oldest];
+      var KEYS = Object.keys(STORE);
+      if (KEYS.length >= MAXKEYS && !STORE[MESSAGE.KEY]) {
+        var OLDEST = KEYS[0];
+        if (OLDEST) delete STORE[OLDEST];
       }
-      store[message.key] = message.value;
-      var persisted = persist(store);
-      if (persisted) storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { result: true }, message.tag, 'DBACTOR');
-      else storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { error: 'persist failed' }, message.tag, 'DBACTOR');
-      return env;
+      STORE[MESSAGE.KEY] = MESSAGE.VALUE;
+      var PERSISTED = PERSIST(STORE);
+      if (PERSISTED) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
+      else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
+      return ENV;
 
     case MESSAGETYPES.RESTORE:
-      logdebug(env, '[DBACTOR]', 'action RESTORE key:', message.key, 'exists:', store[message.key] !== undefined);
-      var restoredvalue = store[message.key] !== undefined ? store[message.key] : null;
-      storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { result: restoredvalue }, message.tag, 'DBACTOR');
-      return env;
+      LOGDEBUG(ENV, '[DBACTOR]', 'ACTION RESTORE KEY:', MESSAGE.KEY, 'EXISTS:', STORE[MESSAGE.KEY] !== undefined);
+      var RESTOREDVALUE = STORE[MESSAGE.KEY] !== undefined ? STORE[MESSAGE.KEY] : null;
+      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { RESULT: RESTOREDVALUE }, MESSAGE.TAG, 'DBACTOR');
+      return ENV;
 
     case MESSAGETYPES.LIST:
-      logdebug(env, '[DBACTOR]', 'action LIST count:', Object.keys(store).length);
-      storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { result: Object.keys(store) }, message.tag, 'DBACTOR');
-      return env;
+      LOGDEBUG(ENV, '[DBACTOR]', 'ACTION LIST COUNT:', Object.keys(STORE).length);
+      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { RESULT: Object.keys(STORE) }, MESSAGE.TAG, 'DBACTOR');
+      return ENV;
 
     case MESSAGETYPES.DELETE:
-      logdebug(env, '[DBACTOR]', 'action DELETE key:', message.key);
-      delete store[message.key];
-      var persisteddel = persist(store);
-      if (persisteddel) storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { result: true }, message.tag, 'DBACTOR');
-      else storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { error: 'persist failed' }, message.tag, 'DBACTOR');
-      return env;
+      LOGDEBUG(ENV, '[DBACTOR]', 'ACTION DELETE KEY:', MESSAGE.KEY);
+      delete STORE[MESSAGE.KEY];
+      var PERSISTEDDEL = PERSIST(STORE);
+      if (PERSISTEDDEL) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
+      else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
+      return ENV;
 
     default:
-      logwarn(env, '[DBACTOR]', 'unknown action:', message.type);
-      storesend(message.sender, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { error: '[DBACTOR] unknown message type' }, message.tag, 'DBACTOR');
-      return env;
+      LOGWARN(ENV, '[DBACTOR]', 'UNKNOWN ACTION:', MESSAGE.TYPE);
+      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT, { ERROR: '[DBACTOR] unknown message type' }, MESSAGE.TAG, 'DBACTOR');
+      return ENV;
   }
 };
 
 // ==================== DIRECT DB API (actors only) ====================
 
-function DBSTORE(key, value) {
-  var tag = GENERATETAG();
-  var dbresulttype = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
-  storesend('DBACTOR', MESSAGETYPES.STORE, { key: key, value: value }, tag, 'WORLDMAPACTOR');
-  var msg = { type: MESSAGETYPES.STORE, key: key, value: value, sender: 'WORLDMAPACTOR', tag: tag };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
-  return storewait({ tag: tag, sender: 'DBACTOR' }, 20000);
+function DBSTORE(KEY, VALUE) {
+  var TAG = GENERATETAG();
+  var DBRESULTTYPE = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
+  STORESEND('DBACTOR', MESSAGETYPES.STORE, { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR');
+  var MSG = { TYPE: MESSAGETYPES.STORE, KEY: KEY, VALUE: VALUE, SENDER: 'WORLDMAPACTOR', TAG: TAG };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
 }
 
-function DBRESTORE(key) {
-  var tag = GENERATETAG();
-  var dbresulttype = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
-  storesend('DBACTOR', MESSAGETYPES.RESTORE, { key: key }, tag, 'WORLDMAPACTOR');
-  var msg = { type: MESSAGETYPES.RESTORE, key: key, sender: 'WORLDMAPACTOR', tag: tag };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
-  return storewait({ tag: tag, sender: 'DBACTOR' }, 20000);
+function DBRESTORE(KEY) {
+  var TAG = GENERATETAG();
+  var DBRESULTTYPE = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
+  STORESEND('DBACTOR', MESSAGETYPES.RESTORE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
+  var MSG = { TYPE: MESSAGETYPES.RESTORE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
 }
 
 function DBLIST() {
-  var tag = GENERATETAG();
-  var dbresulttype = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
-  storesend('DBACTOR', MESSAGETYPES.LIST, {}, tag, 'WORLDMAPACTOR');
-  var msg = { type: MESSAGETYPES.LIST, sender: 'WORLDMAPACTOR', tag: tag };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
-  return storewait({ tag: tag, sender: 'DBACTOR' }, 20000);
+  var TAG = GENERATETAG();
+  var DBRESULTTYPE = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
+  STORESEND('DBACTOR', MESSAGETYPES.LIST, {}, TAG, 'WORLDMAPACTOR');
+  var MSG = { TYPE: MESSAGETYPES.LIST, SENDER: 'WORLDMAPACTOR', TAG: TAG };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
 }
 
-function DBDELETE(key) {
-  var tag = GENERATETAG();
-  var dbresulttype = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
-  storesend('DBACTOR', MESSAGETYPES.DELETE, { key: key }, tag, 'WORLDMAPACTOR');
-  var msg = { type: MESSAGETYPES.DELETE, key: key, sender: 'WORLDMAPACTOR', tag: tag };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), msg);
-  return storewait({ tag: tag, sender: 'DBACTOR' }, 20000);
+function DBDELETE(KEY) {
+  var TAG = GENERATETAG();
+  var DBRESULTTYPE = MESSAGETYPES.DBRESULT || MESSAGETYPES.DB_RESULT;
+  STORESEND('DBACTOR', MESSAGETYPES.DELETE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
+  var MSG = { TYPE: MESSAGETYPES.DELETE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
+  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
 }
 
 var DB_STORE = DBSTORE;
@@ -483,18 +483,18 @@ var DB_DELETE = DBDELETE;
 
 // ==================== START FUNCTION ====================
 
-function STARTDBACTOR(options) {
-  if (options !== undefined) {
-    var lvl = typeof options === 'number' ? options :
-      (options && options.verbosity !== undefined ? options.verbosity : (options && options.verbosityLevel));
-    if (lvl !== undefined) {
-      var env = GETACTORSTATE('WORLDMAPACTOR');
-      if (env) env.verbosity = lvl;
+function STARTDBACTOR(OPTIONS) {
+  if (OPTIONS !== undefined) {
+    var LVL = typeof OPTIONS === 'number' ? OPTIONS :
+      (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
+    if (LVL !== undefined) {
+      var ENV = GETACTORSTATE('WORLDMAPACTOR');
+      if (ENV) ENV.VERBOSITY = LVL;
     }
   }
   return {
-    getstate: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    dispatch: function(message) { return DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), message); }
+    GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
+    DISPATCH: function(MESSAGE) { return DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MESSAGE); }
   };
 }
 
@@ -510,10 +510,12 @@ if (typeof module !== 'undefined' && module.exports) {
     DB_LIST: DBLIST,
     DB_DELETE: DBDELETE,
     STARTDBACTOR: STARTDBACTOR,
-    serializeforpersistence: serializeforpersistence,
-    serializedna: serializedna,
-    deserializedna: deserializedna,
-    optimizeserializeddna: optimizeserializeddna,
-    deoptimizeserializeddna: deoptimizeserializeddna
+    STORESEND: STORESEND,
+    STOREWAIT: STOREWAIT,
+    SERIALIZEFORPERSISTENCE: SERIALIZEFORPERSISTENCE,
+    SERIALIZEDNA: SERIALIZEDNA,
+    DESERIALIZEDNA: DESERIALIZEDNA,
+    OPTIMIZESERIALIZEDDNA: OPTIMIZESERIALIZEDDNA,
+    DEOPTIMIZESERIALIZEDDNA: DEOPTIMIZESERIALIZEDDNA
   };
 }

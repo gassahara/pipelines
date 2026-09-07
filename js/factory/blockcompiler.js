@@ -349,7 +349,7 @@ function compilehttpblock(merged, id, sig, istextual, options) {
   };
 
   var blockfn = function(env) {
-    return callwithstack(EVALSTACK, (istextual ? 'fetch' : 'api') + ':' + id, 'async-await', function() {
+    return callwithstack(evalstack, (istextual ? 'fetch' : 'api') + ':' + id, 'async-await', function() {
       return innerfn(env);
     }, [env], {
       context: { env: env, pipestate: env.pipestate },
@@ -374,7 +374,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       var fnargs = [properties].concat(inputargs);
-      return callwithstack(EVALSTACK, 'fn:' + (merged.ref || id), 'async-await', function() {
+      return callwithstack(evalstack, 'fn:' + (merged.ref || id), 'async-await', function() {
         return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
       }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
       .then(function(result) {
@@ -424,7 +424,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       });
     };
     var blockfn = function(env) {
-      return callwithstack(EVALSTACK, 'writer:' + id, 'async-await', function() { return innerfn(env); }, [env], {
+      return callwithstack(evalstack, 'writer:' + id, 'async-await', function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
         errk: createerrorcontext(id, 'writer')
@@ -442,12 +442,12 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       if (!io) throw new Error('io block "' + id + '" ref must be a function');
       var inputdata = {};
       (sig.inputs || []).forEach(function(inp) { inputdata[inp] = compilepathaccessor(inp)(env); });
-      return callwithstack(EVALSTACK, 'io:' + (merged.ref || id), 'async-await', function(e) {
+      return callwithstack(evalstack, 'io:' + (merged.ref || id), 'async-await', function(e) {
         return Promise.resolve(io(inputdata, e));
       }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') });
     };
     var blockfn = function(env) {
-      return callwithstack(EVALSTACK, 'io:' + id, 'async-await', function() { return innerfn(env); }, [env], {
+      return callwithstack(evalstack, 'io:' + id, 'async-await', function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
         errk: createerrorcontext(id, 'io')
@@ -511,7 +511,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         });
     };
     var blockfn = function(env) {
-      return callwithstack(EVALSTACK, 'domquery:' + id, 'async-await', function() { return innerfn(env); }, [env], {
+      return callwithstack(evalstack, 'domquery:' + id, 'async-await', function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
         errk: createerrorcontext(id, 'domquery')
@@ -535,7 +535,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         });
     };
     var blockfn = function(env) {
-      return callwithstack(EVALSTACK, 'crypto:' + id, 'async-await', function() { return innerfn(env); }, [env], {
+      return callwithstack(evalstack, 'crypto:' + id, 'async-await', function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
         errk: createerrorcontext(id, 'crypto')
@@ -552,7 +552,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       return new Promise(function(r) { setTimeout(r, ms); }).then(function() { return {}; });
     };
     var blockfn = function(env) {
-      return callwithstack(EVALSTACK, 'wait:' + id, 'async-await', function() { return innerfn(env); }, [env], {
+      return callwithstack(evalstack, 'wait:' + id, 'async-await', function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
         errk: createerrorcontext(id, 'wait')
@@ -587,7 +587,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         });
     };
     var blockfn = function(env) {
-      return callwithstack(EVALSTACK, 'executionquery:' + id, 'async-await', function() { return innerfn(env); }, [env], {
+      return callwithstack(evalstack, 'executionquery:' + id, 'async-await', function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
         errk: createerrorcontext(id, 'executionquery')
@@ -714,7 +714,7 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
     };
 
     var blockfn = function(env) {
-      return callwithstack(EVALSTACK, 'pipeline:' + elementid, 'async-await', function() { return innerfn(env); }, [env], {
+      return callwithstack(evalstack, 'pipeline:' + elementid, 'async-await', function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
         errk: createerrorcontext(elementid, 'pipeline')
@@ -777,7 +777,7 @@ function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcas
   if (childstage.async === true) {
     var asyncwrapper = function(env) {
       return callwithstack(
-        EVALSTACK,
+        evalstack,
         'nested-stage:' + childstage.id,
         'async-await',
         function() {
@@ -796,7 +796,7 @@ function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcas
   } else {
     var syncwrapper = function(env) {
       return callwithstack(
-        EVALSTACK,
+        evalstack,
         'nested-stage:' + childstage.id,
         'async-await',
         function() {

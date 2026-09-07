@@ -7,7 +7,7 @@ function safeshallowclone(obj) {
         keys.forEach(function(key) {
             var val = obj[key];
             if (typeof val === 'function') clone[key] = '[FUNCTION]';
-            else if (typeof HTMLELEMENT !== 'undefined' && (val instanceof HTMLELEMENT || val instanceof NODE)) clone[key] = '[DOM_NODE]';
+            else if (typeof HTMLELEMENT !== 'undefined' && (val instanceof HTMLELEMENT || val instanceof Node)) clone[key] = '[DOM_NODE]';
             else if (typeof val === 'object' && val !== null) {
                 try { JSON.stringify(val); clone[key] = safeshallowclone(val); }
                 catch (e2) { clone[key] = '[NON_SERIALIZABLE]'; }
@@ -101,8 +101,8 @@ function callwithstack(evalstack, label, type, fn, args, options) {
             if (captured && !err.diagnostic.continuation) err.diagnostic.continuation = captured;
             evalstack.popframe();
 
-            var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : (typeof SENDINSTRUCTION === 'function' ? SENDINSTRUCTION : null);
-            var gentagfn = (typeof GENERATETAG === 'function') ? GENERATETAG : (typeof GENERATETAG === 'function' ? GENERATETAG : function() { return 'tag'; });
+            var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : null;
+            var gentagfn = (typeof GENERATETAG === 'function') ? GENERATETAG : function() { return 'tag'; };
             if (sendinstfn && typeof MESSAGETYPES !== 'undefined') {
                 try {
                     sendinstfn('DEBUGACTOR', MESSAGETYPES.SHOW, {
