@@ -108,6 +108,45 @@ function getverbosityname(levelvalue) {
   }
 }
 
+// ===== ADDED: logToDebugger helper =====
+function logToDebugger(env, level, prefix, data) {
+  // If env is not provided, use a default state
+  var effectiveEnv = env || {};
+  var lvl = resolvelevel(level);
+  if (lvl === null) lvl = constants.debug; // fallback
+
+  // Check if verbosity is high enough
+  if (getverbosity(effectiveEnv) < lvl) {
+    return; // do nothing
+  }
+
+  // Emit to console using appropriate level
+  var args = [];
+  if (data && typeof data === 'object') {
+    // If data is an object, stringify it for console output (optional)
+    // but we pass both prefix and data as separate arguments.
+    args = [prefix, data];
+  } else {
+    args = [prefix, data];
+  }
+  // Use the existing emit logic
+  emit(lvl, effectiveEnv, prefix, [data]);
+
+  // Send to DEBUGACTOR via LOGLINE message
+  if (typeof SENDINSTRUCTION !== 'undefined' && typeof MESSAGETYPES !== 'undefined') {
+    var tag = (typeof GENERATETAG === 'function') ? GENERATETAG() : 'LOG' + Date.now();
+    var payload = {
+      level: getverbosityname(lvl),
+      message: prefix + ' ' + (typeof data === 'string' ? data : JSON.stringify(data)),
+      data: data,
+      timestamp: Date.now(),
+      prefix: prefix
+    };
+    SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.LOGLINE, payload, tag, 'verbosity');
+  }
+}
+// ===== END ADDED =====
+
 function createverbosityfunctions() {
   return {
     getverbosity: getverbosity,
@@ -117,7 +156,8 @@ function createverbosityfunctions() {
     logwarn: logwarn,
     loginfo: loginfo,
     logdebug: logdebug,
-    getverbosityname: getverbosityname
+    getverbosityname: getverbosityname,
+    logToDebugger: logToDebugger  // exported in factory
   };
 }
 
@@ -132,6 +172,7 @@ if (typeof module !== 'undefined' && module.exports) {
     loginfo: loginfo,
     logdebug: logdebug,
     getverbosityname: getverbosityname,
-    createverbosityfunctions: createverbosityfunctions
+    createverbosityfunctions: createverbosityfunctions,
+    logToDebugger: logToDebugger
   };
 }

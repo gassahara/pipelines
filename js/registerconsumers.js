@@ -1,9 +1,4 @@
 var registeredconsumers = true;
-
-// ------------------------------------------------------------------
-// 1. Register request interfaces and actor consumers
-// ------------------------------------------------------------------
-
 // APIACTOR
 messageregistry.register('APIACTOR', MESSAGETYPES.API, {
   endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
@@ -37,6 +32,18 @@ ACTORCONSUMERS['DEBUGACTOR:recover'] = DEBUGBEHAVIOR;
 messageregistry.register('DEBUGACTOR', MESSAGETYPES.PING, { sender: 'string?', tag: 'string?' }, DEBUGBEHAVIOR);
 ACTORCONSUMERS['DEBUGACTOR:PING'] = DEBUGBEHAVIOR;
 ACTORCONSUMERS['DEBUGACTOR:ping'] = DEBUGBEHAVIOR;
+
+// ==== ADDED: LOGLINE handler ====
+messageregistry.register('DEBUGACTOR', MESSAGETYPES.LOGLINE, {
+  level: 'string',
+  message: 'string',
+  data: 'object?',
+  timestamp: 'number',
+  prefix: 'string?'
+}, DEBUGBEHAVIOR);
+ACTORCONSUMERS['DEBUGACTOR:LOGLINE'] = DEBUGBEHAVIOR;
+ACTORCONSUMERS['DEBUGACTOR:logline'] = DEBUGBEHAVIOR;
+// ==== END ADDED ====
 
 // EXECUTIONACTOR
 messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.PIPELINELOADED, { pipelineid: 'string', env: 'object?' }, EXECUTIONBEHAVIOR);

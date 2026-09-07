@@ -45,12 +45,70 @@ function ENSUREDEBUGSLICE(ENV) {
       CURRENTCONTINUATION: null,
       OVERLAYVISIBLE: false,
       CCCSTATE: { CURRENTCONTINUATION: null },
-      GLOBALLISTENERSINSTALLED: false
+      GLOBALLISTENERSINSTALLED: false,
+      // Logs storage
+      LOGS: [],
+      LOGFILTER: 'all',
+      LOGSMAX: 1000,
+      LOGVIEWERAUTO: true
     };
   });
 }
 
-// Pure behavior function: (env, message) -> env
+// ===== Helper: builds log viewer HTML with all styles inlined =====
+function buildLogViewerHTML(logs, filter, auto) {
+  var filtered = logs;
+  if (filter !== 'all') {
+    filtered = logs.filter(function(entry) { return entry.level === filter; });
+  }
+  var display = filtered.slice(-200);
+  var html = '';
+  // Controls bar with inline styles
+  html += '<div style="display:flex;gap:10px;padding:8px 16px;background:#1a1a2e;border-bottom:1px solid #444;flex-wrap:wrap;align-items:center;flex-shrink:0;">';
+  html += '<span style="color:#ccc;font-size:13px;">Logs</span>';
+  html += '<select id="debuglogfilter" style="background:#2d2d44;color:#eee;border:1px solid #555;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;">';
+  html += '<option value="all"' + (filter === 'all' ? ' selected' : '') + '>All</option>';
+  html += '<option value="error"' + (filter === 'error' ? ' selected' : '') + '>Errors</option>';
+  html += '<option value="warn"' + (filter === 'warn' ? ' selected' : '') + '>Warnings</option>';
+  html += '<option value="info"' + (filter === 'info' ? ' selected' : '') + '>Info</option>';
+  html += '<option value="debug"' + (filter === 'debug' ? ' selected' : '') + '>Debug</option>';
+  html += '</select>';
+  html += '<label style="color:#aaa;font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">';
+  html += '<input type="checkbox" id="debuglogautoscroll"' + (auto ? ' checked' : '') + '> Auto-scroll';
+  html += '</label>';
+  html += '<button id="debuglogclear" style="background:#d32f2f;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;">Clear</button>';
+  html += '<span style="color:#888;font-size:11px;margin-left:auto;">' + logs.length + ' entries</span>';
+  html += '</div>';
+  // Log list with inline styles
+  html += '<div id="debugloglist" style="flex:1;overflow-y:auto;padding:8px 16px;font-family:\'Courier New\',monospace;font-size:12px;line-height:1.5;background:#0a0a12;">';
+  if (display.length === 0) {
+    html += '<div style="color:#666;padding:20px;text-align:center;">No logs to display.</div>';
+  } else {
+    display.forEach(function(entry) {
+      var levelClass = entry.level || 'info';
+      var color = '#aaa';
+      if (levelClass === 'error') color = '#ff5555';
+      else if (levelClass === 'warn') color = '#ffaa33';
+      else if (levelClass === 'info') color = '#88ccff';
+      else if (levelClass === 'debug') color = '#888';
+      var time = new Date(entry.timestamp).toLocaleTimeString();
+      var msg = entry.message || '';
+      var prefix = entry.prefix || '';
+      html += '<div style="color:' + color + ';padding:2px 0;border-bottom:1px solid #1a1a2e;word-break:break-all;white-space:pre-wrap;">';
+      html += '<span style="color:#666;margin-right:8px;">[' + time + ']</span>';
+      if (prefix) html += '<span style="color:#88aaff;margin-right:8px;">' + prefix + '</span>';
+      html += '<span>' + msg + '</span>';
+      if (entry.data && typeof entry.data === 'object') {
+        html += ' <span style="color:#666;font-size:10px;margin-left:8px;">' + JSON.stringify(entry.data) + '</span>';
+      }
+      html += '</div>';
+    });
+  }
+  html += '</div>';
+  return html;
+}
+// ===== END =====
+
 function DEBUGBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[DEBUGACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
@@ -139,6 +197,14 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
     );
 
+    // Append log viewer panel with all styles inline
+    var logViewerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
+    var logPanel = document.createElement('div');
+    logPanel.id = 'debuglogpanel';
+    logPanel.style.cssText = 'flex:1;display:flex;flex-direction:column;border-top:1px solid #444;margin-top:20px;max-height:40vh;background:rgba(0,0,0,0.8);font-family:\'Courier New\',monospace;font-size:12px;color:#eee;';
+    logPanel.innerHTML = logViewerHTML;
+    OVERLAY.appendChild(logPanel);
+
     var ACTIONS = document.createElement('div');
     ACTIONS.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
 
@@ -196,10 +262,136 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
+    // Attach event listeners for log controls
+    setTimeout(function() {
+      var filterSelect = document.getElementById('debuglogfilter');
+      var clearBtn = document.getElementById('debuglogclear');
+      var autoCheck = document.getElementById('debuglogautoscroll');
+      if (filterSelect) {
+        filterSelect.addEventListener('change', function() {
+          DEBUGSLICE.LOGFILTER = filterSelect.value;
+          var panel = document.getElementById('debuglogpanel');
+          if (panel) {
+            panel.innerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
+          }
+          SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+            UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+          }, GENERATETAG(), 'DEBUGACTOR');
+        });
+      }
+      if (clearBtn) {
+        clearBtn.addEventListener('click', function() {
+          DEBUGSLICE.LOGS = [];
+          var panel = document.getElementById('debuglogpanel');
+          if (panel) {
+            panel.innerHTML = buildLogViewerHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
+          }
+          SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+            UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+          }, GENERATETAG(), 'DEBUGACTOR');
+        });
+      }
+      if (autoCheck) {
+        autoCheck.addEventListener('change', function() {
+          DEBUGSLICE.LOGVIEWERAUTO = autoCheck.checked;
+          if (DEBUGSLICE.LOGVIEWERAUTO) {
+            var list = document.getElementById('debugloglist');
+            if (list) list.scrollTop = list.scrollHeight;
+          }
+          SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+            UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+          }, GENERATETAG(), 'DEBUGACTOR');
+        });
+      }
+    }, 100);
+
     if (MESSAGE.SENDER && MESSAGE.TAG) {
       var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
       var RESPONSETYPESHOW = (RESPONSESPECSHOW && (RESPONSESPECSHOW.responsetype || RESPONSESPECSHOW.responseType)) || 'response';
       SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPESHOW);
+    }
+    return ENV;
+  }
+
+  // LOGLINE handler
+  if (MESSAGE.TYPE === MESSAGETYPES.LOGLINE) {
+    logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.message);
+    var entry = {
+      level: MESSAGE.level || 'info',
+      message: MESSAGE.message || '',
+      data: MESSAGE.data || null,
+      timestamp: MESSAGE.timestamp || Date.now(),
+      prefix: MESSAGE.prefix || ''
+    };
+    if (!DEBUGSLICE.LOGS) DEBUGSLICE.LOGS = [];
+    DEBUGSLICE.LOGS.push(entry);
+    if (DEBUGSLICE.LOGS.length > DEBUGSLICE.LOGSMAX) {
+      DEBUGSLICE.LOGS = DEBUGSLICE.LOGS.slice(-DEBUGSLICE.LOGSMAX);
+    }
+    // Update viewer if visible
+    if (DEBUGSLICE.OVERLAYVISIBLE && DEBUGSLICE.OVERLAY) {
+      var logPanel = document.getElementById('debuglogpanel');
+      if (logPanel) {
+        var currentFilter = DEBUGSLICE.LOGFILTER || 'all';
+        var auto = DEBUGSLICE.LOGVIEWERAUTO !== false;
+        logPanel.innerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS, currentFilter, auto);
+        if (auto) {
+          var list = document.getElementById('debugloglist');
+          if (list) list.scrollTop = list.scrollHeight;
+        }
+        // Re-bind controls
+        setTimeout(function() {
+          var filterSelect = document.getElementById('debuglogfilter');
+          var clearBtn = document.getElementById('debuglogclear');
+          var autoCheck = document.getElementById('debuglogautoscroll');
+          if (filterSelect) {
+            filterSelect.value = currentFilter;
+            filterSelect.onchange = function() {
+              DEBUGSLICE.LOGFILTER = filterSelect.value;
+              var panel = document.getElementById('debuglogpanel');
+              if (panel) {
+                panel.innerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS, DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
+              }
+              SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+                UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+              }, GENERATETAG(), 'DEBUGACTOR');
+            };
+          }
+          if (clearBtn) {
+            clearBtn.onclick = function() {
+              DEBUGSLICE.LOGS = [];
+              var panel = document.getElementById('debuglogpanel');
+              if (panel) {
+                panel.innerHTML = buildLogViewerHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
+              }
+              SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+                UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+              }, GENERATETAG(), 'DEBUGACTOR');
+            };
+          }
+          if (autoCheck) {
+            autoCheck.checked = DEBUGSLICE.LOGVIEWERAUTO !== false;
+            autoCheck.onchange = function() {
+              DEBUGSLICE.LOGVIEWERAUTO = autoCheck.checked;
+              if (DEBUGSLICE.LOGVIEWERAUTO) {
+                var list = document.getElementById('debugloglist');
+                if (list) list.scrollTop = list.scrollHeight;
+              }
+              SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+                UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+              }, GENERATETAG(), 'DEBUGACTOR');
+            };
+          }
+        }, 50);
+      }
+    }
+    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+    }, GENERATETAG(), 'DEBUGACTOR');
+    if (MESSAGE.SENDER && MESSAGE.TAG) {
+      var RESPONSESPECLOG = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSETYPELOG = (RESPONSESPECLOG && (RESPONSESPECLOG.responsetype || RESPONSESPECLOG.responseType)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { stored: true }, 'DEBUGACTOR', RESPONSETYPELOG);
     }
     return ENV;
   }
@@ -212,7 +404,11 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         CURRENTCONTINUATION: null,
         OVERLAYVISIBLE: false,
         CCCSTATE: { CURRENTCONTINUATION: null },
-        GLOBALLISTENERSINSTALLED: false
+        GLOBALLISTENERSINSTALLED: false,
+        LOGS: [],
+        LOGFILTER: 'all',
+        LOGSMAX: 1000,
+        LOGVIEWERAUTO: true
       };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         UPDATES: [{ PATH: 'debug', VALUE: NEWDEBUG }]

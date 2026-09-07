@@ -708,6 +708,13 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
           var result = response && response.result ? response.result : response;
+          // ========== ADDED ERROR CHECK ==========
+          if (result && result.ERROR) {
+            var err = new Error(result.ERROR);
+            err.diagnostic = result.DIAGNOSTIC || {};
+            throw err;
+          }
+          // ========== END ADDED ==========
           writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentenv, result, elementid);
           return result;
         });
@@ -1053,6 +1060,13 @@ function loadpipeline(pipelinedefinition, pipelineid, options) {
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
           if (response && response.error) throw new Error(response.error);
+          // Also check for embedded ERROR (our new pattern)
+          var result = response && response.result ? response.result : response;
+          if (result && result.ERROR) {
+            var err = new Error(result.ERROR);
+            err.diagnostic = result.DIAGNOSTIC || {};
+            throw err;
+          }
           return response && response.result ? response.result : response;
         });
     });
