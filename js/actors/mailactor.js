@@ -1,5 +1,5 @@
-var MAILVERBOSITYCONSTANTS = CREATECONSTANTS ? CREATECONSTANTS() : (typeof CREATEVERBOSITYCONSTANTS === 'function' ? CREATEVERBOSITYCONSTANTS() : { DEBUG: 0, WARN: 1, ERROR: 2 });
-var MAILSTATE = Object.freeze({ LEVEL: MAILVERBOSITYCONSTANTS.DEBUG });
+var MAILVERBOSITYCONSTANTS = createverbosityconstants();
+var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
 // Global registries
 var ACTORCONSUMERS = {};
@@ -130,9 +130,9 @@ function REJECTEXPECTATION(TAG, ERROR) {
 }
 
 function MAILBEHAVIOR(ENV, MESSAGE) {
-  LOGDEBUG(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE || MESSAGE.type);
+  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE || MESSAGE.type);
 
-  var MAILSLICE = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
+  var MAILSLICE = ensureenvslice(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
 
   var MSGTYPE = MESSAGE.TYPE || MESSAGE.type;
   if (MSGTYPE === MESSAGETYPES.SEND) {
@@ -147,7 +147,7 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
     var FLATTAG = FLATMESSAGE && (FLATMESSAGE.TAG || FLATMESSAGE.tag);
     var FLATSENDER = FLATMESSAGE && (FLATMESSAGE.SENDER || FLATMESSAGE.sender);
 
-    LOGDEBUG(ENV, '[MAILACTOR]', 'SEND START:', 'RECIPIENT=', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG, 'SENDER=', FLATSENDER);
+    logdebug(ENV, '[MAILACTOR]', 'SEND START:', 'RECIPIENT=', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG, 'SENDER=', FLATSENDER);
 
     var ENVELOPE = {
       ID: 'MAIL' + (MAILSLICE.NEXTID++),
@@ -167,11 +167,11 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
     var CONSUMERKEY3 = RECIPIENT + ':' + String(FLATTYPE).toUpperCase();
     var CONSUMER = ACTORCONSUMERS[CONSUMERKEY1] || ACTORCONSUMERS[CONSUMERKEY2] || ACTORCONSUMERS[CONSUMERKEY3];
     if (CONSUMER) {
-      LOGDEBUG(ENV, '[MAILACTOR]', 'DISPATCHING TO ACTOR:', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG);
+      logdebug(ENV, '[MAILACTOR]', 'DISPATCHING TO ACTOR:', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG);
       DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE);
       ENVELOPE.READ = 'READ';
     } else {
-      LOGDEBUG(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1);
+      logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1);
     }
 
     var RESPONSESPEC = FLATMESSAGE && (FLATMESSAGE.RESPONSESPEC || FLATMESSAGE.responseSpec);
@@ -195,7 +195,6 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
     var ACKQUEUE = MAILSLICE.QUEUES[ACKRECIPIENT] || [];
     ACKQUEUE.forEach(function(M) {
       if (ACKIDS.indexOf(M.ID || M.id) !== -1) {
-        M.UNREAD = false;
         M.UNREAD = false;
       }
     });
@@ -224,7 +223,7 @@ function QUERYMAILBOX(FILTER) {
     }
   }
 
-  LOGDEBUG(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX FILTER:', JSON.stringify(FILTER));
+  logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX FILTER:', JSON.stringify(FILTER));
 
   var CANDIDATES = MAILBOX;
   var FILTERTAG = FILTER.TAG || FILTER.tag;
@@ -288,12 +287,12 @@ function QUERYMAILBOX(FILTER) {
     return true;
   });
 
-  LOGDEBUG(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX RAW MATCHES:', DEDUPED.length);
+  logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX RAW MATCHES:', DEDUPED.length);
 
   var RESULT = DEDUPED.map(function(ITEM) {
     if (ITEM && (ITEM.READ !== 'READ')) {
       ITEM.READ = 'READ';
-      LOGDEBUG(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX MARKING READ:', ITEM.ID, 'TAG=', ITEM.TAG || ITEM.tag);
+      logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX MARKING READ:', ITEM.ID, 'TAG=', ITEM.TAG || ITEM.tag);
     }
     return ITEM;
   });
@@ -308,18 +307,14 @@ function QUERYMAILBOX(FILTER) {
     }
   });
 
-  LOGDEBUG(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX RETURNING', RESULT.length, 'ITEMS');
+  logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX RETURNING', RESULT.length, 'ITEMS');
   return RESULT;
 }
 
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = EXPECTATIONTIMEOUT;
   return new Promise(function(RESOLVE, REJECT) {
-    if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
-      REJECT(new Error('Cancelled'));
-      return;
-    }
-    if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
+    if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.activecancellationtoken && blockcompilerstate.activecancellationtoken.cancelled) {
       REJECT(new Error('Cancelled'));
       return;
     }
@@ -338,7 +333,7 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
     }
 
     var CHECKINTERVAL = setInterval(function() {
-      if ((typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED)) {
+      if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.activecancellationtoken && blockcompilerstate.activecancellationtoken.cancelled) {
         clearInterval(CHECKINTERVAL);
         REJECT(new Error('Cancelled'));
         return;
@@ -358,7 +353,7 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
 
     setTimeout(function() {
       clearInterval(CHECKINTERVAL);
-      if ((typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED)) {
+      if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.activecancellationtoken && blockcompilerstate.activecancellationtoken.cancelled) {
         REJECT(new Error('Cancelled'));
         return;
       }
@@ -397,14 +392,14 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     FLATMESSAGE.CONTEXT = CONTEXT;
   }
 
-  if (MESSAGEREGISTRY && (typeof MESSAGEREGISTRY.GETINTERFACES === 'function' || typeof MESSAGEREGISTRY.getInterfaces === 'function')) {
-    var GETIFACES = MESSAGEREGISTRY.GETINTERFACES || MESSAGEREGISTRY.getInterfaces;
+  if (messageregistry && typeof messageregistry.getinterfaces === 'function') {
+    var GETIFACES = messageregistry.getinterfaces;
     var IFACES = GETIFACES(RECIPIENT);
     if (IFACES && Object.keys(IFACES).length > 0) {
-      var VALIDATEFN = MESSAGEREGISTRY.VALIDATE || MESSAGEREGISTRY.validate;
+      var VALIDATEFN = messageregistry.validate;
       var VALIDATION = VALIDATEFN(RECIPIENT, FLATMESSAGE);
-      if (VALIDATION.VALID === false || VALIDATION.valid === false) {
-        throw new Error('[MAILACTOR] Message validation failed for ' + RECIPIENT + ': ' + (VALIDATION.ERROR || VALIDATION.error));
+      if (VALIDATION.valid === false) {
+        throw new Error('[MAILACTOR] Message validation failed for ' + RECIPIENT + ': ' + VALIDATION.error);
       }
     }
   }

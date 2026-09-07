@@ -1,18 +1,18 @@
-var blockcompilerstate = Object.freeze({ level: createverbosityconstants().DEBUG });
+var blockcompilerstate = { level: createverbosityconstants().DEBUG };
 
 var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
 var scriptwitnesstimeout = 5000;
 var mailboxwaittimeout = 25000;
 
 function createblockcompilerconstants() {
-  return Object.freeze({
-    blocktypes: Object.freeze({
+  return {
+    blocktypes: {
       fn: 'fn', api: 'api', fetch: 'fetch', writer: 'writer',
       io: 'io', domquery: 'domquery', crypto: 'crypto',
       wait: 'wait', executionquery: 'executionquery'
-    }),
-    inheritedkeys: Object.freeze(['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents'])
-  });
+    },
+    inheritedkeys: ['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents']
+  };
 }
 
 function cloneobject(obj) {
@@ -301,7 +301,7 @@ function createblockanalyzers(blocktypes, dnaconstants) {
     { field: 'command', required: true, message: 'executionquery requires command', custom: function(v) { return v && typeof v.COMMAND === 'string'; } }
   ]);
 
-  return Object.freeze(analyzers);
+  return analyzers;
 }
 
 function compilehttpblock(merged, id, sig, istextual, options) {
@@ -597,7 +597,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
     return blockfn;
   };
 
-  return Object.freeze(compilers);
+  return compilers;
 }
 
 function compileblock(block, inheritedbriefcase, constants, options) {
@@ -1132,20 +1132,6 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
   return wrapper;
 }
 
-// UPPERCASE aliases for actor files
-var BLOCKCOMPILERCOMPILESTAGE = blockcompilercompilestage;
-var COMPILESTAGE = compilestage;
-var LOADPIPELINE = loadpipeline;
-var RESOLVENEXTELEMENT = resolvenextelement;
-var ORCHESTRATESTAGE = orchestratestage;
-var VALIDATEPIPELINEBRIEFCASE = validatepipelinebriefcase;
-var BUILD_BLOCK_PROPERTIES = buildblockproperties;
-var PROCESS_ELEMENT = processelement;
-var PROCESS_PIPELINE_ELEMENT = processpipelineelement;
-var REGISTER_EVENT_STAGE = registereventstage;
-var PROCESS_NESTED_STAGE = processnestedstage;
-var CREATE_PERSISTENT_ELEMENT_WRAPPER = createpersistentelementwrapper;
-
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     loadpipeline: loadpipeline,
@@ -1160,18 +1146,6 @@ if (typeof module !== 'undefined' && module.exports) {
     processpipelineelement: processpipelineelement,
     registereventstage: registereventstage,
     processnestedstage: processnestedstage,
-    createpersistentelementwrapper: createpersistentelementwrapper,
-    BLOCKCOMPILERCOMPILESTAGE: BLOCKCOMPILERCOMPILESTAGE,
-    COMPILESTAGE: COMPILESTAGE,
-    LOADPIPELINE: LOADPIPELINE,
-    RESOLVENEXTELEMENT: RESOLVENEXTELEMENT,
-    ORCHESTRATESTAGE: ORCHESTRATESTAGE,
-    VALIDATEPIPELINEBRIEFCASE: VALIDATEPIPELINEBRIEFCASE,
-    BUILD_BLOCK_PROPERTIES: BUILD_BLOCK_PROPERTIES,
-    PROCESS_ELEMENT: PROCESS_ELEMENT,
-    PROCESS_PIPELINE_ELEMENT: PROCESS_PIPELINE_ELEMENT,
-    REGISTER_EVENT_STAGE: REGISTER_EVENT_STAGE,
-    PROCESS_NESTED_STAGE: PROCESS_NESTED_STAGE,
-    CREATE_PERSISTENT_ELEMENT_WRAPPER: CREATE_PERSISTENT_ELEMENT_WRAPPER
+    createpersistentelementwrapper: createpersistentelementwrapper
   };
 }

@@ -1,7 +1,7 @@
-var RENDERVERBOSITYCONSTANTS = CREATEVERBOSITYCONSTANTS();
+var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
 function ENSURERENDERSLICE(ENV) {
-  return ENSUREENVSLICE(ENV, 'RENDER', function() {
+  return ensureenvslice(ENV, 'render', function() {
     return {
       HTML: '',
       VIEWPORT: null,
@@ -28,7 +28,7 @@ function WITHELEMENT(ID, REJECT, FN) {
     if (typeof REJECT === 'function') REJECT(new Error('[RENDERACTOR] id must be a non-empty string'));
     return null;
   }
-  var EL = DOCUMENT.GETELEMENTBYID(ID);
+  var EL = document.getElementById(ID);
   if (!EL) {
     if (typeof REJECT === 'function') REJECT(new Error('[RENDERACTOR] element not found: ' + ID));
     return null;
@@ -38,33 +38,33 @@ function WITHELEMENT(ID, REJECT, FN) {
 
 function WITHELEMENTRETRY(ID, REJECT, FN, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = 5000;
-  var EXISTING = DOCUMENT.GETELEMENTBYID(ID);
+  var EXISTING = document.getElementById(ID);
   if (EXISTING) return FN(EXISTING);
   return new Promise(function(RESOLVE, REJECTPROMISE) {
     var OBSERVER = null;
     var TIMEOUTID = setTimeout(function() {
-      if (OBSERVER) OBSERVER.DISCONNECT();
+      if (OBSERVER) OBSERVER.disconnect();
       REJECTPROMISE(new Error('[RENDERACTOR] element not found after timeout: ' + ID));
     }, TIMEOUT);
-    OBSERVER = new MUTATIONOBSERVER(function() {
-      var EL = DOCUMENT.GETELEMENTBYID(ID);
+    OBSERVER = new MutationObserver(function() {
+      var EL = document.getElementById(ID);
       if (EL) {
         clearTimeout(TIMEOUTID);
-        OBSERVER.DISCONNECT();
+        OBSERVER.disconnect();
         try { RESOLVE(FN(EL)); } catch (ERR) { REJECTPROMISE(ERR); }
       }
     });
-    OBSERVER.OBSERVE(DOCUMENT.BODY, { CHILDLIST: true, SUBTREE: true });
+    OBSERVER.observe(document.body, { childList: true, subtree: true });
   });
 }
 
 function WAITFORDOMREADY() {
-  if (typeof DOCUMENT === 'undefined') return Promise.resolve();
-  if (DOCUMENT.READYSTATE === 'loading') {
-    return new Promise(function(RESOLVE) { DOCUMENT.ADDEVENTLISTENER('DOMContentLoaded', RESOLVE, { ONCE: true }); });
+  if (typeof document === 'undefined') return Promise.resolve();
+  if (document.readyState === 'loading') {
+    return new Promise(function(RESOLVE) { document.addEventListener('DOMContentLoaded', RESOLVE, { once: true }); });
   }
-  if (DOCUMENT.READYSTATE !== 'complete') {
-    return new Promise(function(RESOLVE) { WINDOW.ADDEVENTLISTENER('load', RESOLVE, { ONCE: true }); });
+  if (document.readyState !== 'complete') {
+    return new Promise(function(RESOLVE) { window.addEventListener('load', RESOLVE, { once: true }); });
   }
   return Promise.resolve();
 }
@@ -72,21 +72,21 @@ function WAITFORDOMREADY() {
 function CREATEEVENTPRODUCERCONSUMER(MSG) {
   return {
     PRODUCER: { TYPE: 'domevent', ID: MSG.SOURCEID, EVENT: MSG.EVENT },
-    CONSUMER: { TYPE: 'eventtrigger', PIPELINEID: MSG.PIPELINEID || MSG.PIPELINEID, STAGEID: MSG.STAGEID || MSG.STAGEID },
-    METADATA: { STAGEPATH: MSG.STAGEPATH || MSG.STAGEPATH || [], CONTROL: MSG.CONTROL, CHILDREN: MSG.ELEMENTS, ENV: MSG.ENV || {} }
+    CONSUMER: { TYPE: 'eventtrigger', PIPELINEID: MSG.PIPELINEID || MSG.pipelineId, STAGEID: MSG.STAGEID || MSG.stageId },
+    METADATA: { STAGEPATH: MSG.STAGEPATH || MSG.stagePath || [], CONTROL: MSG.CONTROL, CHILDREN: MSG.ELEMENTS, ENV: MSG.ENV || {} }
   };
 }
 
 function SCHEDULEGCCYCLE(RENDERSLICE) {
   if (!RENDERSLICE) return;
-  var SCHEDULED = RENDERSLICE.TRIGGERGCSCHEDULED || RENDERSLICE._TRIGGERGCSCHEDULED;
+  var SCHEDULED = RENDERSLICE.TRIGGERGCSCHEDULED || RENDERSLICE._triggerGcScheduled;
   if (SCHEDULED) return;
   RENDERSLICE.TRIGGERGCSCHEDULED = true;
-  RENDERSLICE._TRIGGERGCSCHEDULED = true;
+  RENDERSLICE._triggerGcScheduled = true;
   setTimeout(function() {
     RENDERSLICE.TRIGGERGCSCHEDULED = false;
-    RENDERSLICE._TRIGGERGCSCHEDULED = false;
-    var GC = RENDERSLICE.GC || RENDERSLICE._GC;
+    RENDERSLICE._triggerGcScheduled = false;
+    var GC = RENDERSLICE.GC || RENDERSLICE._gc;
     if (GC) {
       if (typeof COLLECTENDED === 'function') COLLECTENDED(GC);
       else if (typeof COLLECTENDED === 'function') COLLECTENDED(GC);
@@ -95,36 +95,36 @@ function SCHEDULEGCCYCLE(RENDERSLICE) {
 }
 
 function ENSUREEVENTOBSERVER(RENDERSLICE) {
-  var INSTALLED = RENDERSLICE && (RENDERSLICE.TRIGGEROBSERVERINSTALLED || RENDERSLICE._TRIGGEROBSERVERINSTALLED);
+  var INSTALLED = RENDERSLICE && (RENDERSLICE.TRIGGEROBSERVERINSTALLED || RENDERSLICE._triggerObserverInstalled);
   if (!RENDERSLICE || INSTALLED) return;
-  if (typeof DOCUMENT === 'undefined') return;
+  if (typeof document === 'undefined') return;
   RENDERSLICE.TRIGGEROBSERVERINSTALLED = true;
-  RENDERSLICE._TRIGGEROBSERVERINSTALLED = true;
-  LOGINFO(RENDERSLICE, '[RENDERACTOR]', 'INSTALLING GLOBAL DOM EVENT OBSERVER FOR EVENT STAGES');
+  RENDERSLICE._triggerObserverInstalled = true;
+  loginfo(RENDERSLICE, '[RENDERACTOR]', 'INSTALLING GLOBAL DOM EVENT OBSERVER FOR EVENT STAGES');
 
   var HANDLER = function(EVENT) {
-    var TARGET = EVENT.TARGET;
-    var TARGETID = TARGET && TARGET.ID;
-    var GC = RENDERSLICE.GC || RENDERSLICE._GC;
+    var TARGET = EVENT.target;
+    var TARGETID = TARGET && TARGET.id;
+    var GC = RENDERSLICE.GC || RENDERSLICE._gc;
     if (!TARGETID || !GC) return;
 
     var LISTFN = (typeof LISTOBJECTS === 'function') ? LISTOBJECTS : LISTOBJECTS;
     var INCSENTFN = (typeof INCREMENTSENT === 'function') ? INCREMENTSENT : INCREMENTSENT;
     var MATCHINGOBJECTS = LISTFN(GC).filter(function(GCOBJ) {
       var PRODUCER = GCOBJ.PRODUCER || {};
-      return (PRODUCER.TYPE === 'domevent' || PRODUCER.TYPE === 'DOM-EVENT') &&
+      return (PRODUCER.TYPE === 'domevent' || PRODUCER.TYPE === 'dom-event') &&
              PRODUCER.ID === TARGETID &&
-             PRODUCER.EVENT === EVENT.TYPE;
+             PRODUCER.EVENT === EVENT.type;
     });
 
     if (MATCHINGOBJECTS.length === 0) return;
 
     var FIRSTCONSUMER = MATCHINGOBJECTS[0].CONSUMER || {};
-    LOGINFO(RENDERSLICE, '[RENDERACTOR]', 'EVENT OBSERVED:', {
+    loginfo(RENDERSLICE, '[RENDERACTOR]', 'EVENT OBSERVED:', {
       SOURCEID: TARGETID,
-      EVENT: EVENT.TYPE,
-      PIPELINEID: FIRSTCONSUMER.PIPELINEID || FIRSTCONSUMER.PIPELINEID,
-      STAGEID: FIRSTCONSUMER.STAGEID || FIRSTCONSUMER.STAGEID
+      EVENT: EVENT.type,
+      PIPELINEID: FIRSTCONSUMER.PIPELINEID || FIRSTCONSUMER.pipelineId,
+      STAGEID: FIRSTCONSUMER.STAGEID || FIRSTCONSUMER.stageId
     });
 
     MATCHINGOBJECTS.forEach(function(GCOBJ) {
@@ -132,189 +132,189 @@ function ENSUREEVENTOBSERVER(RENDERSLICE) {
 
       var CONSUMER = GCOBJ.CONSUMER || {};
       var METADATA = GCOBJ.METADATA || {};
-      var PIPELINEID = CONSUMER.PIPELINEID || CONSUMER.PIPELINEID;
-      var STAGEID = CONSUMER.STAGEID || CONSUMER.STAGEID;
-      var STAGEPATH = METADATA.STAGEPATH || METADATA.STAGEPATH || [STAGEID];
+      var PIPELINEID = CONSUMER.PIPELINEID || CONSUMER.pipelineId;
+      var STAGEID = CONSUMER.STAGEID || CONSUMER.stageId;
+      var STAGEPATH = METADATA.STAGEPATH || METADATA.stagePath || [STAGEID];
 
       var EVENTTRIGGERPAYLOAD = {
         PIPELINEID: PIPELINEID,
         STAGEID: STAGEID,
         STAGEPATH: STAGEPATH,
-        EVENTPAYLOAD: { TYPE: EVENT.TYPE, TARGETID: TARGETID }
+        EVENTPAYLOAD: { TYPE: EVENT.type, TARGETID: TARGETID }
       };
 
       var MSGTYPE = MESSAGETYPES.EVENTTRIGGERED || MESSAGETYPES.EVENT_TRIGGERED;
       SENDINSTRUCTION('HYPERVISORACTOR', MSGTYPE, EVENTTRIGGERPAYLOAD, null, 'RENDERACTOR');
 
-      LOGDEBUG(RENDERSLICE, '[RENDERACTOR]', 'EVENTTRIGGERED SENT TO HYPERVISORACTOR FOR', STAGEID);
+      logdebug(RENDERSLICE, '[RENDERACTOR]', 'EVENTTRIGGERED SENT TO HYPERVISORACTOR FOR', STAGEID);
     });
   };
 
-  DOCUMENT.ADDEVENTLISTENER('click', HANDLER, true);
-  DOCUMENT.ADDEVENTLISTENER('input', HANDLER, true);
-  DOCUMENT.ADDEVENTLISTENER('change', HANDLER, true);
-  LOGINFO(RENDERSLICE, '[RENDERACTOR]', 'GLOBAL EVENT OBSERVER INSTALLED FOR CLICK/INPUT/CHANGE');
+  document.addEventListener('click', HANDLER, true);
+  document.addEventListener('input', HANDLER, true);
+  document.addEventListener('change', HANDLER, true);
+  loginfo(RENDERSLICE, '[RENDERACTOR]', 'GLOBAL EVENT OBSERVER INSTALLED FOR CLICK/INPUT/CHANGE');
 }
 
 var HANDLERS = {};
 HANDLERS[MESSAGETYPES.RENDER] = function(ENV, MSG) {
-  var TARGET = MSG.ID ? DOCUMENT.GETELEMENTBYID(MSG.ID) : null;
+  var TARGET = MSG.ID ? document.getElementById(MSG.ID) : null;
   if (typeof MSG.RENDERER === 'function') {
-    try { MSG.RENDERER(TARGET, MSG.DATA, MSG.ENV || {}); } catch (ERR) { CONSOLE.ERROR('[RENDERACTOR] Renderer error:', ERR); throw ERR; }
+    try { MSG.RENDERER(TARGET, MSG.DATA, MSG.ENV || {}); } catch (ERR) { console.error('[RENDERACTOR] Renderer error:', ERR); throw ERR; }
   }
   return true;
 };
 HANDLERS[MESSAGETYPES.CLEAR] = function(ENV, MSG) {
-  WITHELEMENT(MSG.ID, null, function(EL) { EL.INNERHTML = ''; });
+  WITHELEMENT(MSG.ID, null, function(EL) { EL.innerHTML = ''; });
   return true;
 };
 HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
     WITHELEMENTRETRY(MSG.ID, null, function(EL) {
-      if (MSG.APPEND) EL.INSERTADJACENTHTML('beforeend', MSG.MARKUP);
-      else EL.INNERHTML = MSG.MARKUP;
+      if (MSG.APPEND) EL.insertAdjacentHTML('beforeend', MSG.MARKUP);
+      else EL.innerHTML = MSG.MARKUP;
     });
     RESPONDIFNEEDED(ENV, MSG, true);
   }).catch(function(ERR) {
-    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.message || String(ERR) });
   });
 };
 HANDLERS[MESSAGETYPES.REMOVE] = function(ENV, MSG) {
-  WITHELEMENT(MSG.ID, null, function(EL) { EL.REMOVE(); });
+  WITHELEMENT(MSG.ID, null, function(EL) { EL.remove(); });
   return true;
 };
 HANDLERS[MESSAGETYPES.SETSTYLES] = function(ENV, MSG) {
   WITHELEMENTRETRY(MSG.ID, null, function(EL) {
-    Object.keys(MSG.STYLES || {}).forEach(function(PROP) { EL.STYLE[PROP] = MSG.STYLES[PROP]; });
+    Object.keys(MSG.STYLES || {}).forEach(function(PROP) { EL.style[PROP] = MSG.STYLES[PROP]; });
   });
   RESPONDIFNEEDED(ENV, MSG, true);
 };
 HANDLERS[MESSAGETYPES.SETATTR] = function(ENV, MSG) {
-  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.SETATTRIBUTE(MSG.NAME, MSG.VALUE); });
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.setAttribute(MSG.NAME, MSG.VALUE); });
   RESPONDIFNEEDED(ENV, MSG, true);
 };
 HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(ENV, MSG) {
-  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.CLASSLIST.TOGGLE(MSG.CLASSNAME, MSG.FORCE); });
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.classList.toggle(MSG.CLASSNAME, MSG.FORCE); });
   RESPONDIFNEEDED(ENV, MSG, true);
 };
 HANDLERS[MESSAGETYPES.CRYPTO] = function(ENV, MSG) {
-  var WIN = typeof WINDOW !== 'undefined' ? WINDOW : (typeof SELF !== 'undefined' ? SELF : (typeof GLOBAL !== 'undefined' ? GLOBAL : null));
+  var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
   var ARRAY = new Uint8Array(MSG.BYTES);
-  WIN.CRYPTO.GETRANDOMVALUES(ARRAY);
+  WIN.crypto.getRandomValues(ARRAY);
   return Array.prototype.slice.call(ARRAY);
 };
 HANDLERS[MESSAGETYPES.GEOLOCATION] = function(ENV, MSG) {
-  var WIN = typeof WINDOW !== 'undefined' ? WINDOW : (typeof SELF !== 'undefined' ? SELF : (typeof GLOBAL !== 'undefined' ? GLOBAL : null));
-  var GEO = WIN.NAVIGATOR && WIN.NAVIGATOR.GEOLOCATION;
+  var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
+  var GEO = WIN.navigator && WIN.navigator.geolocation;
   if (!GEO) {
     RESPONDIFNEEDED(ENV, MSG, { ERROR: 'geolocation API unavailable' });
     return;
   }
-  GEO.GETCURRENTPOSITION(
-    function(POS) { RESPONDIFNEEDED(ENV, MSG, { LATITUDE: POS.COORDS.LATITUDE, LONGITUDE: POS.COORDS.LONGITUDE, ACCURACY: POS.COORDS.ACCURACY }); },
-    function(ERR) { RESPONDIFNEEDED(ENV, MSG, { ERROR: 'geolocation failed: ' + ERR.MESSAGE }); },
-    { ENABLEHIGHACCURACY: MSG.ENABLEHIGHACCURACY || false, TIMEOUT: MSG.TIMEOUT || 5000 }
+  GEO.getCurrentPosition(
+    function(POS) { RESPONDIFNEEDED(ENV, MSG, { LATITUDE: POS.coords.latitude, LONGITUDE: POS.coords.longitude, ACCURACY: POS.coords.accuracy }); },
+    function(ERR) { RESPONDIFNEEDED(ENV, MSG, { ERROR: 'geolocation failed: ' + ERR.message }); },
+    { enableHighAccuracy: MSG.ENABLEHIGHACCURACY || false, timeout: MSG.TIMEOUT || 5000 }
   );
 };
 HANDLERS[MESSAGETYPES.PERSISTENCE] = function(ENV, MSG) {
-  var WIN = typeof WINDOW !== 'undefined' ? WINDOW : (typeof SELF !== 'undefined' ? SELF : (typeof GLOBAL !== 'undefined' ? GLOBAL : null));
-  var STORAGE = WIN.LOCALSTORAGE;
+  var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
+  var STORAGE = WIN.localStorage;
   if (!STORAGE) return { ERROR: 'localStorage unavailable' };
   try {
-    if (MSG.ACTION === 'getItem') return { VALUE: STORAGE.GETITEM(MSG.KEY) };
-    else if (MSG.ACTION === 'setItem') { STORAGE.SETITEM(MSG.KEY, MSG.VALUE); return { SUCCESS: true }; }
-    else if (MSG.ACTION === 'removeItem') { STORAGE.REMOVEITEM(MSG.KEY); return { SUCCESS: true }; }
-    else if (MSG.ACTION === 'clear') { STORAGE.CLEAR(); return { SUCCESS: true }; }
+    if (MSG.ACTION === 'getItem') return { VALUE: STORAGE.getItem(MSG.KEY) };
+    else if (MSG.ACTION === 'setItem') { STORAGE.setItem(MSG.KEY, MSG.VALUE); return { SUCCESS: true }; }
+    else if (MSG.ACTION === 'removeItem') { STORAGE.removeItem(MSG.KEY); return { SUCCESS: true }; }
+    else if (MSG.ACTION === 'clear') { STORAGE.clear(); return { SUCCESS: true }; }
     else return { ERROR: 'unknown persistence action: ' + MSG.ACTION };
-  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
+  } catch (ERR) { return { ERROR: ERR.message }; }
 };
 HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
   try {
-    var EL = DOCUMENT.CREATEELEMENT(MSG.TAG);
+    var EL = document.createElement(MSG.TAG);
     if (MSG.PROPS) Object.keys(MSG.PROPS).forEach(function(PROP) { EL[PROP] = MSG.PROPS[PROP]; });
-    var REG = ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
-    var DOMREFFN = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
+    var REG = ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
+    var DOMREFFN = (typeof createdomref === 'function') ? createdomref : (typeof createdomref === 'function' ? createdomref : function(E) { return E; });
     return DOMREFFN(EL, REG);
-  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
+  } catch (ERR) { return { ERROR: ERR.message }; }
 };
 HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(ENV, MSG) {
   try {
-    var REG2 = ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
-    var DOMREFFN2 = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
-    return DOMREFFN2(DOCUMENT.CREATEELEMENT('div'), REG2);
-  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
+    var REG2 = ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
+    var DOMREFFN2 = (typeof createdomref === 'function') ? createdomref : (typeof createdomref === 'function' ? createdomref : function(E) { return E; });
+    return DOMREFFN2(document.createElement('div'), REG2);
+  } catch (ERR) { return { ERROR: ERR.message }; }
 };
 HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(ENV, MSG) {
   try {
-    var WRAPPER = DOCUMENT.CREATEELEMENT('div');
-    WRAPPER.INNERHTML = MSG.HTML;
-    var CHILD = WRAPPER.FIRSTELEMENTCHILD || WRAPPER;
-    var REG3 = ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
-    var DOMREFFN3 = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
+    var WRAPPER = document.createElement('div');
+    WRAPPER.innerHTML = MSG.HTML;
+    var CHILD = WRAPPER.firstElementChild || WRAPPER;
+    var REG3 = ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
+    var DOMREFFN3 = (typeof createdomref === 'function') ? createdomref : (typeof createdomref === 'function' ? createdomref : function(E) { return E; });
     return DOMREFFN3(CHILD, REG3);
-  } catch (ERR) { return { ERROR: ERR.MESSAGE }; }
+  } catch (ERR) { return { ERROR: ERR.message }; }
 };
 HANDLERS[MESSAGETYPES.PROPERTY] = function(ENV, MSG) {
-  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
   var FN = EL[MSG.NAME];
   if (typeof FN !== 'function') return { ERROR: 'property "' + MSG.NAME + '" is not a function' };
-  try { return FN.APPLY(EL, MSG.ARGUMENTS || []); } catch (E) { return { ERROR: E.MESSAGE }; }
+  try { return FN.apply(EL, MSG.ARGUMENTS || []); } catch (E) { return { ERROR: E.message }; }
 };
 HANDLERS[MESSAGETYPES.GETHTML] = function(ENV, MSG) {
-  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
-  return { TAG: EL.TAGNAME.TOLOWERCASE(), INNERHTML: EL.INNERHTML };
+  return { TAG: EL.tagName.toLowerCase(), INNERHTML: EL.innerHTML };
 };
 HANDLERS[MESSAGETYPES.GETVALUE] = function(ENV, MSG) {
-  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
-  return EL.VALUE;
+  return EL.value;
 };
 HANDLERS[MESSAGETYPES.GETSTYLE] = function(ENV, MSG) {
-  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
-  var COMPUTED = WINDOW.GETCOMPUTEDSTYLE(EL);
+  var COMPUTED = window.getComputedStyle(EL);
   var STYLEOBJ = Array.prototype.slice.call(COMPUTED).reduce(function(ACC, PROP) {
-    ACC[PROP] = COMPUTED.GETPROPERTYVALUE(PROP);
+    ACC[PROP] = COMPUTED.getPropertyValue(PROP);
     return ACC;
   }, {});
   return STYLEOBJ;
 };
 HANDLERS[MESSAGETYPES.GETPOSITION] = function(ENV, MSG) {
-  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
-  var RECT = EL.GETBOUNDINGCLIENTRECT();
-  return { X: RECT.X, Y: RECT.Y, WIDTH: RECT.WIDTH, HEIGHT: RECT.HEIGHT, TOP: RECT.TOP, RIGHT: RECT.RIGHT, BOTTOM: RECT.BOTTOM, LEFT: RECT.LEFT };
+  var RECT = EL.getBoundingClientRect();
+  return { X: RECT.x, Y: RECT.y, WIDTH: RECT.width, HEIGHT: RECT.height, TOP: RECT.top, RIGHT: RECT.right, BOTTOM: RECT.bottom, LEFT: RECT.left };
 };
 HANDLERS[MESSAGETYPES.GETLAYOUT] = function(ENV, MSG) {
-  var EL = DOCUMENT.GETELEMENTBYID(MSG.ID);
+  var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
   return {
-    OFFSETWIDTH: EL.OFFSETWIDTH, OFFSETHEIGHT: EL.OFFSETHEIGHT,
-    OFFSETLEFT: EL.OFFSETLEFT, OFFSETTOP: EL.OFFSETTOP,
-    SCROLLWIDTH: EL.SCROLLWIDTH, SCROLLHEIGHT: EL.SCROLLHEIGHT,
-    CLIENTWIDTH: EL.CLIENTWIDTH, CLIENTHEIGHT: EL.CLIENTHEIGHT
+    OFFSETWIDTH: EL.offsetWidth, OFFSETHEIGHT: EL.offsetHeight,
+    OFFSETLEFT: EL.offsetLeft, OFFSETTOP: EL.offsetTop,
+    SCROLLWIDTH: EL.scrollWidth, SCROLLHEIGHT: EL.scrollHeight,
+    CLIENTWIDTH: EL.clientWidth, CLIENTHEIGHT: EL.clientHeight
   };
 };
 HANDLERS[MESSAGETYPES.SETHTML] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
-    WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.INNERHTML = MSG.VALUE; });
+    WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.innerHTML = MSG.VALUE; });
     RESPONDIFNEEDED(ENV, MSG, true);
   }).catch(function(ERR) {
-    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.message || String(ERR) });
   });
 };
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(ENV, MSG) {
-  WITHELEMENTRETRY(MSG.ID, null, function(EL) { Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.STYLE[PROP] = MSG.VALUE[PROP]; }); });
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.style[PROP] = MSG.VALUE[PROP]; }); });
   RESPONDIFNEEDED(ENV, MSG, true);
 };
 HANDLERS[MESSAGETYPES.SETSTYLE] = function(ENV, MSG) {
-  WITHELEMENTRETRY(MSG.ID, null, function(EL) { Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.STYLE[PROP] = MSG.VALUE[PROP]; }); });
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.style[PROP] = MSG.VALUE[PROP]; }); });
   RESPONDIFNEEDED(ENV, MSG, true);
 };
 HANDLERS[MESSAGETYPES.SETVALUE] = function(ENV, MSG) {
-  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.VALUE = MSG.VALUE; });
+  WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.value = MSG.VALUE; });
   RESPONDIFNEEDED(ENV, MSG, true);
 };
 HANDLERS[MESSAGETYPES.SETLAYOUT] = function(ENV, MSG) {
@@ -322,50 +322,50 @@ HANDLERS[MESSAGETYPES.SETLAYOUT] = function(ENV, MSG) {
   RESPONDIFNEEDED(ENV, MSG, true);
 };
 HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(ENV, MSG) {
-  var DOC = DOCUMENT.DOCUMENTELEMENT;
-  return { VIEWPORTWIDTH: DOC.CLIENTWIDTH, VIEWPORTHEIGHT: DOC.CLIENTHEIGHT };
+  var DOC = document.documentElement;
+  return { VIEWPORTWIDTH: DOC.clientWidth, VIEWPORTHEIGHT: DOC.clientHeight };
 };
 HANDLERS[MESSAGETYPES.GETSCREEN] = function(ENV, MSG) {
-  var SCR = WINDOW.SCREEN;
-  return { SCREENWIDTH: SCR.WIDTH, SCREENHEIGHT: SCR.HEIGHT, AVAILWIDTH: SCR.AVAILWIDTH, AVAILHEIGHT: SCR.AVAILHEIGHT };
+  var SCR = window.screen;
+  return { SCREENWIDTH: SCR.width, SCREENHEIGHT: SCR.height, AVAILWIDTH: SCR.availWidth, AVAILHEIGHT: SCR.availHeight };
 };
 HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(ENV, MSG) {
-  return { MATCHES: WINDOW.MATCHMEDIA(MSG.QUERY).MATCHES };
+  return { MATCHES: window.matchMedia(MSG.QUERY).matches };
 };
 HANDLERS[MESSAGETYPES.GETBODYHTML || MESSAGETYPES.GET_BODY_HTML] = function(ENV, MSG) {
-  return DOCUMENT.BODY ? DOCUMENT.BODY.INNERHTML : '';
+  return document.body ? document.body.innerHTML : '';
 };
 HANDLERS[MESSAGETYPES.RESTOREBODYHTML || MESSAGETYPES.RESTORE_BODY_HTML] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
-    if (DOCUMENT.BODY) DOCUMENT.BODY.INNERHTML = MSG.HTML;
+    if (document.body) document.body.innerHTML = MSG.HTML;
     RESPONDIFNEEDED(ENV, MSG, true);
   }).catch(function(ERR) {
-    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.message || String(ERR) });
   });
 };
 HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
-    return DBRESTORE('ACTOR:STATE:RENDER').then(function(SAVED) {
+    return DBRESTORE('actor:state:render').then(function(SAVED) {
       if (SAVED !== null && SAVED !== undefined) {
-        ENV.RENDER = SAVED;
+        ENV.render = SAVED;
       } else {
-        ENV.RENDER = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
+        ENV.render = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
       }
-      SCHEDULEGCCYCLE(ENV.RENDER);
-      REINJECTSCRIPTTAGS(ENV.RENDER.SCRIPTTAGS || ENV.RENDER.SCRIPTTAGS || []);
+      SCHEDULEGCCYCLE(ENV.render);
+      REINJECTSCRIPTTAGS(ENV.render.SCRIPTTAGS || ENV.render.scriptTags || []);
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        UPDATES: [{ PATH: 'RENDER', VALUE: ENV.RENDER }]
+        UPDATES: [{ PATH: 'render', VALUE: ENV.render }]
       }, GENERATETAG(), 'RENDERACTOR');
       RESPONDIFNEEDED(ENV, MSG, ENV);
     }).catch(function(E) {
-      ENV.RENDER = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
+      ENV.render = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        UPDATES: [{ PATH: 'RENDER', VALUE: ENV.RENDER }]
+        UPDATES: [{ PATH: 'render', VALUE: ENV.render }]
       }, GENERATETAG(), 'RENDERACTOR');
-      RESPONDIFNEEDED(ENV, MSG, { ERROR: E.MESSAGE || String(E) });
+      RESPONDIFNEEDED(ENV, MSG, { ERROR: E.message || String(E) });
     });
   }).catch(function(ERR) {
-    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.MESSAGE || String(ERR) });
+    RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.message || String(ERR) });
   });
 };
 HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
@@ -373,17 +373,17 @@ HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
 var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER || MESSAGETYPES.REGISTER_EVENT_LISTENER;
 HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
   var RENDERSLICE = ENSURERENDERSLICE(ENV);
-  var GC = RENDERSLICE.GC || RENDERSLICE._GC;
+  var GC = RENDERSLICE.GC || RENDERSLICE._gc;
   if (!GC) {
     GC = (typeof CREATEGARBAGECOLLECTOR === 'function') ? CREATEGARBAGECOLLECTOR() : CREATEGARBAGECOLLECTOR();
     RENDERSLICE.GC = GC;
   }
 
-  LOGINFO(ENV, '[RENDERACTOR]', 'REGISTEREVENTLISTENER START:', {
+  loginfo(ENV, '[RENDERACTOR]', 'REGISTEREVENTLISTENER START:', {
     SOURCEID: MSG.SOURCEID,
     EVENT: MSG.EVENT,
-    PIPELINEID: MSG.PIPELINEID || MSG.PIPELINEID,
-    STAGEID: MSG.STAGEID || MSG.STAGEID
+    PIPELINEID: MSG.PIPELINEID || MSG.pipelineId,
+    STAGEID: MSG.STAGEID || MSG.stageId
   });
 
   var PC = CREATEEVENTPRODUCERCONSUMER(MSG);
@@ -395,12 +395,12 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
     var P = OBJ.PRODUCER || {};
     var C = OBJ.CONSUMER || {};
     return P.ID === PC.PRODUCER.ID && P.EVENT === PC.PRODUCER.EVENT &&
-      (C.PIPELINEID || C.PIPELINEID) === (PC.CONSUMER.PIPELINEID || PC.CONSUMER.PIPELINEID) &&
-      (C.STAGEID || C.STAGEID) === (PC.CONSUMER.STAGEID || PC.CONSUMER.STAGEID);
+      (C.PIPELINEID || C.pipelineId) === (PC.CONSUMER.PIPELINEID || PC.CONSUMER.pipelineId) &&
+      (C.STAGEID || C.stageId) === (PC.CONSUMER.STAGEID || PC.CONSUMER.stageId);
   })[0];
 
   if (EXISTING) {
-    LOGINFO(ENV, '[RENDERACTOR]', 'EVENT LISTENER ALREADY REGISTERED FOR', MSG.SOURCEID, MSG.EVENT);
+    loginfo(ENV, '[RENDERACTOR]', 'EVENT LISTENER ALREADY REGISTERED FOR', MSG.SOURCEID, MSG.EVENT);
     EXISTING.METADATA = PC.METADATA;
     EXISTING.STATUS = 'EXPECTING';
     EXISTING.SENTCOUNT = 0;
@@ -417,12 +417,12 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
     REGOBJFN(GC, GCOBJECT);
     INCRECVFN(GC, GCOBJECT.ID, 1);
     ENSUREEVENTOBSERVER(RENDERSLICE);
-    LOGINFO(ENV, '[RENDERACTOR]', 'EVENT LISTENER REGISTERED:', MSG.SOURCEID, MSG.EVENT, 'FOR STAGE', MSG.STAGEID || MSG.STAGEID);
+    loginfo(ENV, '[RENDERACTOR]', 'EVENT LISTENER REGISTERED:', MSG.SOURCEID, MSG.EVENT, 'FOR STAGE', MSG.STAGEID || MSG.stageId);
   }
 
   SCHEDULEGCCYCLE(RENDERSLICE);
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-    UPDATES: [{ PATH: 'RENDER', VALUE: RENDERSLICE }]
+    UPDATES: [{ PATH: 'render', VALUE: RENDERSLICE }]
   }, GENERATETAG(), 'RENDERACTOR');
 
   return { REGISTERED: true, SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT };
@@ -430,32 +430,32 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
 
 function RESPONDIFNEEDED(ENV, MESSAGE, RESULT) {
   if (MESSAGE.SENDER && MESSAGE.TAG) {
-    var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
+    var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
     var DOMRESULTTYPE = MESSAGETYPES.DOMRESULT || MESSAGETYPES.DOM_RESULT;
-    var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.RESPONSETYPE || RESPONSESPEC.RESPONSETYPE)) || DOMRESULTTYPE;
+    var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || DOMRESULTTYPE;
     SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESULT, 'RENDERACTOR', RESPONSETYPE);
   }
 }
 
 function REINJECTSCRIPTTAGS(SCRIPTTAGS) {
-  if (!SCRIPTTAGS || !SCRIPTTAGS.length || typeof DOCUMENT === 'undefined') return;
+  if (!SCRIPTTAGS || !SCRIPTTAGS.length || typeof document === 'undefined') return;
   var EXISTINGSRCS = {};
-  Array.prototype.slice.call(DOCUMENT.HEAD.GETELEMENTSBYTAGNAME('script')).forEach(function(S) {
-    if (S.SRC) EXISTINGSRCS[S.SRC] = true;
+  Array.prototype.slice.call(document.head.getElementsByTagName('script')).forEach(function(S) {
+    if (S.src) EXISTINGSRCS[S.src] = true;
   });
   SCRIPTTAGS.forEach(function(SRC) {
     if (!EXISTINGSRCS[SRC]) {
-      var SCRIPT = DOCUMENT.CREATEELEMENT('script');
-      SCRIPT.SRC = SRC;
-      DOCUMENT.HEAD.APPENDCHILD(SCRIPT);
-      LOGINFO({}, '[RENDERACTOR]', 'RE-INJECTED SCRIPT TAG:', SRC);
+      var SCRIPT = document.createElement('script');
+      SCRIPT.src = SRC;
+      document.head.appendChild(SCRIPT);
+      loginfo({}, '[RENDERACTOR]', 'RE-INJECTED SCRIPT TAG:', SRC);
     }
   });
 }
 
 // Pure behavior function: (env, message) -> env
 function RENDERBEHAVIOR(ENV, MESSAGE) {
-  LOGDEBUG(ENV, '[RENDERACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE, MESSAGE.ID || '');
+  logdebug(ENV, '[RENDERACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE, MESSAGE.ID || '');
   var RENDERSLICE = ENSURERENDERSLICE(ENV);
   var HANDLER = HANDLERS[MESSAGE.TYPE];
   if (HANDLER) {
@@ -481,7 +481,7 @@ function CREATEENQUEUER(TYPE, IDREQUIRED, EXTRAPAYLOADFN) {
     var RESPONSESPEC = undefined;
     if (arguments.length > 0) {
       var LASTARG = arguments[arguments.length - 1];
-      if (LASTARG && typeof LASTARG === 'object' && (LASTARG.RESPONSETYPE || LASTARG.RESPONSETYPE)) {
+      if (LASTARG && typeof LASTARG === 'object' && (LASTARG.responsetype || LASTARG.responseType)) {
         RESPONSESPEC = LASTARG;
       }
     }
@@ -515,35 +515,35 @@ var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
 var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(REST) { return { QUERY: REST[0] }; });
 
 function ENQUEUERENDERREGISTERTRIGGER(REGISTRATION, RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREGISTERTRIGGER; USE BLOCKCOMPILER REGISTER_EVENT_LISTENER INSTEAD');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREGISTERTRIGGER; USE BLOCKCOMPILER REGISTER_EVENT_LISTENER INSTEAD');
   return undefined;
 }
 function ENQUEUERENDERREGISTERTRIGGEREXPECTATION(REGISTRATION, RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREGISTERTRIGGEREXPECTATION; USE BLOCKCOMPILER REGISTER_EVENT_LISTENER INSTEAD');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREGISTERTRIGGEREXPECTATION; USE BLOCKCOMPILER REGISTER_EVENT_LISTENER INSTEAD');
   return undefined;
 }
 function ENQUEUERENDERREVALIDATETRIGGERS(RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREVALIDATETRIGGERS; NO LONGER NEEDED');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERREVALIDATETRIGGERS; NO LONGER NEEDED');
   return undefined;
 }
 function ENQUEUERENDERPING(RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERPING; USE ENQUEUERENDER... OR DIRECT MESSAGE');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERPING; USE ENQUEUERENDER... OR DIRECT MESSAGE');
   return undefined;
 }
 function ENQUEUERENDERGETBODYHTML(RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERGETBODYHTML; USE GET_BODY_HTML MESSAGE DIRECTLY');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERGETBODYHTML; USE GET_BODY_HTML MESSAGE DIRECTLY');
   return undefined;
 }
 function ENQUEUERENDERRESTOREBODYHTML(HTML, RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERRESTOREBODYHTML; USE RESTORE_BODY_HTML MESSAGE DIRECTLY');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERRESTOREBODYHTML; USE RESTORE_BODY_HTML MESSAGE DIRECTLY');
   return undefined;
 }
 function ENQUEUERENDERRECOVER(RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERRECOVER; USE RECOVER MESSAGE DIRECTLY');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERRECOVER; USE RECOVER MESSAGE DIRECTLY');
   return undefined;
 }
 function ENQUEUERENDERCRYPTO(BYTES, RESPONSESPEC) {
-  LOGWARN({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERCRYPTO; USE CRYPTO MESSAGE DIRECTLY');
+  logwarn({}, '[RENDERACTOR]', 'DEPRECATED ENQUEUER CALLED: ENQUEUERENDERCRYPTO; USE CRYPTO MESSAGE DIRECTLY');
   return undefined;
 }
 
@@ -565,26 +565,26 @@ var STARTRENDERACTOR = function(OPTIONS) {
 var EXPECTELEMENT = function(ID, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = 30000;
   return new Promise(function(RESOLVE, REJECT) {
-    var EXISTING = DOCUMENT.GETELEMENTBYID(ID);
-    var DOMREFFN = (typeof CREATEDOMREF === 'function') ? CREATEDOMREF : (typeof CREATEDOMREF === 'function' ? CREATEDOMREF : function(E) { return E; });
+    var EXISTING = document.getElementById(ID);
+    var DOMREFFN = (typeof createdomref === 'function') ? createdomref : (typeof createdomref === 'function' ? createdomref : function(E) { return E; });
     if (EXISTING) {
       var ENV = GETACTORSTATE('WORLDMAPACTOR');
-      var REG = ENV && ENV.RENDER && (ENV.RENDER.ACTORREGISTRY || ENV.RENDER.ACTORREGISTRY);
+      var REG = ENV && ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
       return RESOLVE(DOMREFFN(EXISTING, REG));
     }
     var OBSERVER = null;
-    var TIMEOUTID = setTimeout(function() { if (OBSERVER) OBSERVER.DISCONNECT(); REJECT(new Error('[EXPECTELEMENT] ELEMENT NOT FOUND: ' + ID)); }, TIMEOUT);
-    OBSERVER = new MUTATIONOBSERVER(function() {
-      var EL = DOCUMENT.GETELEMENTBYID(ID);
+    var TIMEOUTID = setTimeout(function() { if (OBSERVER) OBSERVER.disconnect(); REJECT(new Error('[EXPECTELEMENT] ELEMENT NOT FOUND: ' + ID)); }, TIMEOUT);
+    OBSERVER = new MutationObserver(function() {
+      var EL = document.getElementById(ID);
       if (EL) {
         clearTimeout(TIMEOUTID);
-        OBSERVER.DISCONNECT();
+        OBSERVER.disconnect();
         var ENVNOW = GETACTORSTATE('WORLDMAPACTOR');
-        var REGNOW = ENVNOW && ENVNOW.RENDER && (ENVNOW.RENDER.ACTORREGISTRY || ENVNOW.RENDER.ACTORREGISTRY);
+        var REGNOW = ENVNOW && ENVNOW.render && (ENVNOW.render.actorregistry || ENVNOW.render.actorRegistry);
         RESOLVE(DOMREFFN(EL, REGNOW));
       }
     });
-    OBSERVER.OBSERVE(DOCUMENT.BODY, { CHILDLIST: true, SUBTREE: true });
+    OBSERVER.observe(document.body, { childList: true, subtree: true });
   });
 };
 
@@ -592,10 +592,10 @@ var EXPECTELEMENTALIAS = EXPECTELEMENT;
 
 var HANDLEFILEREADERREQUEST = function(PAYLOAD) {
   return new Promise(function(RESOLVE, REJECT) {
-    var READER = new FILEREADER();
-    READER.ONLOAD = function(E) { RESOLVE({ TEXT: E.TARGET.RESULT }); };
-    READER.ONERROR = function() { REJECT(new Error('[RENDERACTOR] FileReader error')); };
-    READER.READASTEXT(PAYLOAD.FILE);
+    var READER = new FileReader();
+    READER.onload = function(E) { RESOLVE({ TEXT: E.target.result }); };
+    READER.onerror = function() { REJECT(new Error('[RENDERACTOR] FileReader error')); };
+    READER.readAsText(PAYLOAD.FILE);
   });
 };
 

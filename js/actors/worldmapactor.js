@@ -1,5 +1,5 @@
-var WORLDMAPVERBOSITYCONSTANTS = CREATEVERBOSITYCONSTANTS();
-var WORLDMAPSTATE = Object.freeze({ LEVEL: WORLDMAPVERBOSITYCONSTANTS.DEBUG });
+var WORLDMAPVERBOSITYCONSTANTS = createverbosityconstants();
+var WORLDMAPSTATE = { level: WORLDMAPVERBOSITYCONSTANTS.DEBUG };
 
 // Immutable path setter and value set application
 function SETINPATH(OBJ, PATH, VALUE) {
@@ -24,43 +24,43 @@ function APPLYVALUESET(ENV, UPDATES) {
 }
 
 function PERSISTENV(ENV) {
-  LOGDEBUG(ENV, '[WORLDMAPACTOR]', 'PERSISTENV SAVING ENV TO DB');
+  logdebug(ENV, '[WORLDMAPACTOR]', 'PERSISTENV SAVING ENV TO DB');
   var STOREFN = (typeof DBSTORE === 'function') ? DBSTORE : (typeof DB_STORE === 'function' ? DB_STORE : function() { return Promise.resolve(true); });
   STOREFN('actor:state:env', ENV).then(function(SUCCESS) {
     if (SUCCESS === false) {
-      LOGWARN(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED');
+      logwarn(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED');
     }
   }).catch(function(E) {
-    LOGWARN(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED:', E);
+    logwarn(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED:', E);
   });
 }
 
 function RECOVERENV() {
-  LOGDEBUG({}, '[WORLDMAPACTOR]', 'RECOVERENV START');
+  logdebug({}, '[WORLDMAPACTOR]', 'RECOVERENV START');
   var RESTOREFN = (typeof DBRESTORE === 'function') ? DBRESTORE : (typeof DB_RESTORE === 'function' ? DB_RESTORE : function() { return Promise.resolve(null); });
   return RESTOREFN('actor:state:env').then(function(SAVED) {
     if (SAVED !== null && SAVED !== undefined) {
-      LOGINFO(SAVED, '[WORLDMAPACTOR]', 'RECOVERENV RESTORED ENV');
+      loginfo(SAVED, '[WORLDMAPACTOR]', 'RECOVERENV RESTORED ENV');
       return SAVED;
     }
-    LOGINFO({}, '[WORLDMAPACTOR]', 'RECOVERENV NO SAVED ENV, USING EMPTY CONTAINER');
+    loginfo({}, '[WORLDMAPACTOR]', 'RECOVERENV NO SAVED ENV, USING EMPTY CONTAINER');
     return {};
   });
 }
 
 // Pure behavior function: (env, message) -> env
 function WORLDMAPBEHAVIOR(ENV, MESSAGE) {
-  LOGDEBUG(ENV, '[WORLDMAPACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
+  logdebug(ENV, '[WORLDMAPACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
   switch (MESSAGE.TYPE) {
     case MESSAGETYPES.UPDATE: {
       if (!MESSAGE.UPDATES || !Array.isArray(MESSAGE.UPDATES)) {
-        LOGWARN(ENV, '[WORLDMAPACTOR]', 'UPDATE MISSING UPDATES ARRAY');
+        logwarn(ENV, '[WORLDMAPACTOR]', 'UPDATE MISSING UPDATES ARRAY');
         return ENV;
       }
       var NEWENV = APPLYVALUESET(ENV, MESSAGE.UPDATES);
       (NEWENV.OBSERVERS || []).forEach(function(OBSERVER) {
-        try { OBSERVER(NEWENV); } catch (ERR) { LOGWARN(NEWENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
+        try { OBSERVER(NEWENV); } catch (ERR) { logwarn(NEWENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
       });
       PERSISTENV(NEWENV);
       return NEWENV;
@@ -70,7 +70,7 @@ function WORLDMAPBEHAVIOR(ENV, MESSAGE) {
       var NEXTENV = MESSAGE.FN(ENV);
       if (NEXTENV === undefined) NEXTENV = ENV;
       (NEXTENV.OBSERVERS || []).forEach(function(OBSERVER) {
-        try { OBSERVER(NEXTENV); } catch (ERR) { LOGWARN(NEXTENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
+        try { OBSERVER(NEXTENV); } catch (ERR) { logwarn(NEXTENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
       });
       PERSISTENV(NEXTENV);
       return NEXTENV;
@@ -93,7 +93,7 @@ function WORLDMAPBEHAVIOR(ENV, MESSAGE) {
       return ENV;
     }
     default:
-      LOGWARN(ENV, '[WORLDMAPACTOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
+      logwarn(ENV, '[WORLDMAPACTOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
       return ENV;
   }
 }
@@ -105,7 +105,7 @@ function STARTWORLDMAPACTOR(OPTIONS) {
   if (OPTIONS !== undefined) {
     var LVL = typeof OPTIONS === 'number' ? OPTIONS : (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
     if (LVL !== undefined) {
-      WORLDMAPSTATE = Object.freeze({ LEVEL: LVL });
+      WORLDMAPSTATE = { level: LVL };
       var ENVFORVERBOSITY = GETACTORSTATE('WORLDMAPACTOR');
       if (ENVFORVERBOSITY) {
         SETACTORSTATE('WORLDMAPACTOR', SETINPATH(ENVFORVERBOSITY, 'verbosity', LVL));
@@ -117,7 +117,7 @@ function STARTWORLDMAPACTOR(OPTIONS) {
     SETACTORSTATE('WORLDMAPACTOR', SAVED);
     return SAVED;
   }).catch(function(ERR) {
-    LOGWARN(CURRENTENV, '[WORLDMAPACTOR]', 'STATE RESTORE FAILED:', ERR);
+    logwarn(CURRENTENV, '[WORLDMAPACTOR]', 'STATE RESTORE FAILED:', ERR);
     return CURRENTENV;
   });
 }

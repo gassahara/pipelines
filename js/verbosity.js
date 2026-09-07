@@ -1,5 +1,5 @@
 function createverbosityconstants() {
-  return Object.freeze({
+  return {
     none: 0,
     critical: 0,
     error: 1,
@@ -7,7 +7,7 @@ function createverbosityconstants() {
     info: 3,
     debug: 4,
     all: 4
-  });
+  };
 }
 
 var constants = createverbosityconstants();
@@ -56,9 +56,9 @@ function setverbosity(state, level) {
       var copy = Object.keys(state).reduce(function(acc, k) { acc[k] = state[k]; return acc; }, {});
       copy.level = lvl;
       copy.verbosity = lvl;
-      return Object.freeze(copy);
+      return copy;
     }
-    return Object.freeze({ level: lvl, verbosity: lvl });
+    return { level: lvl, verbosity: lvl };
   }
   return state;
 }
@@ -109,7 +109,7 @@ function getverbosityname(levelvalue) {
 }
 
 function createverbosityfunctions() {
-  return Object.freeze({
+  return {
     getverbosity: getverbosity,
     setverbosity: setverbosity,
     logcritical: logcritical,
@@ -118,21 +118,8 @@ function createverbosityfunctions() {
     loginfo: loginfo,
     logdebug: logdebug,
     getverbosityname: getverbosityname
-  });
+  };
 }
-
-// UPPERCASE aliases for actor files
-var CREATEVERBOSITYCONSTANTS = createverbosityconstants;
-var CREATECONSTANTS = createverbosityconstants;   // <-- missing alias now added
-var GETVERBOSITY = getverbosity;
-var SETVERBOSITY = setverbosity;
-var LOGCRITICAL = logcritical;
-var LOGERROR = logerror;
-var LOGWARN = logwarn;
-var LOGINFO = loginfo;
-var LOGDEBUG = logdebug;
-var GETVERBOSITYNAME = getverbosityname;
-var CREATEVERBOSITYFUNCTIONS = createverbosityfunctions;
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -145,17 +132,6 @@ if (typeof module !== 'undefined' && module.exports) {
     loginfo: loginfo,
     logdebug: logdebug,
     getverbosityname: getverbosityname,
-    createverbosityfunctions: createverbosityfunctions,
-    CREATEVERBOSITYCONSTANTS: CREATEVERBOSITYCONSTANTS,
-    CREATECONSTANTS: CREATECONSTANTS,
-    GETVERBOSITY: GETVERBOSITY,
-    SETVERBOSITY: SETVERBOSITY,
-    LOGCRITICAL: LOGCRITICAL,
-    LOGERROR: LOGERROR,
-    LOGWARN: LOGWARN,
-    LOGINFO: LOGINFO,
-    LOGDEBUG: LOGDEBUG,
-    GETVERBOSITYNAME: GETVERBOSITYNAME,
-    CREATEVERBOSITYFUNCTIONS: CREATEVERBOSITYFUNCTIONS
+    createverbosityfunctions: createverbosityfunctions
   };
 }

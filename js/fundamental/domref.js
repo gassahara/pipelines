@@ -27,7 +27,7 @@ function createdomref(rawelement, actorregistry) {
     }
   }
 
-  var getrenderactorfn = (typeof GETRENDERACTOR === 'function') ? GETRENDERACTOR : (typeof GETRENDERACTOR === 'function' ? GETRENDERACTOR : function() { return { send: function() {} }; });
+  var getrenderactorfn = (typeof getrenderactor === 'function') ? getrenderactor : (typeof getrenderactor === 'function' ? getrenderactor : function() { return { send: function() {} }; });
 
   var ref = {
     project: function(renderer, data, env) {
@@ -80,12 +80,6 @@ function isvaliddomref(ref) {
   return ref && typeof ref === 'object' && typeof ref.project === 'function';
 }
 
-// UPPERCASE aliases for actor files
-var CREATEDOMREF = createdomref;
-var GETRAWELEMENT = getrawelement;
-var REMOVEREF = removeref;
-var ISVALIDDOMREF = isvaliddomref;
-
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     rawmap: rawmap,
@@ -95,10 +89,6 @@ if (typeof module !== 'undefined' && module.exports) {
     removerawelementref: removerawelementref,
     createdomref: createdomref,
     removeref: removeref,
-    isvaliddomref: isvaliddomref,
-    CREATEDOMREF: CREATEDOMREF,
-    GETRAWELEMENT: GETRAWELEMENT,
-    REMOVEREF: REMOVEREF,
-    ISVALIDDOMREF: ISVALIDDOMREF
+    isvaliddomref: isvaliddomref
   };
 }

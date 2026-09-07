@@ -1,4 +1,4 @@
-var DEBUGVERBOSITYCONSTANTS = CREATEVERBOSITYCONSTANTS();
+var DEBUGVERBOSITYCONSTANTS = createverbosityconstants();
 
 function GETCTX(ERROR, CONT) {
   var ENV = (CONT && CONT.ENVSNAPSHOT) ||
@@ -17,21 +17,21 @@ function GETCTX(ERROR, CONT) {
 }
 
 function BTN(TEXT, STYLE, ONCLICK) {
-  var B = DOCUMENT.CREATEELEMENT('button');
-  B.TEXTCONTENT = TEXT;
-  B.STYLE.CSSTEXT = 'border:none; padding:10px 20px; cursor:pointer; font-weight:bold; ' + STYLE;
-  B.ONCLICK = ONCLICK;
+  var B = document.createElement('button');
+  B.textContent = TEXT;
+  B.style.cssText = 'border:none; padding:10px 20px; cursor:pointer; font-weight:bold; ' + STYLE;
+  B.onclick = ONCLICK;
   return B;
 }
 
 function ENSUREOVERLAY(DEBUGSLICE) {
   if (!DEBUGSLICE.OVERLAY) {
-    var OVERLAY = DOCUMENT.GETELEMENTBYID('debugoverlay');
+    var OVERLAY = document.getElementById('debugoverlay');
     if (!OVERLAY) {
-      OVERLAY = DOCUMENT.CREATEELEMENT('div');
-      OVERLAY.ID = 'debugoverlay';
-      OVERLAY.STYLE.CSSTEXT = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.95);z-index:10000;display:none;flex-direction:column;';
-      DOCUMENT.BODY.APPENDCHILD(OVERLAY);
+      OVERLAY = document.createElement('div');
+      OVERLAY.id = 'debugoverlay';
+      OVERLAY.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.95);z-index:10000;display:none;flex-direction:column;';
+      document.body.appendChild(OVERLAY);
     }
     DEBUGSLICE.OVERLAY = OVERLAY;
   }
@@ -39,7 +39,7 @@ function ENSUREOVERLAY(DEBUGSLICE) {
 }
 
 function ENSUREDEBUGSLICE(ENV) {
-  return ENSUREENVSLICE(ENV, 'debug', function() {
+  return ensureenvslice(ENV, 'debug', function() {
     return {
       OVERLAY: null,
       CURRENTCONTINUATION: null,
@@ -52,43 +52,43 @@ function ENSUREDEBUGSLICE(ENV) {
 
 // Pure behavior function: (env, message) -> env
 function DEBUGBEHAVIOR(ENV, MESSAGE) {
-  LOGDEBUG(ENV, '[DEBUGACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
+  logdebug(ENV, '[DEBUGACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
   var DEBUGSLICE = ENSUREDEBUGSLICE(ENV);
 
   if (MESSAGE.TYPE === MESSAGETYPES.PING) {
-    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION PING');
+    logdebug(ENV, '[DEBUGACTOR]', 'ACTION PING');
     if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECPING = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
-      var RESPONSETYPEPING = (RESPONSESPECPING && (RESPONSESPECPING.RESPONSETYPE || RESPONSESPECPING.RESPONSETYPE)) || 'response';
+      var RESPONSESPECPING = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSETYPEPING = (RESPONSESPECPING && (RESPONSESPECPING.responsetype || RESPONSESPECPING.responseType)) || 'response';
       SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEPING);
     }
     return ENV;
   }
 
   if (MESSAGE.TYPE === MESSAGETYPES.INITOVERLAY || MESSAGE.TYPE === MESSAGETYPES.INIT_OVERLAY) {
-    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION INITOVERLAY');
+    logdebug(ENV, '[DEBUGACTOR]', 'ACTION INITOVERLAY');
     ENSUREOVERLAY(DEBUGSLICE);
 
     if (!DEBUGSLICE.GLOBALLISTENERSINSTALLED) {
       DEBUGSLICE.GLOBALLISTENERSINSTALLED = true;
 
-      WINDOW.ADDEVENTLISTENER('error', function(E) {
-        E.PREVENTDEFAULT();
-        LOGWARN(ENV, '[DEBUGACTOR]', 'GLOBAL WINDOW ERROR CAPTURED:', E.ERROR || E);
+      window.addEventListener('error', function(E) {
+        E.preventDefault();
+        logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL WINDOW ERROR CAPTURED:', E.error || E);
         SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
-          ERROR: E.ERROR || E,
+          ERROR: E.error || E,
           CONTINUATION: null
         }, null, 'window');
       });
 
-      WINDOW.ADDEVENTLISTENER('unhandledrejection', function(E) {
-        if (E.REASON && E.REASON.DIAGNOSTIC) {
-          E.PREVENTDEFAULT();
-          LOGWARN(ENV, '[DEBUGACTOR]', 'GLOBAL UNHANDLED REJECTION CAPTURED:', E.REASON);
+      window.addEventListener('unhandledrejection', function(E) {
+        if (E.reason && E.reason.diagnostic) {
+          E.preventDefault();
+          logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL UNHANDLED REJECTION CAPTURED:', E.reason);
           SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
-            ERROR: E.REASON,
-            CONTINUATION: E.REASON.DIAGNOSTIC.CONTINUATION || null
+            ERROR: E.reason,
+            CONTINUATION: E.reason.diagnostic.continuation || null
           }, null, 'window');
         }
       });
@@ -100,18 +100,18 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     }, GENERATETAG(), 'DEBUGACTOR');
 
     if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECINIT = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
-      var RESPONSETYPEINIT = (RESPONSESPECINIT && (RESPONSESPECINIT.RESPONSETYPE || RESPONSESPECINIT.RESPONSETYPE)) || 'response';
+      var RESPONSESPECINIT = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSETYPEINIT = (RESPONSESPECINIT && (RESPONSESPECINIT.responsetype || RESPONSESPECINIT.responseType)) || 'response';
       SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEINIT);
     }
     return ENV;
   }
 
   if (MESSAGE.TYPE === MESSAGETYPES.HIDE) {
-    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION HIDE');
+    logdebug(ENV, '[DEBUGACTOR]', 'ACTION HIDE');
     if (DEBUGSLICE.OVERLAY) {
-      DEBUGSLICE.OVERLAY.STYLE.DISPLAY = 'none';
-      DEBUGSLICE.OVERLAY.INNERHTML = '';
+      DEBUGSLICE.OVERLAY.style.display = 'none';
+      DEBUGSLICE.OVERLAY.innerHTML = '';
     }
     DEBUGSLICE.OVERLAYVISIBLE = false;
     DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = null;
@@ -122,33 +122,33 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     }, GENERATETAG(), 'DEBUGACTOR');
 
     if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECHIDE = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
-      var RESPONSETYPEHIDE = (RESPONSESPECHIDE && (RESPONSESPECHIDE.RESPONSETYPE || RESPONSESPECHIDE.RESPONSETYPE)) || 'response';
+      var RESPONSESPECHIDE = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSETYPEHIDE = (RESPONSESPECHIDE && (RESPONSESPECHIDE.responsetype || RESPONSESPECHIDE.responseType)) || 'response';
       SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEHIDE);
     }
     return ENV;
   }
 
   if (MESSAGE.TYPE === MESSAGETYPES.SHOW) {
-    LOGINFO(ENV, '[DEBUGACTOR]', 'ACTION SHOW DEBUG OVERLAY');
-    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION SHOW ERROR:', MESSAGE.ERROR, 'CONTINUATION:', MESSAGE.CONTINUATION);
+    loginfo(ENV, '[DEBUGACTOR]', 'ACTION SHOW DEBUG OVERLAY');
+    logdebug(ENV, '[DEBUGACTOR]', 'ACTION SHOW ERROR:', MESSAGE.ERROR, 'CONTINUATION:', MESSAGE.CONTINUATION);
     var OVERLAY = ENSUREOVERLAY(DEBUGSLICE);
 
-    OVERLAY.INNERHTML = FORMATDEBUGTRACE(
+    OVERLAY.innerHTML = formatdebugtrace(
       MESSAGE.ERROR,
       (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
     );
 
-    var ACTIONS = DOCUMENT.CREATEELEMENT('div');
-    ACTIONS.STYLE.CSSTEXT = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
+    var ACTIONS = document.createElement('div');
+    ACTIONS.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
 
     if (MESSAGE.CONTINUATION) {
       var CTX = GETCTX(MESSAGE.ERROR, MESSAGE.CONTINUATION);
 
-      ACTIONS.APPENDCHILD(BTN('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
-        LOGDEBUG(ENV, '[DEBUGACTOR]', 'RETRYING STAGE:', CTX);
-        OVERLAY.STYLE.DISPLAY = 'none';
-        OVERLAY.INNERHTML = '';
+      ACTIONS.appendChild(BTN('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
+        logdebug(ENV, '[DEBUGACTOR]', 'RETRYING STAGE:', CTX);
+        OVERLAY.style.display = 'none';
+        OVERLAY.innerHTML = '';
         SENDINSTRUCTION('EXECUTIONACTOR', 'CCCRETRY', {
           PIPELINEID: CTX.PIPELINEID,
           PATH: CTX.PATH,
@@ -157,10 +157,10 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         }, null, 'DEBUGACTOR');
       }));
 
-      ACTIONS.APPENDCHILD(BTN('CONTINUE', 'background:#4488ff;color:#fff;', function() {
-        LOGDEBUG(ENV, '[DEBUGACTOR]', 'CONTINUING STAGE:', CTX);
-        OVERLAY.STYLE.DISPLAY = 'none';
-        OVERLAY.INNERHTML = '';
+      ACTIONS.appendChild(BTN('CONTINUE', 'background:#4488ff;color:#fff;', function() {
+        logdebug(ENV, '[DEBUGACTOR]', 'CONTINUING STAGE:', CTX);
+        OVERLAY.style.display = 'none';
+        OVERLAY.innerHTML = '';
         SENDINSTRUCTION('EXECUTIONACTOR', 'CCCCONTINUE', {
           PIPELINEID: CTX.PIPELINEID,
           PATH: CTX.PATH,
@@ -170,13 +170,13 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       }));
     }
 
-    ACTIONS.APPENDCHILD(BTN('ABORT', 'background:#ff5555;color:#fff;', function() {
+    ACTIONS.appendChild(BTN('ABORT', 'background:#ff5555;color:#fff;', function() {
       var ABORTCTX = MESSAGE.CONTINUATION
         ? GETCTX(null, MESSAGE.CONTINUATION)
         : { PIPELINEID: 'unknownpipeline', PATH: ['unknownstage', 'unknownelement'], ELEMENTID: 'unknownelement' };
-      LOGDEBUG(ENV, '[DEBUGACTOR]', 'ABORTING STAGE:', ABORTCTX);
-      OVERLAY.STYLE.DISPLAY = 'none';
-      OVERLAY.INNERHTML = '';
+      logdebug(ENV, '[DEBUGACTOR]', 'ABORTING STAGE:', ABORTCTX);
+      OVERLAY.style.display = 'none';
+      OVERLAY.innerHTML = '';
       SENDINSTRUCTION('EXECUTIONACTOR', 'CCCABORT', {
         PIPELINEID: ABORTCTX.PIPELINEID,
         PATH: ABORTCTX.PATH,
@@ -185,8 +185,8 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       }, null, 'DEBUGACTOR');
     }));
 
-    OVERLAY.APPENDCHILD(ACTIONS);
-    OVERLAY.STYLE.DISPLAY = 'flex';
+    OVERLAY.appendChild(ACTIONS);
+    OVERLAY.style.display = 'flex';
 
     DEBUGSLICE.OVERLAYVISIBLE = true;
     DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
@@ -197,15 +197,15 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     }, GENERATETAG(), 'DEBUGACTOR');
 
     if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
-      var RESPONSETYPESHOW = (RESPONSESPECSHOW && (RESPONSESPECSHOW.RESPONSETYPE || RESPONSESPECSHOW.RESPONSETYPE)) || 'response';
+      var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSETYPESHOW = (RESPONSESPECSHOW && (RESPONSESPECSHOW.responsetype || RESPONSESPECSHOW.responseType)) || 'response';
       SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPESHOW);
     }
     return ENV;
   }
 
   if (MESSAGE.TYPE === MESSAGETYPES.RECOVER) {
-    LOGDEBUG(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
+    logdebug(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
     DBRESTORE('actor:state:debug').then(function(SAVED) {
       var NEWDEBUG = (SAVED !== null && SAVED !== undefined) ? SAVED : {
         OVERLAY: null,
@@ -218,15 +218,15 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         UPDATES: [{ PATH: 'debug', VALUE: NEWDEBUG }]
       }, GENERATETAG(), 'DEBUGACTOR');
       if (MESSAGE.SENDER && MESSAGE.TAG) {
-        var RESPONSESPECRECOVER = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
-        var RESPONSETYPERECOVER = (RESPONSESPECRECOVER && (RESPONSESPECRECOVER.RESPONSETYPE || RESPONSESPECRECOVER.RESPONSETYPE)) || 'response';
+        var RESPONSESPECRECOVER = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+        var RESPONSETYPERECOVER = (RESPONSESPECRECOVER && (RESPONSESPECRECOVER.responsetype || RESPONSESPECRECOVER.responseType)) || 'response';
         SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPERECOVER);
       }
     }).catch(function(E) {
-      LOGWARN(ENV, '[DEBUGACTOR]', 'STATE RESTORE FAILED:', E);
+      logwarn(ENV, '[DEBUGACTOR]', 'STATE RESTORE FAILED:', E);
       if (MESSAGE.SENDER && MESSAGE.TAG) {
-        var RESPONSESPECERR = MESSAGE.RESPONSESPEC || MESSAGE.RESPONSESPEC;
-        var RESPONSETYPEERR = (RESPONSESPECERR && (RESPONSESPECERR.RESPONSETYPE || RESPONSESPECERR.RESPONSETYPE)) || 'response';
+        var RESPONSESPECERR = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+        var RESPONSETYPEERR = (RESPONSESPECERR && (RESPONSESPECERR.responsetype || RESPONSESPECERR.responseType)) || 'response';
         SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEERR);
       }
     });
