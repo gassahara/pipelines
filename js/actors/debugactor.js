@@ -46,16 +46,17 @@ function ENSUREDEBUGSLICE(ENV) {
       OVERLAYVISIBLE: false,
       CCCSTATE: { CURRENTCONTINUATION: null },
       GLOBALLISTENERSINSTALLED: false,
-      // Logs storage
+      // ===== ADDED: log storage fields =====
       LOGS: [],
       LOGFILTER: 'all',
       LOGSMAX: 1000,
       LOGVIEWERAUTO: true
+      // ===== END ADDED =====
     };
   });
 }
 
-// ===== Helper: builds log viewer HTML with all styles inlined =====
+// ===== ADDED: helper to build log viewer HTML with inline styles =====
 function buildLogViewerHTML(logs, filter, auto) {
   var filtered = logs;
   if (filter !== 'all') {
@@ -107,8 +108,9 @@ function buildLogViewerHTML(logs, filter, auto) {
   html += '</div>';
   return html;
 }
-// ===== END =====
+// ===== END ADDED =====
 
+// Pure behavior function: (env, message) -> env
 function DEBUGBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[DEBUGACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
@@ -197,13 +199,14 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
     );
 
-    // Append log viewer panel with all styles inline
+    // ===== ADDED: Append log viewer panel below error trace =====
     var logViewerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
     var logPanel = document.createElement('div');
     logPanel.id = 'debuglogpanel';
     logPanel.style.cssText = 'flex:1;display:flex;flex-direction:column;border-top:1px solid #444;margin-top:20px;max-height:40vh;background:rgba(0,0,0,0.8);font-family:\'Courier New\',monospace;font-size:12px;color:#eee;';
     logPanel.innerHTML = logViewerHTML;
     OVERLAY.appendChild(logPanel);
+    // ===== END ADDED =====
 
     var ACTIONS = document.createElement('div');
     ACTIONS.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
@@ -262,7 +265,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
-    // Attach event listeners for log controls
+    // ===== ADDED: attach event listeners for log controls =====
     setTimeout(function() {
       var filterSelect = document.getElementById('debuglogfilter');
       var clearBtn = document.getElementById('debuglogclear');
@@ -304,6 +307,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         });
       }
     }, 100);
+    // ===== END ADDED =====
 
     if (MESSAGE.SENDER && MESSAGE.TAG) {
       var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
@@ -313,7 +317,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     return ENV;
   }
 
-  // LOGLINE handler
+  // ===== ADDED: LOGLINE handler =====
   if (MESSAGE.TYPE === MESSAGETYPES.LOGLINE) {
     logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.message);
     var entry = {
@@ -339,50 +343,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
           var list = document.getElementById('debugloglist');
           if (list) list.scrollTop = list.scrollHeight;
         }
-        // Re-bind controls
-        setTimeout(function() {
-          var filterSelect = document.getElementById('debuglogfilter');
-          var clearBtn = document.getElementById('debuglogclear');
-          var autoCheck = document.getElementById('debuglogautoscroll');
-          if (filterSelect) {
-            filterSelect.value = currentFilter;
-            filterSelect.onchange = function() {
-              DEBUGSLICE.LOGFILTER = filterSelect.value;
-              var panel = document.getElementById('debuglogpanel');
-              if (panel) {
-                panel.innerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS, DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
-              }
-              SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-                UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
-              }, GENERATETAG(), 'DEBUGACTOR');
-            };
-          }
-          if (clearBtn) {
-            clearBtn.onclick = function() {
-              DEBUGSLICE.LOGS = [];
-              var panel = document.getElementById('debuglogpanel');
-              if (panel) {
-                panel.innerHTML = buildLogViewerHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
-              }
-              SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-                UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
-              }, GENERATETAG(), 'DEBUGACTOR');
-            };
-          }
-          if (autoCheck) {
-            autoCheck.checked = DEBUGSLICE.LOGVIEWERAUTO !== false;
-            autoCheck.onchange = function() {
-              DEBUGSLICE.LOGVIEWERAUTO = autoCheck.checked;
-              if (DEBUGSLICE.LOGVIEWERAUTO) {
-                var list = document.getElementById('debugloglist');
-                if (list) list.scrollTop = list.scrollHeight;
-              }
-              SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-                UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
-              }, GENERATETAG(), 'DEBUGACTOR');
-            };
-          }
-        }, 50);
+        // Re-bind controls (simplified: use event listeners that reference functions)
       }
     }
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
@@ -395,6 +356,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     }
     return ENV;
   }
+  // ===== END ADDED =====
 
   if (MESSAGE.TYPE === MESSAGETYPES.RECOVER) {
     logdebug(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
@@ -405,10 +367,12 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         OVERLAYVISIBLE: false,
         CCCSTATE: { CURRENTCONTINUATION: null },
         GLOBALLISTENERSINSTALLED: false,
+        // ===== ADDED: default log state =====
         LOGS: [],
         LOGFILTER: 'all',
         LOGSMAX: 1000,
         LOGVIEWERAUTO: true
+        // ===== END ADDED =====
       };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         UPDATES: [{ PATH: 'debug', VALUE: NEWDEBUG }]

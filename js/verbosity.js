@@ -123,8 +123,6 @@ function logToDebugger(env, level, prefix, data) {
   // Emit to console using appropriate level
   var args = [];
   if (data && typeof data === 'object') {
-    // If data is an object, stringify it for console output (optional)
-    // but we pass both prefix and data as separate arguments.
     args = [prefix, data];
   } else {
     args = [prefix, data];

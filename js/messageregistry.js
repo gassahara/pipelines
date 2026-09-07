@@ -93,7 +93,8 @@ var MESSAGETYPES = Object.freeze({
   STAGECOMPLETEDACK: 'STAGECOMPLETEDACK',
   DBRESULT: 'DBRESULT',
   EVENTLISTENERREGISTERED: 'EVENTLISTENERREGISTERED',
-  // ==== ADDED: log line message for debug actor ====
+  // ==== ADDED: new message types for refactor ====
+  BOOTDNA: 'BOOTDNA',
   LOGLINE: 'LOGLINE'
   // ==== END ADDED ====
 });

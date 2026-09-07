@@ -1,5 +1,11 @@
 var HYPERVISORVERBOSITYCONSTANTS = createverbosityconstants();
 
+// ===== ADDED: safety check for global =====
+if (typeof loadPipeline === 'undefined') {
+  throw new Error('[HYPERVISORACTOR] loadPipeline is not defined. Ensure blockcompiler.js is loaded first.');
+}
+// ===== END ADDED =====
+
 function ENSUREHYPERVISORSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'hypervisor', function() {
     return {
@@ -263,67 +269,217 @@ function HYPERVISORBEHAVIOR(ENV, MESSAGE) {
     case MESSAGETYPES.ACTIVATEACTORS:
     case MESSAGETYPES.ACTIVATEACTORS:
       return ENV;
-    // ========== FIXED BOOTPIPELINE CASE ==========
-    case MESSAGETYPES.BOOTPIPELINE:
-    case MESSAGETYPES.BOOTPIPELINE: {
-      var BOOTOPTIONS = MESSAGE.OPTIONS || {};
-      if (BOOTOPTIONS.AUTORUN === undefined) BOOTOPTIONS.AUTORUN = true;
-      if (BOOTOPTIONS.VERBOSITY === undefined && ENV.VERBOSITY !== undefined) BOOTOPTIONS.VERBOSITY = ENV.VERBOSITY;
 
-      var DNAENVELOPE = MESSAGE.DNA;
-      var BOOTEDTYPE = MESSAGETYPES.PIPELINEBOOTED || MESSAGETYPES.PIPELINEBOOTED;
-      if (!DNAENVELOPE || !DNAENVELOPE.DEFINITION) {
+    case MESSAGETYPES.BOOTDNA: {
+      loginfo(ENV, '[HYPERVISOR]', 'ACTION BOOTDNA for pipeline:', MESSAGE.pipelineId);
+
+      var dna = MESSAGE.dna;
+      var pipelineId = MESSAGE.pipelineId || (dna && dna.pipelineid);
+      var options = MESSAGE.options || {};
+
+      if (!dna || !pipelineId) {
         if (MESSAGE.SENDER && MESSAGE.TAG) {
-          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: '[HYPERVISOR] missing DNA envelope' }, 'HYPERVISORACTOR', BOOTEDTYPE);
+          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, {
+            ERROR: 'BOOTDNA: missing dna or pipelineId',
+            type: 'BOOTERROR'
+          }, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINEBOOTED);
         }
         return ENV;
       }
 
-      // Store DNA and options (do NOT register pipeline yet)
       if (!HYPERSLICE.LOADEDPIPELINES) HYPERSLICE.LOADEDPIPELINES = {};
-      HYPERSLICE.LOADEDPIPELINES[PIPELINEID] = {
-        DNA: DNAENVELOPE,
-        OPTIONS: BOOTOPTIONS,
-        ACCESSORS: MESSAGE.ACCESSORS || null,
-        SINKS: MESSAGE.SINKS || []
-      };
+      if (!HYPERSLICE.LOADEDPIPELINES[pipelineId]) {
+        HYPERSLICE.LOADEDPIPELINES[pipelineId] = {
+          DNA: dna,
+          OPTIONS: options,
+          ACCESSORS: null,
+          SINKS: []
+        };
+      }
 
-      // Notify execution actor (but don't mark as active yet)
-      var LOADEDMSGTYPE = MESSAGETYPES.PIPELINELOADED || MESSAGETYPES.PIPELINELOADED;
-      SENDINSTRUCTION('EXECUTIONACTOR', LOADEDMSGTYPE, { PIPELINEID: PIPELINEID, ENV: {} }, null, 'HYPERVISORACTOR');
+      var existingEnv = HYPERSLICE.ENVBYPIPELINE && HYPERSLICE.ENVBYPIPELINE[pipelineId];
+      var stageIndex = 0;
+      var env = {};
 
-      var STAGEPATH2 = MESSAGE.STAGEPATH || MESSAGE.stagePath || ['pipeline', 'elements', 0];
+      if (existingEnv && existingEnv.ENV && existingEnv.currentStageIndex !== undefined) {
+        stageIndex = existingEnv.currentStageIndex;
+        env = existingEnv.ENV;
+        loginfo(ENV, '[HYPERVISOR]', 'Resuming pipeline ' + pipelineId + ' at stage ' + stageIndex);
+      } else {
+        loginfo(ENV, '[HYPERVISOR]', 'Starting new pipeline ' + pipelineId + ' from stage 0');
+        if (!HYPERSLICE.ENVBYPIPELINE) HYPERSLICE.ENVBYPIPELINE = {};
+        HYPERSLICE.ENVBYPIPELINE[pipelineId] = {
+          ENV: {},
+          currentStageIndex: 0,
+          status: 'running',
+          startedAt: Date.now()
+        };
+      }
 
-      // Chain compilation and send response only after completion
-      return COMPILESTAGEFROMSTOREDDNA(HYPERSLICE, PIPELINEID, STAGEPATH2, BOOTOPTIONS.BASEENV || BOOTOPTIONS.baseEnv || {}, BOOTOPTIONS)
-        .then(function() {
-          // Success: register pipeline and send success response
-          REGISTERHYPERVISORPIPELINE(HYPERSLICE, PIPELINEID);
-          var REGMSGTYPE = MESSAGETYPES.REGISTERPIPELINE || MESSAGETYPES.REGISTERPIPELINE;
-          SENDINSTRUCTION('EXECUTIONACTOR', REGMSGTYPE, { PIPELINEID: PIPELINEID, DNA: null, ENV: {} }, null, 'HYPERVISORACTOR');
-          
+      // ===== USE GLOBAL loadPipeline =====
+      return loadPipeline(dna, stageIndex, env, options)
+        .then(function(result) {
+          var newEnv = result.env || env;
+          var nextStageIndex = result.nextStageIndex;
+
+          if (!HYPERSLICE.ENVBYPIPELINE) HYPERSLICE.ENVBYPIPELINE = {};
+          if (!HYPERSLICE.ENVBYPIPELINE[pipelineId]) HYPERSLICE.ENVBYPIPELINE[pipelineId] = {};
+          HYPERSLICE.ENVBYPIPELINE[pipelineId].ENV = newEnv;
+          HYPERSLICE.ENVBYPIPELINE[pipelineId].currentStageIndex = nextStageIndex !== null ? nextStageIndex : -1;
+          HYPERSLICE.ENVBYPIPELINE[pipelineId].status = (nextStageIndex === null) ? 'complete' : 'running';
+          if (nextStageIndex === null) {
+            HYPERSLICE.ENVBYPIPELINE[pipelineId].completedAt = Date.now();
+          }
           SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
             UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
           }, GENERATETAG(), 'HYPERVISORACTOR');
 
+          var responsePayload = {
+            type: 'BOOTREADY',
+            pipelineId: pipelineId,
+            env: newEnv,
+            currentStageIndex: nextStageIndex,
+            status: HYPERSLICE.ENVBYPIPELINE[pipelineId].status
+          };
           if (MESSAGE.SENDER && MESSAGE.TAG) {
-            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STARTED: true, PIPELINEID: PIPELINEID }, 'HYPERVISORACTOR', BOOTEDTYPE);
+            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, responsePayload, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINEBOOTED);
           }
+          return ENV;
         })
-        .catch(function(ERR) {
-          // Failure: do NOT register pipeline, send error response
-          logwarn(ENV, '[HYPERVISOR]', 'BOOT PIPELINE ORCHESTRATION FAILED:', ERR);
-          // Clean up loaded pipeline entry? (optional)
-          delete HYPERSLICE.LOADEDPIPELINES[PIPELINEID];
+        .catch(function(err) {
+          logerror(ENV, '[HYPERVISOR]', 'BOOTDNA stage compilation failed:', err);
+          var errorPayload = {
+            type: 'BOOTERROR',
+            pipelineId: pipelineId,
+            ERROR: err.message || String(err),
+            DIAGNOSTIC: err.diagnostic || {}
+          };
           if (MESSAGE.SENDER && MESSAGE.TAG) {
-            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, 
-              { ERROR: ERR.message || String(ERR), DIAGNOSTIC: ERR.diagnostic || {} }, 
-              'HYPERVISORACTOR', BOOTEDTYPE);
+            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, errorPayload, 'HYPERVISORACTOR', MESSAGETYPES.PIPELINEBOOTED);
           }
-          // Keep state unchanged
+          if (HYPERSLICE.ENVBYPIPELINE && HYPERSLICE.ENVBYPIPELINE[pipelineId]) {
+            HYPERSLICE.ENVBYPIPELINE[pipelineId].status = 'error';
+          }
+          return ENV;
         });
     }
-    // ========== END FIXED BOOTPIPELINE ==========
+
+    case MESSAGETYPES.COMPILESTAGE:
+    case MESSAGETYPES.COMPILESTAGE: {
+      var STAGEPATH = MESSAGE.STAGEPATH || MESSAGE.stagePath || ['pipeline', 'elements', 0];
+      logdebug(ENV, '[HYPERVISOR]', 'ACTION COMPILESTAGE:', PIPELINEID, 'STAGEPATH:', JSON.stringify(STAGEPATH));
+      COMPILESTAGEFROMSTOREDDNA(
+        HYPERSLICE,
+        PIPELINEID,
+        STAGEPATH,
+        MESSAGE.ENV || {},
+        MESSAGE.OPTIONS || {}
+      ).then(function(RES) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RES, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      }).catch(function(ERR) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: ERR.message || String(ERR) }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+      });
+      return ENV;
+    }
+
+    case MESSAGETYPES.STAGECOMPLETED:
+    case MESSAGETYPES.STAGECOMPLETED: {
+      loginfo(ENV, '[HYPERVISOR]', 'ACTION STAGECOMPLETED for pipeline:', MESSAGE.pipelineId, 'stage:', MESSAGE.stageId);
+      var pipeId = MESSAGE.PIPELINEID || MESSAGE.pipelineId;
+      var stageId = MESSAGE.STAGEID || MESSAGE.stageId;
+
+      if (MESSAGE.ENV !== undefined && MESSAGE.ENV !== null) {
+        if (!HYPERSLICE.ENVBYPIPELINE) HYPERSLICE.ENVBYPIPELINE = {};
+        if (!HYPERSLICE.ENVBYPIPELINE[pipeId]) HYPERSLICE.ENVBYPIPELINE[pipeId] = {};
+        HYPERSLICE.ENVBYPIPELINE[pipeId].ENV = MESSAGE.ENV;
+        HYPERSLICE.ENVBYPIPELINE[pipeId].lastStageId = stageId;
+        HYPERSLICE.ENVBYPIPELINE[pipeId].updatedAt = Date.now();
+        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+          UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
+        }, GENERATETAG(), 'HYPERVISORACTOR');
+      }
+
+      var nextStageIndex = null;
+      var nextMsg = MESSAGE.NEXTSTAGEMESSAGE || MESSAGE.nextStageMessage;
+      if (nextMsg) {
+        if (nextMsg.stageindex !== undefined) nextStageIndex = nextMsg.stageindex;
+        else if (nextMsg.stageIndex !== undefined) nextStageIndex = nextMsg.stageIndex;
+        else if (nextMsg.STAGEINDEX !== undefined) nextStageIndex = nextMsg.STAGEINDEX;
+      }
+
+      if (nextStageIndex !== null && nextStageIndex >= 0) {
+        loginfo(ENV, '[HYPERVISOR]', 'Continuing pipeline ' + pipeId + ' to stage ' + nextStageIndex);
+        var dnaEntry = HYPERSLICE.LOADEDPIPELINES && HYPERSLICE.LOADEDPIPELINES[pipeId];
+        if (!dnaEntry || !dnaEntry.DNA) {
+          logwarn(ENV, '[HYPERVISOR]', 'Missing DNA for pipeline ' + pipeId + ' – cannot continue');
+          if (MESSAGE.SENDER && MESSAGE.TAG) {
+            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: 'Missing DNA for continuation' }, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
+          }
+          return ENV;
+        }
+        var dna = dnaEntry.DNA;
+        var env = MESSAGE.ENV || HYPERSLICE.ENVBYPIPELINE[pipeId].ENV || {};
+        var options = dnaEntry.OPTIONS || {};
+
+        // ===== USE GLOBAL loadPipeline =====
+        loadPipeline(dna, nextStageIndex, env, options)
+          .then(function(result) {
+            var newEnv = result.env || env;
+            var nextNextIndex = result.nextStageIndex;
+
+            if (!HYPERSLICE.ENVBYPIPELINE) HYPERSLICE.ENVBYPIPELINE = {};
+            if (!HYPERSLICE.ENVBYPIPELINE[pipeId]) HYPERSLICE.ENVBYPIPELINE[pipeId] = {};
+            HYPERSLICE.ENVBYPIPELINE[pipeId].ENV = newEnv;
+            HYPERSLICE.ENVBYPIPELINE[pipeId].currentStageIndex = nextNextIndex !== null ? nextNextIndex : -1;
+            HYPERSLICE.ENVBYPIPELINE[pipeId].status = (nextNextIndex === null) ? 'complete' : 'running';
+            if (nextNextIndex === null) {
+              HYPERSLICE.ENVBYPIPELINE[pipeId].completedAt = Date.now();
+            }
+            SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+              UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
+            }, GENERATETAG(), 'HYPERVISORACTOR');
+
+            if (MESSAGE.SENDER && MESSAGE.TAG) {
+              SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, {
+                stageId: stageId,
+                pipelineId: pipeId,
+                nextStageIndex: nextNextIndex,
+                status: HYPERSLICE.ENVBYPIPELINE[pipeId].status
+              }, 'HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETEDACK);
+            }
+          })
+          .catch(function(err) {
+            logerror(ENV, '[HYPERVISOR]', 'Failed to compile next stage for pipeline ' + pipeId + ':', err);
+            if (MESSAGE.SENDER && MESSAGE.TAG) {
+              SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, {
+                ERROR: err.message || String(err),
+                DIAGNOSTIC: err.diagnostic || {}
+              }, 'HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETEDACK);
+            }
+            if (HYPERSLICE.ENVBYPIPELINE && HYPERSLICE.ENVBYPIPELINE[pipeId]) {
+              HYPERSLICE.ENVBYPIPELINE[pipeId].status = 'error';
+            }
+          });
+      } else {
+        loginfo(ENV, '[HYPERVISOR]', 'Pipeline ' + pipeId + ' completed.');
+        if (HYPERSLICE.ENVBYPIPELINE && HYPERSLICE.ENVBYPIPELINE[pipeId]) {
+          HYPERSLICE.ENVBYPIPELINE[pipeId].status = 'complete';
+          HYPERSLICE.ENVBYPIPELINE[pipeId].completedAt = Date.now();
+        }
+        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+          UPDATES: [{ PATH: 'hypervisor', VALUE: HYPERSLICE }]
+        }, GENERATETAG(), 'HYPERVISORACTOR');
+        if (MESSAGE.SENDER && MESSAGE.TAG) {
+          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, {
+            stageId: stageId,
+            pipelineId: pipeId,
+            status: 'complete'
+          }, 'HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETEDACK);
+        }
+      }
+      return ENV;
+    }
+
     default:
       logwarn(ENV, '[HYPERVISOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
       return ENV;
