@@ -243,62 +243,158 @@ function safeliteral(value) {
   }
 }
 
-function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps) {
-  if (typeof fn !== 'function') return null;
+// ==================== GLOBAL SERIALIZED DEPS STORE ====================
+var serializedDepsStore = {};
+var serializedDepsCounter = 0;
+var serializedDepsKeyMap = {};
 
+function structuralhash(value) {
+  try {
+    return JSON.stringify(value);
+  } catch (e) {
+    return String(value);
+  }
+}
+
+function getDepStoreKey(value) {
+  if (typeof value === 'function') {
+    return 'fn:' + structuralhash(value.toString());
+  }
+  if (value && typeof value === 'object') {
+    try {
+      return 'obj:' + structuralhash(JSON.stringify(value, function(k, v) {
+        if (typeof v === 'function') return v.toString();
+        return v;
+      }));
+    } catch (e) {
+      return 'obj:' + String(value);
+    }
+  }
+  return 'val:' + typeof value + ':' + String(value);
+}
+
+function serializeDepValue(value, seen) {
+  if (seen === undefined) seen = [];
+  if (seen.indexOf(value) !== -1) return { __circular: true };
+  seen.push(value);
+
+  if (value === null || value === undefined) return value;
+  var t = typeof value;
+  if (t === 'string' || t === 'boolean' || t === 'number') return value;
+  if (t === 'function') {
+    var key = getDepStoreKey(value);
+    if (!serializedDepsStore[key]) {
+      var serializedFn = serializeFunctionWithDeps(value, {}, {}, seen);
+      serializedDepsStore[key] = {
+        type: 'fn',
+        source: serializedFn.source,
+        deps: serializedFn.deps || {}
+      };
+    }
+    return { __depref: key };
+  }
+  if (Array.isArray(value)) {
+    return value.map(function(item) { return serializeDepValue(item, seen.slice()); });
+  }
+  if (t === 'object') {
+    var out = {};
+    Object.keys(value).forEach(function(k) {
+      out[k] = serializeDepValue(value[k], seen.slice());
+    });
+    return out;
+  }
+  return value;
+}
+
+function serializeFunctionWithDeps(fn, deps, capturedenv, seen) {
+  if (typeof fn !== 'function') return { source: 'function() {}', deps: {} };
   var src = fn.toString();
   if (src.indexOf('[native code]') !== -1) {
-    throw new Error('[serializeselfcontainedclosure] native function not serializable');
+    throw new Error('[serializeFunctionWithDeps] native function cannot be serialized');
   }
-
-  var freeids = detectfreeidentifiers(src);
+  var freeIds = (typeof detectfreeidentifiers === 'function') ? detectfreeidentifiers(src) : [];
   var bindings = {};
   var order = [];
 
-  freeids.forEach(function(id) {
+  freeIds.forEach(function(id) {
     if (deps && deps[id] !== undefined) {
       bindings[id] = deps[id];
       order.push(id);
     } else if (capturedenv && capturedenv[id] !== undefined) {
       bindings[id] = capturedenv[id];
       order.push(id);
+    } else if (typeof globalThis !== 'undefined' && globalThis[id] !== undefined) {
+      // don't capture globals; must be declared deps
     }
   });
 
-  if (actualargs) {
-    actualargs.forEach(function(arg, i) {
-      var name = '__arg' + i;
-      bindings[name] = arg;
-      order.push(name);
-    });
-  }
+  var serializedDepsMap = {};
+  order.forEach(function(name) {
+    var val = bindings[name];
+    var sval = serializeDepValue(val, seen || []);
+    serializedDepsMap[name] = sval;
+  });
 
-  var bindinglines = order.map(function(name) {
-    return '  var ' + name + ' = ' + safeliteral(bindings[name]) + ';';
+  var depLines = order.map(function(name, idx) {
+    var serialized = serializedDepsMap[name];
+    if (serialized && serialized.__depref) {
+      return '  var ' + name + ' = __recallDep(' + JSON.stringify(serialized.__depref) + ');';
+    }
+    return '  var ' + name + ' = ' + JSON.stringify(serialized) + ';';
   }).join('\n');
 
   var openparen = src.indexOf('(');
   var closeparen = openparen === -1 ? -1 : findmatchingparen(src, openparen);
   if (openparen === -1 || closeparen === -1) {
-    return { __fn__: true, source: '(' + src + ')' };
+    return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap };
   }
 
   var bodybrace = findbodybrace(src, closeparen + 1);
   if (bodybrace === -1) {
     var afterarrowmaybe = closeparen + 1;
     var arrowidx = src.indexOf('=>', afterarrowmaybe);
-    if (arrowidx === -1) return { __fn__: true, source: '(' + src + ')' };
+    if (arrowidx === -1) return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap };
     var afterarrow = skipspaces(src, arrowidx + 2, src.length);
     var expr = src.slice(afterarrow);
-    var zeroargsource = '(function() {\n' + bindinglines + '\n  return (' + expr + ');\n})';
-    return { __fn__: true, source: zeroargsource };
+    return { source: '(function() {\n' + depLines + '\n  return (' + expr + ');\n})', deps: serializedDepsMap };
   }
 
   var bodystart = bodybrace + 1;
   var bodyend = src.lastIndexOf('}');
   var innerbody = src.slice(bodystart, bodyend);
-  var zeroargsource = 'function() {\n' + (bindinglines ? bindinglines + '\n' : '') + innerbody + '\n}';
-  return { __fn__: true, source: zeroargsource };
+  var zeroargsource = 'function() {\n' + depLines + '\n' + innerbody + '\n}';
+  return { source: zeroargsource, deps: serializedDepsMap };
+}
+
+function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps) {
+  if (typeof fn !== 'function') return null;
+  var serialized = serializeFunctionWithDeps(fn, deps || {}, capturedenv || {});
+  var source = serialized.source;
+  var depsObj = serialized.deps || {};
+
+  // Build a self-contained IIFE that defines __recallDep and returns the function.
+  var depDefs = [];
+  Object.keys(serializedDepsStore).forEach(function(key) {
+    var entry = serializedDepsStore[key];
+    if (entry.type === 'fn') {
+      depDefs.push('  __depStore[' + JSON.stringify(key) + '] = ' + entry.source + ';');
+    }
+  });
+
+  var iife = '(function() {\n' +
+    '  var __depStore = {};\n' +
+    depDefs.join('\n') + '\n' +
+    '  function __recallDep(key) {\n' +
+    '    return __depStore[key] || null;\n' +
+    '  }\n' +
+    '  return (' + source + ');\n' +
+    '})()';
+
+  return {
+    __fn__: true,
+    source: iife,
+    deps: depsObj
+  };
 }
 
 function preparednaforserialization(node, env, briefcase, deps) {
@@ -345,6 +441,9 @@ if (typeof module !== 'undefined' && module.exports) {
     serializeselfcontainedclosure: serializeselfcontainedclosure,
     serializeselfcontainedclosurealias: serializeselfcontainedclosurealias,
     preparednaforserialization: preparednaforserialization,
-    preparednaforserializationalias: preparednaforserializationalias
+    preparednaforserializationalias: preparednaforserializationalias,
+    serializedDepsStore: serializedDepsStore,
+    serializeFunctionWithDeps: serializeFunctionWithDeps,
+    serializeDepValue: serializeDepValue
   };
 }
