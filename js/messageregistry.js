@@ -153,7 +153,9 @@ var messageregistry = {
       var spec = iface[key];
       var optional = spec.charAt(spec.length - 1) === '?';
       var expectedtype = optional ? spec.slice(0, -1) : spec;
-      var val = message[key] !== undefined ? message[key] : message[key.toLowerCase()];
+      var val = message[key] !== undefined ? message[key] :
+        (message[key.toLowerCase()] !== undefined ? message[key.toLowerCase()] :
+        message[key.toUpperCase()]);
       if (val === undefined || val === null) {
         if (!optional) {
           invalid = { valid: false, error: 'type "' + type + '" missing required field "' + key + '" (' + expectedtype + ')', type: type };
