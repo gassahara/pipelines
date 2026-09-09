@@ -386,6 +386,37 @@ function validateeventstage(stage) {
   return errors;
 }
 
+// ===== ADDED: explicit block input/output contract validation =====
+function validateexplicitblockcontract(block) {
+  var errors = [];
+  if (!block || typeof block !== 'object') return ['EXPLICIT CONTRACT: block is not an object'];
+  if (block.type === 'fn' || block.type === 'writer') {
+    if (!Array.isArray(block.inputs)) {
+      errors.push('EXPLICIT CONTRACT: block "' + (block.id || 'unknown') + '" must declare "inputs" as an array of strings');
+    } else {
+      block.inputs.forEach(function(input, idx) {
+        if (typeof input !== 'string' || input.trim() === '') {
+          errors.push('EXPLICIT CONTRACT: block "' + (block.id || 'unknown') + '" input at index ' + idx + ' must be a non-empty string');
+        }
+      });
+    }
+    if (block.deps !== undefined && !Array.isArray(block.deps)) {
+      errors.push('EXPLICIT CONTRACT: block "' + (block.id || 'unknown') + '" must declare "deps" as an array of strings');
+    }
+    if (!block.outputs || typeof block.outputs !== 'object' || Array.isArray(block.outputs)) {
+      errors.push('EXPLICIT CONTRACT: block "' + (block.id || 'unknown') + '" must declare "outputs" as an object');
+    } else {
+      Object.keys(block.outputs).forEach(function(key) {
+        if (typeof key !== 'string' || key.trim() === '') {
+          errors.push('EXPLICIT CONTRACT: block "' + (block.id || 'unknown') + '" output key must be a non-empty string');
+        }
+      });
+    }
+  }
+  return errors;
+}
+// ===== END ADDED =====
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     extractstagesblocks: extractstagesblocks,
@@ -406,6 +437,7 @@ if (typeof module !== 'undefined' && module.exports) {
     validateexecutionqueryblock: validateexecutionqueryblock,
     validatestorequeryblock: validatestorequeryblock,
     validateblockproperties: validateblockproperties,
-    validateeventstage: validateeventstage
+    validateeventstage: validateeventstage,
+    validateexplicitblockcontract: validateexplicitblockcontract
   };
 }

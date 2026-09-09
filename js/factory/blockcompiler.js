@@ -4,6 +4,28 @@ var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/
 var scriptwitnesstimeout = 5000;
 var mailboxwaittimeout = 25000;
 
+// ---- Injected tools for parser/serializer independence ----
+var blockcompilertools = {
+  parseSource: (typeof parseSource === 'function') ? parseSource :
+    (typeof detectfreeidentifiers === 'function') ? function(src) {
+      try {
+        return { ok: true, identifiers: detectfreeidentifiers(src), errors: [] };
+      } catch (e) {
+        return { ok: false, identifiers: [], errors: [e && e.message ? e.message : String(e)] };
+      }
+    } : function() {
+      return { ok: false, identifiers: [], errors: ['no free variable parser available'] };
+    },
+  serializeClosure: (typeof serializeselfcontainedclosure === 'function') ? serializeselfcontainedclosure : null
+};
+
+function setBlockCompilerTools(tools) {
+  if (!tools || typeof tools !== 'object') return;
+  if (typeof tools.parseSource === 'function') blockcompilertools.parseSource = tools.parseSource;
+  if (typeof tools.serializeClosure === 'function') blockcompilertools.serializeClosure = tools.serializeClosure;
+}
+// ------------------------------------------------
+
 function createblockcompilerconstants() {
   return {
     blocktypes: {
@@ -169,16 +191,31 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
   }
 
   if (merged.type === 'fn' || merged.type === 'writer') {
+    // P57: explicit input/output/deps shape validation
+    if (!Array.isArray(io.inputs)) {
+      throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "inputs" as an array of strings');
+    }
+    if (typeof io.outputs !== 'object' || io.outputs === null || Array.isArray(io.outputs)) {
+      throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "outputs" as an object');
+    }
+    if (merged.deps !== undefined && !Array.isArray(merged.deps)) {
+      throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "deps" as an array of strings');
+    }
+    // Purity / transparency using injected parser
     var fnSrc = '';
     if (typeof merged.fn === 'function') fnSrc = merged.fn.toString();
     else if (merged.ref && typeof merged.ref === 'function') fnSrc = merged.ref.toString();
     if (fnSrc && fnSrc.indexOf('[native code]') === -1) {
-      var freeIds = (typeof detectfreeidentifiers === 'function') ? detectfreeidentifiers(fnSrc) : [];
+      var parserResult = blockcompilertools.parseSource(fnSrc);
+      if (!parserResult || parserResult.ok !== true || !Array.isArray(parserResult.identifiers)) {
+        var parseErr = (parserResult && parserResult.errors && parserResult.errors[0]) ? parserResult.errors[0] : 'parser failed';
+        throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" could not be parsed: ' + parseErr);
+      }
       var allowedMap = {};
       Object.keys(properties.deps || {}).forEach(function(k) { allowedMap[k] = true; });
       (io.inputs || []).forEach(function(k) { allowedMap[k] = true; });
       var ignored = ['properties', 'console', 'window', 'globalThis', 'document'];
-      var viols = freeIds.filter(function(id) {
+      var viols = parserResult.identifiers.filter(function(id) {
         return !allowedMap[id] && ignored.indexOf(id) === -1;
       });
       if (viols.length) {
@@ -193,21 +230,25 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
 function writeoutputs(sig, env, result, id) {
   var patch = {};
   var outputkeys = sig && sig.outputs ? Object.keys(sig.outputs) : [];
-  if (result === null || result === undefined) {
-    if (outputkeys.length > 0) throw new Error('block returned ' + result + ' but outputs expected keys: ' + outputkeys.join(', '));
+  var resultObj = result;
+  if (result && typeof result === 'object' && result.outputs && typeof result.outputs === 'object' && !Array.isArray(result.outputs)) {
+    resultObj = result.outputs;
+  }
+  if (resultObj === null || resultObj === undefined) {
+    if (outputkeys.length > 0) throw new Error('block returned ' + resultObj + ' but outputs expected keys: ' + outputkeys.join(', '));
     return patch;
   }
   if (outputkeys.length === 1) {
     var key = outputkeys[0];
-    var value = result[key] !== undefined ? result[key] : result;
+    var value = resultObj[key] !== undefined ? resultObj[key] : resultObj;
     patch[key] = value;
     env[key] = value;
     return patch;
   }
   outputkeys.forEach(function(k) {
-    if (result[k] === undefined) throw new Error('missing required output "' + k + '" from block result');
-    patch[k] = result[k];
-    env[k] = result[k];
+    if (resultObj[k] === undefined) throw new Error('missing required output "' + k + '" from block result');
+    patch[k] = resultObj[k];
+    env[k] = resultObj[k];
   });
   return patch;
 }
@@ -397,6 +438,13 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
       }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
       .then(function(result) {
+        if (typeof logblockdebug === 'function') {
+          logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', id, {
+            inputs: properties.inputs,
+            deps: Object.keys(properties.deps || {}),
+            result: result
+          });
+        }
         return result;
       });
     };
@@ -621,8 +669,9 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
 
 function compileblock(block, inheritedbriefcase, constants, options) {
   if (inheritedbriefcase === undefined) inheritedbriefcase = {};
+  if (options && options.tools) setBlockCompilerTools(options.tools);
   if (block.ref && typeof block.ref === 'string') {
-    var refTarget = (typeof window !== 'undefined') ? window[block.ref] : (typeof globalThis !== 'undefined' ? globalThis[block.ref] : undefined);
+    var refTarget = (typeof window !== 'undefined') ? window[block.ref] : (typeof globalthis !== 'undefined' ? globalthis[block.ref] : undefined);
     if (typeof refTarget !== 'function') {
       throw new Error('[compileblock] ref function not found: ' + block.ref);
     }
@@ -1186,8 +1235,8 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     var inputargs = blockinputs.map(function(inp) { return compilepathaccessor(inp)(execenv); });
     var originalfn = compiledelement.originalfn || elementdef.fn || elementdef.ref;
     var closureserialized = null;
-    if (typeof originalfn === 'function') {
-      closureserialized = serializeselfcontainedclosure(originalfn, inputargs, execenv, elementdef.deps || {});
+    if (blockcompilertools.serializeClosure && typeof originalfn === 'function') {
+      closureserialized = blockcompilertools.serializeClosure(originalfn, inputargs, execenv, elementdef.deps || {});
     }
     logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelineid, 'stagepath:', JSON.stringify(stagepath));
     var tag = GENERATETAG();
@@ -1214,6 +1263,9 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var result = outerresult && outerresult.result !== undefined ? outerresult.result : outerresult;
         writeoutputs({ inputs: blockinputs, outputs: blockoutputs }, execenv, result, elementid);
         logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelineid);
+        if (typeof logblockdebug === 'function') {
+          logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', elementid, { result: result });
+        }
         return result;
       });
   }
@@ -1239,6 +1291,7 @@ if (typeof module !== 'undefined' && module.exports) {
     processpipelineelement: processpipelineelement,
     registereventstage: registereventstage,
     processnestedstage: processnestedstage,
-    createpersistentelementwrapper: createpersistentelementwrapper
+    createpersistentelementwrapper: createpersistentelementwrapper,
+    setBlockCompilerTools: setBlockCompilerTools
   };
 }

@@ -456,7 +456,12 @@ function createstate(tokens) {
   };
 }
 
-function peek(state) { return state.tokens[state.index]; }
+function peek(state) {
+  if (!state || !state.tokens || !Array.isArray(state.tokens)) {
+    throw new Error('[freevarparser] peek called with invalid state');
+  }
+  return state.tokens[state.index];
+}
 
 function advance(state) {
   var next = cloneobj(state);
@@ -1715,9 +1720,19 @@ function detectfreeidentifiers(source) {
   return parseprogram(state);
 }
 
+function parseSource(source) {
+  try {
+    var identifiers = detectfreeidentifiers(source);
+    return { ok: true, identifiers: identifiers, errors: [] };
+  } catch (err) {
+    return { ok: false, identifiers: [], errors: [err && err.message ? err.message : String(err)] };
+  }
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     detectfreeidentifiers: detectfreeidentifiers,
+    parseSource: parseSource,
     isidentifierstart: isidentifierstart,
     isidentifierpart: isidentifierpart,
     containsidentifier: containsidentifier,

@@ -145,6 +145,25 @@ function logToDebugger(env, level, prefix, data) {
 }
 // ===== END ADDED =====
 
+// ===== ADDED: logblockdebug helper =====
+function logblockdebug(state, prefix, blockid, values) {
+  if (getverbosity(state) < constants.debug) return;
+  var serialized;
+  if (values === null || values === undefined) {
+    serialized = String(values);
+  } else if (typeof values === 'object') {
+    try {
+      serialized = JSON.stringify(values);
+    } catch (e) {
+      serialized = String(values);
+    }
+  } else {
+    serialized = String(values);
+  }
+  logdebug(state, prefix, blockid + ' ' + serialized);
+}
+// ===== END ADDED =====
+
 function createverbosityfunctions() {
   return {
     getverbosity: getverbosity,
@@ -155,7 +174,8 @@ function createverbosityfunctions() {
     loginfo: loginfo,
     logdebug: logdebug,
     getverbosityname: getverbosityname,
-    logToDebugger: logToDebugger  // exported in factory
+    logToDebugger: logToDebugger,
+    logblockdebug: logblockdebug
   };
 }
 
@@ -171,6 +191,7 @@ if (typeof module !== 'undefined' && module.exports) {
     logdebug: logdebug,
     getverbosityname: getverbosityname,
     createverbosityfunctions: createverbosityfunctions,
-    logToDebugger: logToDebugger
+    logToDebugger: logToDebugger,
+    logblockdebug: logblockdebug
   };
 }

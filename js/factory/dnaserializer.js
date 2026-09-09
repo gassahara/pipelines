@@ -273,7 +273,12 @@ function getDepStoreKey(value) {
   return 'val:' + typeof value + ':' + String(value);
 }
 
-function serializeDepValue(value, seen) {
+function defaultAnalyzer(source) {
+  return { ok: false, identifiers: [], errors: ['analyzer not provided'] };
+}
+
+function serializeDepValue(value, seen, analyzer) {
+  if (analyzer === undefined) analyzer = defaultAnalyzer;
   if (seen === undefined) seen = [];
   if (seen.indexOf(value) !== -1) return { __circular: true };
   seen.push(value);
@@ -284,35 +289,40 @@ function serializeDepValue(value, seen) {
   if (t === 'function') {
     var key = getDepStoreKey(value);
     if (!serializedDepsStore[key]) {
-      var serializedFn = serializeFunctionWithDeps(value, {}, {}, seen);
-      serializedDepsStore[key] = {
-        type: 'fn',
-        source: serializedFn.source,
-        deps: serializedFn.deps || {}
-      };
+      var serializedFn = serializeFunctionWithDeps(value, {}, {}, seen, analyzer);
+      if (serializedFn.opaque) {
+        serializedDepsStore[key] = { type: 'opaque-fn', source: serializedFn.source };
+      } else {
+        serializedDepsStore[key] = { type: 'fn', source: serializedFn.source, deps: serializedFn.deps || {} };
+      }
     }
     return { __depref: key };
   }
   if (Array.isArray(value)) {
-    return value.map(function(item) { return serializeDepValue(item, seen.slice()); });
+    return value.map(function(item) { return serializeDepValue(item, seen.slice(), analyzer); });
   }
   if (t === 'object') {
     var out = {};
     Object.keys(value).forEach(function(k) {
-      out[k] = serializeDepValue(value[k], seen.slice());
+      out[k] = serializeDepValue(value[k], seen.slice(), analyzer);
     });
     return out;
   }
   return value;
 }
 
-function serializeFunctionWithDeps(fn, deps, capturedenv, seen) {
-  if (typeof fn !== 'function') return { source: 'function() {}', deps: {} };
+function serializeFunctionWithDeps(fn, deps, capturedenv, seen, analyzer) {
+  if (analyzer === undefined) analyzer = defaultAnalyzer;
+  if (typeof fn !== 'function') return { source: 'function() {}', deps: {}, opaque: false };
   var src = fn.toString();
   if (src.indexOf('[native code]') !== -1) {
-    throw new Error('[serializeFunctionWithDeps] native function cannot be serialized');
+    return { source: src, deps: {}, opaque: true };
   }
-  var freeIds = (typeof detectfreeidentifiers === 'function') ? detectfreeidentifiers(src) : [];
+  var parsed = analyzer(src);
+  if (!parsed || parsed.ok !== true || !Array.isArray(parsed.identifiers)) {
+    return { source: src, deps: {}, opaque: true };
+  }
+  var freeIds = parsed.identifiers;
   var bindings = {};
   var order = [];
 
@@ -323,19 +333,17 @@ function serializeFunctionWithDeps(fn, deps, capturedenv, seen) {
     } else if (capturedenv && capturedenv[id] !== undefined) {
       bindings[id] = capturedenv[id];
       order.push(id);
-    } else if (typeof globalThis !== 'undefined' && globalThis[id] !== undefined) {
-      // don't capture globals; must be declared deps
     }
   });
 
   var serializedDepsMap = {};
   order.forEach(function(name) {
     var val = bindings[name];
-    var sval = serializeDepValue(val, seen || []);
+    var sval = serializeDepValue(val, seen || [], analyzer);
     serializedDepsMap[name] = sval;
   });
 
-  var depLines = order.map(function(name, idx) {
+  var depLines = order.map(function(name) {
     var serialized = serializedDepsMap[name];
     if (serialized && serialized.__depref) {
       return '  var ' + name + ' = __recallDep(' + JSON.stringify(serialized.__depref) + ');';
@@ -346,33 +354,40 @@ function serializeFunctionWithDeps(fn, deps, capturedenv, seen) {
   var openparen = src.indexOf('(');
   var closeparen = openparen === -1 ? -1 : findmatchingparen(src, openparen);
   if (openparen === -1 || closeparen === -1) {
-    return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap };
+    return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap, opaque: false };
   }
 
   var bodybrace = findbodybrace(src, closeparen + 1);
   if (bodybrace === -1) {
     var afterarrowmaybe = closeparen + 1;
     var arrowidx = src.indexOf('=>', afterarrowmaybe);
-    if (arrowidx === -1) return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap };
+    if (arrowidx === -1) return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap, opaque: false };
     var afterarrow = skipspaces(src, arrowidx + 2, src.length);
     var expr = src.slice(afterarrow);
-    return { source: '(function() {\n' + depLines + '\n  return (' + expr + ');\n})', deps: serializedDepsMap };
+    return { source: '(function() {\n' + depLines + '\n  return (' + expr + ');\n})', deps: serializedDepsMap, opaque: false };
   }
 
   var bodystart = bodybrace + 1;
   var bodyend = src.lastIndexOf('}');
   var innerbody = src.slice(bodystart, bodyend);
   var zeroargsource = 'function() {\n' + depLines + '\n' + innerbody + '\n}';
-  return { source: zeroargsource, deps: serializedDepsMap };
+  return { source: zeroargsource, deps: serializedDepsMap, opaque: false };
 }
 
-function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps) {
+function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyzer) {
+  if (analyzer === undefined) analyzer = defaultAnalyzer;
   if (typeof fn !== 'function') return null;
-  var serialized = serializeFunctionWithDeps(fn, deps || {}, capturedenv || {});
+  var serialized = serializeFunctionWithDeps(fn, deps || {}, capturedenv || {}, [], analyzer);
+  if (serialized.opaque) {
+    return {
+      __fn__: true,
+      source: '(function() { return ' + JSON.stringify(serialized.source) + '; })()',
+      deps: {}
+    };
+  }
   var source = serialized.source;
   var depsObj = serialized.deps || {};
 
-  // Build a self-contained IIFE that defines __recallDep and returns the function.
   var depDefs = [];
   Object.keys(serializedDepsStore).forEach(function(key) {
     var entry = serializedDepsStore[key];
@@ -397,17 +412,18 @@ function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps) {
   };
 }
 
-function preparednaforserialization(node, env, briefcase, deps) {
+function preparednaforserialization(node, env, briefcase, deps, analyzer) {
+  if (analyzer === undefined) analyzer = defaultAnalyzer;
   if (typeof node === 'function') {
     return preparefunctionforserialization(node, env, briefcase, deps);
   }
   if (Array.isArray(node)) {
-    return node.map(function(item) { return preparednaforserialization(item, env, briefcase, deps); });
+    return node.map(function(item) { return preparednaforserialization(item, env, briefcase, deps, analyzer); });
   }
   if (node && typeof node === 'object') {
     var out = {};
     Object.keys(node).forEach(function(key) {
-      out[key] = preparednaforserialization(node[key], env, briefcase, deps);
+      out[key] = preparednaforserialization(node[key], env, briefcase, deps, analyzer);
     });
     return out;
   }
