@@ -4,7 +4,6 @@ var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/
 var scriptwitnesstimeout = 5000;
 var mailboxwaittimeout = 25000;
 
-// ---- Injected tools for parser/serializer independence ----
 var blockcompilertools = {
   parseSource: (typeof parseSource === 'function') ? parseSource :
     (typeof detectfreeidentifiers === 'function') ? function(src) {
@@ -24,7 +23,6 @@ function setBlockCompilerTools(tools) {
   if (typeof tools.parseSource === 'function') blockcompilertools.parseSource = tools.parseSource;
   if (typeof tools.serializeClosure === 'function') blockcompilertools.serializeClosure = tools.serializeClosure;
 }
-// ------------------------------------------------
 
 function createblockcompilerconstants() {
   return {
@@ -1227,7 +1225,7 @@ function validatepipelinebriefcase(briefcase) {
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelineid, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
-    var path = stagepath.concat([elementid]);
+    var path = stagepath;
     var execenv = env;
     var executor = function(executioncontext) {
       var effectiveenv = executioncontext.env || execenv;
