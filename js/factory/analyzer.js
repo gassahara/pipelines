@@ -1,3 +1,10 @@
+// analyzer.js — consolidated module
+// Contains: free variable parser, dnaserializer, fn block analysis, output mapping, fn compilation
+
+// ============================================================
+// PART 1: free variable parser (from freevarparser.js)
+// ============================================================
+
 var hasown = Object.prototype.hasOwnProperty;
 
 function trampoline(fn) {
@@ -2280,6 +2287,47 @@ function createblockanalyzers(blocktypes, dnaconstants) {
 }
 
 // ============================================================
+// PART 4: compilefnblock (NEW)
+// ============================================================
+
+function compilefnblock(merged, id, sig, inheritedproperties, dependencies, options, runtime) {
+  if (inheritedproperties === undefined) inheritedproperties = {};
+  var blockcompilerstate = runtime.blockcompilerstate;
+  var logdebug = runtime.logdebug;
+  var logblockdebug = runtime.logblockdebug;
+  var callwithstack = runtime.callwithstack;
+  var evalstack = runtime.evalstack;
+  var compilepathaccessor = runtime.compilepathaccessor;
+  var buildblockproperties = runtime.buildblockproperties;
+  var createerrorcontext = runtime.createerrorcontext;
+
+  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling FN block:', id);
+  var blockfn = function(env) {
+    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing FN block:', id);
+    var fn = merged.fn;
+    if (!fn) throw new Error('fn block must have a function: ' + id);
+    var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
+    var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
+    var fnargs = [properties].concat(inputargs);
+    return callwithstack(evalstack, 'fn:' + (merged.ref || id), 'async-await', function() {
+      return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
+    }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
+    .then(function(result) {
+      if (typeof logblockdebug === 'function') {
+        logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', id, {
+          inputs: properties.inputs,
+          deps: Object.keys(properties.deps || {}),
+          result: result
+        });
+      }
+      return result;
+    });
+  };
+  blockfn.id = id;
+  return blockfn;
+}
+
+// ============================================================
 // EXPORTS (if module system used, but we rely on globals)
 // ============================================================
 
@@ -2310,6 +2358,7 @@ if (typeof module !== 'undefined' && module.exports) {
     mapoutputs: mapoutputs,
     analyzefnblock: analyzefnblock,
     createblockanalyzer: createblockanalyzer,
-    createblockanalyzers: createblockanalyzers
+    createblockanalyzers: createblockanalyzers,
+    compilefnblock: compilefnblock
   };
 }
