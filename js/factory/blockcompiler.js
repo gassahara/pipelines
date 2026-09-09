@@ -400,8 +400,8 @@ function compilehttpblock(merged, id, sig, istextual, options) {
     var timeout = merged.timeout || mailboxwaittimeout;
     return WAITFORMAILBOX({ tag: tag, sender: sender, type: istextual ? MESSAGETYPES.FETCHRESULT : MESSAGETYPES.APIRESULT }, timeout)
       .then(function(mailboxmessage) {
-        var response = mailboxmessage.payload;
-        var result = response && response.RESULT !== undefined ? response.RESULT : response.result;
+        var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+        var result = response.RESULT !== undefined ? response.RESULT : response.result;
         if (result && result.error) throw new Error(result.error);
         var finalresult = result && result.data !== undefined ? result.data : result;
         if (merged.mapping && merged.mapping.response && result && typeof result === 'object') {
@@ -576,8 +576,8 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
 
       return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
-          var response = mailboxmessage.payload;
-          return response && response.RESULT !== undefined ? response.RESULT : response.result;
+          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+          return response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
     var blockfn = function(env) {
@@ -601,7 +601,8 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responsetype: 'domresult' });
       return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
-          return mailboxmessage.payload && mailboxmessage.payload.RESULT !== undefined ? mailboxmessage.payload.RESULT : mailboxmessage.payload.result;
+          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+          return response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
     var blockfn = function(env) {
@@ -652,8 +653,8 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       SENDINSTRUCTION('EXECUTIONACTOR', msgtype, args, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
       return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
-          var response = mailboxmessage.payload;
-          return response && response.RESULT !== undefined ? response.RESULT : response.result;
+          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+          return response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
     var blockfn = function(env) {
@@ -827,7 +828,7 @@ function registereventstage(stage, pipelineid, stagepath, options) {
   SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, payload, tag, 'BLOCKCOMPILER', { responsetype: MESSAGETYPES.EVENTLISTENERREGISTERED });
   return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENTLISTENERREGISTERED }, mailboxwaittimeout)
     .then(function(mailboxmessage) {
-      var response = mailboxmessage.payload;
+      var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
       if (response && response.error) {
         throw new Error('[registereventstage] Registration failed for ' + stage.id + ': ' + response.error);
       }
@@ -1175,8 +1176,8 @@ function bootDNA(dna, options) {
 
       return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: bootedType }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
-          var response = mailboxmessage.payload;
-          var result = response && response.RESULT !== undefined ? response.RESULT : response.result;
+          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+          var result = response.RESULT !== undefined ? response.RESULT : response.result;
           if (result && result.ERROR) {
             var err = new Error(result.ERROR);
             err.diagnostic = result.DIAGNOSTIC || {};
@@ -1273,13 +1274,9 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 
     return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
       .then(function(mailboxmessage) {
-        var payload = mailboxmessage.payload;
-        var outerresult = payload && (payload.RESULT !== undefined ? payload.RESULT : payload.result) !== undefined
-          ? (payload.RESULT !== undefined ? payload.RESULT : payload.result)
-          : payload;
-        var result = outerresult && (outerresult.RESULT !== undefined ? outerresult.RESULT : outerresult.result) !== undefined
-          ? (outerresult.RESULT !== undefined ? outerresult.RESULT : outerresult.result)
-          : outerresult;
+        var payload = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+        var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
+        var result = outerresult.RESULT !== undefined ? outerresult.RESULT : (outerresult.result !== undefined ? outerresult.result : outerresult);
         writeoutputs({ inputs: blockinputs, outputs: blockoutputs }, execenv, result, elementid);
         logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelineid);
         if (typeof logblockdebug === 'function') {
