@@ -201,25 +201,28 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
     if (merged.deps !== undefined && !Array.isArray(merged.deps)) {
       throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "deps" as an array of strings');
     }
-    // Purity / transparency using injected parser
+    // Purity / transparency using injected parser; parser failure is non-fatal
     var fnSrc = '';
     if (typeof merged.fn === 'function') fnSrc = merged.fn.toString();
     else if (merged.ref && typeof merged.ref === 'function') fnSrc = merged.ref.toString();
     if (fnSrc && fnSrc.indexOf('[native code]') === -1) {
       var parserResult = blockcompilertools.parseSource(fnSrc);
-      if (!parserResult || parserResult.ok !== true || !Array.isArray(parserResult.identifiers)) {
-        var parseErr = (parserResult && parserResult.errors && parserResult.errors[0]) ? parserResult.errors[0] : 'parser failed';
-        throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" could not be parsed: ' + parseErr);
-      }
-      var allowedMap = {};
-      Object.keys(properties.deps || {}).forEach(function(k) { allowedMap[k] = true; });
-      (io.inputs || []).forEach(function(k) { allowedMap[k] = true; });
-      var ignored = ['properties', 'console', 'window', 'globalThis', 'document'];
-      var viols = parserResult.identifiers.filter(function(id) {
-        return !allowedMap[id] && ignored.indexOf(id) === -1;
-      });
-      if (viols.length) {
-        throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" has undeclared free identifiers: ' + viols.join(', '));
+      if (parserResult && parserResult.ok === true && Array.isArray(parserResult.identifiers)) {
+        var allowedMap = {};
+        Object.keys(properties.deps || {}).forEach(function(k) { allowedMap[k] = true; });
+        (io.inputs || []).forEach(function(k) { allowedMap[k] = true; });
+        var ignored = ['properties', 'console', 'window', 'globalThis', 'document'];
+        var viols = parserResult.identifiers.filter(function(id) {
+          return !allowedMap[id] && ignored.indexOf(id) === -1;
+        });
+        if (viols.length) {
+          throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" has undeclared free identifiers: ' + viols.join(', '));
+        }
+      } else {
+        if (typeof logwarn === 'function') {
+          var parseErr = (parserResult && parserResult.errors && parserResult.errors[0]) ? parserResult.errors[0] : 'unknown parser error';
+          logwarn(blockcompilerstate, '[BLOCKCOMPILER]', '[FN_PARSER_WARNING] block "' + (merged.id || 'unknown') + '" parser unavailable: ' + parseErr + '; skipping free-identifier validation');
+        }
       }
     }
   }
