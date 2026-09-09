@@ -326,7 +326,10 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
 
 function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
   logdebug(ENV, '[EXECUTIONACTOR]', 'SETTLETASK TASK:', TASKID, 'STATUS:', STATUS);
-  var EXECSLICE = ENV.EXECUTION;
+  var EXECSLICE = ENV && ENV.execution;
+  if (!EXECSLICE) {
+    EXECSLICE = ENSUREEXECUTIONSLICE(ENV);
+  }
   var TASK = EXECSLICE.TASKS[TASKID];
   if (!TASK) return;
   TASK.STATUS = STATUS;
@@ -363,34 +366,42 @@ function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
 }
 
 function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
-  var EXECUTIONCONTEXT = {
-    ENV: DESCRIPTOR.ENV,
-    INPUTS: DESCRIPTOR.SIGNATURE && DESCRIPTOR.SIGNATURE.INPUTS ? DESCRIPTOR.SIGNATURE.INPUTS : [],
-    OUTPUTS: DESCRIPTOR.SIGNATURE && DESCRIPTOR.SIGNATURE.OUTPUTS ? DESCRIPTOR.SIGNATURE.OUTPUTS : {},
-    PROPERTIES: DESCRIPTOR.PROPERTIES || {}
+  var executionContext = {
+    env: DESCRIPTOR.env || DESCRIPTOR.ENV || {},
+    inputs: (DESCRIPTOR.signature && (DESCRIPTOR.signature.inputs || DESCRIPTOR.signature.INPUTS)) || [],
+    outputs: (DESCRIPTOR.signature && (DESCRIPTOR.signature.outputs || DESCRIPTOR.signature.OUTPUTS)) || {},
+    properties: DESCRIPTOR.properties || DESCRIPTOR.PROPERTIES || {}
   };
 
-  logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK START:', TASKID, DESCRIPTOR.ELEMENTID || DESCRIPTOR.elementid, 'PIPELINE:', DESCRIPTOR.PIPELINEID || DESCRIPTOR.pipelineid);
+  logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK START:', TASKID, DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID, 'PIPELINE:', DESCRIPTOR.pipelineid || DESCRIPTOR.PIPELINEID);
 
   function RUNWITHPROGRAM() {
-    var PROGREF = DESCRIPTOR.PROGRAMREF || DESCRIPTOR.PROGRAMREF || DESCRIPTOR.programref || DESCRIPTOR.programRef;
-    var PROGSOURCE = DESCRIPTOR.PROGRAMSOURCE || DESCRIPTOR.PROGRAMSOURCE || DESCRIPTOR.programsource || DESCRIPTOR.programSource;
+    var PROGREF = DESCRIPTOR.programref || DESCRIPTOR.programRef || DESCRIPTOR.PROGRAMREF || null;
+    var PROGSOURCE = DESCRIPTOR.programsource || DESCRIPTOR.programSource || DESCRIPTOR.PROGRAMSOURCE || null;
+    var executor = DESCRIPTOR.executor || DESCRIPTOR.EXECUTOR;
     if (PROGREF && PROGSOURCE) {
       try {
         var PROGRAM = new Function('return ' + PROGSOURCE)();
-        if (PROGRAM && typeof PROGRAM[DESCRIPTOR.ELEMENTID || DESCRIPTOR.elementid] === 'function') {
-          return Promise.resolve(PROGRAM[DESCRIPTOR.ELEMENTID || DESCRIPTOR.elementid](EXECUTIONCONTEXT)).then(function(R) {
+        if (PROGRAM && typeof PROGRAM[DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID] === 'function') {
+          return Promise.resolve(PROGRAM[DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID](executionContext)).then(function(R) {
             return R;
           }).catch(function(ERR) {
             logwarn(ENV, '[EXECUTIONACTOR]', 'PROGRAM RESTORATION FAILED:', ERR);
-            return DESCRIPTOR.EXECUTOR(EXECUTIONCONTEXT);
+            if (typeof executor === 'function') {
+              return executor(executionContext);
+            }
+            throw ERR;
           });
         }
       } catch (ERR) {
         logwarn(ENV, '[EXECUTIONACTOR]', 'PROGRAM RESTORATION FAILED:', ERR);
       }
     }
-    return Promise.resolve(DESCRIPTOR.EXECUTOR(EXECUTIONCONTEXT));
+    if (typeof executor !== 'function') {
+      var err = new Error('[EXECUTIONACTOR] DESCRIPTOR.executor is not a function');
+      return Promise.reject(err);
+    }
+    return Promise.resolve(executor(executionContext));
   }
 
   var EXECUTIONPROMISE;
@@ -401,10 +412,10 @@ function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
   }
 
   EXECUTIONPROMISE.then(function(RESULT) {
-    logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK COMPLETED:', TASKID, DESCRIPTOR.ELEMENTID || DESCRIPTOR.elementid);
+    logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK COMPLETED:', TASKID, DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID);
     SETTLETASK(TASKID, 'EXECUTED', RESULT || {}, null, ENV);
   }).catch(function(ERR) {
-    logerror(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK FAILED:', TASKID, DESCRIPTOR.ELEMENTID || DESCRIPTOR.elementid, ERR);
+    logerror(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK FAILED:', TASKID, DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID, ERR);
     SETTLETASK(TASKID, 'FAILED', null, ERR, ENV);
   });
 }

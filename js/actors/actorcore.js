@@ -1,7 +1,4 @@
 var ACTORSTATEREGISTRY = {};
-
-// ---------- GARBAGE COLLECTOR ----------
-
 function CREATEGARBAGECOLLECTOR() {
   return {
     OBJECTS: {},

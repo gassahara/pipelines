@@ -1254,6 +1254,15 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       elementid: elementid
     };
 
+    if (typeof logblockdebug === 'function') {
+      logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', elementid, {
+        descriptorKeys: Object.keys(descriptor),
+        hasEnv: typeof descriptor.env !== 'undefined',
+        hasExecutor: typeof descriptor.executor === 'function',
+        hasSignature: typeof descriptor.signature === 'object'
+      });
+    }
+
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'taskresult' });
 
     return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
