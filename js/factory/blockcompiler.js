@@ -24,7 +24,6 @@ function setBlockCompilerTools(tools) {
   if (typeof tools.parseSource === 'function') blockcompilertools.parseSource = tools.parseSource;
   if (typeof tools.serializeClosure === 'function') blockcompilertools.serializeClosure = tools.serializeClosure;
 }
-// ------------------------------------------------
 
 function createblockcompilerconstants() {
   return {
@@ -74,39 +73,6 @@ function containspathaccessorchars(str) {
   return str.split('').reduce(function(found, c) {
     return found || c === '.' || c === '[' || c === ']';
   }, false);
-}
-
-function containsstyleaccess(source) {
-  if (typeof source !== 'string') return false;
-
-  function matchestyl(j, k) {
-    var expected = 'tyle';
-    if (k >= expected.length) return j;
-    if (j >= source.length || source.charAt(j).toLowerCase() !== expected.charAt(k)) return -1;
-    return matchestyl(j + 1, k + 1);
-  }
-
-  function skipwhitespace(j) {
-    if (j >= source.length) return j;
-    var c = source.charAt(j);
-    if (c === ' ' || c === '\t' || c === '\n') return skipwhitespace(j + 1);
-    return j;
-  }
-
-  function scan(i) {
-    if (i >= source.length) return false;
-    var ch = source.charAt(i);
-    if (ch === 's' || ch === 'S') {
-      var after = matchestyl(i + 1, 0);
-      if (after !== -1) {
-        var ws = skipwhitespace(after);
-        if (source.charAt(ws) === '.') return true;
-      }
-    }
-    return scan(i + 1);
-  }
-
-  return scan(0);
 }
 
 function compilepathaccessor(pathstr) {
@@ -202,58 +168,13 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
       throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "deps" as an array of strings');
     }
     // Purity / transparency using injected parser; parser failure is non-fatal
-    var fnSrc = '';
-    if (typeof merged.fn === 'function') fnSrc = merged.fn.toString();
-    else if (merged.ref && typeof merged.ref === 'function') fnSrc = merged.ref.toString();
-    if (fnSrc && fnSrc.indexOf('[native code]') === -1) {
-      var parserResult = blockcompilertools.parseSource(fnSrc);
-      if (parserResult && parserResult.ok === true && Array.isArray(parserResult.identifiers)) {
-        var allowedMap = {};
-        Object.keys(properties.deps || {}).forEach(function(k) { allowedMap[k] = true; });
-        (io.inputs || []).forEach(function(k) { allowedMap[k] = true; });
-        var ignored = ['properties', 'console', 'window', 'globalThis', 'document'];
-        var viols = parserResult.identifiers.filter(function(id) {
-          return !allowedMap[id] && ignored.indexOf(id) === -1;
-        });
-        if (viols.length) {
-          throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" has undeclared free identifiers: ' + viols.join(', '));
-        }
-      } else {
-        if (typeof logwarn === 'function') {
-          var parseErr = (parserResult && parserResult.errors && parserResult.errors[0]) ? parserResult.errors[0] : 'unknown parser error';
-          logwarn(blockcompilerstate, '[BLOCKCOMPILER]', '[FN_PARSER_WARNING] block "' + (merged.id || 'unknown') + '" parser unavailable: ' + parseErr + '; skipping free-identifier validation');
-        }
-      }
+    var analysis = analyzefnblock(merged, properties.deps || {}, env, blockcompilertools.parseSource);
+    if (!analysis.valid) {
+      throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" has undeclared free identifiers: ' + analysis.violations.join(', '));
     }
   }
 
   return properties;
-}
-
-function writeoutputs(sig, env, result, id) {
-  var patch = {};
-  var outputkeys = sig && sig.outputs ? Object.keys(sig.outputs) : [];
-  var resultObj = result;
-  if (result && typeof result === 'object' && result.outputs && typeof result.outputs === 'object' && !Array.isArray(result.outputs)) {
-    resultObj = result.outputs;
-  }
-  if (resultObj === null || resultObj === undefined) {
-    if (outputkeys.length > 0) throw new Error('block returned ' + resultObj + ' but outputs expected keys: ' + outputkeys.join(', '));
-    return patch;
-  }
-  if (outputkeys.length === 1) {
-    var key = outputkeys[0];
-    var value = resultObj[key] !== undefined ? resultObj[key] : resultObj;
-    patch[key] = value;
-    env[key] = value;
-    return patch;
-  }
-  outputkeys.forEach(function(k) {
-    if (resultObj[k] === undefined) throw new Error('missing required output "' + k + '" from block result');
-    patch[k] = resultObj[k];
-    env[k] = resultObj[k];
-  });
-  return patch;
 }
 
 function createerrorcontext(id, stagetype) {
@@ -262,31 +183,6 @@ function createerrorcontext(id, stagetype) {
     err.diagnostic.blockid = id;
     err.diagnostic.stagetype = stagetype;
     throw err;
-  };
-}
-
-function createblockanalyzer(rules) {
-  return function(block) {
-    var errors = [];
-    rules.forEach(function(rule) {
-      var value = block[rule.field];
-      if (rule.required && (value === undefined || value === null)) {
-        errors.push(rule.message);
-      } else if (value !== undefined && value !== null) {
-        if (rule.type && typeof value !== rule.type) {
-          errors.push(rule.message + ' (expected ' + rule.type + ', got ' + typeof value + ')');
-        }
-        if (rule.custom && !rule.custom(value, block)) errors.push(rule.message);
-      }
-    });
-    return {
-      valid: errors.length === 0,
-      errors: errors,
-      warnings: [],
-      dependencies: [],
-      outputs: block.outputs ? block.outputs : {},
-      contracts: []
-    };
   };
 }
 
@@ -310,61 +206,6 @@ function buildresponse(mappingobj, raw) {
     else result[fieldkey] = raw[mappingdef];
     return result;
   }, {});
-}
-
-function createblockanalyzers(blocktypes, dnaconstants) {
-  var analyzers = {};
-  analyzers[blocktypes.fn] = function(block) {
-    var errors = [];
-    if (!block.fn) errors.push('fn block must have a function');
-    if (typeof block.fn === 'function') {
-      if (block.fn.toString().indexOf('document.') !== -1 || containsstyleaccess(block.fn.toString())) {
-        errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
-      }
-      errors = errors.concat(validaterevivablefunctionblock(block, blocktypes, dnaconstants));
-    }
-    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
-  };
-
-  analyzers[blocktypes.api] = createblockanalyzer([
-    { field: 'endpoint', required: true, message: 'api block must have an endpoint' },
-    { field: 'method', required: true, message: 'api block must have GET/POST method', custom: function(v) { return v === 'GET' || v === 'POST'; } }
-  ]);
-
-  analyzers[blocktypes.fetch] = createblockanalyzer([
-    { field: 'endpoint', required: true, message: 'fetch block must have an endpoint' },
-    { field: 'method', required: true, message: 'fetch block must have GET/POST method', custom: function(v) { return v === 'GET' || v === 'POST'; } }
-  ]);
-
-  analyzers[blocktypes.writer] = function(block) {
-    var errors = [];
-    if (typeof block.fn !== 'function' && typeof block.ref !== 'function') errors.push('writer block must have fn or ref');
-    if (typeof block.fn === 'function' || typeof block.ref === 'function') errors = errors.concat(validaterevivablefunctionblock(block, blocktypes, dnaconstants));
-    return { valid: errors.length === 0, errors: errors, warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
-  };
-
-  analyzers[blocktypes.io] = createblockanalyzer([
-    { field: 'ref', required: true, type: 'function', message: 'io block ref must be a function' }
-  ]);
-
-  analyzers[blocktypes.domquery] = function(block) {
-    var valid = Boolean(block.command && block.command.COMMAND);
-    return { valid: valid, errors: valid ? [] : ['domquery block requires command.COMMAND'], warnings: [], dependencies: [], outputs: block.outputs ? block.outputs : {}, contracts: [] };
-  };
-
-  analyzers[blocktypes.crypto] = createblockanalyzer([
-    { field: 'outputs', required: true, message: 'crypto block must have outputs', custom: function(v, b) { return Object.keys(b.outputs ? b.outputs : {}).length > 0; } }
-  ]);
-
-  analyzers[blocktypes.wait] = createblockanalyzer([
-    { field: 'ms', required: true, message: 'wait block must have ms' }
-  ]);
-
-  analyzers[blocktypes.executionquery] = createblockanalyzer([
-    { field: 'command', required: true, message: 'executionquery requires command', custom: function(v) { return v && typeof v.COMMAND === 'string'; } }
-  ]);
-
-  return analyzers;
 }
 
 function compilehttpblock(merged, id, sig, istextual, options) {
@@ -428,31 +269,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
   var compilers = {};
 
   compilers[blocktypes.fn] = function(merged, id, sig, inheritedproperties) {
-    if (inheritedproperties === undefined) inheritedproperties = {};
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling FN block:', id);
-    var blockfn = function(env) {
-      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing FN block:', id);
-      var fn = merged.fn;
-      if (!fn) throw new Error('fn block must have a function: ' + id);
-      var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
-      var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
-      var fnargs = [properties].concat(inputargs);
-      return callwithstack(evalstack, 'fn:' + (merged.ref || id), 'async-await', function() {
-        return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
-      }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
-      .then(function(result) {
-        if (typeof logblockdebug === 'function') {
-          logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', id, {
-            inputs: properties.inputs,
-            deps: Object.keys(properties.deps || {}),
-            result: result
-          });
-        }
-        return result;
-      });
-    };
-    blockfn.id = id;
-    return blockfn;
+    return compilefnblock(merged, id, sig, inheritedproperties, dependencies, options);
   };
 
   compilers[blocktypes.api] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, false, options); };
@@ -786,7 +603,9 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
 
       return bootDNAFn(rawDNA, childoptions)
         .then(function(result) {
-          writeoutputs({ inputs: [], outputs: el.outputs || {} }, parentenv, result, elementid);
+          var outputkeys = Object.keys(el.outputs || {});
+          var mapped = mapoutputs(result, outputkeys);
+          Object.keys(mapped).forEach(function(k) { parentenv[k] = mapped[k]; });
           return result;
         })
         .catch(function(err) {
@@ -1277,7 +1096,9 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var payload = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
         var result = outerresult.RESULT !== undefined ? outerresult.RESULT : (outerresult.result !== undefined ? outerresult.result : outerresult);
-        writeoutputs({ inputs: blockinputs, outputs: blockoutputs }, execenv, result, elementid);
+        var outputkeys = Object.keys(blockoutputs || {});
+        var mapped = mapoutputs(result, outputkeys);
+        Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
         logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelineid);
         if (typeof logblockdebug === 'function') {
           logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', elementid, { result: result });
