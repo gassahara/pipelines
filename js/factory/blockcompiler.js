@@ -4,6 +4,7 @@ var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/
 var scriptwitnesstimeout = 5000;
 var mailboxwaittimeout = 25000;
 
+// ---- Injected tools for parser/serializer independence ----
 var blockcompilertools = {
   parseSource: (typeof parseSource === 'function') ? parseSource :
     (typeof detectfreeidentifiers === 'function') ? function(src) {
@@ -23,6 +24,7 @@ function setBlockCompilerTools(tools) {
   if (typeof tools.parseSource === 'function') blockcompilertools.parseSource = tools.parseSource;
   if (typeof tools.serializeClosure === 'function') blockcompilertools.serializeClosure = tools.serializeClosure;
 }
+// ------------------------------------------------
 
 function createblockcompilerconstants() {
   return {
@@ -399,9 +401,9 @@ function compilehttpblock(merged, id, sig, istextual, options) {
     return WAITFORMAILBOX({ tag: tag, sender: sender, type: istextual ? MESSAGETYPES.FETCHRESULT : MESSAGETYPES.APIRESULT }, timeout)
       .then(function(mailboxmessage) {
         var response = mailboxmessage.payload;
-        var result = response && response.result ? response.result : response;
+        var result = response && response.RESULT !== undefined ? response.RESULT : response.result;
         if (result && result.error) throw new Error(result.error);
-        var finalresult = result.data !== undefined ? result.data : result;
+        var finalresult = result && result.data !== undefined ? result.data : result;
         if (merged.mapping && merged.mapping.response && result && typeof result === 'object') {
           finalresult = buildresponse(merged.mapping.response, result);
         }
@@ -575,7 +577,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
-          return response && response.result !== undefined ? response.result : response;
+          return response && response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
     var blockfn = function(env) {
@@ -599,7 +601,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responsetype: 'domresult' });
       return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
-          return mailboxmessage.payload && mailboxmessage.payload.result !== undefined ? mailboxmessage.payload.result : mailboxmessage.payload;
+          return mailboxmessage.payload && mailboxmessage.payload.RESULT !== undefined ? mailboxmessage.payload.RESULT : mailboxmessage.payload.result;
         });
     };
     var blockfn = function(env) {
@@ -651,7 +653,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
-          return response && response.result !== undefined ? response.result : response;
+          return response && response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
     var blockfn = function(env) {
@@ -828,6 +830,9 @@ function registereventstage(stage, pipelineid, stagepath, options) {
       var response = mailboxmessage.payload;
       if (response && response.error) {
         throw new Error('[registereventstage] Registration failed for ' + stage.id + ': ' + response.error);
+      }
+      if (response && response.RESULT !== undefined) {
+        return response.RESULT;
       }
       if (response && response.result !== undefined) {
         return response.result;
@@ -1171,7 +1176,7 @@ function bootDNA(dna, options) {
       return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: bootedType }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage.payload;
-          var result = response && response.result ? response.result : response;
+          var result = response && response.RESULT !== undefined ? response.RESULT : response.result;
           if (result && result.ERROR) {
             var err = new Error(result.ERROR);
             err.diagnostic = result.DIAGNOSTIC || {};
@@ -1269,8 +1274,12 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
       .then(function(mailboxmessage) {
         var payload = mailboxmessage.payload;
-        var outerresult = payload && payload.result !== undefined ? payload.result : payload;
-        var result = outerresult && outerresult.result !== undefined ? outerresult.result : outerresult;
+        var outerresult = payload && (payload.RESULT !== undefined ? payload.RESULT : payload.result) !== undefined
+          ? (payload.RESULT !== undefined ? payload.RESULT : payload.result)
+          : payload;
+        var result = outerresult && (outerresult.RESULT !== undefined ? outerresult.RESULT : outerresult.result) !== undefined
+          ? (outerresult.RESULT !== undefined ? outerresult.RESULT : outerresult.result)
+          : outerresult;
         writeoutputs({ inputs: blockinputs, outputs: blockoutputs }, execenv, result, elementid);
         logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelineid);
         if (typeof logblockdebug === 'function') {
