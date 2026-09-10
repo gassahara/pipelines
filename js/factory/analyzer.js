@@ -1,10 +1,3 @@
-// analyzer.js — consolidated module
-// Contains: free variable parser, dnaserializer, fn block analysis, output mapping, fn compilation
-
-// ============================================================
-// PART 1: free variable parser (from freevarparser.js)
-// ============================================================
-
 var hasown = Object.prototype.hasOwnProperty;
 
 function trampoline(fn) {
@@ -462,11 +455,42 @@ function createstate(tokens) {
   };
 }
 
+// ---- OP-001: enriched `peek` ----
 function peek(state) {
   if (!state || !state.tokens || !Array.isArray(state.tokens)) {
-    throw new Error('[freevarparser] peek called with invalid state');
+    var peekdiag = {
+      kind: 'peek-invalid-state',
+      typeofState: typeof state,
+      hasTokens: !!(state && state.tokens),
+      tokensIsArray: !!(state && state.tokens && Array.isArray(state.tokens)),
+      stateIndex: (state && typeof state.index === 'number') ? state.index : null,
+      tokensLength: (state && state.tokens && Array.isArray(state.tokens)) ? state.tokens.length : null,
+      stack: (function() { try { return (new Error()).stack || null; } catch (_) { return null; } })()
+    };
+    var peekerr = new Error('[freevarparser] peek called with invalid state');
+    peekerr.diagnostic = peekdiag;
+    throw peekerr;
   }
   return state.tokens[state.index];
+}
+
+// ---- OP-002: assert parser state ----
+function assertparserstate(value, production, hintindex) {
+  if (value && typeof value === 'object' && value.tokens && Array.isArray(value.tokens)) {
+    return value;
+  }
+  var assertdiag = {
+    kind: 'parser-return-undefined',
+    production: production,
+    index: (hintindex !== undefined && hintindex !== null) ? hintindex : null,
+    typeofReturn: typeof value,
+    stack: (function() { try { return (new Error()).stack || null; } catch (_) { return null; } })()
+  };
+  var asserterr = new Error('[PARSER_RETURN_UNDEFINED] production=' + production +
+    ' index=' + (assertdiag.index === null ? '?' : assertdiag.index) +
+    ' typeofReturn=' + assertdiag.typeofReturn);
+  asserterr.diagnostic = assertdiag;
+  throw asserterr;
 }
 
 function advance(state) {
@@ -588,13 +612,19 @@ function findkind(kindkey) {
   return found;
 }
 
-function parseprimaryfrombuffer(state, tokens) {
+// ---- OP-021: shared free-var accumulation helper ----
+function addfreevarsfromtokens(state, tokens) {
   var next = state;
-  tokens.forEach(function(t) {
-    if (t.type === 'identifier') {
-      next = addfreevar(next, t.value);
-    }
-  });
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t.type === 'identifier') next = addfreevar(next, t.value);
+  }
+  return next;
+}
+
+// ---- OP-022: buffer parser, refactored to use addfreevarsfromtokens ----
+function parseprimaryfrombuffer(state, tokens) {
+  var next = addfreevarsfromtokens(state, tokens);
   next = advance(next);
   return next;
 }
@@ -602,17 +632,14 @@ function parseprimaryfrombuffer(state, tokens) {
 function parseblockfrombuffer(state, tokens) {
   var next = pushscope(state);
   var inner = tokens.slice(1, -1);
-  inner.forEach(function(t) {
-    if (t.type === 'identifier') {
-      next = addfreevar(next, t.value);
-    }
-  });
+  next = addfreevarsfromtokens(next, inner);
   next = popscope(next);
   next = advance(next);
   return next;
 }
 
 function parseobjectliteralfrombuffer(state, tokens) {
+  // Not replaced by OP-022: custom scan with object-literal key-skip semantics.
   var next = state;
   var inner = tokens.slice(1, -1);
 
@@ -634,28 +661,19 @@ function parseobjectliteralfrombuffer(state, tokens) {
 }
 
 function parsearrayliteralfrombuffer(state, tokens) {
-  var next = state;
-  tokens.slice(1, -1).forEach(function(t) {
-    if (t.type === 'identifier') {
-      next = addfreevar(next, t.value);
-    }
-  });
+  var next = addfreevarsfromtokens(state, tokens.slice(1, -1));
   next = advance(next);
   return next;
 }
 
 function parsejsonfrombuffer(state, tokens) {
-  var next = state;
-  tokens.slice(1, -1).forEach(function(t) {
-    if (t.type === 'identifier') {
-      next = addfreevar(next, t.value);
-    }
-  });
+  var next = addfreevarsfromtokens(state, tokens.slice(1, -1));
   next = advance(next);
   return next;
 }
 
 function parsearrowfunctionfrombuffer(state, tokens) {
+  // Not replaced by OP-022: contains declare/addfreevar split.
   var next = pushscope(state);
   var arrowindex = tokens.reduce(function(acc, t, i) {
     return acc !== -1 ? acc : (t.type === 'punctuator' && t.value === '=>' ? i : acc);
@@ -683,17 +701,13 @@ function parseoptionalaccessfrombuffer(state, tokens) {
 }
 
 function parseargumentsfrombuffer(state, tokens) {
-  var next = state;
-  tokens.slice(1, -1).forEach(function(t) {
-    if (t.type === 'identifier') {
-      next = addfreevar(next, t.value);
-    }
-  });
+  var next = addfreevarsfromtokens(state, tokens.slice(1, -1));
   next = advance(next);
   return next;
 }
 
 function parseforheaderfrombuffer(state, tokens) {
+  // Not replaced by OP-022: has secondary in/of detection.
   var next = state;
   var hasinof = false;
   tokens.forEach(function(t) {
@@ -709,6 +723,7 @@ function parseforheaderfrombuffer(state, tokens) {
 }
 
 function parsetemplatefrombuffer(state, tokens) {
+  // Not replaced by OP-022: nested tokenize+substate per expression.
   var next = state;
   tokens.forEach(function(t) {
     if (t.type === 'templateliteral' && t.extra && t.extra.expressions) {
@@ -728,23 +743,13 @@ function parsetemplatefrombuffer(state, tokens) {
 }
 
 function parseconditionalfrombuffer(state, tokens) {
-  var next = state;
-  tokens.forEach(function(t) {
-    if (t.type === 'identifier') {
-      next = addfreevar(next, t.value);
-    }
-  });
+  var next = addfreevarsfromtokens(state, tokens);
   next = advance(next);
   return next;
 }
 
 function parsemapconstructfrombuffer(state, tokens) {
-  var next = state;
-  tokens.forEach(function(t) {
-    if (t.type === 'identifier') {
-      next = addfreevar(next, t.value);
-    }
-  });
+  var next = addfreevarsfromtokens(state, tokens);
   next = advance(next);
   return next;
 }
@@ -1073,12 +1078,13 @@ function isarrowfunctionstart(state) {
   return false;
 }
 
+// ---- OP-003: parseprogram with assertparserstate ----
 function parseprogram(state) {
   function loop(s) {
     if (peek(s).type === 'eof') return s;
     return function() { return loop(parsestatement(s)); };
   }
-  var finalstate = trampoline(loop)(state);
+  var finalstate = assertparserstate(trampoline(loop)(state), 'parseprogram', state && state.index);
   return Object.keys(finalstate.freevars).filter(function(k) {
     return has(finalstate.freevars, k);
   });
@@ -1138,6 +1144,7 @@ function parsestatement(state) {
   return consumesemicolon(state);
 }
 
+// ---- OP-004: parseblock ----
 function parseblock(state) {
   state = expectpunctuator(state, '{');
   state = pushscope(state);
@@ -1146,11 +1153,12 @@ function parseblock(state) {
     if (peek(s).type === 'eof') return s;
     return function() { return loop(parsestatement(s)); };
   }
-  state = trampoline(loop)(state);
+  state = assertparserstate(trampoline(loop)(state), 'parseblock', state && state.index);
   state = expectpunctuator(state, '}');
   return popscope(state);
 }
 
+// ---- OP-005: parsevariabledeclaration ----
 function parsevariabledeclaration(state) {
   state = advance(state);
   function loop(s) {
@@ -1175,10 +1183,11 @@ function parsevariabledeclaration(state) {
     }
     return nextstate;
   }
-  state = trampoline(loop)(state);
+  state = assertparserstate(trampoline(loop)(state), 'parsevariabledeclaration', state && state.index);
   return consumesemicolon(state);
 }
 
+// ---- OP-007: parsebindingpattern ----
 function parsebindingpattern(state) {
   function loop(s, depth) {
     var t = peek(s);
@@ -1195,7 +1204,7 @@ function parsebindingpattern(state) {
     }
     return function() { return loop(advance(s), depth); };
   }
-  return trampoline(loop)(state, 0);
+  return assertparserstate(trampoline(loop)(state, 0), 'parsebindingpattern', state && state.index);
 }
 
 function parsefunctiondeclaration(state) {
@@ -1208,6 +1217,7 @@ function parsefunctiondeclaration(state) {
   return parsefunctionbody(state);
 }
 
+// ---- OP-006: parsefunctionbody ----
 function parsefunctionbody(state) {
   state = pushscope(state);
   if (peek(state).type === 'punctuator' && peek(state).value === '(') {
@@ -1228,7 +1238,7 @@ function parsefunctionbody(state) {
       if (peek(nextstate).type === 'punctuator' && peek(nextstate).value === ',') nextstate = advance(nextstate);
       return function() { return loopparams(nextstate); };
     }
-    state = trampoline(loopparams)(state);
+    state = assertparserstate(trampoline(loopparams)(state), 'parsefunctionbody.loopparams', state && state.index);
     state = expectpunctuator(state, ')');
   }
 
@@ -1342,6 +1352,7 @@ function parsetrystatement(state) {
   return state;
 }
 
+// ---- OP-013: parseswitchstatement ----
 function parseswitchstatement(state) {
   state = advance(state);
   if (peek(state).type === 'punctuator' && peek(state).value === '(') {
@@ -1368,12 +1379,13 @@ function parseswitchstatement(state) {
       }
       return function() { return loop(nextstate); };
     }
-    state = trampoline(loop)(state);
+    state = assertparserstate(trampoline(loop)(state), 'parseswitchstatement', state && state.index);
     state = expectpunctuator(state, '}');
   }
   return state;
 }
 
+// ---- OP-014: parseclassdeclaration ----
 function parseclassdeclaration(state) {
   state = advance(state);
   var name = peek(state);
@@ -1408,7 +1420,7 @@ function parseclassdeclaration(state) {
       } else nextstate = advance(nextstate);
       return function() { return loopmembers(nextstate); };
     }
-    state = trampoline(loopmembers)(state);
+    state = assertparserstate(trampoline(loopmembers)(state), 'parseclassdeclaration', state && state.index);
     state = expectpunctuator(state, '}');
     state = popscope(state);
   }
@@ -1464,6 +1476,7 @@ function parseconditionalexpression(state, stoptokens) {
   return state;
 }
 
+// ---- OP-008: parsebinaryexpression ----
 function parsebinaryexpression(state, stoptokens) {
   state = parseunaryexpression(state);
   function loop(s) {
@@ -1481,7 +1494,7 @@ function parsebinaryexpression(state, stoptokens) {
     }
     return s;
   }
-  return trampoline(loop)(state);
+  return assertparserstate(trampoline(loop)(state), 'parsebinaryexpression', state && state.index);
 }
 
 function parseunaryexpression(state) {
@@ -1504,6 +1517,7 @@ function parsepostfixexpression(state) {
   return state;
 }
 
+// ---- OP-009: parseprimaryandmemberandcall ----
 function parseprimaryandmemberandcall(state) {
   var t = peek(state);
 
@@ -1566,7 +1580,7 @@ function parseprimaryandmemberandcall(state) {
     return s;
   }
 
-  return trampoline(loopmember)(state);
+  return assertparserstate(trampoline(loopmember)(state), 'parseprimaryandmemberandcall', state && state.index);
 }
 
 function isasyncarrowstart(state) {
@@ -1598,6 +1612,7 @@ function isasyncarrowstart(state) {
   return false;
 }
 
+// ---- OP-015: parsearrowfunctionfromtokens ----
 function parsearrowfunctionfromtokens(state) {
   state = pushscope(state);
   var t = peek(state);
@@ -1620,7 +1635,7 @@ function parsearrowfunctionfromtokens(state) {
       if (peek(nextstate).type === 'punctuator' && peek(nextstate).value === ',') nextstate = advance(nextstate);
       return function() { return loopparams(nextstate); };
     }
-    state = trampoline(loopparams)(state);
+    state = assertparserstate(trampoline(loopparams)(state), 'parsearrowfunctionfromtokens.loopparams', state && state.index);
     state = expectpunctuator(state, ')');
   }
 
@@ -1653,6 +1668,7 @@ function parsetemplatetoken(state) {
   return state;
 }
 
+// ---- OP-010: parseobjectliteral ----
 function parseobjectliteral(state) {
   state = expectpunctuator(state, '{');
   function loop(s) {
@@ -1685,10 +1701,11 @@ function parseobjectliteral(state) {
     if (peek(nextstate).type === 'punctuator' && peek(nextstate).value === ',') nextstate = advance(nextstate);
     return function() { return loop(nextstate); };
   }
-  state = trampoline(loop)(state);
+  state = assertparserstate(trampoline(loop)(state), 'parseobjectliteral', state && state.index);
   return expectpunctuator(state, '}');
 }
 
+// ---- OP-011: parsearrayliteral ----
 function parsearrayliteral(state) {
   state = expectpunctuator(state, '[');
   function loop(s) {
@@ -1701,10 +1718,11 @@ function parsearrayliteral(state) {
     if (peek(nextstate).type === 'punctuator' && peek(nextstate).value === ',') nextstate = advance(nextstate);
     return function() { return loop(nextstate); };
   }
-  state = trampoline(loop)(state);
+  state = assertparserstate(trampoline(loop)(state), 'parsearrayliteral', state && state.index);
   return expectpunctuator(state, ']');
 }
 
+// ---- OP-012: parsearguments ----
 function parsearguments(state) {
   function loop(s) {
     if (peek(s).type === 'punctuator' && peek(s).value === ')') return s;
@@ -1716,7 +1734,7 @@ function parsearguments(state) {
     if (peek(nextstate).type === 'punctuator' && peek(nextstate).value === ',') nextstate = advance(nextstate);
     return function() { return loop(nextstate); };
   }
-  state = trampoline(loop)(state);
+  state = assertparserstate(trampoline(loop)(state), 'parsearguments', state && state.index);
   return expectpunctuator(state, ')');
 }
 
@@ -1767,6 +1785,7 @@ function readidentifier(source, i, len) {
   return scan(i, '');
 }
 
+// ---- OP-023: rewritefunctionsource refactored ----
 function rewritefunctionsource(source, destructure) {
   var len = source.length;
 
@@ -1781,6 +1800,20 @@ function rewritefunctionsource(source, destructure) {
   var nextword = idresult.word;
   var j = idresult.end;
 
+  function injectdeps(newsource, openparen) {
+    var closeparen = findmatchingparen(newsource, openparen);
+    if (closeparen === -1) return null;
+    var params = newsource.slice(openparen + 1, closeparen).trim();
+    var newparams = params.length === 0 ? '__deps' : params + ', __deps';
+    return newsource.slice(0, openparen + 1) + newparams + newsource.slice(closeparen);
+  }
+
+  function insertdestructure(newsource, closeparen) {
+    var bodybrace = findbodybrace(newsource, closeparen + 1);
+    if (bodybrace === -1) return null;
+    return newsource.slice(0, bodybrace + 1) + destructure + newsource.slice(bodybrace + 1);
+  }
+
   if (nextword === 'function') {
     i = skipspaces(source, j, len);
     if (isidentifierstart(source[i])) {
@@ -1788,36 +1821,22 @@ function rewritefunctionsource(source, destructure) {
       i = skipspaces(source, i, len);
     }
     if (source[i] !== '(') throw new Error('[dnaserializer] invalid function signature');
-    var openparen = i;
-    var closeparen = findmatchingparen(source, openparen);
-    if (closeparen === -1) throw new Error('[dnaserializer] unmatched paren');
-    var params = source.slice(openparen + 1, closeparen).trim();
-    var newparams = params.length === 0 ? '__deps' : params + ', __deps';
-    var newsource = source.slice(0, openparen + 1) + newparams + source.slice(closeparen);
-
-    var newcloseparen = findmatchingparen(newsource, openparen);
+    var newsource = injectdeps(source, i);
+    if (!newsource) throw new Error('[dnaserializer] unmatched paren');
+    var newcloseparen = findmatchingparen(newsource, i);
     if (newcloseparen === -1) throw new Error('[dnaserializer] unmatched paren after injection');
-
-    var bodybrace = findbodybrace(newsource, newcloseparen + 1);
-    if (bodybrace === -1) throw new Error('[dnaserializer] function body not found');
-
-    return newsource.slice(0, bodybrace + 1) + destructure + newsource.slice(bodybrace + 1);
+    var out = insertdestructure(newsource, newcloseparen);
+    if (!out) throw new Error('[dnaserializer] function body not found');
+    return out;
   }
 
   if (source[i] === '(') {
-    var openparen2 = i;
-    var closeparen2 = findmatchingparen(source, openparen2);
-    if (closeparen2 === -1) throw new Error('[dnaserializer] unmatched paren');
-    var params2 = source.slice(openparen2 + 1, closeparen2).trim();
-    var newparams2 = params2.length === 0 ? '__deps' : params2 + ', __deps';
-    var newsource2 = source.slice(0, openparen2 + 1) + newparams2 + source.slice(closeparen2);
-
-    var newcloseparen2 = findmatchingparen(newsource2, openparen2);
+    var newsource2 = injectdeps(source, i);
+    if (!newsource2) throw new Error('[dnaserializer] unmatched paren');
+    var newcloseparen2 = findmatchingparen(newsource2, i);
     if (newcloseparen2 === -1) throw new Error('[dnaserializer] unmatched paren after injection');
-
     var arrowindex = newsource2.indexOf('=>', newcloseparen2 + 1);
     if (arrowindex === -1) throw new Error('[dnaserializer] arrow not found');
-
     var afterarrow = skipspaces(newsource2, arrowindex + 2, newsource2.length);
     if (newsource2[afterarrow] !== '{') {
       if (destructure) {
@@ -1826,9 +1845,7 @@ function rewritefunctionsource(source, destructure) {
       }
       return source;
     }
-
-    var bodybrace2 = afterarrow;
-    return newsource2.slice(0, bodybrace2 + 1) + destructure + newsource2.slice(bodybrace2 + 1);
+    return insertdestructure(newsource2, afterarrow) || source;
   }
 
   if (isidentifierstart(source[i])) {
@@ -1839,10 +1856,7 @@ function rewritefunctionsource(source, destructure) {
     if (source.slice(i, i + 2) !== '=>') return source;
 
     var newparams3 = '(' + ident + ', __deps) =>';
-    var beforearrow3 = source.slice(0, identstart);
-    var afterident3 = source.slice(i);
-    var newsource3 = beforearrow3 + newparams3 + afterident3;
-
+    var newsource3 = source.slice(0, identstart) + newparams3 + source.slice(i);
     var arrowpos3 = newsource3.indexOf('=>');
     if (arrowpos3 === -1) return source;
 
@@ -1854,9 +1868,7 @@ function rewritefunctionsource(source, destructure) {
       }
       return source;
     }
-
-    var bodybrace3 = afterarrow3;
-    return newsource3.slice(0, bodybrace3 + 1) + destructure + newsource3.slice(bodybrace3 + 1);
+    return insertdestructure(newsource3, afterarrow3) || source;
   }
 
   return source;
@@ -2223,6 +2235,119 @@ function mapoutputs(rawresult, outputkeys) {
   return scan(0, {});
 }
 
+// ---- OP-016: runtime block-input definedness (C11) ----
+function assertdefinedinputs(blockid, iokeys, env, accessor, allowundefined) {
+  if (allowundefined === true) return;
+  var keys = iokeys || [];
+  var missing = [];
+  for (var i = 0; i < keys.length; i++) {
+    var value = accessor(keys[i])(env);
+    if (typeof value === 'undefined') missing.push(keys[i]);
+  }
+  if (missing.length > 0) {
+    var err = new Error('[BLOCK_INPUT_UNDEFINED] block "' + blockid +
+      '" has undefined inputs: ' + missing.join(', '));
+    err.diagnostic = {
+      blockid: blockid,
+      kind: 'block-input-undefined',
+      missing: missing
+    };
+    throw err;
+  }
+}
+
+// ---- OP-017: unified container-usage scanner (C12b, C13b, C12a) ----
+function analyzecontainerusage(src, container, declared, opts) {
+  if (opts === undefined) opts = {};
+  var usealiases = opts.aliases === true;
+  var declaredarr = Array.isArray(declared) ? declared : [];
+  var declaredset = {};
+  for (var di = 0; di < declaredarr.length; di++) declaredset[declaredarr[di]] = true;
+
+  var tokens = tokenize(src);
+  var aliases = {};
+  aliases['properties'] = true;
+
+  var aliasroot = {};
+  var used = {};
+  var usedorder = [];
+
+  function recordname(n) {
+    if (!used[n]) { used[n] = true; usedorder.push(n); }
+  }
+
+  function isident(t, v) { return t && t.type === 'identifier' && t.value === v; }
+  function isdot(t) { return t && t.type === 'punctuator' && t.value === '.'; }
+  function iseq(t) { return t && t.type === 'punctuator' && t.value === '='; }
+
+  // pass 1: bind aliases
+  var i = 0;
+  while (i < tokens.length) {
+    var t = tokens[i];
+    if (t.type === 'keyword' && t.value === 'var' && tokens[i + 1] &&
+        tokens[i + 1].type === 'identifier') {
+      var localname = tokens[i + 1].value;
+      if (tokens[i + 2] && iseq(tokens[i + 2])) {
+        var rhs = tokens[i + 3];
+        if (rhs && rhs.type === 'identifier' && rhs.value === 'properties' &&
+            isdot(tokens[i + 4]) && isident(tokens[i + 5], container)) {
+          aliases[localname] = true;
+          aliasroot[localname] = container;
+        } else if (usealiases && rhs && rhs.type === 'identifier' && aliasroot[rhs.value] === container) {
+          aliases[localname] = true;
+          aliasroot[localname] = container;
+        }
+      }
+    }
+    i += 1;
+  }
+
+  // pass 2: collect reads
+  i = 0;
+  while (i < tokens.length) {
+    var a = tokens[i];
+    if (a && a.type === 'identifier' && aliases[a.value] &&
+        isdot(tokens[i + 1]) &&
+        tokens[i + 2] && tokens[i + 2].type === 'identifier') {
+      if (a.value === 'properties') {
+        if (isident(tokens[i + 2], container) &&
+            isdot(tokens[i + 3]) &&
+            tokens[i + 4] && tokens[i + 4].type === 'identifier') {
+          recordname(tokens[i + 4].value);
+          i += 5;
+          continue;
+        }
+      } else if (aliasroot[a.value] === container) {
+        recordname(tokens[i + 2].value);
+        i += 3;
+        continue;
+      }
+    }
+    i += 1;
+  }
+
+  var missingdecl = usedorder.filter(function(n) { return !declaredset[n]; });
+  var missinguse = declaredarr.filter(function(n) { return !used[n]; });
+
+  return {
+    used: usedorder,
+    declared: declaredarr.slice(),
+    missingdecl: missingdecl,
+    missinguse: missinguse
+  };
+}
+
+// ---- OP-018: input-usage scanner ----
+function analyzeinputusage(src, declared) {
+  return analyzecontainerusage(src, 'inputs', declared, { aliases: false });
+}
+
+// ---- OP-019: dep-usage scanner, with alias tracking ----
+function analyzedepusage(src, declared) {
+  return analyzecontainerusage(src, 'deps', declared, { aliases: true });
+}
+
+// ---- OP-020: analyzefnblock with input/dep closure checks ----
 function analyzefnblock(block, depsmap, env, parser) {
   if (parser === undefined) parser = parseSource;
   var fn = block.fn;
@@ -2277,6 +2402,28 @@ function analyzefnblock(block, depsmap, env, parser) {
   var builtins = ['console','window','document','globalThis','Math','JSON','Object','Array','String','Number','Boolean','Promise','Date','RegExp','Error','parseInt','parseFloat','isNaN','isFinite','encodeURIComponent','decodeURIComponent'];
   builtins.forEach(function(k) { declared[k] = true; });
   var violations = parsed.identifiers.filter(function(id) { return !declared[id]; });
+
+  // A3 / A4: input and dep closure checks (C12b, C13b, and C12a under strictinputs)
+  if (violations.length === 0) {
+    var inputusage = analyzeinputusage(src, block.inputs || []);
+    if (inputusage.missingdecl.length > 0) {
+      violations = violations.concat(inputusage.missingdecl.map(function(n) {
+        return '[FN_INPUT_UNDECLARED] reads properties.inputs.' + n + ' but does not declare it in inputs';
+      }));
+    }
+    if (block.strictinputs === true && inputusage.missinguse.length > 0) {
+      violations = violations.concat(inputusage.missinguse.map(function(n) {
+        return '[FN_INPUT_UNUSED] declares input "' + n + '" but never reads it';
+      }));
+    }
+    var depusage = analyzedepusage(src, block.deps || []);
+    if (depusage.missingdecl.length > 0) {
+      violations = violations.concat(depusage.missingdecl.map(function(n) {
+        return '[FN_DEP_UNDECLARED] reads properties.deps.' + n + ' but does not declare it in deps';
+      }));
+    }
+  }
+
   return {
     valid: violations.length === 0,
     violations: violations,

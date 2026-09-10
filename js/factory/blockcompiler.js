@@ -124,6 +124,15 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
   var properties = buildproperties(merged, inherited);
   var inputsobj = {};
 
+  // ---- A7 / P20-call: C11 runtime input-definedness enforcement ----
+  assertdefinedinputs(
+    merged.id || 'unknown',
+    io.inputs || [],
+    env,
+    compilepathaccessor,
+    merged.allowundefinedinputs === true
+  );
+
   (io.inputs || []).forEach(function(name) {
     inputsobj[name] = compilepathaccessor(name)(env);
   });
@@ -182,6 +191,21 @@ function createerrorcontext(id, stagetype) {
     err.diagnostic.stagetype = stagetype;
     throw err;
   };
+}
+
+// ---- A8 / P24: shared wrapper for compiled block functions ----
+function wrapcompiledfn(innerfn, kind, id, blockkind) {
+  var blockfn = function(env) {
+    return callwithstack(evalstack, kind + ':' + id, 'async-await',
+      function() { return innerfn(env); }, [env], {
+        context: { env: env, pipestate: env.pipestate },
+        capturecontinuation: true,
+        errk: createerrorcontext(id, kind)
+      });
+  };
+  blockfn.id = id;
+  if (blockkind !== undefined) blockfn.kind = blockkind;
+  return blockfn;
 }
 
 function buildpayload(mappingobj, data) {
@@ -250,25 +274,12 @@ function compilehttpblock(merged, id, sig, istextual, options) {
       });
   };
 
-  var blockfn = function(env) {
-    return callwithstack(evalstack, (istextual ? 'fetch' : 'api') + ':' + id, 'async-await', function() {
-      return innerfn(env);
-    }, [env], {
-      context: { env: env, pipestate: env.pipestate },
-      capturecontinuation: true,
-      errk: createerrorcontext(id, istextual ? 'fetch' : 'api')
-    });
-  };
-  blockfn.id = id;
-  return blockfn;
+  return wrapcompiledfn(innerfn, istextual ? 'fetch' : 'api', id);
 }
 
 function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) {
   var compilers = {};
 
-  // ============================================================
-  // FIX: construct runtime and pass as 7th argument
-  // ============================================================
   compilers[blocktypes.fn] = function(merged, id, sig, inheritedproperties) {
     var runtime = {
       blockcompilerstate: blockcompilerstate,
@@ -321,15 +332,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
           });
       });
     };
-    var blockfn = function(env) {
-      return callwithstack(evalstack, 'writer:' + id, 'async-await', function() { return innerfn(env); }, [env], {
-        context: { env: env, pipestate: env.pipestate },
-        capturecontinuation: true,
-        errk: createerrorcontext(id, 'writer')
-      });
-    };
-    blockfn.id = id;
-    return blockfn;
+    return wrapcompiledfn(innerfn, 'writer', id);
   };
 
   compilers[blocktypes.io] = function(merged, id, sig) {
@@ -344,15 +347,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         return Promise.resolve(io(inputdata, e));
       }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') });
     };
-    var blockfn = function(env) {
-      return callwithstack(evalstack, 'io:' + id, 'async-await', function() { return innerfn(env); }, [env], {
-        context: { env: env, pipestate: env.pipestate },
-        capturecontinuation: true,
-        errk: createerrorcontext(id, 'io')
-      });
-    };
-    blockfn.id = id;
-    return blockfn;
+    return wrapcompiledfn(innerfn, 'io', id);
   };
 
   compilers[blocktypes.domquery] = function(merged, id, sig) {
@@ -408,15 +403,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
           return response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
-    var blockfn = function(env) {
-      return callwithstack(evalstack, 'domquery:' + id, 'async-await', function() { return innerfn(env); }, [env], {
-        context: { env: env, pipestate: env.pipestate },
-        capturecontinuation: true,
-        errk: createerrorcontext(id, 'domquery')
-      });
-    };
-    blockfn.id = id;
-    return blockfn;
+    return wrapcompiledfn(innerfn, 'domquery', id);
   };
 
   compilers[blocktypes.crypto] = function(merged, id, sig) {
@@ -433,15 +420,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
           return response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
-    var blockfn = function(env) {
-      return callwithstack(evalstack, 'crypto:' + id, 'async-await', function() { return innerfn(env); }, [env], {
-        context: { env: env, pipestate: env.pipestate },
-        capturecontinuation: true,
-        errk: createerrorcontext(id, 'crypto')
-      });
-    };
-    blockfn.id = id;
-    return blockfn;
+    return wrapcompiledfn(innerfn, 'crypto', id);
   };
 
   compilers[blocktypes.wait] = function(merged, id) {
@@ -450,15 +429,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
       return new Promise(function(r) { setTimeout(r, ms); }).then(function() { return {}; });
     };
-    var blockfn = function(env) {
-      return callwithstack(evalstack, 'wait:' + id, 'async-await', function() { return innerfn(env); }, [env], {
-        context: { env: env, pipestate: env.pipestate },
-        capturecontinuation: true,
-        errk: createerrorcontext(id, 'wait')
-      });
-    };
-    blockfn.id = id;
-    return blockfn;
+    return wrapcompiledfn(innerfn, 'wait', id);
   };
 
   compilers[blocktypes.executionquery] = function(merged, id, sig) {
@@ -485,15 +456,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
           return response.RESULT !== undefined ? response.RESULT : response.result;
         });
     };
-    var blockfn = function(env) {
-      return callwithstack(evalstack, 'executionquery:' + id, 'async-await', function() { return innerfn(env); }, [env], {
-        context: { env: env, pipestate: env.pipestate },
-        capturecontinuation: true,
-        errk: createerrorcontext(id, 'executionquery')
-      });
-    };
-    blockfn.id = id;
-    return blockfn;
+    return wrapcompiledfn(innerfn, 'executionquery', id);
   };
 
   return compilers;
@@ -624,16 +587,7 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
         });
     };
 
-    var blockfn = function(env) {
-      return callwithstack(evalstack, 'pipeline:' + elementid, 'async-await', function() { return innerfn(env); }, [env], {
-        context: { env: env, pipestate: env.pipestate },
-        capturecontinuation: true,
-        errk: createerrorcontext(elementid, 'pipeline')
-      });
-    };
-    blockfn.id = elementid;
-    blockfn.kind = 'pipeline';
-    return blockfn;
+    return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
   });
 }
 
@@ -1107,7 +1061,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var payload = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
         var result = outerresult.RESULT !== undefined ? outerresult.RESULT : (outerresult.result !== undefined ? outerresult.result : outerresult);
-        // ----- begin: task-failure first -----
+        // ----- R-2 / P2 : surface task failure BEFORE output mapping -----
         if (result && typeof result === 'object' && result.ERROR !== undefined) {
           var failuremessage = typeof result.ERROR === 'string'
             ? result.ERROR
@@ -1122,7 +1076,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
           failureError.diagnostic.origin = 'createpersistentelementwrapper';
           throw failureError;
         }
-        // ----- end: task-failure first -----
+        // ----- end R-2 / P2 -----
         var outputkeys = Object.keys(blockoutputs || {});
         var mapped = mapoutputs(result, outputkeys);
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
