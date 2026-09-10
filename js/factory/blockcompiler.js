@@ -1107,6 +1107,22 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var payload = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
         var result = outerresult.RESULT !== undefined ? outerresult.RESULT : (outerresult.result !== undefined ? outerresult.result : outerresult);
+        // ----- begin: task-failure first -----
+        if (result && typeof result === 'object' && result.ERROR !== undefined) {
+          var failuremessage = typeof result.ERROR === 'string'
+            ? result.ERROR
+            : (result.ERROR && typeof result.ERROR.message === 'string'
+                ? result.ERROR.message
+                : String(result.ERROR));
+          var failureError = new Error(failuremessage);
+          failureError.diagnostic = failureError.diagnostic || {};
+          failureError.diagnostic.blockid = elementid;
+          failureError.diagnostic.pipelineid = pipelineid;
+          failureError.diagnostic.taskid = result.TASKID || null;
+          failureError.diagnostic.origin = 'createpersistentelementwrapper';
+          throw failureError;
+        }
+        // ----- end: task-failure first -----
         var outputkeys = Object.keys(blockoutputs || {});
         var mapped = mapoutputs(result, outputkeys);
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });

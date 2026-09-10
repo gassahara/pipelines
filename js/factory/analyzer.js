@@ -2233,9 +2233,43 @@ function analyzefnblock(block, depsmap, env, parser) {
   if (src.indexOf('[native code]') !== -1) {
     return { valid: false, violations: ['native function not allowed'], free: [], declared: [] };
   }
+  if (typeof parser !== 'function') {
+    return {
+      valid: false,
+      violations: ['parser not supplied (typeof parser=' + (typeof parser) + ')'],
+      free: [], declared: [],
+      diagnostics: { kind: 'parser-absent', parser: typeof parser }
+    };
+  }
   var parsed = parser(src);
-  if (!parsed || parsed.ok !== true) {
-    return { valid: false, violations: ['parser unavailable'], free: [], declared: [] };
+  if (!parsed) {
+    return {
+      valid: false,
+      violations: ['parser returned no value (typeof return=' + (typeof parsed) + ')'],
+      free: [], declared: [],
+      diagnostics: { kind: 'parser-absent', returned: typeof parsed }
+    };
+  }
+  if (parsed.ok !== true) {
+    var errs = Array.isArray(parsed.errors) ? parsed.errors : [];
+    var errstr = errs.length ? errs.join('; ') : 'no error message returned';
+    var fingerprint = src.length > 120 ? src.slice(0, 120) + '\u2026' : src;
+    try {
+      console.warn('[FN_PURITY_VIOLATION][parser-rejected] block="' +
+        (block.id || 'unknown') + '" srclen=' + src.length +
+        ' err="' + errstr + '" src="' + fingerprint + '"');
+    } catch (_) { /* non-fatal */ }
+    return {
+      valid: false,
+      violations: ['parser rejected source: ' + errstr],
+      free: [], declared: [],
+      diagnostics: {
+        kind: 'parser-rejected',
+        errors: errs,
+        srclen: src.length,
+        srcfingerprint: fingerprint
+      }
+    };
   }
   var declared = {};
   Object.keys(depsmap || {}).forEach(function(k) { declared[k] = true; });
