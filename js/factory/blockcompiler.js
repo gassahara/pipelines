@@ -157,7 +157,6 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
   }
 
   if (merged.type === 'fn' || merged.type === 'writer') {
-    // P57: explicit input/output/deps shape validation
     if (!Array.isArray(io.inputs)) {
       throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "inputs" as an array of strings');
     }
@@ -167,7 +166,6 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
     if (merged.deps !== undefined && !Array.isArray(merged.deps)) {
       throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "deps" as an array of strings');
     }
-    // Purity / transparency using injected parser; parser failure is non-fatal
     var analysis = analyzefnblock(merged, properties.deps || {}, env, blockcompilertools.parseSource);
     if (!analysis.valid) {
       throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" has undeclared free identifiers: ' + analysis.violations.join(', '));
@@ -268,8 +266,21 @@ function compilehttpblock(merged, id, sig, istextual, options) {
 function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) {
   var compilers = {};
 
+  // ============================================================
+  // FIX: construct runtime and pass as 7th argument
+  // ============================================================
   compilers[blocktypes.fn] = function(merged, id, sig, inheritedproperties) {
-    return compilefnblock(merged, id, sig, inheritedproperties, dependencies, options);
+    var runtime = {
+      blockcompilerstate: blockcompilerstate,
+      logdebug: logdebug,
+      logblockdebug: logblockdebug,
+      callwithstack: callwithstack,
+      evalstack: evalstack,
+      compilepathaccessor: compilepathaccessor,
+      buildblockproperties: buildblockproperties,
+      createerrorcontext: createerrorcontext
+    };
+    return compilefnblock(merged, id, sig, inheritedproperties, dependencies, options, runtime);
   };
 
   compilers[blocktypes.api] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, false, options); };
