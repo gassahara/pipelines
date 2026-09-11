@@ -396,6 +396,51 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     FLATMESSAGE.CONTEXT = CONTEXT;
   }
 
+  // ---- OP-011 (FB-14): NON-DESTRUCTIVE payload-key case aliasing ----
+  // The framework's senders and readers disagree on payload key case: 27 send sites across four actors
+  // (hypervisoractor, debugactor, renderactor, apiactor) place UPPERCASE keys (UPDATES / PATH / VALUE) in a
+  // WORLDMAPACTOR UPDATE payload, while the reader (worldmapactor WORLDMAPBEHAVIOR and applyvalueset) tests
+  // lowercase only. The registry's validator tolerates BOTH, so the outgoing gate certifies the message and
+  // the handler then discards it silently.
+  // This block makes every reader's spelling resolve by defining the opposite-case twin of each payload key,
+  // WITHOUT EVER OVERWRITING an existing key. It deliberately does NOT rewrite the sender's casing: many
+  // handlers read UPPERCASE strictly (MESSAGE.PIPELINEID, MESSAGE.ERROR, MESSAGE.FN, MESSAGE.ENV ...), so a
+  // rewrite would break them. Structural keys are excluded — readers already agree on those.
+  var STRUCTURALKEYS = ['TYPE', 'SENDER', 'TAG', 'RESPONSESPEC', 'CONTEXT'];
+  Object.keys(FLATMESSAGE).forEach(function(KEY) {
+    if (STRUCTURALKEYS.indexOf(KEY) !== -1) return;
+    var LOWER = KEY.toLowerCase();
+    var UPPER = KEY.toUpperCase();
+    if (LOWER !== KEY && FLATMESSAGE[LOWER] === undefined) FLATMESSAGE[LOWER] = FLATMESSAGE[KEY];
+    if (UPPER !== KEY && FLATMESSAGE[UPPER] === undefined) FLATMESSAGE[UPPER] = FLATMESSAGE[KEY];
+  });
+
+  // NESTED level (the same defect one layer down, and the reason aliasing the top level alone is NOT enough):
+  // each entry of the updates array carries PATH / VALUE (uppercase) while APPLYVALUESET reads UPDATE.path /
+  // UPDATE.value (lowercase), and SETINPATH then calls PATH.split('.') on whatever it finds. With only the
+  // top-level alias, the guard would pass and the reader would throw a TypeError on undefined instead of
+  // dropping the patch silently — trading a silent failure for a loud one. Both levels are therefore aliased,
+  // still without ever overwriting an existing key.
+  // The entries are CLONED rather than edited in place: the array and its entries belong to the CALLER, and a
+  // message-construction function must not mutate the sender's own objects as a side effect of sending.
+  var UPDATESARR = FLATMESSAGE.updates || FLATMESSAGE.UPDATES;
+  if (Array.isArray(UPDATESARR)) {
+    var ALIASEDUPDATES = UPDATESARR.map(function(ENTRY) {
+      if (!ENTRY || typeof ENTRY !== 'object') return ENTRY;
+      var CLONE = {};
+      Object.keys(ENTRY).forEach(function(K) { CLONE[K] = ENTRY[K]; });
+      Object.keys(ENTRY).forEach(function(K) {
+        var LK = K.toLowerCase();
+        var UK = K.toUpperCase();
+        if (LK !== K && CLONE[LK] === undefined) CLONE[LK] = ENTRY[K];
+        if (UK !== K && CLONE[UK] === undefined) CLONE[UK] = ENTRY[K];
+      });
+      return CLONE;
+    });
+    FLATMESSAGE.updates = ALIASEDUPDATES;
+    FLATMESSAGE.UPDATES = ALIASEDUPDATES;
+  }
+
   if (messageregistry && typeof messageregistry.getinterfaces === 'function') {
     var GETIFACES = messageregistry.getinterfaces;
     var IFACES = GETIFACES(RECIPIENT);
@@ -436,17 +481,5 @@ function STARTMAILACTOR(OPTIONS) {
   return {
     GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
     DISPATCH: function(MSG) { return DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, MSG); }
-  };
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    MAILBEHAVIOR: MAILBEHAVIOR,
-    GENERATETAG: GENERATETAG,
-    SENDINSTRUCTION: SENDINSTRUCTION,
-    SENDRESPONSE: SENDRESPONSE,
-    QUERYMAILBOX: QUERYMAILBOX,
-    WAITFORMAILBOX: WAITFORMAILBOX,
-    STARTMAILACTOR: STARTMAILACTOR
   };
 }

@@ -34,18 +34,3 @@ var snapshotstack = function() { return evalstack.snapshot(); };
 var restorestack = function(saved) { return evalstack.restore(saved); };
 var currentcontinuation = function() { return evalstack.currentcontinuation(); };
 var chaincontinuations = function() { return evalstack.chaincontinuations(); };
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    createevalstack: createevalstack,
-    evalstack: evalstack,
-    frames: frames,
-    pushframe: pushframe,
-    popframe: popframe,
-    peekframe: peekframe,
-    snapshotstack: snapshotstack,
-    restorestack: restorestack,
-    currentcontinuation: currentcontinuation,
-    chaincontinuations: chaincontinuations
-  };
-}

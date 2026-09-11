@@ -1,5 +1,5 @@
 function createverbosityconstants() {
-  return {
+  var LEVELS = {
     none: 0,
     critical: 0,
     error: 1,
@@ -8,6 +8,12 @@ function createverbosityconstants() {
     debug: 4,
     all: 4
   };
+
+  Object.keys(LEVELS).forEach(function(NAME) {
+    var UPPER = NAME.toUpperCase();
+    if (UPPER !== NAME && LEVELS[UPPER] === undefined) LEVELS[UPPER] = LEVELS[NAME];
+  });
+  return LEVELS;
 }
 
 var constants = createverbosityconstants();
@@ -108,42 +114,7 @@ function getverbosityname(levelvalue) {
   }
 }
 
-// ===== ADDED: logToDebugger helper =====
-function logToDebugger(env, level, prefix, data) {
-  // If env is not provided, use a default state
-  var effectiveEnv = env || {};
-  var lvl = resolvelevel(level);
-  if (lvl === null) lvl = constants.debug; // fallback
 
-  // Check if verbosity is high enough
-  if (getverbosity(effectiveEnv) < lvl) {
-    return; // do nothing
-  }
-
-  // Emit to console using appropriate level
-  var args = [];
-  if (data && typeof data === 'object') {
-    args = [prefix, data];
-  } else {
-    args = [prefix, data];
-  }
-  // Use the existing emit logic
-  emit(lvl, effectiveEnv, prefix, [data]);
-
-  // Send to DEBUGACTOR via LOGLINE message
-  if (typeof SENDINSTRUCTION !== 'undefined' && typeof MESSAGETYPES !== 'undefined') {
-    var tag = (typeof GENERATETAG === 'function') ? GENERATETAG() : 'LOG' + Date.now();
-    var payload = {
-      level: getverbosityname(lvl),
-      message: prefix + ' ' + (typeof data === 'string' ? data : JSON.stringify(data)),
-      data: data,
-      timestamp: Date.now(),
-      prefix: prefix
-    };
-    SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.LOGLINE, payload, tag, 'verbosity');
-  }
-}
-// ===== END ADDED =====
 
 // ===== ADDED: logblockdebug helper =====
 function logblockdebug(state, prefix, blockid, values) {
@@ -164,34 +135,4 @@ function logblockdebug(state, prefix, blockid, values) {
 }
 // ===== END ADDED =====
 
-function createverbosityfunctions() {
-  return {
-    getverbosity: getverbosity,
-    setverbosity: setverbosity,
-    logcritical: logcritical,
-    logerror: logerror,
-    logwarn: logwarn,
-    loginfo: loginfo,
-    logdebug: logdebug,
-    getverbosityname: getverbosityname,
-    logToDebugger: logToDebugger,
-    logblockdebug: logblockdebug
-  };
-}
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    createverbosityconstants: createverbosityconstants,
-    getverbosity: getverbosity,
-    setverbosity: setverbosity,
-    logcritical: logcritical,
-    logerror: logerror,
-    logwarn: logwarn,
-    loginfo: loginfo,
-    logdebug: logdebug,
-    getverbosityname: getverbosityname,
-    createverbosityfunctions: createverbosityfunctions,
-    logToDebugger: logToDebugger,
-    logblockdebug: logblockdebug
-  };
-}

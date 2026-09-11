@@ -1,3 +1,9 @@
+
+// ---- OP-094: rangemap helper (extracted from 4 call sites) ----
+function rangemap(count, fn) {
+  return Array.apply(null, new Array(count)).map(function(unused, i) { return fn(i); });
+}
+
 var colorcore = {
   createcolorconstants: function() {
     return Object.freeze({
@@ -168,6 +174,7 @@ var colorharmony = {
     return colorharmony.shifthues(hex, [180], colorcore);
   },
 
+  // ---- OP-095: rangemap in analogous ----
   analogous: function(hex, count, step, colorcore) {
     if (count === undefined) count = 3;
     if (step === undefined) step = 30;
@@ -175,7 +182,7 @@ var colorharmony = {
     var hsl = colorcore.rgbtohsl.apply(null, colorcore.hextorgb(hex, colorcore));
     var starth = hsl.h - (step * (count - 1)) / 2;
 
-    return Array.apply(null, new Array(count)).map(function(unused, i) {
+    return rangemap(count, function(i) {
       return colorcore.hsltohex(((starth + i * step) % 360 + 360) % 360, hsl.s, hsl.l, colorcore);
     });
   },
@@ -192,6 +199,7 @@ var colorharmony = {
     return [hex].concat(colorharmony.shifthues(hex, [60, 180, 240], colorcore));
   },
 
+  // ---- OP-095: rangemap in monochromatic ----
   monochromatic: function(hex, count, lightnessrange, colorcore) {
     if (count === undefined) count = 5;
     if (lightnessrange === undefined) lightnessrange = 60;
@@ -200,7 +208,7 @@ var colorharmony = {
     var startl = Math.max(0, hsl.l - lightnessrange / 2);
     var endl = Math.min(100, hsl.l + lightnessrange / 2);
 
-    return Array.apply(null, new Array(count)).map(function(unused, i) {
+    return rangemap(count, function(i) {
       return colorcore.hsltohex(
         hsl.h,
         hsl.s,
@@ -210,11 +218,12 @@ var colorharmony = {
     });
   },
 
+  // ---- OP-095: rangemap in shades ----
   shades: function(hex, count, colorcore) {
     if (count === undefined) count = 5;
     var hsl = colorcore.rgbtohsl.apply(null, colorcore.hextorgb(hex, colorcore));
 
-    return Array.apply(null, new Array(count)).map(function(unused, i) {
+    return rangemap(count, function(i) {
       return colorcore.hsltohex(
         hsl.h,
         hsl.s,
@@ -224,11 +233,12 @@ var colorharmony = {
     });
   },
 
+  // ---- OP-095: rangemap in tints ----
   tints: function(hex, count, colorcore) {
     if (count === undefined) count = 5;
     var hsl = colorcore.rgbtohsl.apply(null, colorcore.hextorgb(hex, colorcore));
 
-    return Array.apply(null, new Array(count)).map(function(unused, i) {
+    return rangemap(count, function(i) {
       return colorcore.hsltohex(
         hsl.h,
         hsl.s,
@@ -427,19 +437,3 @@ var colorcontrast = {
     return candidates[0].hex;
   }
 };
-
-// aliases for backward compatibility (will be removed eventually)
-var col = colorcore;
-var har = colorharmony;
-var con = colorcontrast;
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    colorcore: colorcore,
-    colorharmony: colorharmony,
-    colorcontrast: colorcontrast,
-    col: col,
-    har: har,
-    con: con
-  };
-}

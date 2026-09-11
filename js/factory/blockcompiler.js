@@ -1,3 +1,8 @@
+
+// ============================================================
+// §1 — Constants & path accessors
+// ============================================================
+
 var blockcompilerstate = { level: createverbosityconstants().DEBUG };
 
 var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
@@ -19,7 +24,7 @@ var blockcompilertools = {
   serializeClosure: (typeof serializeselfcontainedclosure === 'function') ? serializeselfcontainedclosure : null
 };
 
-function setBlockCompilerTools(tools) {
+function setblockcompilertools(tools) {
   if (!tools || typeof tools !== 'object') return;
   if (typeof tools.parseSource === 'function') blockcompilertools.parseSource = tools.parseSource;
   if (typeof tools.serializeClosure === 'function') blockcompilertools.serializeClosure = tools.serializeClosure;
@@ -36,15 +41,21 @@ function createblockcompilerconstants() {
   };
 }
 
+// ---- C.2.3: entry-walker ----
+function walkentries(source, acc, step) {
+  var keys = Object.keys(source || {});
+  for (var i = 0; i < keys.length; i++) {
+    acc = step(acc, keys[i], source[keys[i]]);
+  }
+  return acc;
+}
+
 function cloneobject(obj) {
-  var out = {};
-  Object.keys(obj || {}).forEach(function(key) { out[key] = obj[key]; });
-  return out;
+  return walkentries(obj || {}, {}, function(acc, k, v) { acc[k] = v; return acc; });
 }
 
 function extendobject(target, source) {
-  Object.keys(source || {}).forEach(function(key) { target[key] = source[key]; });
-  return target;
+  return walkentries(source || {}, target, function(acc, k, v) { acc[k] = v; return acc; });
 }
 
 function stripquotes(str) {
@@ -177,7 +188,19 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
     }
     var analysis = analyzefnblock(merged, properties.deps || {}, env, blockcompilertools.parseSource);
     if (!analysis.valid) {
-      throw new Error('[FN_PURITY_VIOLATION] block "' + (merged.id || 'unknown') + '" has undeclared free identifiers: ' + analysis.violations.join(', '));
+      // OP-026 (R-29a): DISTINGUISH the failure kinds. A completed analysis that FOUND free identifiers is a
+      // purity violation; an analysis that could NOT COMPLETE is an analysis failure and must carry the parser's
+      // own diagnostic. Before this change every violation string was concatenated into the fixed phrase
+      // "has undeclared free identifiers", so a parser crash was reported as a purity breach — the defect graded
+      // as FB-29. The kind is already produced by fnblock (@file=js/factory/fnblock.js#L753-L775), so this is a
+      // branch, not a new signal.
+      var analysisdiagkind = (analysis.diagnostics && analysis.diagnostics.kind) ? analysis.diagnostics.kind : null;
+      var analysisblockid = merged.id || 'unknown';
+      if (analysisdiagkind === 'parser-rejected' || analysisdiagkind === 'parser-absent') {
+        throw new Error('[FN_ANALYSIS_FAILED] block "' + analysisblockid + '" analysis could not complete (' +
+          analysisdiagkind + '): ' + analysis.violations.join(', '));
+      }
+      throw new Error('[FN_PURITY_VIOLATION] block "' + analysisblockid + '" has undeclared free identifiers: ' + analysis.violations.join(', '));
     }
   }
 
@@ -191,6 +214,29 @@ function createerrorcontext(id, stagetype) {
     err.diagnostic.stagetype = stagetype;
     throw err;
   };
+}
+
+// ---- C.2.1: unwrap response envelope ----
+function unwrap(response) {
+  if (!response) return {};
+  if (response.RESULT !== undefined) return response.RESULT;
+  if (response.result !== undefined) return response.result;
+  return response;
+}
+
+// ---- C.2.2: send-and-await triad ----
+function sendandawait(recipient, type, payload, timeout, responsetype) {
+  var tag = GENERATETAG();
+  SENDINSTRUCTION(recipient, type, payload, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
+  return WAITFORMAILBOX({ tag: tag, sender: recipient, type: responsetype }, timeout).then(unwrap);
+}
+
+// ---- C.2.4: loader factorisation ----
+function loadscripts(entries, basepath, timeout, label) {
+  if (typeof timeout === 'undefined') timeout = scriptwitnesstimeout;
+  var normalized = normalizeentries(entries);
+  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', label, normalized.length);
+  return loadscriptssequentially(normalized, basepath, timeout);
 }
 
 // ---- A8 / P24: shared wrapper for compiled block functions ----
@@ -207,6 +253,10 @@ function wrapcompiledfn(innerfn, kind, id, blockkind) {
   if (blockkind !== undefined) blockfn.kind = blockkind;
   return blockfn;
 }
+
+// ============================================================
+// §2 — Block compilers
+// ============================================================
 
 function buildpayload(mappingobj, data) {
   return Object.keys(mappingobj).reduce(function(result, fieldkey) {
@@ -230,6 +280,7 @@ function buildresponse(mappingobj, raw) {
   }, {});
 }
 
+// ---- OP-193: compilehttpblock response handler via sendandawait ----
 function compilehttpblock(merged, id, sig, istextual, options) {
   var innerfn = function(env) {
     var label = (istextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
@@ -249,22 +300,15 @@ function compilehttpblock(merged, id, sig, istextual, options) {
       if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
     });
 
-    var tag = GENERATETAG();
-    var responsetype = istextual ? 'fetchresult' : 'apiresult';
-    var sender = 'APIACTOR';
+    var timeout = merged.timeout || mailboxwaittimeout;
 
-    SENDINSTRUCTION('APIACTOR', istextual ? MESSAGETYPES.FETCH : MESSAGETYPES.API, {
+    return sendandawait('APIACTOR', istextual ? MESSAGETYPES.FETCH : MESSAGETYPES.API, {
       endpoint: endpoint,
       method: merged.method,
       payload: payload,
       token: env.authsessionaccesstoken || ''
-    }, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
-
-    var timeout = merged.timeout || mailboxwaittimeout;
-    return WAITFORMAILBOX({ tag: tag, sender: sender, type: istextual ? MESSAGETYPES.FETCHRESULT : MESSAGETYPES.APIRESULT }, timeout)
-      .then(function(mailboxmessage) {
-        var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
-        var result = response.RESULT !== undefined ? response.RESULT : response.result;
+    }, timeout, istextual ? 'fetchresult' : 'apiresult')
+      .then(function(result) {
         if (result && result.error) throw new Error(result.error);
         var finalresult = result && result.data !== undefined ? result.data : result;
         if (merged.mapping && merged.mapping.response && result && typeof result === 'object') {
@@ -297,6 +341,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
   compilers[blocktypes.api] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, false, options); };
   compilers[blocktypes.fetch] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, true, options); };
 
+  // ---- OP-194: writer via sendandawait ----
   compilers[blocktypes.writer] = function(merged, id, sig, inheritedproperties) {
     if (inheritedproperties === undefined) inheritedproperties = {};
     logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
@@ -312,17 +357,15 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         }
         var target = merged.targetlabel || env.approot;
         if (!target) throw new Error('[WRITER] missing targetlabel/approot');
-        var tag = GENERATETAG();
-        SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.HTML, {
+
+        return sendandawait('RENDERACTOR', MESSAGETYPES.HTML, {
           id: target,
           markup: result.html,
           append: !merged.replace
-        }, tag, 'BLOCKCOMPILER', { responsetype: 'domresult' });
-
-        return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
+        }, mailboxwaittimeout, 'domresult')
           .then(function() {
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
-              return expectelement(result.id, result.timeout || 5000).then(function(domref) {
+              return EXPECTELEMENT(result.id, result.timeout || 5000).then(function(domref) {
                 env[Object.keys(sig.outputs)[0]] = result;
                 env[result.id] = domref;
                 return result;
@@ -339,17 +382,24 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
     logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling IO block:', id);
     var innerfn = function(env) {
       logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing IO block:', id);
-      var io = typeof merged.ref === 'function' ? merged.ref : null;
-      if (!io) throw new Error('io block "' + id + '" ref must be a function');
+      // R-41 (analysis8, constraint #4): the IO block accepts an INLINE `fn:`, mirroring the writer branch at
+      // #L350. Before this change the branch read `merged.ref` only, so an io block declaring its function inline
+      // — the form the standing constraint requires — failed validation although the block type is otherwise
+      // complete. The error message and the trace label are corrected with the lookup, since both also assumed
+      // the ref-only form.
+      var io = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
+      if (!io) throw new Error('io block "' + id + '" must declare an inline fn or a ref function');
+      var ioname = (typeof merged.fn === 'function') ? id : (merged.ref || id);
       var inputdata = {};
       (sig.inputs || []).forEach(function(inp) { inputdata[inp] = compilepathaccessor(inp)(env); });
-      return callwithstack(evalstack, 'io:' + (merged.ref || id), 'async-await', function(e) {
+      return callwithstack(evalstack, 'io:' + ioname, 'async-await', function(e) {
         return Promise.resolve(io(inputdata, e));
       }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') });
     };
     return wrapcompiledfn(innerfn, 'io', id);
   };
 
+  // ---- OP-195: domquery via sendandawait ----
   compilers[blocktypes.domquery] = function(merged, id, sig) {
     logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
     var innerfn = function(env) {
@@ -366,8 +416,6 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         resolvedclassname = compilepathaccessor(props.classname)(env);
       }
 
-      var tag = GENERATETAG();
-      var responsetype = 'domresult';
       var msgtype;
       switch (cmd) {
         case 'gethtml': msgtype = MESSAGETYPES.GETHTML; break;
@@ -387,7 +435,8 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         case 'matchmedia': msgtype = MESSAGETYPES.MATCHMEDIA; break;
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
-      SENDINSTRUCTION('RENDERACTOR', msgtype, {
+
+      return sendandawait('RENDERACTOR', msgtype, {
         id: props.id,
         value: resolvedvalue,
         classname: resolvedclassname,
@@ -395,13 +444,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         query: props.query,
         arguments: props.arguments,
         name: props.name
-      }, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
-
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
-        .then(function(mailboxmessage) {
-          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
-          return response.RESULT !== undefined ? response.RESULT : response.result;
-        });
+      }, mailboxwaittimeout, 'domresult');
     };
     return wrapcompiledfn(innerfn, 'domquery', id);
   };
@@ -412,13 +455,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
-      var tag = GENERATETAG();
-      SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, tag, 'BLOCKCOMPILER', { responsetype: 'domresult' });
-      return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.DOMRESULT }, mailboxwaittimeout)
-        .then(function(mailboxmessage) {
-          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
-          return response.RESULT !== undefined ? response.RESULT : response.result;
-        });
+      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: bytes }, mailboxwaittimeout, 'domresult');
     };
     return wrapcompiledfn(innerfn, 'crypto', id);
   };
@@ -437,7 +474,6 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       var command = merged.command || {};
       var cmd = command.COMMAND;
       var args = command.args || {};
-      var tag = GENERATETAG();
       var responsetype = 'taskresult';
       var msgtype;
       switch (cmd) {
@@ -449,12 +485,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         case 'stoptask': msgtype = MESSAGETYPES.STOPTASK; break;
         default: throw new Error('[executionquery] unknown command: ' + cmd);
       }
-      SENDINSTRUCTION('EXECUTIONACTOR', msgtype, args, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
-      return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
-        .then(function(mailboxmessage) {
-          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
-          return response.RESULT !== undefined ? response.RESULT : response.result;
-        });
+      return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxwaittimeout, responsetype);
     };
     return wrapcompiledfn(innerfn, 'executionquery', id);
   };
@@ -464,7 +495,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
 
 function compileblock(block, inheritedbriefcase, constants, options) {
   if (inheritedbriefcase === undefined) inheritedbriefcase = {};
-  if (options && options.tools) setBlockCompilerTools(options.tools);
+  if (options && options.tools) setblockcompilertools(options.tools);
   if (block.ref && typeof block.ref === 'string') {
     var refTarget = (typeof window !== 'undefined') ? window[block.ref] : (typeof globalthis !== 'undefined' ? globalthis[block.ref] : undefined);
     if (typeof refTarget !== 'function') {
@@ -485,16 +516,38 @@ function compileblock(block, inheritedbriefcase, constants, options) {
   return compiler(block, block.id, blockio, inheritedbriefcase);
 }
 
+// ---- END segment 1 of 3 ----
+
+
+
+
+
+
+// ============================================================
+// §3 — Pipeline orchestration
+// ============================================================
+
+// ---- OP-197 (BC-2): blockfn tagging helper ----
+function tagfn(fn, meta) {
+  if (meta.blockmeta !== undefined) fn.blockmeta = meta.blockmeta;
+  if (meta.originalfn !== undefined) fn.originalfn = meta.originalfn;
+  if (meta.kind !== undefined) fn.kind = meta.kind;
+  return fn;
+}
+
 function resolvenextelement(stage, index) {
   if (!stage || !stage.elements || index >= stage.elements.length) return null;
   return stage.elements[index];
 }
 
+// ---- OP-198: processelement via tagfn ----
 function processelement(el, pipelineid, stagepath, inheritedbriefcase, constants, dnaconstants, dependencies, options) {
   var fn = compileblock(el, inheritedbriefcase, constants, options);
-  fn.blockmeta = { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' };
-  fn.originalfn = (typeof el.fn === 'function') ? el.fn : (typeof el.ref === 'function' ? el.ref : null);
-  fn.kind = 'element';
+  tagfn(fn, {
+    blockmeta: { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' },
+    originalfn: (typeof el.fn === 'function') ? el.fn : (typeof el.ref === 'function' ? el.ref : null),
+    kind: 'element'
+  });
   return createpersistentelementwrapper(fn, el, stagepath, pipelineid, options);
 }
 
@@ -565,9 +618,9 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
         rawDNA.id = childenv.pipelineid;
       }
 
-      var bootDNAFn = (typeof bootDNA === 'function') ? bootDNA : window.bootDNA;
-      if (typeof bootDNAFn !== 'function') {
-        throw new Error('[processpipelineelement] bootDNA function not available');
+      var bootdnafn = (typeof bootdna === 'function') ? bootdna : window.bootdna;
+      if (typeof bootdnafn !== 'function') {
+        throw new Error('[processpipelineelement] bootdna function not available');
       }
 
       var nestedPipelineId = childenv.pipelineid;
@@ -575,7 +628,7 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
         rawDNA.id = nestedPipelineId;
       }
 
-      return bootDNAFn(rawDNA, childoptions)
+      return bootdnafn(rawDNA, childoptions)
         .then(function(result) {
           var outputkeys = Object.keys(el.outputs || {});
           var mapped = mapoutputs(result, outputkeys);
@@ -587,17 +640,18 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
         });
     };
 
+    // R-ARC-24: tagging handled by wrapcompiledfn's 4th arg
     return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
   });
 }
 
+// ---- OP-196: registereventstage via sendandawait ----
 function registereventstage(stage, pipelineid, stagepath, options) {
   var sourceid = stage.control.sourceid;
   var event = stage.control.event;
   if (!sourceid || !event) {
     return Promise.reject(new Error('[registereventstage] EVENT stage missing sourceid/event'));
   }
-  var tag = GENERATETAG();
   var payload = {
     pipelineid: pipelineid,
     stageid: stage.id,
@@ -609,10 +663,8 @@ function registereventstage(stage, pipelineid, stagepath, options) {
     briefcase: stage.briefcase || {},
     options: options || {}
   };
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, payload, tag, 'BLOCKCOMPILER', { responsetype: MESSAGETYPES.EVENTLISTENERREGISTERED });
-  return WAITFORMAILBOX({ tag: tag, sender: 'RENDERACTOR', type: MESSAGETYPES.EVENTLISTENERREGISTERED }, mailboxwaittimeout)
-    .then(function(mailboxmessage) {
-      var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+  return sendandawait('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, payload, mailboxwaittimeout, MESSAGETYPES.EVENTLISTENERREGISTERED)
+    .then(function(response) {
       if (response && response.error) {
         throw new Error('[registereventstage] Registration failed for ' + stage.id + ': ' + response.error);
       }
@@ -626,6 +678,7 @@ function registereventstage(stage, pipelineid, stagepath, options) {
     });
 }
 
+// R-ARC-25: processnestedstage does not use tagfn (no blockmeta/originalfn/kind)
 function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcase, constants, dnaconstants, dependencies, options) {
   var childstagepath = stagepath.concat([childstage.id]);
   var childbriefcase = cloneobject(inheritedbriefcase || {});
@@ -694,15 +747,14 @@ function buildnextstagemessage(pipeline, stageindex, pipelineid, env, options) {
   };
 }
 
+// ---- OP-192: sendstagecompleted via sendandawait with R-ARC-03 postprocessing ----
 function sendstagecompleted(pipelineid, stageid, nextstagemessage, env) {
-  var tag = GENERATETAG();
-  SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETED, {
+  return sendandawait('HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETED, {
     pipelineid: pipelineid,
     stageid: stageid,
     nextstagemessage: nextstagemessage,
     env: env || {}
-  }, tag, 'BLOCKCOMPILER', { responsetype: 'stagecompletedack' });
-  return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: MESSAGETYPES.STAGECOMPLETEDACK }, mailboxwaittimeout)
+  }, mailboxwaittimeout, 'stagecompletedack')
     .then(function() { return; });
 }
 
@@ -759,257 +811,6 @@ function orchestratestage(stage, pipelineid, dependencies, env, stagepath, optio
   }
 
   return runnext();
-}
-
-function waitforwitness(entry, timeout) {
-  return new Promise(function(resolve, reject) {
-    var start = Date.now();
-    function check() {
-      if (!entry.provides || entry.provides.length === 0) return resolve();
-      var alldefined = entry.provides.every(function(name) {
-        return typeof window[name] !== 'undefined' || typeof globalthis[name] !== 'undefined';
-      });
-      if (alldefined) return resolve();
-      if (Date.now() - start > timeout) return reject(new Error('timeout waiting for witness from ' + entry.src));
-      setTimeout(check, 10);
-    }
-    check();
-  });
-}
-
-function loadscriptwithwitness(entry, basepath, timeout) {
-  return new Promise(function(resolve, reject) {
-    var s = document.createElement('script');
-    s.src = basepath + entry.src;
-    s.onload = function() {
-      setTimeout(function() {
-        if (entry.provides && entry.provides.length > 0) {
-          waitforwitness(entry, timeout).then(resolve).catch(reject);
-        } else {
-          resolve();
-        }
-      }, 0);
-    };
-    s.onerror = function() { reject(new Error('failed to load ' + entry.src)); };
-    document.head.appendChild(s);
-  });
-}
-
-function loadscriptssequentially(entries, basepath, timeout) {
-  if (!entries || entries.length === 0) return Promise.resolve();
-  var index = 0;
-  function loadnext() {
-    if (index >= entries.length) return Promise.resolve();
-    var entry = entries[index];
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'loading script:', entry.src);
-    return loadscriptwithwitness(entry, basepath, timeout).then(function() {
-      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'script loaded:', entry.src);
-      index++;
-      return loadnext();
-    });
-  }
-  return loadnext();
-}
-
-function normalizeentries(entries) {
-  return (entries || []).map(function(entry) {
-    if (typeof entry === 'string') return { src: entry, provides: null };
-    return entry;
-  });
-}
-
-function loadframeworklibs(libs, basepath, timeout) {
-  if (typeof timeout === 'undefined') timeout = scriptwitnesstimeout;
-  var normalized = normalizeentries(libs);
-  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'loading framework libs:', normalized.length);
-  return loadscriptssequentially(normalized, basepath, timeout);
-}
-
-function loadfrontendprograms(programs, basepath, timeout) {
-  if (typeof timeout === 'undefined') timeout = scriptwitnesstimeout;
-  var normalized = normalizeentries(programs);
-  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'loading frontend programs:', normalized.length);
-  return loadscriptssequentially(normalized, basepath, timeout);
-}
-
-function builddependenciesregistry(entries) {
-  var registry = {};
-  var missing = [];
-  (entries || []).forEach(function(entry) {
-    (entry.provides || []).forEach(function(name) {
-      if (typeof window !== 'undefined' && typeof window[name] !== 'undefined') {
-        registry[name] = window[name];
-      } else if (typeof globalthis !== 'undefined' && typeof globalthis[name] !== 'undefined') {
-        registry[name] = globalthis[name];
-      } else {
-        missing.push(name);
-      }
-    });
-  });
-  if (missing.length > 0) {
-    throw new Error('[builddependenciesregistry] Missing global(s): ' + missing.join(', '));
-  }
-  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies registry keys:', Object.keys(registry));
-  return registry;
-}
-
-function blockcompilercompilestage(dnaenvelope, stagepath, env, options) {
-  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'blockcompilercompilestage:', dnaenvelope.pipelineid, 'stagepath', JSON.stringify(stagepath));
-  if (!dnaenvelope || !dnaenvelope.definition || !dnaenvelope.definition.pipeline) {
-    throw new Error('[blockcompilercompilestage] invalid DNA envelope');
-  }
-  options = options || {};
-  options.pipelineid = dnaenvelope.pipelineid;
-  options.dependencies = dnaenvelope.dependencies || {};
-
-  var pipeline = dnaenvelope.definition.pipeline;
-  var stage = resolvestagefrompath(dnaenvelope, stagepath);
-  if (!stage || stage.element !== 'STAGE') {
-    throw new Error('[blockcompilercompilestage] stage not found at path: ' + JSON.stringify(stagepath));
-  }
-
-  var stageindex = stagepath[stagepath.length - 1];
-  var iseventstage = stage.control && stage.control.command === 'EVENT';
-  var iseventtrigger = options.iseventtrigger === true;
-
-  if (iseventstage && !iseventtrigger) {
-    return registereventstage(stage, dnaenvelope.pipelineid, stagepath, options)
-      .then(function() {
-        var nextstagemessage = buildnextstagemessage(pipeline, stageindex, dnaenvelope.pipelineid, env, options);
-        return sendstagecompleted(dnaenvelope.pipelineid, stage.id, nextstagemessage, env);
-      });
-  }
-
-  var nextstagemessage = buildnextstagemessage(pipeline, stageindex, dnaenvelope.pipelineid, env, options);
-  return orchestratestage(stage, dnaenvelope.pipelineid, dnaenvelope.dependencies || {}, env || {}, stagepath, options, nextstagemessage);
-}
-
-function loadPipeline(dna, stageIndex, env, options) {
-  if (stageIndex === undefined) stageIndex = 0;
-  if (env === undefined) env = {};
-  if (options === undefined) options = {};
-
-  var pipelineDef = dna.pipeline;
-  if (!pipelineDef) {
-    var err = new Error('loadPipeline: DNA missing pipeline property');
-    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown' };
-    return Promise.reject(err);
-  }
-
-  var stages = pipelineDef.elements || pipelineDef.stages || [];
-  if (stageIndex >= stages.length) {
-    var err = new Error('loadPipeline: stage index ' + stageIndex + ' out of bounds (max ' + stages.length + ')');
-    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
-    return Promise.reject(err);
-  }
-  var stage = stages[stageIndex];
-  if (!stage || stage.element !== 'STAGE') {
-    var err = new Error('loadPipeline: element at index ' + stageIndex + ' is not a STAGE');
-    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
-    return Promise.reject(err);
-  }
-
-  var pipelineId = dna.id || (dna.identity && dna.identity.id) || 'temp';
-  var dnaEnvelope = {
-    pipelineid: pipelineId,
-    definition: { pipeline: pipelineDef },
-    dependencies: {}
-  };
-
-  var stagePath = ['pipeline', 'elements', stageIndex];
-
-  return blockcompilercompilestage(dnaEnvelope, stagePath, env, options)
-    .then(function(result) {
-      var nextStageIndex = null;
-      if (result && result.nextStageMessage) {
-        var nextMsg = result.nextStageMessage;
-        if (nextMsg && nextMsg.stageindex !== undefined) {
-          nextStageIndex = nextMsg.stageindex;
-        } else if (nextMsg && nextMsg.stageIndex !== undefined) {
-          nextStageIndex = nextMsg.stageIndex;
-        }
-      }
-      return {
-        env: result.env || env,
-        nextStageIndex: nextStageIndex,
-        result: result
-      };
-    });
-}
-
-function bootDNA(dna, options) {
-  if (options === undefined) options = {};
-  var dnaId = dna.id || (dna.identity && dna.identity.id) || 'defaultpipeline';
-  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'bootDNA start for pipeline:', dnaId);
-
-  return loadpipelinedependencies(dna, options)
-    .then(function(depsregistry) {
-      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies loaded for bootDNA:', dnaId);
-
-      var tag = GENERATETAG();
-      var bootedType = MESSAGETYPES.PIPELINEBOOTED || MESSAGETYPES.PIPELINEBOOTED;
-      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
-        dna: dna,
-        pipelineId: dnaId,
-        options: options,
-        sender: 'BLOCKCOMPILER',
-        tag: tag
-      }, tag, 'BLOCKCOMPILER', {
-        responsetype: bootedType
-      });
-
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: bootedType }, mailboxwaittimeout)
-        .then(function(mailboxmessage) {
-          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
-          var result = response.RESULT !== undefined ? response.RESULT : response.result;
-          if (result && result.ERROR) {
-            var err = new Error(result.ERROR);
-            err.diagnostic = result.DIAGNOSTIC || {};
-            throw err;
-          }
-          if (result && result.type === 'BOOTERROR') {
-            var err = new Error(result.message || 'BOOTERROR received');
-            err.diagnostic = result.diagnostic || {};
-            throw err;
-          }
-          return result;
-        });
-    });
-}
-
-function loadpipeline(pipelinedefinition, pipelineid, options) {
-  logwarn(blockcompilerstate, '[BLOCKCOMPILER]', 'loadpipeline is deprecated. Use bootDNA instead.');
-  var dna = pipelinedefinition;
-  if (!dna.id && pipelineid) {
-    dna.id = pipelineid;
-  }
-  return bootDNA(dna, options);
-}
-
-function compilestage(stagedef, briefcase, pipelineid, stagepath, fullpipeline, options) {
-  return null;
-}
-
-function validatepipelinebriefcase(briefcase) {
-  var errors = [];
-  if (briefcase === undefined || briefcase === null) {
-    return { valid: true, errors: [] };
-  }
-  if (typeof briefcase !== 'object') {
-    errors.push('[validatepipelinebriefcase] briefcase must be an object');
-    return { valid: false, errors: errors };
-  }
-  try {
-    var dnaconstants = creatednaserializerconstants();
-    var revivabilityerrors = validaterevivableobject(briefcase, 'briefcase', dnaconstants);
-    errors = errors.concat(revivabilityerrors);
-  } catch (err) {
-    errors.push('[validatepipelinebriefcase] validation error: ' + err.message);
-  }
-  return {
-    valid: errors.length === 0,
-    errors: errors
-  };
 }
 
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelineid, options) {
@@ -1093,23 +894,249 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
   return wrapper;
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    bootDNA: bootDNA,
-    loadPipeline: loadPipeline,
-    loadpipeline: loadpipeline,
-    compilestage: compilestage,
-    resolvenextelement: resolvenextelement,
-    orchestratestage: orchestratestage,
-    validatepipelinebriefcase: validatepipelinebriefcase,
-    blockcompilercompilestage: blockcompilercompilestage,
-    createblockcompilerconstants: createblockcompilerconstants,
-    buildblockproperties: buildblockproperties,
-    processelement: processelement,
-    processpipelineelement: processpipelineelement,
-    registereventstage: registereventstage,
-    processnestedstage: processnestedstage,
-    createpersistentelementwrapper: createpersistentelementwrapper,
-    setBlockCompilerTools: setBlockCompilerTools
+// ---- END segment 2 of 3 ----
+
+
+
+// ============================================================
+// §4 — Loader & boot
+// ============================================================
+
+function waitforwitness(entry, timeout) {
+  return new Promise(function(resolve, reject) {
+    var start = Date.now();
+    function check() {
+      if (!entry.provides || entry.provides.length === 0) return resolve();
+      var alldefined = entry.provides.every(function(name) {
+        return typeof window[name] !== 'undefined' || typeof globalthis[name] !== 'undefined';
+      });
+      if (alldefined) return resolve();
+      if (Date.now() - start > timeout) return reject(new Error('timeout waiting for witness from ' + entry.src));
+      setTimeout(check, 10);
+    }
+    check();
+  });
+}
+
+function loadscriptwithwitness(entry, basepath, timeout) {
+  return new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = basepath + entry.src;
+    s.onload = function() {
+      setTimeout(function() {
+        if (entry.provides && entry.provides.length > 0) {
+          waitforwitness(entry, timeout).then(resolve).catch(reject);
+        } else {
+          resolve();
+        }
+      }, 0);
+    };
+    s.onerror = function() { reject(new Error('failed to load ' + entry.src)); };
+    document.head.appendChild(s);
+  });
+}
+
+function loadscriptssequentially(entries, basepath, timeout) {
+  if (!entries || entries.length === 0) return Promise.resolve();
+  var index = 0;
+  function loadnext() {
+    if (index >= entries.length) return Promise.resolve();
+    var entry = entries[index];
+    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'loading script:', entry.src);
+    return loadscriptwithwitness(entry, basepath, timeout).then(function() {
+      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'script loaded:', entry.src);
+      index++;
+      return loadnext();
+    });
+  }
+  return loadnext();
+}
+
+function normalizeentries(entries) {
+  return (entries || []).map(function(entry) {
+    if (typeof entry === 'string') return { src: entry, provides: null };
+    return entry;
+  });
+}
+
+function loadframeworklibs(libs, basepath, timeout) {
+  return loadscripts(libs, basepath, timeout, 'loading framework libs:');
+}
+
+function loadfrontendprograms(programs, basepath, timeout) {
+  return loadscripts(programs, basepath, timeout, 'loading frontend programs:');
+}
+
+function builddependenciesregistry(entries) {
+  var registry = {};
+  var missing = [];
+  (entries || []).forEach(function(entry) {
+    (entry.provides || []).forEach(function(name) {
+      if (typeof window !== 'undefined' && typeof window[name] !== 'undefined') {
+        registry[name] = window[name];
+      } else if (typeof globalthis !== 'undefined' && typeof globalthis[name] !== 'undefined') {
+        registry[name] = globalthis[name];
+      } else {
+        missing.push(name);
+      }
+    });
+  });
+  if (missing.length > 0) {
+    throw new Error('[builddependenciesregistry] Missing global(s): ' + missing.join(', '));
+  }
+  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies registry keys:', Object.keys(registry));
+  return registry;
+}
+
+function blockcompilercompilestage(dnaenvelope, stagepath, env, options) {
+  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'blockcompilercompilestage:', dnaenvelope.pipelineid, 'stagepath', JSON.stringify(stagepath));
+  if (!dnaenvelope || !dnaenvelope.definition || !dnaenvelope.definition.pipeline) {
+    throw new Error('[blockcompilercompilestage] invalid DNA envelope');
+  }
+  options = options || {};
+  options.pipelineid = dnaenvelope.pipelineid;
+  options.dependencies = dnaenvelope.dependencies || {};
+
+  var pipeline = dnaenvelope.definition.pipeline;
+  var stage = resolvestagefrompath(dnaenvelope, stagepath);
+  if (!stage || stage.element !== 'STAGE') {
+    throw new Error('[blockcompilercompilestage] stage not found at path: ' + JSON.stringify(stagepath));
+  }
+
+  var stageindex = stagepath[stagepath.length - 1];
+  var iseventstage = stage.control && stage.control.command === 'EVENT';
+  var iseventtrigger = options.iseventtrigger === true;
+
+  if (iseventstage && !iseventtrigger) {
+    return registereventstage(stage, dnaenvelope.pipelineid, stagepath, options)
+      .then(function() {
+        var nextstagemessage = buildnextstagemessage(pipeline, stageindex, dnaenvelope.pipelineid, env, options);
+        return sendstagecompleted(dnaenvelope.pipelineid, stage.id, nextstagemessage, env);
+      });
+  }
+
+  var nextstagemessage = buildnextstagemessage(pipeline, stageindex, dnaenvelope.pipelineid, env, options);
+  return orchestratestage(stage, dnaenvelope.pipelineid, dnaenvelope.dependencies || {}, env || {}, stagepath, options, nextstagemessage);
+}
+
+function loadpipeline(dna, stageIndex, env, options) {
+  if (stageIndex === undefined) stageIndex = 0;
+  if (env === undefined) env = {};
+  if (options === undefined) options = {};
+
+  var pipelineDef = dna.pipeline;
+  if (!pipelineDef) {
+    var err = new Error('loadpipeline: DNA missing pipeline property');
+    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown' };
+    return Promise.reject(err);
+  }
+
+  var stages = pipelineDef.elements || pipelineDef.stages || [];
+  if (stageIndex >= stages.length) {
+    var err = new Error('loadpipeline: stage index ' + stageIndex + ' out of bounds (max ' + stages.length + ')');
+    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
+    return Promise.reject(err);
+  }
+  var stage = stages[stageIndex];
+  if (!stage || stage.element !== 'STAGE') {
+    var err = new Error('loadpipeline: element at index ' + stageIndex + ' is not a STAGE');
+    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
+    return Promise.reject(err);
+  }
+
+  var pipelineId = dna.id || (dna.identity && dna.identity.id) || 'temp';
+  var dnaEnvelope = {
+    pipelineid: pipelineId,
+    definition: { pipeline: pipelineDef },
+    dependencies: {}
+  };
+
+  var stagePath = ['pipeline', 'elements', stageIndex];
+
+  return blockcompilercompilestage(dnaEnvelope, stagePath, env, options)
+    .then(function(result) {
+      var nextStageIndex = null;
+      if (result && result.nextStageMessage) {
+        var nextMsg = result.nextStageMessage;
+        if (nextMsg && nextMsg.stageindex !== undefined) {
+          nextStageIndex = nextMsg.stageindex;
+        } else if (nextMsg && nextMsg.stageIndex !== undefined) {
+          nextStageIndex = nextMsg.stageIndex;
+        }
+      }
+      return {
+        env: result.env || env,
+        nextStageIndex: nextStageIndex,
+        result: result
+      };
+    });
+}
+
+function bootdna(dna, options) {
+  if (options === undefined) options = {};
+  var dnaId = dna.id || (dna.identity && dna.identity.id) || 'defaultpipeline';
+  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'bootdna start for pipeline:', dnaId);
+
+  return loadpipelinedependencies(dna, options)
+    .then(function(depsregistry) {
+      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies loaded for bootdna:', dnaId);
+
+      var tag = GENERATETAG();
+      var bootedType = MESSAGETYPES.PIPELINEBOOTED;
+      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
+        dna: dna,
+        pipelineId: dnaId,
+        options: options,
+        sender: 'BLOCKCOMPILER',
+        tag: tag
+      }, tag, 'BLOCKCOMPILER', {
+        responsetype: bootedType
+      });
+
+      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: bootedType }, mailboxwaittimeout)
+        .then(function(mailboxmessage) {
+          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+          var result = response.RESULT !== undefined ? response.RESULT : response.result;
+          if (result && result.ERROR) {
+            var err = new Error(result.ERROR);
+            err.diagnostic = result.DIAGNOSTIC || {};
+            throw err;
+          }
+          if (result && result.type === 'BOOTERROR') {
+            var err = new Error(result.message || 'BOOTERROR received');
+            err.diagnostic = result.diagnostic || {};
+            throw err;
+          }
+          return result;
+        });
+    });
+}
+function compilestage(stagedef, briefcase, pipelineid, stagepath, fullpipeline, options) {
+  return null;
+}
+
+function validatepipelinebriefcase(briefcase) {
+  var errors = [];
+  if (briefcase === undefined || briefcase === null) {
+    return { valid: true, errors: [] };
+  }
+  if (typeof briefcase !== 'object') {
+    errors.push('[validatepipelinebriefcase] briefcase must be an object');
+    return { valid: false, errors: errors };
+  }
+  try {
+    var dnaconstants = creatednaserializerconstants();
+    var revivabilityerrors = validaterevivableobject(briefcase, 'briefcase', dnaconstants);
+    errors = errors.concat(revivabilityerrors);
+  } catch (err) {
+    errors.push('[validatepipelinebriefcase] validation error: ' + err.message);
+  }
+  return {
+    valid: errors.length === 0,
+    errors: errors
   };
 }
+
+// ============================================================
+// §5 — Exports
+// ============================================================

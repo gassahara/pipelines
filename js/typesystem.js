@@ -416,28 +416,3 @@ function validateexplicitblockcontract(block) {
   return errors;
 }
 // ===== END ADDED =====
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    extractstagesblocks: extractstagesblocks,
-    typeschema: typeschema,
-    validatefields: validatefields,
-    validate: validate,
-    validatecall: validatecall,
-    validateschema: validateschema,
-    validateformalblock: validateformalblock,
-    validatestageflow: validatestageflow,
-    validatemonadalgebra: validatemonadalgebra,
-    validateblockio: validateblockio,
-    validateblockfnio: validateblockfnio,
-    validatecontainerrefs: validatecontainerrefs,
-    validatespawncontracts: validatespawncontracts,
-    validateblocktype: validateblocktype,
-    validatedomqueryblock: validatedomqueryblock,
-    validateexecutionqueryblock: validateexecutionqueryblock,
-    validatestorequeryblock: validatestorequeryblock,
-    validateblockproperties: validateblockproperties,
-    validateeventstage: validateeventstage,
-    validateexplicitblockcontract: validateexplicitblockcontract
-  };
-}

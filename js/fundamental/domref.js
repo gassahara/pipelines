@@ -27,7 +27,7 @@ function createdomref(rawelement, actorregistry) {
     }
   }
 
-  var getrenderactorfn = (typeof getrenderactor === 'function') ? getrenderactor : (typeof getrenderactor === 'function' ? getrenderactor : function() { return { send: function() {} }; });
+  var getrenderactorfn = (typeof getrenderactor === 'function') ? getrenderactor : function() { return { send: function() {} }; };
 
   var ref = {
     project: function(renderer, data, env) {
@@ -78,17 +78,4 @@ function removeref(ref) {
 
 function isvaliddomref(ref) {
   return ref && typeof ref === 'object' && typeof ref.project === 'function';
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    rawmap: rawmap,
-    generatedomrefid: generatedomrefid,
-    setrawelement: setrawelement,
-    getrawelement: getrawelement,
-    removerawelementref: removerawelementref,
-    createdomref: createdomref,
-    removeref: removeref,
-    isvaliddomref: isvaliddomref
-  };
 }

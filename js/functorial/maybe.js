@@ -38,8 +38,6 @@ var nothing = function() {
     };
 };
 
-var of = just;
-
 var fromnullable = function(val) {
     return (val === null || val === undefined) ? nothing() : just(val);
 };
@@ -64,14 +62,3 @@ var maybealgebra = Object.freeze({
     functorlaw: 'proven',
     verificationmethod: 'kleisli audit §3.1'
 });
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    just: just,
-    nothing: nothing,
-    of: of,
-    fromnullable: fromnullable,
-    getorelselazy: getorelselazy,
-    maybealgebra: maybealgebra
-  };
-}

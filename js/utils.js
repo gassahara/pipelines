@@ -176,21 +176,3 @@ function createnodefromtemplate(templateobj, doc) {
   if (html) container.innerHTML = html;
   return (typeof just === 'function') ? just(container) : { tag: 'JUST', value: container };
 }
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    deepmerge: deepmerge,
-    createapiconstants: createapiconstants,
-    escapehtml: escapehtml,
-    formatinlinetext: formatinlinetext,
-    parseline: parseline,
-    markdowntohtml: markdowntohtml,
-    formataitext: formataitext,
-    resolvepath: resolvepath,
-    getprop: getprop,
-    getproperty: getproperty,
-    getfunction: getfunction,
-    setproperty: setproperty,
-    createnodefromtemplate: createnodefromtemplate
-  };
-}

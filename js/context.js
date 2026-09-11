@@ -27,11 +27,3 @@ var updateworldmap = function(update) {
 };
 
 var select = function(selectorfn) { return function(state) { return selectorfn(state); }; };
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    createinitialworldmap: createinitialworldmap,
-    updateworldmap: updateworldmap,
-    select: select
-  };
-}

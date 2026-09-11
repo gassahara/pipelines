@@ -110,7 +110,7 @@ function buildLogViewerHTML(logs, filter, auto) {
 }
 // ===== END ADDED =====
 
-// Pure behavior function: (env, message) -> env
+// Behavior function: (env, message) -> env | promise<env>
 function DEBUGBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[DEBUGACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
@@ -404,17 +404,4 @@ function ENQUEUEDEBUGPING(RESPONSESPEC) {
 function ENQUEUEDEBUGRECOVER(RESPONSESPEC) {
   var TAG = GENERATETAG();
   SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.RECOVER, {}, TAG, 'system', RESPONSESPEC);
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    DEBUGVERBOSITYCONSTANTS: DEBUGVERBOSITYCONSTANTS,
-    GETCTX: GETCTX,
-    BTN: BTN,
-    ENSUREOVERLAY: ENSUREOVERLAY,
-    ENSUREDEBUGSLICE: ENSUREDEBUGSLICE,
-    DEBUGBEHAVIOR: DEBUGBEHAVIOR,
-    ENQUEUEDEBUGPING: ENQUEUEDEBUGPING,
-    ENQUEUEDEBUGRECOVER: ENQUEUEDEBUGRECOVER
-  };
 }

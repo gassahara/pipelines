@@ -574,10 +574,6 @@ var stylizerrewrite = {
           Object.keys(rule.style || {}).forEach(function(prop) {
             el.style[prop] = rule.style[prop];
           });
-        } else if (rule.class && el.classList && el.classList.contains(rule.class)) {
-          Object.keys(rule.style || {}).forEach(function(prop) {
-            el.style[prop] = rule.style[prop];
-          });
         } else if (rule.path && Array.isArray(rule.path)) {
           function walkpath(stepindex, currentnodes) {
             if (stepindex >= rule.path.length) return currentnodes;
@@ -620,7 +616,7 @@ var stylizerrewrite = {
       css += '@media ' + [min, max].filter(Boolean).join(' and ') + ' {\n';
 
       bp.rules.forEach(function(rule) {
-        var sel = rule.id ? '#' + rule.id : rule.class ? '.' + rule.class : rule.tag || '*';
+        var sel = rule.id ? '#' + rule.id : rule.tag || '*';
         css += '  ' + sel + ' {\n';
         Object.keys(rule.style).forEach(function(prop) {
           css += '    ' + stylizercore.cameltokebab(prop) + ': ' + rule.style[prop] + ';\n';
@@ -1238,11 +1234,3 @@ var stylizerverify = {
     return result;
   }
 };
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    stylizercore: stylizercore,
-    stylizerrewrite: stylizerrewrite,
-    stylizerverify: stylizerverify
-  };
-}

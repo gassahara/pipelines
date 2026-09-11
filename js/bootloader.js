@@ -1,6 +1,14 @@
 var pipelinesmanifest = [
-  { src: 'factory/analyzer.js', provides: [
-    'detectfreeidentifiers', 'parseSource', 'isidentifierstart', 'isidentifierpart',
+  { src: 'factory/tuning/limits.js', provides: [
+    'fnmaxsourcechars'
+  ] },
+  { src: 'factory/tokenscanner.js', provides: [
+    'isidentifierstart', 'isidentifierpart'
+  ] },
+  { src: 'factory/parser.js', provides: [
+    'parseSource', 'detectfreeidentifiers'
+  ] },
+  { src: 'factory/fnblock.js', provides: [
     'containsidentifier', 'findmatchingparen', 'findbodybrace',
     'creatednaserializerconstants', 'validaterevivablefunctionblock', 'validaterevivableobject',
     'resolvefrombriefcase', 'preparefunctionforserialization', 'serializeselfcontainedclosure',
@@ -10,12 +18,12 @@ var pipelinesmanifest = [
   ] },
   { src: 'messageregistry.js', provides: ['messageregistry', 'MESSAGETYPES'] },
   { src: 'verbosity.js', provides: [
-    'createverbosityconstants', 'createverbosityfunctions', 'getverbosity', 'setverbosity',
+    'createverbosityconstants', 'getverbosity', 'setverbosity',
     'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'
   ] },
   { src: 'functorial/maybe.js', provides: ['just', 'nothing', 'of', 'fromnullable', 'getorelselazy', 'maybealgebra'] },
   { src: 'evalstack.js', provides: ['createevalstack', 'evalstack', 'frames', 'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack', 'currentcontinuation', 'chaincontinuations'] },
-  { src: 'factory/callwithstack.js', provides: ['callwithstack', 'runwithstack'] },
+  { src: 'factory/callwithstack.js', provides: ['callwithstack'] },
   { src: 'factory/colorutils.js', provides: ['colorcore', 'colorharmony', 'colorcontrast'] },
   { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
   { src: 'factory/domqueryconstants.js', provides: ['domquerygetters', 'domquerysetters', 'domquerymessages'] },
@@ -30,7 +38,7 @@ var pipelinesmanifest = [
   { src: 'actors/mailactor.js', provides: ['MAILBEHAVIOR', 'GENERATETAG', 'SENDINSTRUCTION', 'SENDRESPONSE', 'QUERYMAILBOX', 'WAITFORMAILBOX', 'STARTMAILACTOR'], owner: 'MAILACTOR', types: ['SEND', 'ACK'] },
   { src: 'actors/worldmapactor.js', provides: ['WORLDMAPBEHAVIOR', 'STARTWORLDMAPACTOR', 'SENDWORLDMAPPATCH', 'UPDATEWORLDMAPFN', 'OBSERVEWORLDMAP', 'UNOBSERVEWORLDMAP', 'GETWORLDMAP'], owner: 'WORLDMAPACTOR', types: ['UPDATE', 'UPDATEFN', 'OBSERVE', 'UNOBSERVE', 'GETWORLDMAP'] },
   { src: 'actors/apiactor.js', provides: ['APIBEHAVIOR', 'ENQUEUEAPI', 'ENQUEUEFETCH'], owner: 'APIACTOR', types: ['API', 'FETCH'] },
-  { src: 'actors/debugactor.js', provides: ['DEBUGBEHAVIOR', 'ENQUEUEDEBUGPING', 'ENQUEUEDEBUGRECOVER'], owner: 'DEBUGACTOR', types: ['INITOVERLAY', 'SHOW', 'HIDE', 'RECOVER', 'PING'] },
+  { src: 'actors/debugactor.js', provides: ['DEBUGBEHAVIOR', 'ENQUEUEDEBUGPING', 'ENQUEUEDEBUGRECOVER'], owner: 'DEBUGACTOR', types: ['INITOVERLAY', 'SHOW', 'HIDE', 'RECOVER', 'PING', 'LOGLINE'] },
   { src: 'actors/executionactor.js', provides: ['EXECUTIONBEHAVIOR', 'ENQUEUEEXECUTIONPIPELINELOADED', 'ENQUEUEEXECUTIONSUBMIT', 'ENQUEUEEXECUTIONAWAITTASK', 'ENQUEUEEXECUTIONGETTASKS', 'ENQUEUEEXECUTIONGETTASKSTATUS', 'ENQUEUEEXECUTIONCANCELTASK', 'ENQUEUEEXECUTIONSTOPTASK', 'ENQUEUEEXECUTIONGETSTATUS', 'ENQUEUEEXECUTIONENVUPDATED', 'ENQUEUEEXECUTIONCCCABORT', 'ENQUEUEEXECUTIONCCCCONTINUE', 'ENQUEUEEXECUTIONCCCRETRY', 'ENQUEUEEXECUTIONREGISTERPIPELINE', 'ENQUEUEEXECUTIONRECOVER', 'ENQUEUEEXECUTIONPING', 'STARTEXECUTIONACTOR', 'ENSUREEXECUTIONACTORREADY'], owner: 'EXECUTIONACTOR', types: ['PIPELINELOADED', 'ENVUPDATED', 'GETSTATUS', 'EXECUTEELEMENT', 'AWAITTASK', 'GETTASKS', 'GETTASKSTATUS', 'CANCELTASK', 'STOPTASK', 'CCCABORT', 'CCCCONTINUE', 'CCCRETRY', 'TASKSETTLED', 'RECOVER', 'REGISTERPIPELINE', 'PING'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
   { src: 'actors/renderactor.js', provides: ['RENDERBEHAVIOR', 'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE', 'ENQUEUESTYLES', 'ENQUEUESETATTR', 'ENQUEUETOGGLECLASS', 'ENQUEUECREATEELEMENT', 'ENQUEUECREATECONTAINER', 'ENQUEUECREATEFROMHTML', 'ENQUEUEGETHTML', 'ENQUEUEGETVALUE', 'ENQUEUEGETSTYLE', 'ENQUEUEGETPOSITION', 'ENQUEUEGETLAYOUT', 'ENQUEUESETHTML', 'ENQUEUESETPOSITION', 'ENQUEUESETSTYLE', 'ENQUEUESETVALUE', 'ENQUEUEPROPERTY', 'ENQUEUESETLAYOUT', 'ENQUEUEGETVIEWPORT', 'ENQUEUEGETSCREEN', 'ENQUEUEMATCHMEDIA', 'STARTRENDERACTOR', 'EXPECTELEMENT', 'HANDLEFILEREADERREQUEST'], owner: 'RENDERACTOR', types: ['RENDER', 'CLEAR', 'HTML', 'REMOVE', 'SETSTYLES', 'SETATTR', 'TOGGLECLASS', 'CRYPTO', 'GEOLOCATION', 'PERSISTENCE', 'CREATEELEMENT', 'CREATECONTAINER', 'CREATEFROMHTML', 'PROPERTY', 'GETHTML', 'GETVALUE', 'GETSTYLE', 'GETPOSITION', 'GETLAYOUT', 'SETHTML', 'SETPOSITION', 'SETSTYLE', 'SETVALUE', 'SETLAYOUT', 'GETVIEWPORT', 'GETSCREEN', 'MATCHMEDIA', 'GETBODYHTML', 'RESTOREBODYHTML', 'RECOVER', 'PING', 'REGISTEREVENTLISTENER'] },
@@ -40,7 +48,7 @@ var pipelinesmanifest = [
     'processelement', 'processpipelineelement', 'registereventstage', 'processnestedstage',
     'createpersistentelementwrapper'
   ] },
-  { src: 'actors/hypervisoractor.js', provides: ['HYPERVISORBEHAVIOR', 'ENQUEUEHYPERVISORLOAD', 'ENQUEUEHYPERVISORSAVE', 'ENQUEUEHYPERVISORGETENV', 'ENQUEUEHYPERVISORSETENV', 'ENQUEUEHYPERVISORGETLATESTENV', 'ENQUEUEHYPERVISORGETRENDERHTML', 'ENQUEUEHYPERVISORSETRENDERHTML', 'ENQUEUEHYPERVISORGETEXECUTIONSTACK', 'ENQUEUEHYPERVISORSETEXECUTIONSTACK', 'ENQUEUEHYPERVISORGETROUTE', 'ENQUEUEHYPERVISORSETROUTE', 'ENQUEUEHYPERVISORGETACTIVEPIPELINES', 'ENQUEUEHYPERVISORREGISTERPIPELINE', 'ENQUEUEHYPERVISORUNREGISTERPIPELINE', 'ENQUEUEHYPERVISORSETPROGRAM', 'ENQUEUEHYPERVISORGETPROGRAM', 'ENQUEUEHYPERVISORMARKBOOT', 'ENQUEUEHYPERVISORPING', 'ENQUEUEHYPERVISORACTIVATEACTORS', 'ENQUEUEHYPERVISORBOOTPIPELINE', 'ENQUEUEHYPERVISORSTAGECOMPLETED', 'STARTHYPERVISORACTOR'], owner: 'HYPERVISORACTOR', types: [
+  { src: 'actors/hypervisoractor.js', provides: ['HYPERVISORBEHAVIOR', 'ENQUEUEHYPERVISORLOAD', 'ENQUEUEHYPERVISORSAVE', 'ENQUEUEHYPERVISORGETENV', 'ENQUEUEHYPERVISORSETENV', 'ENQUEUEHYPERVISORGETLATESTENV', 'ENQUEUEHYPERVISORGETRENDERHTML', 'ENQUEUEHYPERVISORSETRENDERHTML', 'ENQUEUEHYPERVISORGETEXECUTIONSTACK', 'ENQUEUEHYPERVISORSETEXECUTIONSTACK', 'ENQUEUEHYPERVISORGETROUTE', 'ENQUEUEHYPERVISORSETROUTE', 'ENQUEUEHYPERVISORGETACTIVEPIPELINES', 'ENQUEUEHYPERVISORREGISTERPIPELINE', 'ENQUEUEHYPERVISORUNREGISTERPIPELINE', 'ENQUEUEHYPERVISORSETPROGRAM', 'ENQUEUEHYPERVISORGETPROGRAM', 'ENQUEUEHYPERVISORMARKBOOT', 'ENQUEUEHYPERVISORPING', 'ENQUEUEHYPERVISORACTIVATEACTORS', 'ENQUEUEHYPERVISORSTAGECOMPLETED', 'STARTHYPERVISORACTOR'], owner: 'HYPERVISORACTOR', types: [
     'LOAD', 'SAVE', 'GETENV', 'SETENV', 'GETLATESTENV',
     'GETRENDERHTML', 'SETRENDERHTML', 'GETEXECUTIONSTACK', 'SETEXECUTIONSTACK',
     'GETROUTE', 'SETROUTE', 'GETACTIVEPIPELINES',
@@ -70,7 +78,7 @@ function checkregistration(entry) {
   var missing = [];
   var reg = (typeof messageregistry !== 'undefined') ? messageregistry : null;
   if (!reg) return { ok: false, missing: entry.types };
-  var gethandlerfn = reg.gethandler || reg.gethandler;
+  var gethandlerfn = reg.gethandler;
   entry.types.forEach(function(type) {
     if (typeof gethandlerfn.call(reg, entry.owner, type) !== 'function') missing.push(type);
   });
@@ -150,15 +158,3 @@ function bootpipeline(ondone) {
   });
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    pipelinesmanifest: pipelinesmanifest,
-    getroot: getroot,
-    checkexistence: checkexistence,
-    checkregistration: checkregistration,
-    checkstateregistration: checkstateregistration,
-    runpipelineboot: runpipelineboot,
-    pipelinesbase: pipelinesbase,
-    bootpipeline: bootpipeline
-  };
-}

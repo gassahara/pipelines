@@ -19,25 +19,32 @@ function REGISTEROBJECT(GC, OBJ) {
   return OBJ;
 }
 
+// ---- OP-100: shared guarded-object walker (extracted from 3 GC mutators) ----
+function withobj(GC, ID, fn) {
+  if (!GC || !GC.OBJECTS || !GC.OBJECTS[ID]) return;
+  fn(GC.OBJECTS[ID]);
+}
+
+// ---- OP-101: GC mutators routed through withobj ----
 function UPDATESTATUS(GC, ID, STATUS) {
-  if (GC.OBJECTS[ID]) {
-    GC.OBJECTS[ID].STATUS = STATUS;
-    GC.OBJECTS[ID].status = STATUS;
-  }
+  withobj(GC, ID, function(o) {
+    o.STATUS = STATUS;
+    o.status = STATUS;
+  });
 }
 
 function INCREMENTSENT(GC, ID, COUNT) {
-  if (GC.OBJECTS[ID]) {
-    GC.OBJECTS[ID].SENTCOUNT = (GC.OBJECTS[ID].SENTCOUNT || 0) + (COUNT || 1);
-    GC.OBJECTS[ID].sentCount = GC.OBJECTS[ID].SENTCOUNT;
-  }
+  withobj(GC, ID, function(o) {
+    o.SENTCOUNT = (o.SENTCOUNT || 0) + (COUNT || 1);
+    o.sentCount = o.SENTCOUNT;
+  });
 }
 
 function INCREMENTRECEIVED(GC, ID, COUNT) {
-  if (GC.OBJECTS[ID]) {
-    GC.OBJECTS[ID].RECEIVEDCOUNT = (GC.OBJECTS[ID].RECEIVEDCOUNT || 0) + (COUNT || 1);
-    GC.OBJECTS[ID].receivedCount = GC.OBJECTS[ID].RECEIVEDCOUNT;
-  }
+  withobj(GC, ID, function(o) {
+    o.RECEIVEDCOUNT = (o.RECEIVEDCOUNT || 0) + (COUNT || 1);
+    o.receivedCount = o.RECEIVEDCOUNT;
+  });
 }
 
 function COLLECTENDED(GC) {
@@ -74,11 +81,7 @@ function SETACTORSTATE(ACTORNAME, NEXTSTATE) {
 }
 
 function DISPATCHIMMUTABLE(ENV, ACTORNAME, BEHAVIOR, MESSAGE) {
-  var RESULT = BEHAVIOR(ENV, MESSAGE);
-  if (RESULT && typeof RESULT.then === 'function') {
-    return RESULT;
-  }
-  return RESULT;
+  return BEHAVIOR(ENV, MESSAGE);
 }
 
 function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE) {
@@ -164,6 +167,15 @@ function PINGACTOR(ENQUEUEPING, TIMEOUT) {
       RESOLVE(false);
     });
   });
+}
+
+// ---- OP-096 (P44): guard-and-respond helper ----
+function respondif(message, actorname, payload, defaulttype) {
+  if (!message.SENDER || !message.TAG) return false;
+  var spec = message.RESPONSESPEC || message.responseSpec;
+  var rtype = (spec && (spec.responsetype || spec.responseType)) || defaulttype || 'response';
+  SENDRESPONSE(message.SENDER, message.TAG, payload, actorname, rtype);
+  return true;
 }
 
 var ACTORREGISTRY = {};
@@ -264,32 +276,3 @@ function GETTRIGGERMAP(REGISTRY) {
 }
 
 // ---------- EXPORT ----------
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    CREATEGARBAGECOLLECTOR: CREATEGARBAGECOLLECTOR,
-    REGISTEROBJECT: REGISTEROBJECT,
-    UPDATESTATUS: UPDATESTATUS,
-    INCREMENTSENT: INCREMENTSENT,
-    INCREMENTRECEIVED: INCREMENTRECEIVED,
-    COLLECTENDED: COLLECTENDED,
-    LISTOBJECTS: LISTOBJECTS,
-    REGISTERACTORSTATE: REGISTERACTORSTATE,
-    GETACTORSTATE: GETACTORSTATE,
-    SETACTORSTATE: SETACTORSTATE,
-    DISPATCHIMMUTABLE: DISPATCHIMMUTABLE,
-    DISPATCHTOACTOR: DISPATCHTOACTOR,
-    ENSUREENVSLICE: ENSUREENVSLICE,
-    CREATEMESSAGEVALIDATOR: CREATEMESSAGEVALIDATOR,
-    PINGACTOR: PINGACTOR,
-    GETACTORREGISTRY: GETACTORREGISTRY,
-    CREATEACTORREGISTRY: CREATEACTORREGISTRY,
-    SETRENDERACTOR: SETRENDERACTOR,
-    GETRENDERACTOR: GETRENDERACTOR,
-    CREATETRIGGERREGISTRY: CREATETRIGGERREGISTRY,
-    REGISTERTRIGGER: REGISTERTRIGGER,
-    UNREGISTERTRIGGER: UNREGISTERTRIGGER,
-    REVALIDATEALL: REVALIDATEALL,
-    GETTRIGGERMAP: GETTRIGGERMAP
-  };
-}

@@ -1,10 +1,26 @@
-function structuralhash(value) {
-  try {
-    return JSON.stringify(value);
-  } catch (e) {
-    return String(value);
+// ---- OP-092: shared var/const line parser (from RUN 49) ----
+function parsevardecl(line) {
+  var trimmed = line.trim();
+  if (trimmed.indexOf('var ') !== 0 && trimmed.indexOf('const ') !== 0) return null;
+  var prefixlen = trimmed.indexOf('var ') === 0 ? 4 : 6;
+  var rest = trimmed.slice(prefixlen);
+  var eq = rest.indexOf('=');
+  if (eq === -1) return null;
+  var name = rest.slice(0, eq).trim();
+  var literal = rest.slice(eq + 1).trim();
+  var hassemi = false;
+  if (literal.charAt(literal.length - 1) === ';') {
+    literal = literal.slice(0, -1).trim();
+    hassemi = true;
   }
+  if (!name || !literal) return null;
+  return { name: name, literal: literal, hassemi: hassemi };
 }
+
+// ---- OP-104 (P46): local structuralhash removed ----
+// structuralhash is provided as a global by the bootloader manifest;
+// closureconsolidator.js (manifest entry #8) loads after it. The export
+// block below preserves the name via a fallback for standalone Node use.
 
 function collectbindings(closuresource) {
   var bindings = [];
@@ -13,31 +29,17 @@ function collectbindings(closuresource) {
   lines.some(function(line) {
     var trimmed = line.trim();
 
-    if (trimmed.indexOf('var ') === 0 || trimmed.indexOf('const ') === 0) {
-      var prefixlen = trimmed.indexOf('var ') === 0 ? 4 : 6;
-      var rest = trimmed.slice(prefixlen);
-      var eq = rest.indexOf('=');
-
-      if (eq !== -1) {
-        var name = rest.slice(0, eq).trim();
-        var literal = rest.slice(eq + 1).trim();
-        if (literal.charAt(literal.length - 1) === ';') {
-          literal = literal.slice(0, -1).trim();
-        }
-
-        if (name && literal) {
-          bindings.push({ name: name, literal: literal });
-        }
-      }
-      return false;
-    }
-
     if (
       trimmed.indexOf('function') === 0 ||
       trimmed.indexOf('return') === 0 ||
       trimmed.indexOf('}') === 0
     ) {
       return true;
+    }
+
+    var parsed = parsevardecl(line);
+    if (parsed) {
+      bindings.push({ name: parsed.name, literal: parsed.literal });
     }
     return false;
   });
@@ -49,28 +51,10 @@ function rewriteclosurewithshared(closuresource, sharedmap) {
   var lines = String(closuresource || '').split('\n');
 
   var out = lines.map(function(line) {
-    var trimmed = line.trim();
-
-    if (trimmed.indexOf('var ') === 0 || trimmed.indexOf('const ') === 0) {
-      var prefixlen = trimmed.indexOf('var ') === 0 ? 4 : 6;
-      var rest = trimmed.slice(prefixlen);
-      var eq = rest.indexOf('=');
-
-      if (eq !== -1) {
-        var name = rest.slice(0, eq).trim();
-        var literal = rest.slice(eq + 1).trim();
-        var hassemi = false;
-        if (literal.charAt(literal.length - 1) === ';') {
-          literal = literal.slice(0, -1).trim();
-          hassemi = true;
-        }
-
-        if (sharedmap[literal] !== undefined) {
-          return '  var ' + name + ' = ' + sharedmap[literal] + (hassemi ? ';' : '');
-        }
-      }
+    var parsed = parsevardecl(line);
+    if (parsed && sharedmap[parsed.literal] !== undefined) {
+      return '  var ' + parsed.name + ' = ' + sharedmap[parsed.literal] + (parsed.hassemi ? ';' : '');
     }
-
     return line;
   });
 
@@ -133,14 +117,5 @@ function consolidateclosures(entries) {
     programSource: programsource,
     elementmap: elementmap,
     elementMap: elementmap
-  };
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    structuralhash: structuralhash,
-    collectbindings: collectbindings,
-    rewriteclosurewithshared: rewriteclosurewithshared,
-    consolidateclosures: consolidateclosures
   };
 }

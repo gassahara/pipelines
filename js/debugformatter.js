@@ -49,9 +49,3 @@ function formatdebugtrace(error, framelist) {
   html += '</ul></div>';
   return html;
 }
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    formatdebugtrace: formatdebugtrace
-  };
-}

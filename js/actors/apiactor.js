@@ -13,15 +13,15 @@ function APIBEHAVIOR(ENV, MESSAGE) {
         TOKEN: MESSAGE.TOKEN || '',
         TIMESTAMP: Date.now()
       },
-      REQUESTCOUNT: (ENV.API && (ENV.API.REQUESTCOUNT || ENV.API.REQUESTCOUNT || ENV.API.requestCount) || 0) + 1
+      REQUESTCOUNT: (ENV.API && (ENV.API.REQUESTCOUNT || ENV.API.requestCount) || 0) + 1
     };
 
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
       UPDATES: [{ PATH: 'api', VALUE: UPDATEDAPI }]
     }, GENERATETAG(), 'APIACTOR');
 
-    var APICONSTANTS = (typeof createapiconstants === 'function') ? createapiconstants() : (typeof createapiconstants === 'function' ? createapiconstants() : { apibase: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1' });
-    var APIBASE = APICONSTANTS.apibase || APICONSTANTS.apibase || '';
+    var APICONSTANTS = (typeof createapiconstants === 'function') ? createapiconstants() : { apibase: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1' };
+    var APIBASE = APICONSTANTS.apibase || '';
     var URL = APIBASE + '/' + MESSAGE.ENDPOINT;
     var ISTEXTUAL = MESSAGE.TYPE === MESSAGETYPES.FETCH;
     var METHOD = String(MESSAGE.METHOD || 'GET').toUpperCase();
@@ -82,12 +82,4 @@ function ENQUEUEFETCH(ENDPOINT, METHOD, PAYLOAD, OPTIONS, RESPONSESPEC) {
     PAYLOAD: PAYLOAD || {},
     TOKEN: (OPTIONS && OPTIONS.TOKEN) || ''
   }, TAG, 'system', RESPONSESPEC);
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    APIBEHAVIOR: APIBEHAVIOR,
-    ENQUEUEAPI: ENQUEUEAPI,
-    ENQUEUEFETCH: ENQUEUEFETCH
-  };
 }

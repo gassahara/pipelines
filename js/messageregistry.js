@@ -72,8 +72,6 @@ var MESSAGETYPES = Object.freeze({
   SETPROGRAM: 'SETPROGRAM',
   GETPROGRAM: 'GETPROGRAM',
   MARKBOOT: 'MARKBOOT',
-  SETSTAGEDESCRIPTOR: 'SETSTAGEDESCRIPTOR',
-  GETTRIGGERRECIPIENTSTATUS: 'GETTRIGGERRECIPIENTSTATUS',
   EVENTTRIGGERED: 'EVENTTRIGGERED',
   ACTIVATEACTORS: 'ACTIVATEACTORS',
   // BOOTPIPELINE: 'BOOTPIPELINE', // REMOVED (no longer used)
@@ -119,6 +117,10 @@ var messageregistry = {
       messageregistrystore[owner] = entry;
     }
     entry[type] = { iface: iface, handler: handler };
+    if (typeof ACTORCONSUMERS !== 'undefined') {
+      ACTORCONSUMERS[owner + ':' + type] = handler;
+      ACTORCONSUMERS[owner + ':' + String(type).toLowerCase()] = handler;
+    }
   },
   getinterfaces: function(owner) {
     var entry = messageregistrystore[owner] || {};
@@ -182,11 +184,3 @@ var messageregistry = {
     return { valid: true, error: null, type: type };
   }
 };
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    MESSAGETYPES: MESSAGETYPES,
-    mailboxfiltertypes: mailboxfiltertypes,
-    messageregistry: messageregistry
-  };
-}

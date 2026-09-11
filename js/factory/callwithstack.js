@@ -134,13 +134,3 @@ function callwithstack(evalstack, label, type, fn, args, options) {
     return promise;
 }
 
-function runwithstack(p) { return p; }
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    safeshallowclone: safeshallowclone,
-    applyccc: applyccc,
-    callwithstack: callwithstack,
-    runwithstack: runwithstack
-  };
-}
