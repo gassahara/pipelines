@@ -16,7 +16,7 @@ var pipelinesmanifest = [
     'containsstyleaccess', 'mapoutputs', 'analyzefnblock', 'createblockanalyzer',
     'createblockanalyzers', 'compilefnblock'
   ] },
-  { src: 'messageregistry.js', provides: ['messageregistry', 'MESSAGETYPES'] },
+  { src: 'messageregistry.js', provides: ['MESSAGEREGISTRY', 'MESSAGETYPES'] },
   { src: 'verbosity.js', provides: [
     'createverbosityconstants', 'getverbosity', 'setverbosity',
     'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'
@@ -43,8 +43,8 @@ var pipelinesmanifest = [
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
   { src: 'actors/renderactor.js', provides: ['RENDERBEHAVIOR', 'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE', 'ENQUEUESTYLES', 'ENQUEUESETATTR', 'ENQUEUETOGGLECLASS', 'ENQUEUECREATEELEMENT', 'ENQUEUECREATECONTAINER', 'ENQUEUECREATEFROMHTML', 'ENQUEUEGETHTML', 'ENQUEUEGETVALUE', 'ENQUEUEGETSTYLE', 'ENQUEUEGETPOSITION', 'ENQUEUEGETLAYOUT', 'ENQUEUESETHTML', 'ENQUEUESETPOSITION', 'ENQUEUESETSTYLE', 'ENQUEUESETVALUE', 'ENQUEUEPROPERTY', 'ENQUEUESETLAYOUT', 'ENQUEUEGETVIEWPORT', 'ENQUEUEGETSCREEN', 'ENQUEUEMATCHMEDIA', 'STARTRENDERACTOR', 'EXPECTELEMENT', 'HANDLEFILEREADERREQUEST'], owner: 'RENDERACTOR', types: ['RENDER', 'CLEAR', 'HTML', 'REMOVE', 'SETSTYLES', 'SETATTR', 'TOGGLECLASS', 'CRYPTO', 'GEOLOCATION', 'PERSISTENCE', 'CREATEELEMENT', 'CREATECONTAINER', 'CREATEFROMHTML', 'PROPERTY', 'GETHTML', 'GETVALUE', 'GETSTYLE', 'GETPOSITION', 'GETLAYOUT', 'SETHTML', 'SETPOSITION', 'SETSTYLE', 'SETVALUE', 'SETLAYOUT', 'GETVIEWPORT', 'GETSCREEN', 'MATCHMEDIA', 'GETBODYHTML', 'RESTOREBODYHTML', 'RECOVER', 'PING', 'REGISTEREVENTLISTENER'] },
   { src: 'factory/blockcompiler.js', provides: [
-    'loadpipeline', 'compilestage', 'resolvenextelement', 'orchestratestage', 'validatepipelinebriefcase',
-    'blockcompilercompilestage', 'createblockcompilerconstants', 'buildblockproperties',
+    'LOADPIPELINE', 'resolvenextelement', 'orchestratestage', 'validatepipelinebriefcase',
+    'BLOCKCOMPILERCOMPILESTAGE', 'createblockcompilerconstants', 'buildblockproperties',
     'processelement', 'processpipelineelement', 'registereventstage', 'processnestedstage',
     'createpersistentelementwrapper'
   ] },
@@ -76,7 +76,7 @@ function checkexistence(entry) {
 function checkregistration(entry) {
   if (!entry.owner) return { ok: true, missing: [] };
   var missing = [];
-  var reg = (typeof messageregistry !== 'undefined') ? messageregistry : null;
+  var reg = (typeof MESSAGEREGISTRY !== 'undefined') ? MESSAGEREGISTRY : null;
   if (!reg) return { ok: false, missing: entry.types };
   var gethandlerfn = reg.gethandler;
   entry.types.forEach(function(type) {
@@ -157,4 +157,3 @@ function bootpipeline(ondone) {
     if (typeof ondone === 'function') ondone(result);
   });
 }
-

@@ -3,7 +3,7 @@ var EXECUTIONVERBOSITYCONSTANTS = createverbosityconstants();
 function SANITIZEFORSTATE(VALUE, SEEN) {
   if (VALUE === null || VALUE === undefined) return VALUE;
   if (typeof VALUE === 'function') return '[Function]';
-  if (typeof HTMLELEMENT !== 'undefined' && VALUE instanceof HTMLELEMENT) return '[DOMNODE]';
+  if (typeof HTMLELEMENT !== 'undefined' && VALUE instanceof HTMLElement) return '[DOMNODE]';
   if (typeof Node !== 'undefined' && VALUE instanceof Node) return '[DOMNODE]';
   if (typeof EventTarget !== 'undefined' && VALUE instanceof EventTarget) return '[EventTarget]';
   if (typeof VALUE !== 'object') return VALUE;
@@ -44,14 +44,14 @@ function MAKETASK(EXECSLICE, DESCRIPTOR) {
   var TASK = {
     TASKID: TASKID,
     KIND: 'element',
-    PIPELINEID: DESCRIPTOR.PIPELINEID || DESCRIPTOR.pipelineid || null,
-    ELEMENTID: DESCRIPTOR.ELEMENTID || DESCRIPTOR.elementid || null,
+    PIPELINEID: DESCRIPTOR.PIPELINEID || null,
+    ELEMENTID: DESCRIPTOR.ELEMENTID || null,
     PARENTTASKID: null,
     CHILDTASKIDS: [],
     STATUS: 'WAITING',
-    SERIALIZED: DESCRIPTOR.SERIALIZED || DESCRIPTOR.serialized || null,
-    PROGRAMREF: DESCRIPTOR.PROGRAMREF || DESCRIPTOR.programref || DESCRIPTOR.programRef || null,
-    ORIGIN: DESCRIPTOR.ORIGIN || DESCRIPTOR.origin || null,
+    SERIALIZED: DESCRIPTOR.SERIALIZED || null,
+    PROGRAMREF: DESCRIPTOR.PROGRAMREF || null,
+    ORIGIN: DESCRIPTOR.ORIGIN || null,
     CONSUMERS: [],
     RESULT: null,
     ERROR: null
@@ -101,7 +101,7 @@ function ENSUREPIPELINE(EXECSLICE, PIPELINEID) {
 
 function SENDEXECUTIONUPDATE(EXECSLICE) {
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-    updates: [{ path: 'execution', value: EXECSLICE }]
+    UPDATES: [{ PATH: 'execution', VALUE: EXECSLICE }]
   }, GENERATETAG(), 'EXECUTIONACTOR');
 }
 
@@ -113,15 +113,15 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
 
   switch (MESSAGE.TYPE) {
     case MESSAGETYPES.PIPELINELOADED: {
-      loginfo(ENV, '[EXECUTIONACTOR]', 'ACTION PIPELINELOADED:', MESSAGE.PIPELINEID || MESSAGE.pipelineid || MESSAGE.pipelineId);
-      var PIPELINE = ENSUREPIPELINE(EXECSLICE, MESSAGE.PIPELINEID || MESSAGE.pipelineid || MESSAGE.pipelineId);
+      loginfo(ENV, '[EXECUTIONACTOR]', 'ACTION PIPELINELOADED:', MESSAGE.PIPELINEID);
+      var PIPELINE = ENSUREPIPELINE(EXECSLICE, MESSAGE.PIPELINEID);
       if (MESSAGE.ENV && Object.keys(MESSAGE.ENV).length > 0) PIPELINE.ENV = MESSAGE.ENV;
       PIPELINE.STATUS = 'running';
       SENDEXECUTIONUPDATE(EXECSLICE);
       return ENV;
     }
     case MESSAGETYPES.ENVUPDATED: {
-      var P3 = ENSUREPIPELINE(EXECSLICE, MESSAGE.PIPELINEID || MESSAGE.pipelineid || MESSAGE.pipelineId);
+      var P3 = ENSUREPIPELINE(EXECSLICE, MESSAGE.PIPELINEID);
       P3.ENV = SANITIZEFORSTATE(MESSAGE.ENV || {});
       SENDEXECUTIONUPDATE(EXECSLICE);
       return ENV;
@@ -134,17 +134,17 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       return ENV;
     }
     case MESSAGETYPES.EXECUTEELEMENT: {
-      var PIPELINEID = MESSAGE.pipelineid || MESSAGE.pipelineId || MESSAGE.PIPELINEID;
-      var ELEMENTID = MESSAGE.elementid || MESSAGE.elementId || MESSAGE.ELEMENTID;
-      var PATH = MESSAGE.path || MESSAGE.PATH;
+      var PIPELINEID = MESSAGE.PIPELINEID;
+      var ELEMENTID = MESSAGE.ELEMENTID;
+      var PATH = MESSAGE.PATH;
       logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION EXECUTEELEMENT ELEMENT:', ELEMENTID, 'PIPELINE:', PIPELINEID, 'PATH:', PATH);
       var TASK = MAKETASK(EXECSLICE, {
         KIND: 'element',
         PIPELINEID: PIPELINEID,
         ELEMENTID: ELEMENTID,
-        SERIALIZED: MESSAGE.serialized || MESSAGE.SERIALIZED || null,
-        PROGRAMREF: MESSAGE.programref || MESSAGE.programRef || MESSAGE.PROGRAMREF || null,
-        ORIGIN: MESSAGE.origin || MESSAGE.ORIGIN || null
+        SERIALIZED: MESSAGE.SERIALIZED || null,
+        PROGRAMREF: MESSAGE.PROGRAMREF || null,
+        ORIGIN: MESSAGE.ORIGIN || null
       });
       if (MESSAGE.SENDER && MESSAGE.TAG) {
         TASK.CONSUMERS = TASK.CONSUMERS || [];
@@ -156,11 +156,11 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       return ENV;
     }
     case MESSAGETYPES.AWAITTASK: {
-      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION AWAITTASK TASK:', MESSAGE.TASKID || MESSAGE.taskid);
-      var AWAITTASK = EXECSLICE.TASKS[MESSAGE.TASKID || MESSAGE.taskid];
+      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION AWAITTASK TASK:', MESSAGE.TASKID);
+      var AWAITTASK = EXECSLICE.TASKS[MESSAGE.TASKID];
       if (!AWAITTASK) {
         if (MESSAGE.SENDER && MESSAGE.TAG) {
-          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: '[EXECUTIONACTOR] UNKNOWN TASK: ' + (MESSAGE.TASKID || MESSAGE.taskid) }, 'EXECUTIONACTOR');
+          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: '[EXECUTIONACTOR] UNKNOWN TASK: ' + MESSAGE.TASKID }, 'EXECUTIONACTOR');
         }
         return ENV;
       }
@@ -213,7 +213,7 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       return ENV;
     }
     case MESSAGETYPES.GETTASKSTATUS: {
-      var T2 = EXECSLICE.TASKS[MESSAGE.TASKID || MESSAGE.taskid];
+      var T2 = EXECSLICE.TASKS[MESSAGE.TASKID];
       var STATUSRESULT = T2 ? {
         TASKID: T2.TASKID,
         KIND: T2.KIND,
@@ -232,12 +232,12 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       return ENV;
     }
     case MESSAGETYPES.CANCELTASK: {
-      CANCELTASK(EXECSLICE, MESSAGE.TASKID || MESSAGE.taskid);
+      CANCELTASK(EXECSLICE, MESSAGE.TASKID);
       SENDEXECUTIONUPDATE(EXECSLICE);
       return ENV;
     }
     case MESSAGETYPES.STOPTASK: {
-      STOPTASK(EXECSLICE, MESSAGE.TASKID || MESSAGE.taskid);
+      STOPTASK(EXECSLICE, MESSAGE.TASKID);
       SENDEXECUTIONUPDATE(EXECSLICE);
       return ENV;
     }
@@ -247,10 +247,10 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       return ENV;
     }
     case MESSAGETYPES.TASKSETTLED: {
-      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION TASKSETTLED TASK:', MESSAGE.TASKID || MESSAGE.taskid, 'STATUS:', MESSAGE.STATUS || MESSAGE.status);
-      var TASK4 = EXECSLICE.TASKS[MESSAGE.TASKID || MESSAGE.taskid];
+      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION TASKSETTLED TASK:', MESSAGE.TASKID, 'STATUS:', MESSAGE.STATUS);
+      var TASK4 = EXECSLICE.TASKS[MESSAGE.TASKID];
       if (TASK4) {
-        TASK4.STATUS = MESSAGE.STATUS || MESSAGE.status;
+        TASK4.STATUS = MESSAGE.STATUS;
         TASK4.RESULT = MESSAGE.RESULT || null;
         TASK4.ERROR = MESSAGE.ERROR || null;
 
@@ -290,8 +290,8 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       return ENV;
     }
     case MESSAGETYPES.REGISTERPIPELINE: {
-      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION REGISTERPIPELINE:', MESSAGE.PIPELINEID || MESSAGE.pipelineid || MESSAGE.pipelineId);
-      var P10 = ENSUREPIPELINE(EXECSLICE, MESSAGE.PIPELINEID || MESSAGE.pipelineid || MESSAGE.pipelineId);
+      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION REGISTERPIPELINE:', MESSAGE.PIPELINEID);
+      var P10 = ENSUREPIPELINE(EXECSLICE, MESSAGE.PIPELINEID);
       P10.USESELEMENTSNAPSHOTS = true;
       if (MESSAGE.ENV) P10.ENV = SANITIZEFORSTATE(MESSAGE.ENV);
       SENDEXECUTIONUPDATE(EXECSLICE);
@@ -352,29 +352,29 @@ function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
 }
 
 function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
-  var executionContext = {
-    env: DESCRIPTOR.env || DESCRIPTOR.ENV || {},
-    inputs: (DESCRIPTOR.signature && (DESCRIPTOR.signature.inputs || DESCRIPTOR.signature.INPUTS)) || [],
-    outputs: (DESCRIPTOR.signature && (DESCRIPTOR.signature.outputs || DESCRIPTOR.signature.OUTPUTS)) || {},
-    properties: DESCRIPTOR.properties || DESCRIPTOR.PROPERTIES || {}
+  var EXECUTIONCONTEXT = {
+    env: DESCRIPTOR.ENV || {},
+    inputs: (DESCRIPTOR.SIGNATURE && (DESCRIPTOR.SIGNATURE.inputs || DESCRIPTOR.SIGNATURE.INPUTS)) || [],
+    outputs: (DESCRIPTOR.SIGNATURE && (DESCRIPTOR.SIGNATURE.outputs || DESCRIPTOR.SIGNATURE.OUTPUTS)) || {},
+    properties: DESCRIPTOR.PROPERTIES || {}
   };
 
-  logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK START:', TASKID, DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID, 'PIPELINE:', DESCRIPTOR.pipelineid || DESCRIPTOR.PIPELINEID);
+  logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK START:', TASKID, DESCRIPTOR.ELEMENTID, 'PIPELINE:', DESCRIPTOR.PIPELINEID);
 
   function RUNWITHPROGRAM() {
-    var PROGREF = DESCRIPTOR.programref || DESCRIPTOR.programRef || DESCRIPTOR.PROGRAMREF || null;
-    var PROGSOURCE = DESCRIPTOR.programsource || DESCRIPTOR.programSource || DESCRIPTOR.PROGRAMSOURCE || null;
-    var executor = DESCRIPTOR.executor || DESCRIPTOR.EXECUTOR;
+    var PROGREF = DESCRIPTOR.PROGRAMREF || null;
+    var PROGSOURCE = DESCRIPTOR.PROGRAMSOURCE || null;
+    var EXECUTOR = DESCRIPTOR.EXECUTOR;
     if (PROGREF && PROGSOURCE) {
       try {
         var PROGRAM = new Function('return ' + PROGSOURCE)();
-        if (PROGRAM && typeof PROGRAM[DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID] === 'function') {
-          return Promise.resolve(PROGRAM[DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID](executionContext)).then(function(R) {
+        if (PROGRAM && typeof PROGRAM[DESCRIPTOR.ELEMENTID] === 'function') {
+          return Promise.resolve(PROGRAM[DESCRIPTOR.ELEMENTID](EXECUTIONCONTEXT)).then(function(R) {
             return R;
           }).catch(function(ERR) {
             logwarn(ENV, '[EXECUTIONACTOR]', 'PROGRAM RESTORATION FAILED:', ERR);
-            if (typeof executor === 'function') {
-              return executor(executionContext);
+            if (typeof EXECUTOR === 'function') {
+              return EXECUTOR(EXECUTIONCONTEXT);
             }
             throw ERR;
           });
@@ -383,11 +383,11 @@ function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
         logwarn(ENV, '[EXECUTIONACTOR]', 'PROGRAM RESTORATION FAILED:', ERR);
       }
     }
-    if (typeof executor !== 'function') {
-      var err = new Error('[EXECUTIONACTOR] DESCRIPTOR.executor is not a function');
-      return Promise.reject(err);
+    if (typeof EXECUTOR !== 'function') {
+      var FAILUREERROR = new Error('[EXECUTIONACTOR] DESCRIPTOR.executor is not a function');
+      return Promise.reject(FAILUREERROR);
     }
-    return Promise.resolve(executor(executionContext));
+    return Promise.resolve(EXECUTOR(EXECUTIONCONTEXT));
   }
 
   var EXECUTIONPROMISE;
@@ -398,10 +398,10 @@ function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
   }
 
   EXECUTIONPROMISE.then(function(RESULT) {
-    logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK COMPLETED:', TASKID, DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID);
+    logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK COMPLETED:', TASKID, DESCRIPTOR.ELEMENTID);
     SETTLETASK(TASKID, 'EXECUTED', RESULT || {}, null, ENV);
   }).catch(function(ERR) {
-    logerror(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK FAILED:', TASKID, DESCRIPTOR.elementid || DESCRIPTOR.ELEMENTID, ERR);
+    logerror(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK FAILED:', TASKID, DESCRIPTOR.ELEMENTID, ERR);
     SETTLETASK(TASKID, 'FAILED', null, ERR, ENV);
   });
 }

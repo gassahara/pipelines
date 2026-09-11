@@ -367,7 +367,7 @@ function tokenis(token, kind, value) {
   return !!token && token.type === kind && (value === undefined || token.value === value);
 }
 
-function mk_kind(cfg) {
+function mkkind(cfg) {
   var append = function(t, token) {
     var n = cloneobj(t);
     n.tokens = t.tokens.concat([token]);
@@ -400,7 +400,7 @@ function mk_kind(cfg) {
 }
 
 var kinds = [
-  mk_kind({
+  mkkind({
     name: 'regex',
     start: function(state, token) { return tokenis(token, 'punctuator', '/') && state.expectexpression === true; },
     decide: function(t, token) {
@@ -415,26 +415,26 @@ var kinds = [
       return n;
     }
   }),
-  mk_kind({
+  mkkind({
     name: 'objectliteral',
     start: function(state, token) { return tokenis(token, 'punctuator', '{') && state.expectexpression === true; },
     accept: '}',
     commit: function(state, t) { return parseobjectliteralfrombuffer(state, t.tokens); },
     reject: function(state, t) { return parseblockfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'block',
     start: function(state, token) { return tokenis(token, 'punctuator', '{') && state.expectexpression !== true; },
     accept: '}',
     commit: function(state, t) { return parseblockfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'arrayliteral',
     start: function(state, token) { return tokenis(token, 'punctuator', '[') && state.expectexpression === true; },
     accept: ']',
     commit: function(state, t) { return parsearrayliteralfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'json',
     start: function(state, token) { return tokenis(token, 'punctuator', '{') || tokenis(token, 'punctuator', '['); },
     decide: function(t, token) {
@@ -444,14 +444,14 @@ var kinds = [
     },
     commit: function(state, t) { return parsejsonfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'arrowfunction',
     start: function(state, token) { return isarrowfunctionstart(state); },
     accept: '=>',
     commit: function(state, t) { return parsearrowfunctionfrombuffer(state, t.tokens); },
     reject: function(state, t) { return parseprimaryfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'memberaccess',
     start: function(state, token) { return tokenis(token, 'punctuator', '.'); },
     decide: function(t, token) {
@@ -461,7 +461,7 @@ var kinds = [
     },
     commit: function(state, t) { return advance(state); }
   }),
-  mk_kind({
+  mkkind({
     name: 'optionalaccess',
     start: function(state, token) { return tokenis(token, 'punctuator', '?.'); },
     decide: function(t, token) {
@@ -471,13 +471,13 @@ var kinds = [
     },
     commit: function(state, t) { return parseoptionalaccessfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'call',
     start: function(state, token) { return tokenis(token, 'punctuator', '('); },
     accept: ')',
     commit: function(state, t) { return parseargumentsfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'forheader',
     start: function(state, token) { return tokenis(token, 'keyword', 'for'); },
     decide: function(t, token) {
@@ -489,19 +489,19 @@ var kinds = [
     },
     commit: function(state, t) { return parseforheaderfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'templatesubstitution',
     start: function(state, token) { return tokenis(token, 'templateliteral') && token.extra && token.extra.expressions.length > 0; },
     acceptany: true,
     commit: function(state, t) { return parsetemplatefrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'conditional',
     start: function(state, token) { return tokenis(token, 'punctuator', '?'); },
     accept: ':',
     commit: function(state, t) { return parseconditionalfrombuffer(state, t.tokens); }
   }),
-  mk_kind({
+  mkkind({
     name: 'mapconstruct',
     start: function(state, token) { return tokenis(token, 'keyword', 'new') && state.expectexpression === true; },
     accept: ')',

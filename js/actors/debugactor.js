@@ -57,56 +57,56 @@ function ENSUREDEBUGSLICE(ENV) {
 }
 
 // ===== ADDED: helper to build log viewer HTML with inline styles =====
-function buildLogViewerHTML(logs, filter, auto) {
-  var filtered = logs;
-  if (filter !== 'all') {
-    filtered = logs.filter(function(entry) { return entry.level === filter; });
+function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
+  var FILTERED = LOGS;
+  if (FILTER !== 'all') {
+    FILTERED = LOGS.filter(function(ENTRY) { return ENTRY.level === FILTER; });
   }
-  var display = filtered.slice(-200);
-  var html = '';
+  var DISPLAY = FILTERED.slice(-200);
+  var HTML = '';
   // Controls bar with inline styles
-  html += '<div style="display:flex;gap:10px;padding:8px 16px;background:#1a1a2e;border-bottom:1px solid #444;flex-wrap:wrap;align-items:center;flex-shrink:0;">';
-  html += '<span style="color:#ccc;font-size:13px;">Logs</span>';
-  html += '<select id="debuglogfilter" style="background:#2d2d44;color:#eee;border:1px solid #555;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;">';
-  html += '<option value="all"' + (filter === 'all' ? ' selected' : '') + '>All</option>';
-  html += '<option value="error"' + (filter === 'error' ? ' selected' : '') + '>Errors</option>';
-  html += '<option value="warn"' + (filter === 'warn' ? ' selected' : '') + '>Warnings</option>';
-  html += '<option value="info"' + (filter === 'info' ? ' selected' : '') + '>Info</option>';
-  html += '<option value="debug"' + (filter === 'debug' ? ' selected' : '') + '>Debug</option>';
-  html += '</select>';
-  html += '<label style="color:#aaa;font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">';
-  html += '<input type="checkbox" id="debuglogautoscroll"' + (auto ? ' checked' : '') + '> Auto-scroll';
-  html += '</label>';
-  html += '<button id="debuglogclear" style="background:#d32f2f;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;">Clear</button>';
-  html += '<span style="color:#888;font-size:11px;margin-left:auto;">' + logs.length + ' entries</span>';
-  html += '</div>';
+  HTML += '<div style="display:flex;gap:10px;padding:8px 16px;background:#1a1a2e;border-bottom:1px solid #444;flex-wrap:wrap;align-items:center;flex-shrink:0;">';
+  HTML += '<span style="color:#ccc;font-size:13px;">Logs</span>';
+  HTML += '<select id="debuglogfilter" style="background:#2d2d44;color:#eee;border:1px solid #555;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;">';
+  HTML += '<option value="all"' + (FILTER === 'all' ? ' selected' : '') + '>All</option>';
+  HTML += '<option value="error"' + (FILTER === 'error' ? ' selected' : '') + '>Errors</option>';
+  HTML += '<option value="warn"' + (FILTER === 'warn' ? ' selected' : '') + '>Warnings</option>';
+  HTML += '<option value="info"' + (FILTER === 'info' ? ' selected' : '') + '>Info</option>';
+  HTML += '<option value="debug"' + (FILTER === 'debug' ? ' selected' : '') + '>Debug</option>';
+  HTML += '</select>';
+  HTML += '<label style="color:#aaa;font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">';
+  HTML += '<input type="checkbox" id="debuglogautoscroll"' + (AUTO ? ' checked' : '') + '> Auto-scroll';
+  HTML += '</label>';
+  HTML += '<button id="debuglogclear" style="background:#d32f2f;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;">Clear</button>';
+  HTML += '<span style="color:#888;font-size:11px;margin-left:auto;">' + LOGS.length + ' entries</span>';
+  HTML += '</div>';
   // Log list with inline styles
-  html += '<div id="debugloglist" style="flex:1;overflow-y:auto;padding:8px 16px;font-family:\'Courier New\',monospace;font-size:12px;line-height:1.5;background:#0a0a12;">';
-  if (display.length === 0) {
-    html += '<div style="color:#666;padding:20px;text-align:center;">No logs to display.</div>';
+  HTML += '<div id="debugloglist" style="flex:1;overflow-y:auto;padding:8px 16px;font-family:\'Courier New\',monospace;font-size:12px;line-height:1.5;background:#0a0a12;">';
+  if (DISPLAY.length === 0) {
+    HTML += '<div style="color:#666;padding:20px;text-align:center;">No logs to display.</div>';
   } else {
-    display.forEach(function(entry) {
-      var levelClass = entry.level || 'info';
-      var color = '#aaa';
-      if (levelClass === 'error') color = '#ff5555';
-      else if (levelClass === 'warn') color = '#ffaa33';
-      else if (levelClass === 'info') color = '#88ccff';
-      else if (levelClass === 'debug') color = '#888';
-      var time = new Date(entry.timestamp).toLocaleTimeString();
-      var msg = entry.message || '';
-      var prefix = entry.prefix || '';
-      html += '<div style="color:' + color + ';padding:2px 0;border-bottom:1px solid #1a1a2e;word-break:break-all;white-space:pre-wrap;">';
-      html += '<span style="color:#666;margin-right:8px;">[' + time + ']</span>';
-      if (prefix) html += '<span style="color:#88aaff;margin-right:8px;">' + prefix + '</span>';
-      html += '<span>' + msg + '</span>';
-      if (entry.data && typeof entry.data === 'object') {
-        html += ' <span style="color:#666;font-size:10px;margin-left:8px;">' + JSON.stringify(entry.data) + '</span>';
+    DISPLAY.forEach(function(ENTRY) {
+      var LEVELCLASS = ENTRY.level || 'info';
+      var COLOR = '#aaa';
+      if (LEVELCLASS === 'error') COLOR = '#ff5555';
+      else if (LEVELCLASS === 'warn') COLOR = '#ffaa33';
+      else if (LEVELCLASS === 'info') COLOR = '#88ccff';
+      else if (LEVELCLASS === 'debug') COLOR = '#888';
+      var TIME = new Date(ENTRY.timestamp).toLocaleTimeString();
+      var MSG = ENTRY.message || '';
+      var PREFIX = ENTRY.prefix || '';
+      HTML += '<div style="color:' + COLOR + ';padding:2px 0;border-bottom:1px solid #1a1a2e;word-break:break-all;white-space:pre-wrap;">';
+      HTML += '<span style="color:#666;margin-right:8px;">[' + TIME + ']</span>';
+      if (PREFIX) HTML += '<span style="color:#88aaff;margin-right:8px;">' + PREFIX + '</span>';
+      HTML += '<span>' + MSG + '</span>';
+      if (ENTRY.data && typeof ENTRY.data === 'object') {
+        HTML += ' <span style="color:#666;font-size:10px;margin-left:8px;">' + JSON.stringify(ENTRY.data) + '</span>';
       }
-      html += '</div>';
+      HTML += '</div>';
     });
   }
-  html += '</div>';
-  return html;
+  HTML += '</div>';
+  return HTML;
 }
 // ===== END ADDED =====
 
@@ -200,12 +200,12 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     );
 
     // ===== ADDED: Append log viewer panel below error trace =====
-    var logViewerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
-    var logPanel = document.createElement('div');
-    logPanel.id = 'debuglogpanel';
-    logPanel.style.cssText = 'flex:1;display:flex;flex-direction:column;border-top:1px solid #444;margin-top:20px;max-height:40vh;background:rgba(0,0,0,0.8);font-family:\'Courier New\',monospace;font-size:12px;color:#eee;';
-    logPanel.innerHTML = logViewerHTML;
-    OVERLAY.appendChild(logPanel);
+    var LOGVIEWERHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
+    var LOGPANEL = document.createElement('div');
+    LOGPANEL.id = 'debuglogpanel';
+    LOGPANEL.style.cssText = 'flex:1;display:flex;flex-direction:column;border-top:1px solid #444;margin-top:20px;max-height:40vh;background:rgba(0,0,0,0.8);font-family:\'Courier New\',monospace;font-size:12px;color:#eee;';
+    LOGPANEL.innerHTML = LOGVIEWERHTML;
+    OVERLAY.appendChild(LOGPANEL);
     // ===== END ADDED =====
 
     var ACTIONS = document.createElement('div');
@@ -267,39 +267,39 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
 
     // ===== ADDED: attach event listeners for log controls =====
     setTimeout(function() {
-      var filterSelect = document.getElementById('debuglogfilter');
-      var clearBtn = document.getElementById('debuglogclear');
-      var autoCheck = document.getElementById('debuglogautoscroll');
-      if (filterSelect) {
-        filterSelect.addEventListener('change', function() {
-          DEBUGSLICE.LOGFILTER = filterSelect.value;
-          var panel = document.getElementById('debuglogpanel');
-          if (panel) {
-            panel.innerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
+      var FILTERSELECT = document.getElementById('debuglogfilter');
+      var CLEARBTN = document.getElementById('debuglogclear');
+      var AUTOCHECK = document.getElementById('debuglogautoscroll');
+      if (FILTERSELECT) {
+        FILTERSELECT.addEventListener('change', function() {
+          DEBUGSLICE.LOGFILTER = FILTERSELECT.value;
+          var PANEL = document.getElementById('debuglogpanel');
+          if (PANEL) {
+            PANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
           }
           SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
             UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
           }, GENERATETAG(), 'DEBUGACTOR');
         });
       }
-      if (clearBtn) {
-        clearBtn.addEventListener('click', function() {
+      if (CLEARBTN) {
+        CLEARBTN.addEventListener('click', function() {
           DEBUGSLICE.LOGS = [];
-          var panel = document.getElementById('debuglogpanel');
-          if (panel) {
-            panel.innerHTML = buildLogViewerHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
+          var PANEL = document.getElementById('debuglogpanel');
+          if (PANEL) {
+            PANEL.innerHTML = BUILDLOGVIEWERHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
           }
           SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
             UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
           }, GENERATETAG(), 'DEBUGACTOR');
         });
       }
-      if (autoCheck) {
-        autoCheck.addEventListener('change', function() {
-          DEBUGSLICE.LOGVIEWERAUTO = autoCheck.checked;
+      if (AUTOCHECK) {
+        AUTOCHECK.addEventListener('change', function() {
+          DEBUGSLICE.LOGVIEWERAUTO = AUTOCHECK.checked;
           if (DEBUGSLICE.LOGVIEWERAUTO) {
-            var list = document.getElementById('debugloglist');
-            if (list) list.scrollTop = list.scrollHeight;
+            var LIST = document.getElementById('debugloglist');
+            if (LIST) LIST.scrollTop = LIST.scrollHeight;
           }
           SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
             UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
@@ -320,7 +320,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
   // ===== ADDED: LOGLINE handler =====
   if (MESSAGE.TYPE === MESSAGETYPES.LOGLINE) {
     logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.message);
-    var entry = {
+    var ENTRY = {
       level: MESSAGE.level || 'info',
       message: MESSAGE.message || '',
       data: MESSAGE.data || null,
@@ -328,20 +328,20 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       prefix: MESSAGE.prefix || ''
     };
     if (!DEBUGSLICE.LOGS) DEBUGSLICE.LOGS = [];
-    DEBUGSLICE.LOGS.push(entry);
+    DEBUGSLICE.LOGS.push(ENTRY);
     if (DEBUGSLICE.LOGS.length > DEBUGSLICE.LOGSMAX) {
       DEBUGSLICE.LOGS = DEBUGSLICE.LOGS.slice(-DEBUGSLICE.LOGSMAX);
     }
     // Update viewer if visible
     if (DEBUGSLICE.OVERLAYVISIBLE && DEBUGSLICE.OVERLAY) {
-      var logPanel = document.getElementById('debuglogpanel');
-      if (logPanel) {
-        var currentFilter = DEBUGSLICE.LOGFILTER || 'all';
-        var auto = DEBUGSLICE.LOGVIEWERAUTO !== false;
-        logPanel.innerHTML = buildLogViewerHTML(DEBUGSLICE.LOGS, currentFilter, auto);
-        if (auto) {
-          var list = document.getElementById('debugloglist');
-          if (list) list.scrollTop = list.scrollHeight;
+      var LOGPANEL = document.getElementById('debuglogpanel');
+      if (LOGPANEL) {
+        var CURRENTFILTER = DEBUGSLICE.LOGFILTER || 'all';
+        var AUTO = DEBUGSLICE.LOGVIEWERAUTO !== false;
+        LOGPANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS, CURRENTFILTER, AUTO);
+        if (AUTO) {
+          var LIST = document.getElementById('debugloglist');
+          if (LIST) LIST.scrollTop = LIST.scrollHeight;
         }
         // Re-bind controls (simplified: use event listeners that reference functions)
       }

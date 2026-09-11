@@ -109,7 +109,7 @@ var mailboxfiltertypes = Object.freeze({
 
 var messageregistrystore = {};
 
-var messageregistry = {
+var MESSAGEREGISTRY = {
   register: function(owner, type, iface, handler) {
     var entry = messageregistrystore[owner];
     if (!entry) {

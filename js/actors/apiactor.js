@@ -42,20 +42,20 @@ function APIBEHAVIOR(ENV, MESSAGE) {
       if (!ISTEXTUAL) {
         return RESPONSE.json().then(function(DATA) {
           logdebug(ENV, '[APIACTOR]', 'ACTION JSON RESPONSE RECEIVED FOR:', MESSAGE.ENDPOINT);
-          var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+          var RESPONSESPEC = MESSAGE.RESPONSESPEC;
           var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || 'response';
           SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STATUS: STATUS, DATA: DATA }, 'APIACTOR', RESPONSETYPE);
         });
       }
       return RESPONSE.text().then(function(DATA) {
         logdebug(ENV, '[APIACTOR]', 'ACTION TEXT RESPONSE RECEIVED FOR:', MESSAGE.ENDPOINT);
-        var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+        var RESPONSESPEC = MESSAGE.RESPONSESPEC;
         var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || 'response';
         SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { STATUS: STATUS, DATA: DATA }, 'APIACTOR', RESPONSETYPE);
       });
     }).catch(function(ERR) {
       logerror(ENV, '[APIACTOR]', 'ACTION REQUEST ERROR FOR:', MESSAGE.ENDPOINT, ERR);
-      var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSESPEC = MESSAGE.RESPONSESPEC;
       var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || 'response';
       SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: ERR.message || String(ERR) }, 'APIACTOR', RESPONSETYPE);
     });

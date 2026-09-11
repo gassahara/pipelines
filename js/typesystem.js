@@ -353,7 +353,7 @@ function validateexecutionqueryblock(block) {
   var command = block.command || {};
   var cmd = command.COMMAND || command.command;
   if (!cmd) return ['EXECUTIONQUERY: block "' + block.id + '" requires command.COMMAND'];
-  var allowed = ['get', 'tasks', 'taskstatus', 'task_status', 'awaittask', 'await_task', 'canceltask', 'cancel_task', 'stoptask', 'stop_task'];
+  var allowed = ['get', 'tasks', 'taskstatus', 'awaittask', 'canceltask', 'stoptask'];
   if (allowed.indexOf(cmd) === -1) return ['EXECUTIONQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd];
   return [];
 }

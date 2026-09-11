@@ -20,30 +20,30 @@ function REGISTEROBJECT(GC, OBJ) {
 }
 
 // ---- OP-100: shared guarded-object walker (extracted from 3 GC mutators) ----
-function withobj(GC, ID, fn) {
+function WITHOBJ(GC, ID, FN) {
   if (!GC || !GC.OBJECTS || !GC.OBJECTS[ID]) return;
-  fn(GC.OBJECTS[ID]);
+  FN(GC.OBJECTS[ID]);
 }
 
-// ---- OP-101: GC mutators routed through withobj ----
+// ---- OP-101: GC mutators routed through WITHOBJ ----
 function UPDATESTATUS(GC, ID, STATUS) {
-  withobj(GC, ID, function(o) {
-    o.STATUS = STATUS;
-    o.status = STATUS;
+  WITHOBJ(GC, ID, function(OBJ) {
+    OBJ.STATUS = STATUS;
+    OBJ.status = STATUS;
   });
 }
 
 function INCREMENTSENT(GC, ID, COUNT) {
-  withobj(GC, ID, function(o) {
-    o.SENTCOUNT = (o.SENTCOUNT || 0) + (COUNT || 1);
-    o.sentCount = o.SENTCOUNT;
+  WITHOBJ(GC, ID, function(OBJ) {
+    OBJ.SENTCOUNT = (OBJ.SENTCOUNT || 0) + (COUNT || 1);
+    OBJ.sentCount = OBJ.SENTCOUNT;
   });
 }
 
 function INCREMENTRECEIVED(GC, ID, COUNT) {
-  withobj(GC, ID, function(o) {
-    o.RECEIVEDCOUNT = (o.RECEIVEDCOUNT || 0) + (COUNT || 1);
-    o.receivedCount = o.RECEIVEDCOUNT;
+  WITHOBJ(GC, ID, function(OBJ) {
+    OBJ.RECEIVEDCOUNT = (OBJ.RECEIVEDCOUNT || 0) + (COUNT || 1);
+    OBJ.receivedCount = OBJ.RECEIVEDCOUNT;
   });
 }
 
@@ -170,11 +170,11 @@ function PINGACTOR(ENQUEUEPING, TIMEOUT) {
 }
 
 // ---- OP-096 (P44): guard-and-respond helper ----
-function respondif(message, actorname, payload, defaulttype) {
-  if (!message.SENDER || !message.TAG) return false;
-  var spec = message.RESPONSESPEC || message.responseSpec;
-  var rtype = (spec && (spec.responsetype || spec.responseType)) || defaulttype || 'response';
-  SENDRESPONSE(message.SENDER, message.TAG, payload, actorname, rtype);
+function RESPONDIF(MESSAGE, ACTORNAME, PAYLOAD, DEFAULTTYPE) {
+  if (!MESSAGE.SENDER || !MESSAGE.TAG) return false;
+  var SPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+  var RESPONSETYPE = (SPEC && (SPEC.responsetype || SPEC.responseType)) || DEFAULTTYPE || 'response';
+  SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, PAYLOAD, ACTORNAME, RESPONSETYPE);
   return true;
 }
 

@@ -1,220 +1,220 @@
 var registeredconsumers = true;
 
 // APIACTOR
-messageregistry.register('APIACTOR', MESSAGETYPES.API, {
-  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
+MESSAGEREGISTRY.register('APIACTOR', MESSAGETYPES.API, {
+  ENDPOINT: 'string', METHOD: 'string', PAYLOAD: 'object?', TOKEN: 'string?', SENDER: 'string', TAG: 'string'
 }, APIBEHAVIOR);
 
-messageregistry.register('APIACTOR', MESSAGETYPES.FETCH, {
-  endpoint: 'string', method: 'string', payload: 'object?', token: 'string?', sender: 'string', tag: 'string'
+MESSAGEREGISTRY.register('APIACTOR', MESSAGETYPES.FETCH, {
+  ENDPOINT: 'string', METHOD: 'string', PAYLOAD: 'object?', TOKEN: 'string?', SENDER: 'string', TAG: 'string'
 }, APIBEHAVIOR);
 
 // DEBUGACTOR
-messageregistry.register('DEBUGACTOR', MESSAGETYPES.INITOVERLAY, { sender: 'string?', tag: 'string?' }, DEBUGBEHAVIOR);
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.INITOVERLAY, { SENDER: 'string?', TAG: 'string?' }, DEBUGBEHAVIOR);
 
-messageregistry.register('DEBUGACTOR', MESSAGETYPES.SHOW, { error: 'object', continuation: 'object?', sender: 'string?', tag: 'string?' }, DEBUGBEHAVIOR);
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.SHOW, { ERROR: 'object', CONTINUATION: 'object?', SENDER: 'string?', TAG: 'string?' }, DEBUGBEHAVIOR);
 
-messageregistry.register('DEBUGACTOR', MESSAGETYPES.HIDE, { sender: 'string?', tag: 'string?' }, DEBUGBEHAVIOR);
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.HIDE, { SENDER: 'string?', TAG: 'string?' }, DEBUGBEHAVIOR);
 
-messageregistry.register('DEBUGACTOR', MESSAGETYPES.RECOVER, { sender: 'string?', tag: 'string?' }, DEBUGBEHAVIOR);
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.RECOVER, { SENDER: 'string?', TAG: 'string?' }, DEBUGBEHAVIOR);
 
-messageregistry.register('DEBUGACTOR', MESSAGETYPES.PING, { sender: 'string?', tag: 'string?' }, DEBUGBEHAVIOR);
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.PING, { SENDER: 'string?', TAG: 'string?' }, DEBUGBEHAVIOR);
 
-messageregistry.register('DEBUGACTOR', MESSAGETYPES.LOGLINE, {
-  level: 'string',
-  message: 'string',
-  data: 'object?',
-  timestamp: 'number',
-  prefix: 'string?'
+MESSAGEREGISTRY.register('DEBUGACTOR', MESSAGETYPES.LOGLINE, {
+  LEVEL: 'string',
+  MESSAGE: 'string',
+  DATA: 'object?',
+  TIMESTAMP: 'number',
+  PREFIX: 'string?'
 }, DEBUGBEHAVIOR);
 
 // EXECUTIONACTOR
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.PIPELINELOADED, { pipelineid: 'string', env: 'object?' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.PIPELINELOADED, { PIPELINEID: 'string', ENV: 'object?' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.ENVUPDATED, { pipelineid: 'string', env: 'object' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.ENVUPDATED, { PIPELINEID: 'string', ENV: 'object' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.GETSTATUS, { pipelineid: 'string?' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.GETSTATUS, { PIPELINEID: 'string?' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, {
-  pipelineid: 'string', path: 'array', elementid: 'string', env: 'object', signature: 'object',
-  executor: 'function', properties: 'object?', async: 'boolean?', serialized: 'object?',
-  programRef: 'string?', elementId: 'string?', origin: 'object?'
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, {
+  PIPELINEID: 'string', PATH: 'array', ELEMENTID: 'string', ENV: 'object', SIGNATURE: 'object',
+  EXECUTOR: 'function', PROPERTIES: 'object?', ASYNC: 'boolean?', SERIALIZED: 'object?',
+  PROGRAMREF: 'string?', ORIGIN: 'object?'
 }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.AWAITTASK, { taskid: 'string' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.AWAITTASK, { TASKID: 'string' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.GETTASKS, { pipelineid: 'string?', stageid: 'string?', elementid: 'string?', kind: 'string?' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.GETTASKS, { PIPELINEID: 'string?', STAGEID: 'string?', ELEMENTID: 'string?', KIND: 'string?' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.GETTASKSTATUS, { taskid: 'string' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.GETTASKSTATUS, { TASKID: 'string' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.CANCELTASK, { taskid: 'string' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CANCELTASK, { TASKID: 'string' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.STOPTASK, { taskid: 'string' }, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.STOPTASK, { TASKID: 'string' }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.CCCABORT, {
-  pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?'
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CCCABORT, {
+  PIPELINEID: 'string', PATH: 'array', ELEMENTID: 'string', CONTINUATION: 'object?'
 }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.CCCCONTINUE, {
-  pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?'
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CCCCONTINUE, {
+  PIPELINEID: 'string', PATH: 'array', ELEMENTID: 'string', CONTINUATION: 'object?'
 }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.CCCRETRY, {
-  pipelineid: 'string', path: 'array', elementid: 'string', continuation: 'object?'
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.CCCRETRY, {
+  PIPELINEID: 'string', PATH: 'array', ELEMENTID: 'string', CONTINUATION: 'object?'
 }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.TASKSETTLED, {
-  taskid: 'string', status: 'string', result: 'any', error: 'object?'
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.TASKSETTLED, {
+  TASKID: 'string', STATUS: 'string', RESULT: 'any', ERROR: 'object?'
 }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.RECOVER, {}, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.RECOVER, {}, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.REGISTERPIPELINE, {
-  pipelineid: 'string', dna: 'object?', env: 'object?'
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.REGISTERPIPELINE, {
+  PIPELINEID: 'string', DNA: 'object?', ENV: 'object?'
 }, EXECUTIONBEHAVIOR);
 
-messageregistry.register('EXECUTIONACTOR', MESSAGETYPES.PING, {}, EXECUTIONBEHAVIOR);
+MESSAGEREGISTRY.register('EXECUTIONACTOR', MESSAGETYPES.PING, {}, EXECUTIONBEHAVIOR);
 
 // HYPERVISORACTOR
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.LOAD, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.LOAD, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.SAVE, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SAVE, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.GETENV, { pipelineId: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETENV, { PIPELINEID: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.SETENV, { pipelineId: 'string', env: 'object', stageId: 'string?', elementId: 'string?' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SETENV, { PIPELINEID: 'string', ENV: 'object', STAGEID: 'string?', ELEMENTID: 'string?' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.GETLATESTENV, { pipelineId: 'string', stageId: 'string', elementId: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETLATESTENV, { PIPELINEID: 'string', STAGEID: 'string', ELEMENTID: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.GETRENDERHTML, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETRENDERHTML, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.SETRENDERHTML, { html: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SETRENDERHTML, { HTML: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.GETEXECUTIONSTACK, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETEXECUTIONSTACK, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.SETEXECUTIONSTACK, { stack: 'array' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SETEXECUTIONSTACK, { STACK: 'array' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.GETROUTE, { key: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETROUTE, { KEY: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.SETROUTE, { key: 'string', route: 'object?' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SETROUTE, { KEY: 'string', ROUTE: 'object?' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.GETACTIVEPIPELINES, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETACTIVEPIPELINES, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.REGISTERPIPELINE, { pipelineId: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.REGISTERPIPELINE, { PIPELINEID: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.UNREGISTERPIPELINE, { pipelineId: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.UNREGISTERPIPELINE, { PIPELINEID: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
-  dna: 'object',
-  pipelineId: 'string',
-  options: 'object?',
-  sender: 'string',
-  tag: 'string'
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
+  DNA: 'object',
+  PIPELINEID: 'string',
+  OPTIONS: 'object?',
+  SENDER: 'string',
+  TAG: 'string'
 }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.SETPROGRAM, { programKey: 'string', programSource: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SETPROGRAM, { PROGRAMKEY: 'string', PROGRAMSOURCE: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.GETPROGRAM, { programKey: 'string' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETPROGRAM, { PROGRAMKEY: 'string' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.MARKBOOT, { boot: 'boolean' }, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.MARKBOOT, { BOOT: 'boolean' }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.EVENTTRIGGERED, {
-  pipelineId: 'string', stageId: 'string', stagePath: 'array', eventPayload: 'object'
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.EVENTTRIGGERED, {
+  PIPELINEID: 'string', STAGEID: 'string', STAGEPATH: 'array', EVENTPAYLOAD: 'object'
 }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.PING, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.PING, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.RECOVER, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.RECOVER, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.ACTIVATEACTORS, {}, HYPERVISORBEHAVIOR);
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.ACTIVATEACTORS, {}, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.COMPILESTAGE, {
-  pipeline: 'object', pipelineId: 'string', stageIndex: 'number', stagePath: 'array', briefcase: 'object', env: 'object?', options: 'object?'
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.COMPILESTAGE, {
+  PIPELINE: 'object', PIPELINEID: 'string', STAGEINDEX: 'number', STAGEPATH: 'array', BRIEFCASE: 'object', ENV: 'object?', OPTIONS: 'object?'
 }, HYPERVISORBEHAVIOR);
 
-messageregistry.register('HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETED, {
-  pipelineId: 'string', stageId: 'string', env: 'object?', nextStageMessage: 'object?'
+MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETED, {
+  PIPELINEID: 'string', STAGEID: 'string', ENV: 'object?', NEXTSTAGEMESSAGE: 'object?'
 }, HYPERVISORBEHAVIOR);
 
 // RENDERACTOR
-messageregistry.register('RENDERACTOR', MESSAGETYPES.RENDER, { id: 'string', renderer: 'function', data: 'any', env: 'object' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.RENDER, { ID: 'string', RENDERER: 'function', DATA: 'any', ENV: 'object' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.CLEAR, { id: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CLEAR, { ID: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.HTML, { id: 'string', markup: 'string', append: 'boolean' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.HTML, { ID: 'string', MARKUP: 'string', APPEND: 'boolean' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.REMOVE, { id: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REMOVE, { ID: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.SETSTYLES, { id: 'string', styles: 'object' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETSTYLES, { ID: 'string', STYLES: 'object' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.SETATTR, { id: 'string', name: 'string', value: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETATTR, { ID: 'string', NAME: 'string', VALUE: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.TOGGLECLASS, { id: 'string', classname: 'string', force: 'boolean?' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.TOGGLECLASS, { ID: 'string', CLASSNAME: 'string', FORCE: 'boolean?' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.CRYPTO, { bytes: 'number' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: 'number' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GEOLOCATION, { enablehighaccuracy: 'boolean', timeout: 'number' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GEOLOCATION, { ENABLEHIGHACCURACY: 'boolean', TIMEOUT: 'number' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.PERSISTENCE, { action: 'string', key: 'string?', value: 'string?' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PERSISTENCE, { ACTION: 'string', KEY: 'string?', VALUE: 'string?' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.CREATEELEMENT, { tag: 'string', props: 'object?' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CREATEELEMENT, { TAG: 'string', PROPS: 'object?' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.CREATECONTAINER, {}, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CREATECONTAINER, {}, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.CREATEFROMHTML, { html: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CREATEFROMHTML, { HTML: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.PROPERTY, { id: 'string', name: 'string', arguments: 'array?' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PROPERTY, { ID: 'string', NAME: 'string', ARGUMENTS: 'array?' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETHTML, { id: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETHTML, { ID: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETVALUE, { id: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETVALUE, { ID: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETSTYLE, { id: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETSTYLE, { ID: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETPOSITION, { id: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETPOSITION, { ID: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETLAYOUT, { id: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETLAYOUT, { ID: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.SETHTML, { id: 'string', value: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETHTML, { ID: 'string', VALUE: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.SETPOSITION, { id: 'string', value: 'object' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETPOSITION, { ID: 'string', VALUE: 'object' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.SETSTYLE, { id: 'string', value: 'object' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETSTYLE, { ID: 'string', VALUE: 'object' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.SETVALUE, { id: 'string', value: 'any' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETVALUE, { ID: 'string', VALUE: 'any' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.SETLAYOUT, { id: 'string', value: 'object' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.SETLAYOUT, { ID: 'string', VALUE: 'object' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETVIEWPORT, {}, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETVIEWPORT, {}, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETSCREEN, {}, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETSCREEN, {}, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.MATCHMEDIA, { query: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.MATCHMEDIA, { QUERY: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.GETBODYHTML, {}, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETBODYHTML, {}, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.RESTOREBODYHTML, { html: 'string' }, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.RESTOREBODYHTML, { HTML: 'string' }, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.RECOVER, {}, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.RECOVER, {}, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.PING, {}, RENDERBEHAVIOR);
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PING, {}, RENDERBEHAVIOR);
 
-messageregistry.register('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, {
-  pipelineId: 'string', stageId: 'string', stagePath: 'array', sourceid: 'string', event: 'string',
-  control: 'object', elements: 'array', briefcase: 'object?', options: 'object?'
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, {
+  PIPELINEID: 'string', STAGEID: 'string', STAGEPATH: 'array', SOURCEID: 'string', EVENT: 'string',
+  CONTROL: 'object', ELEMENTS: 'array', BRIEFCASE: 'object?', OPTIONS: 'object?'
 }, RENDERBEHAVIOR);
 
 // WORLDMAPACTOR
-messageregistry.register('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { updates: 'array' }, WORLDMAPBEHAVIOR);
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { UPDATES: 'array' }, WORLDMAPBEHAVIOR);
 
-messageregistry.register('WORLDMAPACTOR', MESSAGETYPES.UPDATEFN, { fn: 'function' }, WORLDMAPBEHAVIOR);
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.UPDATEFN, { FN: 'function' }, WORLDMAPBEHAVIOR);
 
-messageregistry.register('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { observer: 'function' }, WORLDMAPBEHAVIOR);
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.OBSERVE, { OBSERVER: 'function' }, WORLDMAPBEHAVIOR);
 
-messageregistry.register('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { observer: 'function' }, WORLDMAPBEHAVIOR);
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.UNOBSERVE, { OBSERVER: 'function' }, WORLDMAPBEHAVIOR);
 
-messageregistry.register('WORLDMAPACTOR', MESSAGETYPES.GETWORLDMAP, {}, WORLDMAPBEHAVIOR);
+MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.GETWORLDMAP, {}, WORLDMAPBEHAVIOR);
 
 // MAILACTOR
-messageregistry.register('MAILACTOR', MESSAGETYPES.SEND, { recipient: 'string', message: 'object' }, MAILBEHAVIOR);
-messageregistry.register('MAILACTOR', MESSAGETYPES.ACK, { recipient: 'string', ids: 'array' }, MAILBEHAVIOR);
+MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.SEND, { RECIPIENT: 'string', MESSAGE: 'object' }, MAILBEHAVIOR);
+MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.ACK, { RECIPIENT: 'string', IDS: 'array' }, MAILBEHAVIOR);
