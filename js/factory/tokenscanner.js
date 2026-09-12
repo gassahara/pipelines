@@ -11,13 +11,10 @@ var hasown = Object.prototype.hasOwnProperty;
 function trampoline(fn) {
   return function() {
     var result = fn.apply(null, arguments);
-    function unwind(r) {
-      if (typeof r === 'function') {
-        return unwind(r());
-      }
-      return r;
+    while (typeof result === 'function') {
+      result = result();
     }
-    return unwind(result);
+    return result;
   };
 }
 
