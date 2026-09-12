@@ -1100,6 +1100,10 @@ function bootdna(dna, options) {
             err.diagnostic = result.DIAGNOSTIC || {};
             throw err;
           }
+          // ---- P4 (boot-outcome-propagation): a BOOTERROR from HYPERVISOR is a
+          // stage failure. Reject the outer promise so callers such as appinit.js
+          // cannot receive a resolved `undefined` when the boot actually failed.
+          // This path is already in place; P4 records it as the frozen contract.
           if (result && result.TYPE === 'BOOTERROR') {
             var err = new Error(result.ERROR || 'BOOTERROR received');
             err.diagnostic = result.DIAGNOSTIC || {};

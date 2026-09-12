@@ -159,6 +159,11 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
       TIMESTAMP: Date.now(),
       PAYLOAD: FLATMESSAGE
     };
+    // ---- P3 (envelope-payload-case): expose both PAYLOAD and payload. The
+    // mailbox reader in blockcompiler.js (createpersistentelementwrapper) reads
+    // `mailboxmessage.payload` (lowercase) while this producer writes PAYLOAD
+    // (uppercase). Non-destructive aliasing — the uppercase form is preserved.
+    ENVELOPE.payload = ENVELOPE.PAYLOAD;
 
     ADDENVELOPETOMAILBOX(ENVELOPE);
 
@@ -215,6 +220,20 @@ function GETMAILBOX() {
 function QUERYMAILBOX(FILTER) {
   if (!FILTER) FILTER = {};
 
+  // ---- P1 (mailbox-filter-case): non-destructive case-aliasing of filter keys.
+  // QUERYMAILBOX / WAITFORMAILBOX read FILTER.TYPE / FILTER.TAG / FILTER.SENDER /
+  // FILTER.RECIPIENT (UPPERCASE); every current caller passes { tag, sender, type }
+  // (lowercase). Before this change every predicate was inert and the query returned
+  // the first unread mailbox record of any shape. Aliasing both cases preserves the
+  // readers' uppercase reads and the callers' lowercase writes without overwriting
+  // either. Mirrors the OP-011 pattern in SENDINSTRUCTION.
+  Object.keys(FILTER).forEach(function(FKEY) {
+    var FUP = FKEY.toUpperCase();
+    var FLOW = FKEY.toLowerCase();
+    if (FUP !== FKEY && FILTER[FUP] === undefined) FILTER[FUP] = FILTER[FKEY];
+    if (FLOW !== FKEY && FILTER[FLOW] === undefined) FILTER[FLOW] = FILTER[FKEY];
+  });
+
   var FILTERTYPE = FILTER.TYPE;
   if (FILTERTYPE !== undefined) {
     var ALLOWEDTYPES = Object.keys(MESSAGETYPES).map(function(K) { return MESSAGETYPES[K]; });
@@ -245,6 +264,11 @@ function QUERYMAILBOX(FILTER) {
   }
 
   var MATCHED = CANDIDATES.filter(function(ITEM) {
+    // ---- P2 (record-role-discrimination): EXPECTATION records are settlement
+    // bookkeeping, not message envelopes; they carry no PAYLOAD. A payload-consuming
+    // query must never receive one. Restrict candidates to records that carry a
+    // PAYLOAD (equivalently, to ENVELOPE records).
+    if (!ITEM || !ITEM.PAYLOAD) return false;
     var MATCHES = true;
     var ITEMRECIPIENT = ITEM.RECIPIENT;
     var ITEMSENDER = ITEM.SENDER;
@@ -317,6 +341,16 @@ function QUERYMAILBOX(FILTER) {
 
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = EXPECTATIONTIMEOUT;
+  // ---- P1: same non-destructive filter key-case aliasing as in QUERYMAILBOX, so
+  // WAITFORMAILBOX's own TAGVAL read (FILTER.TAG) also sees lowercase callers.
+  if (FILTER && typeof FILTER === 'object') {
+    Object.keys(FILTER).forEach(function(FKEY) {
+      var FUP = FKEY.toUpperCase();
+      var FLOW = FKEY.toLowerCase();
+      if (FUP !== FKEY && FILTER[FUP] === undefined) FILTER[FUP] = FILTER[FKEY];
+      if (FLOW !== FKEY && FILTER[FLOW] === undefined) FILTER[FLOW] = FILTER[FKEY];
+    });
+  }
   return new Promise(function(RESOLVE, REJECT) {
     if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       REJECT(new Error('Cancelled'));
