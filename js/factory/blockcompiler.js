@@ -134,7 +134,6 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
   var properties = buildproperties(merged, inherited);
   var inputsobj = {};
 
-  // ---- A7 / P20-call: C11 runtime input-definedness enforcement ----
   assertdefinedinputs(
     merged.id || 'unknown',
     io.inputs || [],
@@ -187,12 +186,6 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
     }
     var analysis = analyzefnblock(merged, properties.deps || {}, env, blockcompilertools.parsesource);
     if (!analysis.valid) {
-      // OP-026 (R-29a): DISTINGUISH the failure kinds. A completed analysis that FOUND free identifiers is a
-      // purity violation; an analysis that could NOT COMPLETE is an analysis failure and must carry the parser's
-      // own diagnostic. Before this change every violation string was concatenated into the fixed phrase
-      // "has undeclared free identifiers", so a parser crash was reported as a purity breach — the defect graded
-      // as FB-29. The kind is already produced by fnblock (@file=js/factory/fnblock.js#L753-L775), so this is a
-      // branch, not a new signal.
       var analysisdiagkind = (analysis.diagnostics && analysis.diagnostics.kind) ? analysis.diagnostics.kind : null;
       var analysisblockid = merged.id || 'unknown';
       if (analysisdiagkind === 'parser-rejected' || analysisdiagkind === 'parser-absent') {
@@ -215,11 +208,34 @@ function createerrorcontext(id, stagetype) {
   };
 }
 
-// ---- C.2.1: unwrap response envelope ----
+// ---- C.2.1: unwrap response envelope (P43: reaches through payload / PAYLOAD) ----
 function unwrap(response) {
   if (!response) return {};
   if (response.RESULT !== undefined) return response.RESULT;
   if (response.result !== undefined) return response.result;
+  var inner = response.payload !== undefined ? response.payload : response.PAYLOAD;
+  if (inner && typeof inner === 'object') {
+    if (inner.RESULT !== undefined) return inner.RESULT;
+    if (inner.result !== undefined) return inner.result;
+  }
+  return response;
+}
+
+// ---- P42: wrap a compiler-driven dispatcher response under the block's
+//      declared single output key. Applied by every compiler-driven blockfn
+//      (domquery, api, fetch, crypto, executionquery, io, wait).
+//      - 0 declared keys      → return {}
+//      - 1 declared key       → return { <key>: response }
+//      - many declared keys   → return response (the block author's obligation)
+//      fn and writer blocks are exempt: their source already shapes the return.
+function wrapBlockResult(response, sig) {
+  var outputkeys = Object.keys(sig.outputs || {});
+  if (outputkeys.length === 0) return {};
+  if (outputkeys.length === 1) {
+    var wrapped = {};
+    wrapped[outputkeys[0]] = response;
+    return wrapped;
+  }
   return response;
 }
 
@@ -280,6 +296,7 @@ function buildresponse(mappingobj, raw) {
 }
 
 // ---- OP-193: compilehttpblock response handler via sendandawait ----
+// P42: wraps the http result under the block's declared single output key.
 function compilehttpblock(merged, id, sig, istextual, options) {
   var innerfn = function(env) {
     var label = (istextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
@@ -313,7 +330,7 @@ function compilehttpblock(merged, id, sig, istextual, options) {
         if (merged.mapping && merged.mapping.response && result && typeof result === 'object') {
           finalresult = buildresponse(merged.mapping.response, result);
         }
-        return finalresult;
+        return wrapBlockResult(finalresult, sig);
       });
   };
 
@@ -377,15 +394,11 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
     return wrapcompiledfn(innerfn, 'writer', id);
   };
 
+  // ---- P42: io wraps its result under the declared single output key.
   compilers[blocktypes.io] = function(merged, id, sig) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling IO block:', id);
     var innerfn = function(env) {
       logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing IO block:', id);
-      // R-41 (analysis8, constraint #4): the IO block accepts an INLINE `fn:`, mirroring the writer branch at
-      // #L350. Before this change the branch read `merged.ref` only, so an io block declaring its function inline
-      // — the form the standing constraint requires — failed validation although the block type is otherwise
-      // complete. The error message and the trace label are corrected with the lookup, since both also assumed
-      // the ref-only form.
       var io = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!io) throw new Error('io block "' + id + '" must declare an inline fn or a ref function');
       var ioname = (typeof merged.fn === 'function') ? id : (merged.ref || id);
@@ -393,12 +406,13 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       (sig.inputs || []).forEach(function(inp) { inputdata[inp] = compilepathaccessor(inp)(env); });
       return callwithstack(evalstack, 'io:' + ioname, 'async-await', function(e) {
         return Promise.resolve(io(inputdata, e));
-      }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') });
+      }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') })
+        .then(function(r) { return wrapBlockResult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'io', id);
   };
 
-  // ---- OP-195: domquery via sendandawait ----
+  // ---- OP-195 + P42: domquery wraps its response under the declared single output key.
   compilers[blocktypes.domquery] = function(merged, id, sig) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
     var innerfn = function(env) {
@@ -443,31 +457,37 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         QUERY: props.query,
         ARGUMENTS: props.arguments,
         NAME: props.name
-      }, mailboxwaittimeout, 'domresult');
+      }, mailboxwaittimeout, 'domresult')
+        .then(function(r) { return wrapBlockResult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'domquery', id);
   };
 
+  // ---- P42: crypto wraps its response under the declared single output key.
   compilers[blocktypes.crypto] = function(merged, id, sig) {
     var innerfn = function(env) {
       var outputkey = Object.keys(sig.outputs || {})[0];
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
-      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxwaittimeout, 'domresult');
+      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxwaittimeout, 'domresult')
+        .then(function(r) { return wrapBlockResult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'crypto', id);
   };
 
-  compilers[blocktypes.wait] = function(merged, id) {
+  // ---- P42: wait wraps its (empty) result under the declared single output key.
+  compilers[blocktypes.wait] = function(merged, id, sig) {
     var innerfn = function(env) {
       var ms = typeof merged.ms === 'number' ? merged.ms : compilepathaccessor(merged.ms)(env);
       if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
-      return new Promise(function(r) { setTimeout(r, ms); }).then(function() { return {}; });
+      return new Promise(function(r) { setTimeout(r, ms); })
+        .then(function() { return wrapBlockResult({}, sig); });
     };
     return wrapcompiledfn(innerfn, 'wait', id);
   };
 
+  // ---- P42: executionquery wraps its response under the declared single output key.
   compilers[blocktypes.executionquery] = function(merged, id, sig) {
     var innerfn = function(env) {
       var command = merged.command || {};
@@ -484,7 +504,8 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         case 'stoptask': msgtype = MESSAGETYPES.STOPTASK; break;
         default: throw new Error('[executionquery] unknown command: ' + cmd);
       }
-      return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxwaittimeout, responsetype);
+      return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxwaittimeout, responsetype)
+        .then(function(r) { return wrapBlockResult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'executionquery', id);
   };
@@ -516,11 +537,6 @@ function compileblock(block, inheritedbriefcase, constants, options) {
 }
 
 // ---- END segment 1 of 3 ----
-
-
-
-
-
 
 // ============================================================
 // §3 — Pipeline orchestration
@@ -639,7 +655,6 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
         });
     };
 
-    // R-ARC-24: tagging handled by wrapcompiledfn's 4th arg
     return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
   });
 }
@@ -893,8 +908,6 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 }
 
 // ---- END segment 2 of 3 ----
-
-
 
 // ============================================================
 // §4 — Loader & boot
