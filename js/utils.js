@@ -15,7 +15,7 @@ var deepmerge = function(target, source) {
 
 function createapiconstants() {
   return Object.freeze({
-    apibase: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1'
+    APIBASE: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1'
   });
 }
 

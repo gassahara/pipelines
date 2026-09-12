@@ -6,13 +6,13 @@ var pipelinesmanifest = [
     'isidentifierstart', 'isidentifierpart'
   ] },
   { src: 'factory/parser.js', provides: [
-    'parseSource', 'detectfreeidentifiers'
+    'parsesource', 'detectfreeidentifiers'
   ] },
   { src: 'factory/fnblock.js', provides: [
     'containsidentifier', 'findmatchingparen', 'findbodybrace',
     'creatednaserializerconstants', 'validaterevivablefunctionblock', 'validaterevivableobject',
     'resolvefrombriefcase', 'preparefunctionforserialization', 'serializeselfcontainedclosure',
-    'preparednaforserialization', 'structuralhash', 'serializeFunctionWithDeps', 'serializeDepValue',
+    'preparednaforserialization', 'structuralhash', 'serializefunctionwithdeps', 'serializedepvalue',
     'containsstyleaccess', 'mapoutputs', 'analyzefnblock', 'createblockanalyzer',
     'createblockanalyzers', 'compilefnblock'
   ] },
@@ -21,7 +21,7 @@ var pipelinesmanifest = [
     'createverbosityconstants', 'getverbosity', 'setverbosity',
     'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'
   ] },
-  { src: 'functorial/maybe.js', provides: ['just', 'nothing', 'of', 'fromnullable', 'getorelselazy', 'maybealgebra'] },
+  { src: 'functorial/maybe.js', provides: ['just', 'nothing', 'fromnullable', 'getorelselazy', 'maybealgebra'] },
   { src: 'evalstack.js', provides: ['createevalstack', 'evalstack', 'frames', 'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack', 'currentcontinuation', 'chaincontinuations'] },
   { src: 'factory/callwithstack.js', provides: ['callwithstack'] },
   { src: 'factory/colorutils.js', provides: ['colorcore', 'colorharmony', 'colorcontrast'] },

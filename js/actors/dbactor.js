@@ -18,7 +18,7 @@ var DBACTORCONSUMERS = {};
 function GETSTORAGE() {
   try {
     var STORAGE = typeof localStorage !== 'undefined' ? localStorage :
-      (typeof globalthis !== 'undefined' ? globalthis.localStorage : null);
+      (typeof globalThis !== 'undefined' ? globalThis.localStorage : null);
     if (STORAGE && typeof STORAGE.getItem === 'function' && typeof STORAGE.setItem === 'function') {
       return STORAGE;
     }
@@ -42,7 +42,7 @@ function SERIALIZEFORPERSISTENCE(VALUE, SEEN, REFMAP) {
   }
   if (T === 'undefined') return { TYPEMARKER: 'undefined' };
   if (T === 'function') return { TYPEMARKER: 'function', SOURCE: VALUE.toString() };
-  if (typeof HTMLELEMENT !== 'undefined' && VALUE instanceof HTMLELEMENT) {
+  if (typeof HTMLElement !== 'undefined' && VALUE instanceof HTMLElement) {
     return { TYPEMARKER: 'dom', TAG: VALUE.tagName, ID: VALUE.id || null };
   }
   if (typeof Node !== 'undefined' && VALUE instanceof Node) {
@@ -125,7 +125,7 @@ function DNAREPLACER(KEY, VALUE) {
 }
 
 function DNAREVIVER(KEY, VALUE) {
-  if (VALUE && typeof VALUE === 'object' && (VALUE.SERIALIZEDFUNCTION === true || VALUE.serializedFunction === true)) {
+  if (VALUE && typeof VALUE === 'object' && VALUE.SERIALIZEDFUNCTION === true) {
     try {
       if (VALUE.DEPS) {
         var DEPS = VALUE.DEPS;
@@ -177,7 +177,7 @@ function STOREPAIR(KEY, VALUE) {
 function CONSOLIDATEGRAPH(NODE) {
   if (NODE === null || NODE === undefined) return NODE;
   if (typeof NODE === 'object') {
-    if (NODE.PAIRREFERENCE || NODE.pairReference) return NODE;
+    if (NODE.PAIRREFERENCE) return NODE;
     if (Array.isArray(NODE)) return NODE.map(CONSOLIDATEGRAPH);
     if (NODE.BRIEFCASE && typeof NODE.BRIEFCASE === 'object') {
       var BRIEFCASE = NODE.BRIEFCASE;
@@ -203,7 +203,7 @@ function CONSOLIDATEGRAPH(NODE) {
 function RESTOREGRAPH(NODE) {
   if (NODE === null || NODE === undefined) return NODE;
   if (typeof NODE === 'object') {
-    var REFID = NODE.PAIRREFERENCE || NODE.pairReference;
+    var REFID = NODE.PAIRREFERENCE;
     if (REFID) {
       var ENTRY = PAIRSTORE['REF:' + REFID];
       return ENTRY ? ENTRY.VALUE : undefined;
@@ -307,16 +307,15 @@ function OPTIMIZESERIALIZEDDNA(JSONSTRING) {
 function DEOPTIMIZESERIALIZEDDNA(JSONSTRING) {
   logdebug(DBSTATE, '[DBACTOR]', 'DEOPTIMIZESERIALIZEDDNA START, INPUT LENGTH:', JSONSTRING.length);
   var OBJ = JSON.parse(JSONSTRING);
-  var STOREDATA = OBJ.FRAMEWORKPAIRSTORE || OBJ.frameworkPairStore;
+  var STOREDATA = OBJ.FRAMEWORKPAIRSTORE;
   if (STOREDATA) {
     DESERIALIZEPAIRSTORE(STOREDATA);
     delete OBJ.FRAMEWORKPAIRSTORE;
-    delete OBJ.frameworkPairStore;
   }
   var RESOLVENODE = function(NODE) {
     if (Array.isArray(NODE)) return NODE.map(RESOLVENODE);
     if (NODE && typeof NODE === 'object') {
-      var REFID = NODE.PAIRREFERENCE || NODE.pairReference;
+      var REFID = NODE.PAIRREFERENCE;
       if (REFID) {
         var ENTRY = PAIRSTORE['REF:' + REFID];
         return ENTRY ? ENTRY.VALUE : undefined;

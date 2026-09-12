@@ -17,18 +17,18 @@ var MAILBOXRESPONSETYPE = 'MAILBOXRESPONSE';
 
 function ADDENVELOPETOMAILBOX(ENVELOPE) {
   MAILBOX.push(ENVELOPE);
-  var TAG = ENVELOPE.TAG || ENVELOPE.tag;
+  var TAG = ENVELOPE.TAG;
   if (TAG) {
     if (!INDEXBYTAG[TAG]) INDEXBYTAG[TAG] = [];
     INDEXBYTAG[TAG].push(ENVELOPE);
   }
-  var SENDER = ENVELOPE.SENDER || ENVELOPE.sender;
+  var SENDER = ENVELOPE.SENDER;
   if (SENDER) {
     if (!INDEXBYSENDER[SENDER]) INDEXBYSENDER[SENDER] = [];
     INDEXBYSENDER[SENDER].push(ENVELOPE);
   }
-  var PAYLOAD = ENVELOPE.PAYLOAD || ENVELOPE.payload;
-  var TYPE = PAYLOAD && (PAYLOAD.TYPE || PAYLOAD.type);
+  var PAYLOAD = ENVELOPE.PAYLOAD;
+  var TYPE = PAYLOAD && PAYLOAD.TYPE;
   if (TYPE) {
     if (!INDEXBYTYPE[TYPE]) INDEXBYTYPE[TYPE] = [];
     INDEXBYTYPE[TYPE].push(ENVELOPE);
@@ -38,18 +38,18 @@ function ADDENVELOPETOMAILBOX(ENVELOPE) {
 function REMOVEENVELOPEFROMMAILBOX(ENVELOPE) {
   var IDX = MAILBOX.indexOf(ENVELOPE);
   if (IDX !== -1) MAILBOX.splice(IDX, 1);
-  var TAG = ENVELOPE.TAG || ENVELOPE.tag;
+  var TAG = ENVELOPE.TAG;
   if (TAG && INDEXBYTAG[TAG]) {
     INDEXBYTAG[TAG] = INDEXBYTAG[TAG].filter(function(E) { return E !== ENVELOPE; });
     if (INDEXBYTAG[TAG].length === 0) delete INDEXBYTAG[TAG];
   }
-  var SENDER = ENVELOPE.SENDER || ENVELOPE.sender;
+  var SENDER = ENVELOPE.SENDER;
   if (SENDER && INDEXBYSENDER[SENDER]) {
     INDEXBYSENDER[SENDER] = INDEXBYSENDER[SENDER].filter(function(E) { return E !== ENVELOPE; });
     if (INDEXBYSENDER[SENDER].length === 0) delete INDEXBYSENDER[SENDER];
   }
-  var PAYLOAD = ENVELOPE.PAYLOAD || ENVELOPE.payload;
-  var TYPE = PAYLOAD && (PAYLOAD.TYPE || PAYLOAD.type);
+  var PAYLOAD = ENVELOPE.PAYLOAD;
+  var TYPE = PAYLOAD && PAYLOAD.TYPE;
   if (TYPE && INDEXBYTYPE[TYPE]) {
     INDEXBYTYPE[TYPE] = INDEXBYTYPE[TYPE].filter(function(E) { return E !== ENVELOPE; });
     if (INDEXBYTYPE[TYPE].length === 0) delete INDEXBYTYPE[TYPE];
@@ -92,12 +92,12 @@ function RESOLVEEXPECTATION(TAG) {
 
     if (INDEXBYTAG[TAG]) {
       INDEXBYTAG[TAG].slice().forEach(function(ENVLP) {
-        if ((ENVLP.TAG || ENVLP.tag) === TAG) REMOVEENVELOPEFROMMAILBOX(ENVLP);
+        if (ENVLP.TAG === TAG) REMOVEENVELOPEFROMMAILBOX(ENVLP);
       });
     }
 
     var EXPIDX = MAILBOX.findIndex(function(ITEM) {
-      return (ITEM.TAG || ITEM.tag) === TAG && (ITEM.READ === 'UNREAD') && (ITEM.STATUS === 'RESOLVED');
+      return ITEM.TAG === TAG && (ITEM.READ === 'UNREAD') && (ITEM.STATUS === 'RESOLVED');
     });
     if (EXPIDX !== -1) MAILBOX.splice(EXPIDX, 1);
   }
@@ -118,34 +118,34 @@ function REJECTEXPECTATION(TAG, ERROR) {
 
     if (INDEXBYTAG[TAG]) {
       INDEXBYTAG[TAG].slice().forEach(function(ENVLP) {
-        if ((ENVLP.TAG || ENVLP.tag) === TAG) REMOVEENVELOPEFROMMAILBOX(ENVLP);
+        if (ENVLP.TAG === TAG) REMOVEENVELOPEFROMMAILBOX(ENVLP);
       });
     }
 
     var EXPIDX = MAILBOX.findIndex(function(ITEM) {
-      return (ITEM.TAG || ITEM.tag) === TAG && (ITEM.READ === 'UNREAD') && (ITEM.STATUS === 'TIMEOUT');
+      return ITEM.TAG === TAG && (ITEM.READ === 'UNREAD') && (ITEM.STATUS === 'TIMEOUT');
     });
     if (EXPIDX !== -1) MAILBOX.splice(EXPIDX, 1);
   }
 }
 
 function MAILBEHAVIOR(ENV, MESSAGE) {
-  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE || MESSAGE.type);
+  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
   var MAILSLICE = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
 
-  var MSGTYPE = MESSAGE.TYPE || MESSAGE.type;
+  var MSGTYPE = MESSAGE.TYPE;
   if (MSGTYPE === MESSAGETYPES.SEND) {
-    var RECIPIENT = MESSAGE.RECIPIENT || MESSAGE.recipient;
+    var RECIPIENT = MESSAGE.RECIPIENT;
     if (!RECIPIENT || typeof RECIPIENT !== 'string') {
       return ENV;
     }
     if (!MAILSLICE.QUEUES[RECIPIENT]) MAILSLICE.QUEUES[RECIPIENT] = [];
-    var FLATMESSAGE = MESSAGE.MESSAGE || MESSAGE.message;
+    var FLATMESSAGE = MESSAGE.MESSAGE;
 
-    var FLATTYPE = FLATMESSAGE && (FLATMESSAGE.TYPE || FLATMESSAGE.type);
-    var FLATTAG = FLATMESSAGE && (FLATMESSAGE.TAG || FLATMESSAGE.tag);
-    var FLATSENDER = FLATMESSAGE && (FLATMESSAGE.SENDER || FLATMESSAGE.sender);
+    var FLATTYPE = FLATMESSAGE && FLATMESSAGE.TYPE;
+    var FLATTAG = FLATMESSAGE && FLATMESSAGE.TAG;
+    var FLATSENDER = FLATMESSAGE && FLATMESSAGE.SENDER;
 
     logdebug(ENV, '[MAILACTOR]', 'SEND START:', 'RECIPIENT=', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG, 'SENDER=', FLATSENDER);
 
@@ -178,14 +178,14 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
       }
     }
 
-    var RESPONSESPEC = FLATMESSAGE && (FLATMESSAGE.RESPONSESPEC || FLATMESSAGE.responseSpec);
+    var RESPONSESPEC = FLATMESSAGE && FLATMESSAGE.RESPONSESPEC;
     if (RESPONSESPEC && FLATTAG) {
       CREATEEXPECTATION(
         FLATTAG,
         RECIPIENT,
         FLATSENDER || 'system',
         FLATTYPE,
-        (FLATMESSAGE && (FLATMESSAGE.CONTEXT || FLATMESSAGE.context)) || null,
+        (FLATMESSAGE && FLATMESSAGE.CONTEXT) || null,
         RESPONSESPEC
       );
     }
@@ -194,8 +194,8 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
   }
 
   if (MSGTYPE === MESSAGETYPES.ACK) {
-    var ACKRECIPIENT = MESSAGE.RECIPIENT || MESSAGE.recipient;
-    var ACKIDS = MESSAGE.IDS || MESSAGE.ids || [];
+    var ACKRECIPIENT = MESSAGE.RECIPIENT;
+    var ACKIDS = MESSAGE.IDS || [];
     var ACKQUEUE = MAILSLICE.QUEUES[ACKRECIPIENT] || [];
     ACKQUEUE.forEach(function(M) {
       if (ACKIDS.indexOf(M.ID || M.id) !== -1) {
@@ -215,7 +215,7 @@ function GETMAILBOX() {
 function QUERYMAILBOX(FILTER) {
   if (!FILTER) FILTER = {};
 
-  var FILTERTYPE = FILTER.TYPE || FILTER.type;
+  var FILTERTYPE = FILTER.TYPE;
   if (FILTERTYPE !== undefined) {
     var ALLOWEDTYPES = Object.keys(MESSAGETYPES).map(function(K) { return MESSAGETYPES[K]; });
     var FILTERUPPER = String(FILTERTYPE).toUpperCase();
@@ -230,11 +230,11 @@ function QUERYMAILBOX(FILTER) {
   logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX FILTER:', JSON.stringify(FILTER));
 
   var CANDIDATES = MAILBOX;
-  var FILTERTAG = FILTER.TAG || FILTER.tag;
-  var FILTERSENDER = FILTER.SENDER || FILTER.sender;
-  var FILTERRECIPIENT = FILTER.RECIPIENT || FILTER.recipient;
-  var FILTERSTATUS = FILTER.STATUS || FILTER.status;
-  var FILTERREAD = FILTER.READ || FILTER.read;
+  var FILTERTAG = FILTER.TAG;
+  var FILTERSENDER = FILTER.SENDER;
+  var FILTERRECIPIENT = FILTER.RECIPIENT;
+  var FILTERSTATUS = FILTER.STATUS;
+  var FILTERREAD = FILTER.READ;
 
   if (FILTERTAG && INDEXBYTAG[FILTERTAG]) {
     CANDIDATES = INDEXBYTAG[FILTERTAG];
@@ -246,14 +246,14 @@ function QUERYMAILBOX(FILTER) {
 
   var MATCHED = CANDIDATES.filter(function(ITEM) {
     var MATCHES = true;
-    var ITEMRECIPIENT = ITEM.RECIPIENT || ITEM.recipient;
-    var ITEMSENDER = ITEM.SENDER || ITEM.sender;
-    var ITEMTAG = ITEM.TAG || ITEM.tag;
-    var ITEMTIMESTAMP = ITEM.TIMESTAMP || ITEM.timestamp;
-    var ITEMSTATUS = ITEM.STATUS || ITEM.status;
-    var ITEMREAD = ITEM.READ || ITEM.read;
-    var ITEMPAYLOAD = ITEM.PAYLOAD || ITEM.payload;
-    var ITEMTYPE = ITEMPAYLOAD ? (ITEMPAYLOAD.TYPE || ITEMPAYLOAD.type) : (ITEM.TYPE || ITEM.type);
+    var ITEMRECIPIENT = ITEM.RECIPIENT;
+    var ITEMSENDER = ITEM.SENDER;
+    var ITEMTAG = ITEM.TAG;
+    var ITEMTIMESTAMP = ITEM.TIMESTAMP;
+    var ITEMSTATUS = ITEM.STATUS;
+    var ITEMREAD = ITEM.READ;
+    var ITEMPAYLOAD = ITEM.PAYLOAD;
+    var ITEMTYPE = ITEMPAYLOAD ? ITEMPAYLOAD.TYPE : ITEM.TYPE;
 
     if (FILTERRECIPIENT !== undefined && ITEMRECIPIENT !== FILTERRECIPIENT) MATCHES = false;
     if (FILTERSENDER !== undefined && ITEMSENDER !== FILTERSENDER) MATCHES = false;
@@ -283,7 +283,7 @@ function QUERYMAILBOX(FILTER) {
 
   var SEENTAGS = {};
   var DEDUPED = MATCHED.filter(function(ITEM) {
-    var TAGVAL = ITEM.TAG || ITEM.tag;
+    var TAGVAL = ITEM.TAG;
     if (TAGVAL) {
       if (SEENTAGS[TAGVAL]) return false;
       SEENTAGS[TAGVAL] = true;
@@ -296,13 +296,13 @@ function QUERYMAILBOX(FILTER) {
   var RESULT = DEDUPED.map(function(ITEM) {
     if (ITEM && (ITEM.READ !== 'READ')) {
       ITEM.READ = 'READ';
-      logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX MARKING READ:', ITEM.ID, 'TAG=', ITEM.TAG || ITEM.tag);
+      logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX MARKING READ:', ITEM.ID, 'TAG=', ITEM.TAG);
     }
     return ITEM;
   });
 
   RESULT.forEach(function(ITEM) {
-    var TAGVAL = ITEM && (ITEM.TAG || ITEM.tag);
+    var TAGVAL = ITEM && ITEM.TAG;
     if (ITEM && TAGVAL && EXPECTATIONS[TAGVAL] && (ITEM.READ === 'READ')) {
       RESOLVEEXPECTATION(TAGVAL);
     }
@@ -318,12 +318,12 @@ function QUERYMAILBOX(FILTER) {
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = EXPECTATIONTIMEOUT;
   return new Promise(function(RESOLVE, REJECT) {
-    if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.activecancellationtoken && blockcompilerstate.activecancellationtoken.cancelled) {
+    if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       REJECT(new Error('Cancelled'));
       return;
     }
 
-    var TAGVAL = FILTER && (FILTER.TAG || FILTER.tag);
+    var TAGVAL = FILTER && FILTER.TAG;
     if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS !== 'PENDING') {
       REJECT(new Error('Expectation already settled'));
       return;
@@ -337,7 +337,7 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
     }
 
     var CHECKINTERVAL = setInterval(function() {
-      if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.activecancellationtoken && blockcompilerstate.activecancellationtoken.cancelled) {
+      if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
         clearInterval(CHECKINTERVAL);
         REJECT(new Error('Cancelled'));
         return;
@@ -357,7 +357,7 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
 
     setTimeout(function() {
       clearInterval(CHECKINTERVAL);
-      if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.activecancellationtoken && blockcompilerstate.activecancellationtoken.cancelled) {
+      if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
         REJECT(new Error('Cancelled'));
         return;
       }

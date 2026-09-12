@@ -723,7 +723,7 @@ var stylizerrewrite = {
     return {
       background: 'hsl(' + huecont + ', ' + satcont + '%, ' + bglight + '%)',
       color: 'hsl(' + huecont + ', ' + Math.max(satcont - 10, 10) + '%, ' + fglight + '%)',
-      borderColor: 'hsl(' + huecont + ', ' + satcont + '%, ' + Math.round((bglight + fglight) / 2) + '%)'
+      bordercolor: 'hsl(' + huecont + ', ' + satcont + '%, ' + Math.round((bglight + fglight) / 2) + '%)'
     };
   },
 

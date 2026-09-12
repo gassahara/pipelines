@@ -231,14 +231,14 @@ HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
   try {
     var EL = document.createElement(MSG.TAG);
     if (MSG.PROPS) Object.keys(MSG.PROPS).forEach(function(PROP) { EL[PROP] = MSG.PROPS[PROP]; });
-    var REG = ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
+    var REG = ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
     var DOMREFFN = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return DOMREFFN(EL, REG);
   } catch (ERR) { return { ERROR: ERR.message }; }
 };
 HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(ENV, MSG) {
   try {
-    var REG2 = ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
+    var REG2 = ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
     var DOMREFFN2 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return DOMREFFN2(document.createElement('div'), REG2);
   } catch (ERR) { return { ERROR: ERR.message }; }
@@ -248,7 +248,7 @@ HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(ENV, MSG) {
     var WRAPPER = document.createElement('div');
     WRAPPER.innerHTML = MSG.HTML;
     var CHILD = WRAPPER.firstElementChild || WRAPPER;
-    var REG3 = ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
+    var REG3 = ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
     var DOMREFFN3 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return DOMREFFN3(CHILD, REG3);
   } catch (ERR) { return { ERROR: ERR.message }; }
@@ -346,20 +346,20 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
   WAITFORDOMREADY().then(function() {
     return DBRESTORE('actor:state:render').then(function(SAVED) {
       if (SAVED !== null && SAVED !== undefined) {
-        ENV.render = SAVED;
+        ENV.RENDER = SAVED;
       } else {
-        ENV.render = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
+        ENV.RENDER = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
       }
-      SCHEDULEGCCYCLE(ENV.render);
-      REINJECTSCRIPTTAGS(ENV.render.SCRIPTTAGS || ENV.render.scriptTags || []);
+      SCHEDULEGCCYCLE(ENV.RENDER);
+      REINJECTSCRIPTTAGS(ENV.RENDER.SCRIPTTAGS || ENV.RENDER.scriptTags || []);
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        UPDATES: [{ PATH: 'render', VALUE: ENV.render }]
+        UPDATES: [{ PATH: 'RENDER', VALUE: ENV.RENDER }]
       }, GENERATETAG(), 'RENDERACTOR');
       RESPONDIFNEEDED(ENV, MSG, ENV);
     }).catch(function(E) {
-      ENV.render = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
+      ENV.RENDER = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        UPDATES: [{ PATH: 'render', VALUE: ENV.render }]
+        UPDATES: [{ PATH: 'RENDER', VALUE: ENV.RENDER }]
       }, GENERATETAG(), 'RENDERACTOR');
       RESPONDIFNEEDED(ENV, MSG, { ERROR: E.message || String(E) });
     });
@@ -421,7 +421,7 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
 
   SCHEDULEGCCYCLE(RENDERSLICE);
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-    UPDATES: [{ PATH: 'render', VALUE: RENDERSLICE }]
+    UPDATES: [{ PATH: 'RENDER', VALUE: RENDERSLICE }]
   }, GENERATETAG(), 'RENDERACTOR');
 
   return { REGISTERED: true, SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT };
@@ -536,7 +536,7 @@ var EXPECTELEMENT = function(ID, TIMEOUT) {
     var DOMREFFN = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     if (EXISTING) {
       var ENV = GETACTORSTATE('WORLDMAPACTOR');
-      var REG = ENV && ENV.render && (ENV.render.actorregistry || ENV.render.actorRegistry);
+      var REG = ENV && ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
       return RESOLVE(DOMREFFN(EXISTING, REG));
     }
     var OBSERVER = null;
@@ -547,7 +547,7 @@ var EXPECTELEMENT = function(ID, TIMEOUT) {
         clearTimeout(TIMEOUTID);
         OBSERVER.disconnect();
         var ENVNOW = GETACTORSTATE('WORLDMAPACTOR');
-        var REGNOW = ENVNOW && ENVNOW.render && (ENVNOW.render.actorregistry || ENVNOW.render.actorRegistry);
+        var REGNOW = ENVNOW && ENVNOW.RENDER && (ENVNOW.RENDER.actorregistry || ENVNOW.RENDER.actorRegistry);
         RESOLVE(DOMREFFN(EL, REGNOW));
       }
     });

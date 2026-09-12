@@ -3,7 +3,7 @@ var EXECUTIONVERBOSITYCONSTANTS = createverbosityconstants();
 function SANITIZEFORSTATE(VALUE, SEEN) {
   if (VALUE === null || VALUE === undefined) return VALUE;
   if (typeof VALUE === 'function') return '[Function]';
-  if (typeof HTMLELEMENT !== 'undefined' && VALUE instanceof HTMLElement) return '[DOMNODE]';
+  if (typeof HTMLElement !== 'undefined' && VALUE instanceof HTMLElement) return '[DOMNODE]';
   if (typeof Node !== 'undefined' && VALUE instanceof Node) return '[DOMNODE]';
   if (typeof EventTarget !== 'undefined' && VALUE instanceof EventTarget) return '[EventTarget]';
   if (typeof VALUE !== 'object') return VALUE;
@@ -101,7 +101,7 @@ function ENSUREPIPELINE(EXECSLICE, PIPELINEID) {
 
 function SENDEXECUTIONUPDATE(EXECSLICE) {
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-    UPDATES: [{ PATH: 'execution', VALUE: EXECSLICE }]
+    UPDATES: [{ PATH: 'EXECUTION', VALUE: EXECSLICE }]
   }, GENERATETAG(), 'EXECUTIONACTOR');
 }
 
@@ -353,10 +353,10 @@ function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
 
 function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
   var EXECUTIONCONTEXT = {
-    env: DESCRIPTOR.ENV || {},
-    inputs: (DESCRIPTOR.SIGNATURE && (DESCRIPTOR.SIGNATURE.inputs || DESCRIPTOR.SIGNATURE.INPUTS)) || [],
-    outputs: (DESCRIPTOR.SIGNATURE && (DESCRIPTOR.SIGNATURE.outputs || DESCRIPTOR.SIGNATURE.OUTPUTS)) || {},
-    properties: DESCRIPTOR.PROPERTIES || {}
+    ENV: DESCRIPTOR.ENV || {},
+    INPUTS: (DESCRIPTOR.SIGNATURE && (DESCRIPTOR.SIGNATURE.inputs || DESCRIPTOR.SIGNATURE.INPUTS)) || [],
+    OUTPUTS: (DESCRIPTOR.SIGNATURE && (DESCRIPTOR.SIGNATURE.outputs || DESCRIPTOR.SIGNATURE.OUTPUTS)) || {},
+    PROPERTIES: DESCRIPTOR.PROPERTIES || {}
   };
 
   logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK START:', TASKID, DESCRIPTOR.ELEMENTID, 'PIPELINE:', DESCRIPTOR.PIPELINEID);

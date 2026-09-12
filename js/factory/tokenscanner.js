@@ -99,7 +99,7 @@ var punctuators = [
   ['===','binary'], ['!==','binary'], ['>>>','binary'], ['**=','assignment'],
   ['==','binary'], ['!=','binary'], ['<=','binary'], ['>=','binary'],
   ['&&','binary'], ['||','binary'], ['??','binary'],
-  ['++','prefixOrPostfix'], ['--','prefixOrPostfix'],
+  ['++','prefixorpostfix'], ['--','prefixorpostfix'],
   ['+=','assignment'], ['-=','assignment'], ['*=','assignment'], ['/=','assignment'],
   ['%=','assignment'], ['&=','assignment'], ['|=','assignment'], ['^=','assignment'],
   ['<<=','assignment'], ['>>=','assignment'], ['>>>=','assignment'],

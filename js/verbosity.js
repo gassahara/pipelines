@@ -44,8 +44,8 @@ function getverbosity(state) {
       var v = resolvelevel(state.verbosity);
       if (v !== null) return v;
     }
-    if (state.verbositylevel !== undefined || state.verbosityLevel !== undefined) {
-      var vl = resolvelevel(state.verbositylevel !== undefined ? state.verbositylevel : state.verbosityLevel);
+    if (state.verbositylevel !== undefined) {
+      var vl = resolvelevel(state.verbositylevel);
       if (vl !== null) return vl;
     }
     if (state.options) {
@@ -134,5 +134,3 @@ function logblockdebug(state, prefix, blockid, values) {
   logdebug(state, prefix, blockid + ' ' + serialized);
 }
 // ===== END ADDED =====
-
-

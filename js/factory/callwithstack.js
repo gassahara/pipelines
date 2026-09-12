@@ -7,7 +7,7 @@ function safeshallowclone(obj) {
         keys.forEach(function(key) {
             var val = obj[key];
             if (typeof val === 'function') clone[key] = '[FUNCTION]';
-            else if (typeof HTMLELEMENT !== 'undefined' && (val instanceof HTMLELEMENT || val instanceof Node)) clone[key] = '[DOMNODE]';
+            else if (typeof HTMLElement !== 'undefined' && (val instanceof HTMLElement || val instanceof Node)) clone[key] = '[DOMNODE]';
             else if (typeof val === 'object' && val !== null) {
                 try { JSON.stringify(val); clone[key] = safeshallowclone(val); }
                 catch (e2) { clone[key] = '[NONSERIALIZABLE]'; }
@@ -27,7 +27,7 @@ function applyccc(fn, typecheck) {
             argrules.forEach(function(rule, ri) {
                 if (rule && !rule(args[ri])) {
                     var err = new Error('[CCC:TYPEVIOLATION] argument ' + ri + ' failed type check');
-                    err.diagnostic = { typecheck: 'arg', index: ri, value: args[ri], rule: rule.name || 'custom' };
+                    err.diagnostic = { TYPECHECK: 'arg', INDEX: ri, VALUE: args[ri], RULE: rule.name || 'custom' };
                     throw err;
                 }
             });
@@ -37,7 +37,7 @@ function applyccc(fn, typecheck) {
         var check = function(v) {
             if (!resultrule(v)) {
                 var err2 = new Error('[CCC:TYPEVIOLATION] return value failed type check');
-                err2.diagnostic = { typecheck: 'result', value: v, rule: resultrule.name || 'custom' };
+                err2.diagnostic = { TYPECHECK: 'result', VALUE: v, RULE: resultrule.name || 'custom' };
                 throw err2;
             }
             return v;
@@ -70,13 +70,13 @@ function callwithstack(evalstack, label, type, fn, args, options) {
         ckeys.forEach(function(k) { capturedoptions[k] = options[k]; });
         capturedoptions.capturecontinuation = false;
         captured = {
-            fn: wrappedfn,
-            args: args,
-            label: label,
-            type: type,
-            options: capturedoptions,
-            pipestatesnapshot: safeshallowclone(context && context.pipestate),
-            envsnapshot: safeshallowclone(context && context.env)
+            FN: wrappedfn,
+            ARGS: args,
+            LABEL: label,
+            TYPE: type,
+            OPTIONS: capturedoptions,
+            PIPESTATESNAPSHOT: safeshallowclone(context && context.pipestate),
+            ENVSNAPSHOT: safeshallowclone(context && context.env)
         };
     }
 
@@ -90,15 +90,15 @@ function callwithstack(evalstack, label, type, fn, args, options) {
         var onsuccess = function(result) {
             evalstack.popframe();
             if (captured && attachcontinuation && result && typeof result === 'object' && !Array.isArray(result)) {
-                result.continuation = captured;
+                result.CONTINUATION = captured;
             }
             if (thenfn) thenfn(result, context);
             k(result);
         };
         var onfailure = function(err) {
             if (!err.diagnostic) err.diagnostic = {};
-            if (!err.diagnostic.debugtrace) err.diagnostic.debugtrace = evalstack.snapshot();
-            if (captured && !err.diagnostic.continuation) err.diagnostic.continuation = captured;
+            if (!err.diagnostic.DEBUGTRACE) err.diagnostic.DEBUGTRACE = evalstack.snapshot();
+            if (captured && !err.diagnostic.CONTINUATION) err.diagnostic.CONTINUATION = captured;
             evalstack.popframe();
 
             var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : null;
@@ -107,7 +107,7 @@ function callwithstack(evalstack, label, type, fn, args, options) {
                 try {
                     sendinstfn('DEBUGACTOR', MESSAGETYPES.SHOW, {
                         error: err,
-                        continuation: (err.diagnostic && err.diagnostic.continuation) || null
+                        continuation: (err.diagnostic && err.diagnostic.CONTINUATION) || null
                     }, gentagfn(), 'callwithstack');
                 } catch (notifyerr) {}
             }
@@ -133,4 +133,3 @@ function callwithstack(evalstack, label, type, fn, args, options) {
     promise.cont = k;
     return promise;
 }
-

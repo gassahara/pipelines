@@ -65,9 +65,7 @@ function consolidateclosures(entries) {
   if (!entries || entries.length === 0) {
     return {
       programsource: '(function() {\n  return {};\n})();',
-      programSource: '(function() {\n  return {};\n})();',
-      elementmap: {},
-      elementMap: {}
+      elementmap: {}
     };
   }
 
@@ -76,7 +74,7 @@ function consolidateclosures(entries) {
   var sharedindex = 0;
 
   entries.forEach(function(entry) {
-    var src = entry.closuresource || entry.closureSource;
+    var src = entry.closuresource;
     var bindings = collectbindings(src);
 
     bindings.forEach(function(binding) {
@@ -94,8 +92,8 @@ function consolidateclosures(entries) {
   }).join('\n');
 
   var inner = entries.map(function(entry) {
-    var src = entry.closuresource || entry.closureSource;
-    var elid = entry.elementid || entry.elementId;
+    var src = entry.closuresource;
+    var elid = entry.elementid;
     var rewritten = rewriteclosurewithshared(src, sharedvalues);
     return '    ' + JSON.stringify(elid) + ': function() {\n' + rewritten + '\n    }';
   }).join(',\n');
@@ -108,14 +106,12 @@ function consolidateclosures(entries) {
 
   var elementmap = {};
   entries.forEach(function(entry) {
-    var elid = entry.elementid || entry.elementId;
+    var elid = entry.elementid;
     elementmap[elid] = true;
   });
 
   return {
     programsource: programsource,
-    programSource: programsource,
-    elementmap: elementmap,
-    elementMap: elementmap
+    elementmap: elementmap
   };
 }

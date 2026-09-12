@@ -1236,7 +1236,7 @@ function detectfreeidentifiers(source) {
   return parseprogram(state);
 }
 
-function parseSource(source) {
+function parsesource(source) {
   try {
     var identifiers = detectfreeidentifiers(source);
     return { ok: true, identifiers: identifiers, errors: [], diagnostic: null };

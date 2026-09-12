@@ -60,7 +60,7 @@ function ENSUREDEBUGSLICE(ENV) {
 function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
   var FILTERED = LOGS;
   if (FILTER !== 'all') {
-    FILTERED = LOGS.filter(function(ENTRY) { return ENTRY.level === FILTER; });
+    FILTERED = LOGS.filter(function(ENTRY) { return ENTRY.LEVEL === FILTER; });
   }
   var DISPLAY = FILTERED.slice(-200);
   var HTML = '';
@@ -86,21 +86,21 @@ function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
     HTML += '<div style="color:#666;padding:20px;text-align:center;">No logs to display.</div>';
   } else {
     DISPLAY.forEach(function(ENTRY) {
-      var LEVELCLASS = ENTRY.level || 'info';
+      var LEVELCLASS = ENTRY.LEVEL || 'info';
       var COLOR = '#aaa';
       if (LEVELCLASS === 'error') COLOR = '#ff5555';
       else if (LEVELCLASS === 'warn') COLOR = '#ffaa33';
       else if (LEVELCLASS === 'info') COLOR = '#88ccff';
       else if (LEVELCLASS === 'debug') COLOR = '#888';
-      var TIME = new Date(ENTRY.timestamp).toLocaleTimeString();
-      var MSG = ENTRY.message || '';
-      var PREFIX = ENTRY.prefix || '';
+      var TIME = new Date(ENTRY.TIMESTAMP).toLocaleTimeString();
+      var MSG = ENTRY.MESSAGE || '';
+      var PREFIX = ENTRY.PREFIX || '';
       HTML += '<div style="color:' + COLOR + ';padding:2px 0;border-bottom:1px solid #1a1a2e;word-break:break-all;white-space:pre-wrap;">';
       HTML += '<span style="color:#666;margin-right:8px;">[' + TIME + ']</span>';
       if (PREFIX) HTML += '<span style="color:#88aaff;margin-right:8px;">' + PREFIX + '</span>';
       HTML += '<span>' + MSG + '</span>';
-      if (ENTRY.data && typeof ENTRY.data === 'object') {
-        HTML += ' <span style="color:#666;font-size:10px;margin-left:8px;">' + JSON.stringify(ENTRY.data) + '</span>';
+      if (ENTRY.DATA && typeof ENTRY.DATA === 'object') {
+        HTML += ' <span style="color:#666;font-size:10px;margin-left:8px;">' + JSON.stringify(ENTRY.DATA) + '</span>';
       }
       HTML += '</div>';
     });
@@ -126,7 +126,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     return ENV;
   }
 
-  if (MESSAGE.TYPE === MESSAGETYPES.INITOVERLAY || MESSAGE.TYPE === MESSAGETYPES.INIT_OVERLAY) {
+  if (MESSAGE.TYPE === MESSAGETYPES.INITOVERLAY) {
     logdebug(ENV, '[DEBUGACTOR]', 'ACTION INITOVERLAY');
     ENSUREOVERLAY(DEBUGSLICE);
 
@@ -148,7 +148,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
           logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL UNHANDLED REJECTION CAPTURED:', E.reason);
           SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
             ERROR: E.reason,
-            CONTINUATION: E.reason.diagnostic.continuation || null
+            CONTINUATION: E.reason.diagnostic.CONTINUATION || null
           }, null, 'window');
         }
       });
@@ -156,7 +156,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
 
     DEBUGSLICE.OVERLAYVISIBLE = false;
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
     if (MESSAGE.SENDER && MESSAGE.TAG) {
@@ -178,7 +178,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     DEBUGSLICE.CURRENTCONTINUATION = null;
 
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
     if (MESSAGE.SENDER && MESSAGE.TAG) {
@@ -262,7 +262,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     DEBUGSLICE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
 
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
     // ===== ADDED: attach event listeners for log controls =====
@@ -278,7 +278,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
             PANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
           }
           SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-            UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+            UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
           }, GENERATETAG(), 'DEBUGACTOR');
         });
       }
@@ -290,7 +290,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
             PANEL.innerHTML = BUILDLOGVIEWERHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
           }
           SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-            UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+            UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
           }, GENERATETAG(), 'DEBUGACTOR');
         });
       }
@@ -302,7 +302,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
             if (LIST) LIST.scrollTop = LIST.scrollHeight;
           }
           SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-            UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+            UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
           }, GENERATETAG(), 'DEBUGACTOR');
         });
       }
@@ -319,13 +319,13 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
 
   // ===== ADDED: LOGLINE handler =====
   if (MESSAGE.TYPE === MESSAGETYPES.LOGLINE) {
-    logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.message);
+    logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.MESSAGE);
     var ENTRY = {
-      level: MESSAGE.level || 'info',
-      message: MESSAGE.message || '',
-      data: MESSAGE.data || null,
-      timestamp: MESSAGE.timestamp || Date.now(),
-      prefix: MESSAGE.prefix || ''
+      LEVEL: MESSAGE.LEVEL || 'info',
+      MESSAGE: MESSAGE.MESSAGE || '',
+      DATA: MESSAGE.DATA || null,
+      TIMESTAMP: MESSAGE.TIMESTAMP || Date.now(),
+      PREFIX: MESSAGE.PREFIX || ''
     };
     if (!DEBUGSLICE.LOGS) DEBUGSLICE.LOGS = [];
     DEBUGSLICE.LOGS.push(ENTRY);
@@ -347,7 +347,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       }
     }
     SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'debug', VALUE: DEBUGSLICE }]
+      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
     if (MESSAGE.SENDER && MESSAGE.TAG) {
       var RESPONSESPECLOG = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
@@ -375,7 +375,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         // ===== END ADDED =====
       };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        UPDATES: [{ PATH: 'debug', VALUE: NEWDEBUG }]
+        UPDATES: [{ PATH: 'DEBUG', VALUE: NEWDEBUG }]
       }, GENERATETAG(), 'DEBUGACTOR');
       if (MESSAGE.SENDER && MESSAGE.TAG) {
         var RESPONSESPECRECOVER = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;

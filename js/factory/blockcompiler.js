@@ -2,7 +2,7 @@
 // §1 — Constants & path accessors
 // ============================================================
 
-var blockcompilerstate = { level: createverbosityconstants().DEBUG };
+var BLOCKCOMPILERSTATE = { level: createverbosityconstants().DEBUG };
 
 var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
 var scriptwitnesstimeout = 5000;
@@ -10,7 +10,7 @@ var mailboxwaittimeout = 25000;
 
 // ---- Injected tools for parser/serializer independence ----
 var blockcompilertools = {
-  parseSource: (typeof parseSource === 'function') ? parseSource :
+  parsesource: (typeof parsesource === 'function') ? parsesource :
     (typeof detectfreeidentifiers === 'function') ? function(src) {
       try {
         return { ok: true, identifiers: detectfreeidentifiers(src), errors: [] };
@@ -20,13 +20,13 @@ var blockcompilertools = {
     } : function() {
       return { ok: false, identifiers: [], errors: ['no free variable parser available'] };
     },
-  serializeClosure: (typeof serializeselfcontainedclosure === 'function') ? serializeselfcontainedclosure : null
+  serializeclosure: (typeof serializeselfcontainedclosure === 'function') ? serializeselfcontainedclosure : null
 };
 
 function setblockcompilertools(tools) {
   if (!tools || typeof tools !== 'object') return;
-  if (typeof tools.parseSource === 'function') blockcompilertools.parseSource = tools.parseSource;
-  if (typeof tools.serializeClosure === 'function') blockcompilertools.serializeClosure = tools.serializeClosure;
+  if (typeof tools.parsesource === 'function') blockcompilertools.parsesource = tools.parsesource;
+  if (typeof tools.serializeclosure === 'function') blockcompilertools.serializeclosure = tools.serializeclosure;
 }
 
 function createblockcompilerconstants() {
@@ -129,7 +129,7 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
   if (io === undefined) io = { inputs: [], outputs: {} };
   if (env === undefined) env = {};
 
-  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'buildblockproperties for block:', merged.id, 'type:', merged.type);
+  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'buildblockproperties for block:', merged.id, 'type:', merged.type);
 
   var properties = buildproperties(merged, inherited);
   var inputsobj = {};
@@ -185,7 +185,7 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
     if (merged.deps !== undefined && !Array.isArray(merged.deps)) {
       throw new Error('[FN_CONTRACT] block "' + (merged.id || 'unknown') + '" must declare "deps" as an array of strings');
     }
-    var analysis = analyzefnblock(merged, properties.deps || {}, env, blockcompilertools.parseSource);
+    var analysis = analyzefnblock(merged, properties.deps || {}, env, blockcompilertools.parsesource);
     if (!analysis.valid) {
       // OP-026 (R-29a): DISTINGUISH the failure kinds. A completed analysis that FOUND free identifiers is a
       // purity violation; an analysis that could NOT COMPLETE is an analysis failure and must carry the parser's
@@ -209,8 +209,8 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
 function createerrorcontext(id, stagetype) {
   return function(err) {
     err.diagnostic = err.diagnostic || {};
-    err.diagnostic.blockid = id;
-    err.diagnostic.stagetype = stagetype;
+    err.diagnostic.BLOCKID = id;
+    err.diagnostic.STAGETYPE = stagetype;
     throw err;
   };
 }
@@ -234,7 +234,7 @@ function sendandawait(recipient, type, payload, timeout, responsetype) {
 function loadscripts(entries, basepath, timeout, label) {
   if (typeof timeout === 'undefined') timeout = scriptwitnesstimeout;
   var normalized = normalizeentries(entries);
-  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', label, normalized.length);
+  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', label, normalized.length);
   return loadscriptssequentially(normalized, basepath, timeout);
 }
 
@@ -283,7 +283,7 @@ function buildresponse(mappingobj, raw) {
 function compilehttpblock(merged, id, sig, istextual, options) {
   var innerfn = function(env) {
     var label = (istextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing http block:', id, 'type:', istextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing http block:', id, 'type:', istextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
     var inputaccessors = (sig.inputs || []).map(compilepathaccessor);
     var inputdata = {};
     (sig.inputs || []).forEach(function(inp, idx) { inputdata[inp] = inputaccessors[idx](env); });
@@ -325,7 +325,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
 
   compilers[blocktypes.fn] = function(merged, id, sig, inheritedproperties) {
     var runtime = {
-      blockcompilerstate: blockcompilerstate,
+      blockcompilerstate: BLOCKCOMPILERSTATE,
       logdebug: logdebug,
       logblockdebug: logblockdebug,
       callwithstack: callwithstack,
@@ -343,9 +343,9 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
   // ---- OP-194: writer via sendandawait ----
   compilers[blocktypes.writer] = function(merged, id, sig, inheritedproperties) {
     if (inheritedproperties === undefined) inheritedproperties = {};
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
     var innerfn = function(env) {
-      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
+      logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
       var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
       var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
@@ -378,9 +378,9 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
   };
 
   compilers[blocktypes.io] = function(merged, id, sig) {
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling IO block:', id);
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling IO block:', id);
     var innerfn = function(env) {
-      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing IO block:', id);
+      logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing IO block:', id);
       // R-41 (analysis8, constraint #4): the IO block accepts an INLINE `fn:`, mirroring the writer branch at
       // #L350. Before this change the branch read `merged.ref` only, so an io block declaring its function inline
       // — the form the standing constraint requires — failed validation although the block type is otherwise
@@ -400,7 +400,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
 
   // ---- OP-195: domquery via sendandawait ----
   compilers[blocktypes.domquery] = function(merged, id, sig) {
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
     var innerfn = function(env) {
       var cmd = merged.command && merged.command.COMMAND;
       if (!cmd) throw new Error('[DOMQUERY] requires COMMAND');
@@ -568,7 +568,7 @@ function loadpipelinedependencies(container, options) {
 
 function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, dependencies, options) {
   var elementid = el.id || 'pipelineunknown';
-  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'processpipelineelement:', elementid, 'pipeline:', el.pipeline);
+  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'processpipelineelement:', elementid, 'pipeline:', el.pipeline);
 
   var resolvedpipeline = null;
   var parentcontainer = null;
@@ -578,11 +578,11 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
     if (segments.length > 1 && segments[segments.length - 1] === 'pipeline') {
       var parentpath = segments.slice(0, -1).join('.');
       parentcontainer = resolvepipelinepath(parentpath, dependencies || (typeof window !== 'undefined' ? window : (typeof globalthis !== 'undefined' ? globalthis : {})));
-      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'derived parent container for dependencies:', parentpath);
+      logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'derived parent container for dependencies:', parentpath);
     }
     resolvedpipeline = resolvepipelinepath(el.pipeline, dependencies || (typeof window !== 'undefined' ? window : (typeof globalthis !== 'undefined' ? globalthis : {})));
     if (!resolvedpipeline || !resolvedpipeline.elements) {
-      logerror(blockcompilerstate, '[BLOCKCOMPILER]', 'failed to resolve pipeline path:', el.pipeline);
+      logerror(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'failed to resolve pipeline path:', el.pipeline);
       throw new Error('[processpipelineelement] failed to resolve pipeline path: ' + el.pipeline);
     }
   } else {
@@ -703,7 +703,7 @@ function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcas
         function() {
           orchestratestage(childstage, pipelineid, dependencies, env, childstagepath, options || {}, null)
             .catch(function(err) {
-              logwarn(blockcompilerstate, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
+              logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
             });
           return undefined;
         },
@@ -767,7 +767,7 @@ function orchestratestage(stage, pipelineid, dependencies, env, stagepath, optio
   var compilerconstants = { blocktypes: blocktypes, inheritedkeys: inheritedkeys, analyzers: analyzers, compilers: compilers };
 
   var index = 0;
-  var stagetoken = { cancelled: false };
+  var stagetoken = { CANCELLED: false };
 
   function runnext() {
     if (index >= (stage.elements || []).length) {
@@ -791,7 +791,7 @@ function orchestratestage(stage, pipelineid, dependencies, env, stagepath, optio
       throw new Error('[orchestratestage] unexpected element type: ' + elementdef.element);
     }
 
-    blockcompilerstate.activecancellationtoken = stagetoken;
+    BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN = stagetoken;
 
     return Promise.resolve(elementfn).then(function(fn) {
       return fn(env);
@@ -799,12 +799,12 @@ function orchestratestage(stage, pipelineid, dependencies, env, stagepath, optio
       index++;
       return runnext();
     }).catch(function(err) {
-      stagetoken.cancelled = true;
-      blockcompilerstate.activecancellationtoken = null;
-      logerror(blockcompilerstate, '[BLOCKCOMPILER]', 'Element failed:', elementdef.id, err);
+      stagetoken.CANCELLED = true;
+      BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN = null;
+      logerror(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'Element failed:', elementdef.id, err);
       throw err;
     }).then(function(result) {
-      blockcompilerstate.activecancellationtoken = null;
+      BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN = null;
       return result;
     });
   }
@@ -818,7 +818,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     var path = stagepath;
     var execenv = env;
     var executor = function(executioncontext) {
-      var effectiveenv = executioncontext.env || execenv;
+      var effectiveenv = executioncontext.ENV || execenv;
       return compiledelement(effectiveenv);
     };
     var blockinputs = elementdef && elementdef.inputs ? elementdef.inputs : [];
@@ -826,10 +826,10 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     var inputargs = blockinputs.map(function(inp) { return compilepathaccessor(inp)(execenv); });
     var originalfn = compiledelement.originalfn || elementdef.fn || elementdef.ref;
     var closureserialized = null;
-    if (blockcompilertools.serializeClosure && typeof originalfn === 'function') {
-      closureserialized = blockcompilertools.serializeClosure(originalfn, inputargs, execenv, elementdef.deps || {});
+    if (blockcompilertools.serializeclosure && typeof originalfn === 'function') {
+      closureserialized = blockcompilertools.serializeclosure(originalfn, inputargs, execenv, elementdef.deps || {});
     }
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelineid, 'stagepath:', JSON.stringify(stagepath));
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelineid, 'stagepath:', JSON.stringify(stagepath));
     var tag = GENERATETAG();
     var descriptor = {
       PIPELINEID: pipelineid,
@@ -845,7 +845,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     };
 
     if (typeof logblockdebug === 'function') {
-      logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', elementid, {
+      logblockdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', elementid, {
         descriptorKeys: Object.keys(descriptor),
         hasEnv: typeof descriptor.ENV !== 'undefined',
         hasExecutor: typeof descriptor.EXECUTOR === 'function',
@@ -869,19 +869,19 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
                 : String(result.ERROR));
           var failureError = new Error(failuremessage);
           failureError.diagnostic = failureError.diagnostic || {};
-          failureError.diagnostic.blockid = elementid;
-          failureError.diagnostic.pipelineid = pipelineid;
-          failureError.diagnostic.taskid = result.TASKID || null;
-          failureError.diagnostic.origin = 'createpersistentelementwrapper';
+          failureError.diagnostic.BLOCKID = elementid;
+          failureError.diagnostic.PIPELINEID = pipelineid;
+          failureError.diagnostic.TASKID = result.TASKID || null;
+          failureError.diagnostic.ORIGIN = 'createpersistentelementwrapper';
           throw failureError;
         }
         // ----- end R-2 / P2 -----
         var outputkeys = Object.keys(blockoutputs || {});
         var mapped = mapoutputs(result, outputkeys);
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
-        logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelineid);
+        logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelineid);
         if (typeof logblockdebug === 'function') {
-          logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', elementid, { result: result });
+          logblockdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', elementid, { result: result });
         }
         return result;
       });
@@ -940,9 +940,9 @@ function loadscriptssequentially(entries, basepath, timeout) {
   function loadnext() {
     if (index >= entries.length) return Promise.resolve();
     var entry = entries[index];
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'loading script:', entry.src);
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'loading script:', entry.src);
     return loadscriptwithwitness(entry, basepath, timeout).then(function() {
-      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'script loaded:', entry.src);
+      logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'script loaded:', entry.src);
       index++;
       return loadnext();
     });
@@ -982,12 +982,12 @@ function builddependenciesregistry(entries) {
   if (missing.length > 0) {
     throw new Error('[builddependenciesregistry] Missing global(s): ' + missing.join(', '));
   }
-  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies registry keys:', Object.keys(registry));
+  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'dependencies registry keys:', Object.keys(registry));
   return registry;
 }
 
 function BLOCKCOMPILERCOMPILESTAGE(dnaenvelope, stagepath, env, options) {
-  logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'blockcompilercompilestage:', dnaenvelope.pipelineid, 'stagepath', JSON.stringify(stagepath));
+  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'blockcompilercompilestage:', dnaenvelope.pipelineid, 'stagepath', JSON.stringify(stagepath));
   if (!dnaenvelope || !dnaenvelope.definition || !dnaenvelope.definition.pipeline) {
     throw new Error('[blockcompilercompilestage] invalid DNA envelope');
   }
@@ -1073,11 +1073,11 @@ function LOADPIPELINE(dna, stageIndex, env, options) {
 function bootdna(dna, options) {
   if (options === undefined) options = {};
   var dnaId = dna.id || (dna.identity && dna.identity.id) || 'defaultpipeline';
-  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'bootdna start for pipeline:', dnaId);
+  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'bootdna start for pipeline:', dnaId);
 
   return loadpipelinedependencies(dna, options)
     .then(function(depsregistry) {
-      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'dependencies loaded for bootdna:', dnaId);
+      loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'dependencies loaded for bootdna:', dnaId);
 
       var tag = GENERATETAG();
       var bootedType = MESSAGETYPES.PIPELINEBOOTED;
@@ -1094,15 +1094,15 @@ function bootdna(dna, options) {
       return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: bootedType }, mailboxwaittimeout)
         .then(function(mailboxmessage) {
           var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
-          var result = response.RESULT !== undefined ? response.RESULT : response.result;
+          var result = response.RESULT;
           if (result && result.ERROR) {
             var err = new Error(result.ERROR);
             err.diagnostic = result.DIAGNOSTIC || {};
             throw err;
           }
-          if (result && result.type === 'BOOTERROR') {
-            var err = new Error(result.message || 'BOOTERROR received');
-            err.diagnostic = result.diagnostic || {};
+          if (result && result.TYPE === 'BOOTERROR') {
+            var err = new Error(result.ERROR || 'BOOTERROR received');
+            err.diagnostic = result.DIAGNOSTIC || {};
             throw err;
           }
           return result;

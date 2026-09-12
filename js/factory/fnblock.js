@@ -343,7 +343,7 @@ function preparefunctionforserialization(fn, env, briefcase, deps) {
     : '';
   var rewritten = depkeys.length ? rewritefunctionsource(source, destructure) : source;
 
-  return { __fn__: true, source: rewritten, deps: resolveddeps };
+  return { fn: true, source: rewritten, deps: resolveddeps };
 }
 
 // ---- OP-169: structuralhash (canonical; closureconsolidator re-exports) ----
@@ -382,7 +382,7 @@ function defaultanalyzer(source) {
 function serializedepvalue(value, seen, analyzer) {
   if (analyzer === undefined) analyzer = defaultanalyzer;
   if (seen === undefined) seen = [];
-  if (seen.indexOf(value) !== -1) return { __circular: true };
+  if (seen.indexOf(value) !== -1) return { circular: true };
   seen.push(value);
 
   if (value === null || value === undefined) return value;
@@ -398,7 +398,7 @@ function serializedepvalue(value, seen, analyzer) {
         serializeddepsstore[key] = { type: 'fn', source: serializedFn.source, deps: serializedFn.deps || {} };
       }
     }
-    return { __depref: key };
+    return { depref: key };
   }
   if (Array.isArray(value)) {
     return value.map(function(item) { return serializedepvalue(item, seen.slice(), analyzer); });
@@ -448,8 +448,8 @@ function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
 
   var depLines = order.map(function(name) {
     var serialized = serializedDepsMap[name];
-    if (serialized && serialized.__depref) {
-      return '  var ' + name + ' = __recallDep(' + JSON.stringify(serialized.__depref) + ');';
+    if (serialized && serialized.depref) {
+      return '  var ' + name + ' = __recallDep(' + JSON.stringify(serialized.depref) + ');';
     }
     return '  var ' + name + ' = ' + JSON.stringify(serialized) + ';';
   }).join('\n');
@@ -486,7 +486,7 @@ function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyz
   var serialized = serializefunctionwithdeps(fn, deps || {}, capturedenv || {}, [], analyzer);
   if (serialized.opaque) {
     return {
-      __fn__: true,
+      fn: true,
       source: '(function() { return ' + JSON.stringify(serialized.source) + '; })()',
       deps: {}
     };
@@ -512,7 +512,7 @@ function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyz
     '})()';
 
   return {
-    __fn__: true,
+    fn: true,
     source: iife,
     deps: depsObj
   };
@@ -614,9 +614,9 @@ function assertdefinedinputs(blockid, iokeys, env, accessor, allowundefined) {
     var err = new Error('[BLOCK_INPUT_UNDEFINED] block "' + blockid +
       '" has undefined inputs: ' + missing.join(', '));
     err.diagnostic = {
-      blockid: blockid,
-      kind: 'block-input-undefined',
-      missing: missing
+      BLOCKID: blockid,
+      KIND: 'block-input-undefined',
+      MISSING: missing
     };
     throw err;
   }
@@ -711,7 +711,7 @@ function analyzedepusage(src, declared) {
 
 // ---- OP-182: analyzefnblock ----
 function analyzefnblock(block, depsmap, env, parser) {
-  if (parser === undefined) parser = parseSource;
+  if (parser === undefined) parser = parsesource;
   var fn = block.fn;
   if (typeof fn !== 'function') {
     return { valid: false, violations: ['fn is not a function'], free: [], declared: [] };

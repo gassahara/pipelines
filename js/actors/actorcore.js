@@ -7,15 +7,14 @@ function CREATEGARBAGECOLLECTOR() {
 }
 
 function REGISTEROBJECT(GC, OBJ) {
-  if (!OBJ.ID && !OBJ.id) {
+  if (!OBJ.ID) {
     GC.NEXTID += 1;
     OBJ.ID = 'gc' + GC.NEXTID;
-    OBJ.id = OBJ.ID;
   }
-  OBJ.STATUS = OBJ.STATUS || OBJ.status || 'EXPECTING';
-  OBJ.SENTCOUNT = OBJ.SENTCOUNT || OBJ.sentCount || 0;
-  OBJ.RECEIVEDCOUNT = OBJ.RECEIVEDCOUNT || OBJ.receivedCount || 0;
-  GC.OBJECTS[OBJ.ID || OBJ.id] = OBJ;
+  OBJ.STATUS = OBJ.STATUS || 'EXPECTING';
+  OBJ.SENTCOUNT = OBJ.SENTCOUNT || 0;
+  OBJ.RECEIVEDCOUNT = OBJ.RECEIVEDCOUNT || 0;
+  GC.OBJECTS[OBJ.ID] = OBJ;
   return OBJ;
 }
 
@@ -29,28 +28,25 @@ function WITHOBJ(GC, ID, FN) {
 function UPDATESTATUS(GC, ID, STATUS) {
   WITHOBJ(GC, ID, function(OBJ) {
     OBJ.STATUS = STATUS;
-    OBJ.status = STATUS;
   });
 }
 
 function INCREMENTSENT(GC, ID, COUNT) {
   WITHOBJ(GC, ID, function(OBJ) {
     OBJ.SENTCOUNT = (OBJ.SENTCOUNT || 0) + (COUNT || 1);
-    OBJ.sentCount = OBJ.SENTCOUNT;
   });
 }
 
 function INCREMENTRECEIVED(GC, ID, COUNT) {
   WITHOBJ(GC, ID, function(OBJ) {
     OBJ.RECEIVEDCOUNT = (OBJ.RECEIVEDCOUNT || 0) + (COUNT || 1);
-    OBJ.receivedCount = OBJ.RECEIVEDCOUNT;
   });
 }
 
 function COLLECTENDED(GC) {
   GC.OBJECTS = Object.keys(GC.OBJECTS).reduce(function(ACC, ID) {
     var OBJ = GC.OBJECTS[ID];
-    if (OBJ.STATUS !== 'ENDED' && OBJ.status !== 'ENDED') {
+    if (OBJ.STATUS !== 'ENDED') {
       ACC[ID] = OBJ;
     }
     return ACC;
@@ -60,7 +56,7 @@ function COLLECTENDED(GC) {
 function LISTOBJECTS(GC, STATUS) {
   return Object.keys(GC.OBJECTS).filter(function(ID) {
     var OBJ = GC.OBJECTS[ID];
-    return !STATUS || OBJ.STATUS === STATUS || OBJ.status === STATUS;
+    return !STATUS || OBJ.STATUS === STATUS;
   }).map(function(ID) {
     return GC.OBJECTS[ID];
   });
@@ -112,7 +108,7 @@ function CREATEMESSAGEVALIDATOR(INTERFACEMAP) {
     if (!MESSAGE || typeof MESSAGE !== 'object') {
       return { VALID: false, ERROR: 'message must be a non-null object', TYPE: 'null' };
     }
-    var TYPE = MESSAGE.TYPE || MESSAGE.type;
+    var TYPE = MESSAGE.TYPE;
     if (!TYPE || typeof TYPE !== 'string') {
       return { VALID: false, ERROR: 'message type must be a string, got: ' + typeof TYPE, TYPE: String(TYPE) };
     }
@@ -172,8 +168,8 @@ function PINGACTOR(ENQUEUEPING, TIMEOUT) {
 // ---- OP-096 (P44): guard-and-respond helper ----
 function RESPONDIF(MESSAGE, ACTORNAME, PAYLOAD, DEFAULTTYPE) {
   if (!MESSAGE.SENDER || !MESSAGE.TAG) return false;
-  var SPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-  var RESPONSETYPE = (SPEC && (SPEC.responsetype || SPEC.responseType)) || DEFAULTTYPE || 'response';
+  var SPEC = MESSAGE.RESPONSESPEC;
+  var RESPONSETYPE = (SPEC && SPEC.RESPONSETYPE) || DEFAULTTYPE || 'response';
   SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, PAYLOAD, ACTORNAME, RESPONSETYPE);
   return true;
 }
@@ -198,10 +194,10 @@ function SETRENDERACTOR(REGISTRY, ACTOR) {
 }
 
 function GETRENDERACTOR(REGISTRY) {
-  if (!REGISTRY || (!REGISTRY.RENDERACTOR && !REGISTRY.renderActor)) {
+  if (!REGISTRY || !REGISTRY.RENDERACTOR) {
     throw new Error('[actorregistry] RENDERACTOR is not registered');
   }
-  return REGISTRY.RENDERACTOR || REGISTRY.renderActor;
+  return REGISTRY.RENDERACTOR;
 }
 
 // ---------- TRIGGER REGISTRY ----------
@@ -224,11 +220,11 @@ function CLONEREGISTRYMAP(MAP) {
 }
 
 function REGISTERTRIGGER(REGISTRY, ID, EVENT, HANDLER) {
-  if (!REGISTRY || (!REGISTRY.MAP && !REGISTRY.map)) {
+  if (!REGISTRY || !REGISTRY.MAP) {
     throw new Error('[REGISTERTRIGGER] registry is null or missing map');
   }
 
-  var NEWMAP = CLONEREGISTRYMAP(REGISTRY.MAP || REGISTRY.map);
+  var NEWMAP = CLONEREGISTRYMAP(REGISTRY.MAP);
   var EVENTS = NEWMAP[ID] || {};
   var NEWEVENTS = {};
   Object.keys(EVENTS).forEach(function(K) { NEWEVENTS[K] = EVENTS[K]; });
@@ -238,7 +234,7 @@ function REGISTERTRIGGER(REGISTRY, ID, EVENT, HANDLER) {
 }
 
 function UNREGISTERTRIGGER(REGISTRY, ID, EVENT) {
-  var NEWMAP = CLONEREGISTRYMAP(REGISTRY.MAP || REGISTRY.map);
+  var NEWMAP = CLONEREGISTRYMAP(REGISTRY.MAP);
   if (EVENT === undefined || EVENT === null) {
     delete NEWMAP[ID];
   } else if (NEWMAP[ID]) {
@@ -258,7 +254,7 @@ function REVALIDATEALL(REGISTRY, DOC) {
     throw new Error('[REVALIDATEALL] Document object not available; provide a valid DOM document.');
   }
 
-  var MAP = REGISTRY.MAP || REGISTRY.map;
+  var MAP = REGISTRY.MAP;
   Object.keys(MAP).forEach(function(ID) {
     var EL = DOCUMENTREF.getElementById(ID);
     if (EL) {
@@ -272,7 +268,7 @@ function REVALIDATEALL(REGISTRY, DOC) {
 }
 
 function GETTRIGGERMAP(REGISTRY) {
-  return REGISTRY.MAP || REGISTRY.map;
+  return REGISTRY.MAP;
 }
 
 // ---------- EXPORT ----------

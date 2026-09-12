@@ -322,7 +322,7 @@ function validatespawncontracts(pipeline) {
 
 // P17: Align with blockcompiler supported types. Remove 'spawn' from valid list.
 function validateblocktype(block) {
-  var valid = ['fn', 'api', 'fetch', 'writer', 'domquery', 'io', 'crypto', 'wait', 'executionquery', 'storequery'];
+  var valid = ['fn', 'api', 'fetch', 'writer', 'domquery', 'io', 'crypto', 'wait', 'executionquery'];
   if (!block.type || valid.indexOf(block.type) === -1) {
     return ['BLOCK TYPE: block "' + block.id + '" invalid type: ' + block.type];
   }

@@ -111,16 +111,16 @@ function deposition(acc, d, offsetstr, positionmap) {
 
 function deanchor(acc, d) {
   acc.position = 'absolute';
-  acc._anchor = { targetid: d.targetid, mycorner: d.mycorner, targetcorner: d.targetcorner };
+  acc.anchor = { targetid: d.targetid, mycorner: d.mycorner, targetcorner: d.targetcorner };
   return acc;
 }
 
 function dezstack(acc, d) {
   acc.zIndex = 'auto';
-  if (d.mode === 'topmost') acc._zstacktopmost = true;
-  else if (d.mode === 'bottommost') acc._zstackbottommost = true;
-  else if (d.mode === 'above' && d.targetid) acc._zstackabove = d.targetid;
-  else if (d.mode === 'below' && d.targetid) acc._zstackbelow = d.targetid;
+  if (d.mode === 'topmost') acc.zstacktopmost = true;
+  else if (d.mode === 'bottommost') acc.zstackbottommost = true;
+  else if (d.mode === 'above' && d.targetid) acc.zstackabove = d.targetid;
+  else if (d.mode === 'below' && d.targetid) acc.zstackbelow = d.targetid;
   return acc;
 }
 
