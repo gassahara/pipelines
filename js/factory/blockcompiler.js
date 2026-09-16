@@ -582,81 +582,85 @@ function loadpipelinedependencies(container, options) {
     });
 }
 
+// ---- P3: PIPELINE elements carry `dna` (a zero-arg thunk returning the DNA).
+// The element no longer resolves a string path against any namespace; it
+// invokes the thunk at element-execution time and hands the DNA to bootdna,
+// which handles dependency loading, seeding, and stage orchestration.
 function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, dependencies, options) {
   var elementid = el.id || 'pipelineunknown';
-  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'processpipelineelement:', elementid, 'pipeline:', el.pipeline);
 
-  var resolvedpipeline = null;
-  var parentcontainer = null;
-
-  if (typeof el.pipeline === 'string') {
-    var segments = el.pipeline.split('.');
-    if (segments.length > 1 && segments[segments.length - 1] === 'pipeline') {
-      var parentpath = segments.slice(0, -1).join('.');
-      parentcontainer = resolvepipelinepath(parentpath, dependencies || (typeof window !== 'undefined' ? window : (typeof globalthis !== 'undefined' ? globalthis : {})));
-      logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'derived parent container for dependencies:', parentpath);
-    }
-    resolvedpipeline = resolvepipelinepath(el.pipeline, dependencies || (typeof window !== 'undefined' ? window : (typeof globalthis !== 'undefined' ? globalthis : {})));
-    if (!resolvedpipeline || !resolvedpipeline.elements) {
-      logerror(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'failed to resolve pipeline path:', el.pipeline);
-      throw new Error('[processpipelineelement] failed to resolve pipeline path: ' + el.pipeline);
-    }
-  } else {
-    resolvedpipeline = el.pipeline;
+  // --- P3 schema gate (element-compile time) ---
+  if (el.pipeline !== undefined) {
+    var gateerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must not declare "pipeline"; use "dna" (zero-arg thunk) instead');
+    gateerr.diagnostic = { KIND: 'pipeline-property-removed', ELEMENTID: elementid };
+    throw gateerr;
+  }
+  if (typeof el.dna !== 'function') {
+    var thunkerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must declare "dna" as a zero-argument function');
+    thunkerr.diagnostic = { KIND: 'dna-thunk-required', ELEMENTID: elementid, RECEIVED: typeof el.dna };
+    throw thunkerr;
+  }
+  var declaredoutputkeys = Object.keys(el.outputs || {});
+  if (declaredoutputkeys.length > 1) {
+    var multiout = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must declare at most one output key');
+    multiout.diagnostic = { KIND: 'pipeline-multi-output-unsupported', ELEMENTID: elementid, OUTPUTKEYS: declaredoutputkeys };
+    throw multiout;
   }
 
-  var depcontainer = parentcontainer || resolvedpipeline;
+  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'processpipelineelement:', elementid, 'dna: <thunk>');
 
-  return loadpipelinedependencies(depcontainer, options).then(function(nesteddeps) {
-    var mergeddependencies = extendobject(cloneobject(dependencies || {}), nesteddeps);
+  var innerfn = function(env) {
+    var parentenv = env;
 
-    var innerfn = function(env) {
-      var parentenv = env;
-      var childenv = cloneobject(parentenv);
-      childenv.containerid = el.container || null;
-      childenv.pipelineid = el.pipelineidoverride || (el.pipeline && el.pipeline.id) || (el.pipeline && el.pipeline.identity && el.pipeline.identity.id) || 'pipeline' + elementid;
+    // Fresh childenv built ONLY from declared inputs (per R-4/R-5).
+    var childenv = {};
+    var inputkeys = el.inputs || [];
+    inputkeys.forEach(function(key) {
+      childenv[key] = compilepathaccessor(key)(parentenv);
+    });
 
-      var inputkeys = el.inputs || [];
-      inputkeys.forEach(function(key) {
-        childenv[key] = compilepathaccessor(key)(parentenv);
-      });
+    // Invoke the DNA thunk (async-tolerant) at element-execution time.
+    return Promise.resolve(el.dna()).then(function(rawDNA) {
+      if (!rawDNA || typeof rawDNA !== 'object' || !rawDNA.pipeline) {
+        var dnaerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" dna() returned invalid DNA');
+        dnaerr.diagnostic = { KIND: 'dna-invalid', ELEMENTID: elementid, RECEIVED: typeof rawDNA };
+        throw dnaerr;
+      }
+
+      var derivedid = el.pipelineidoverride
+        || (rawDNA.identity && rawDNA.identity.id)
+        || rawDNA.id
+        || ('pipeline' + elementid);
+      childenv.pipelineid = derivedid;
+      if (el.container) childenv.containerid = el.container;
 
       var childoptions = el.options || {};
       if (childoptions.autorun === undefined) childoptions.autorun = true;
       if (childoptions.baseenv === undefined) childoptions.baseenv = childenv;
       if (childoptions.updateworldmap === undefined) childoptions.updateworldmap = parentenv.updateworldmap;
       if (childoptions.verbosity === undefined && options && options.verbosity !== undefined) childoptions.verbosity = options.verbosity;
-
-      var rawDNA = resolvedpipeline;
+      if (childoptions.containerid === undefined && el.container) childoptions.containerid = el.container;
 
       if (!rawDNA.id && !(rawDNA.identity && rawDNA.identity.id)) {
-        rawDNA.id = childenv.pipelineid;
+        rawDNA.id = derivedid;
       }
 
-      var bootdnafn = (typeof bootdna === 'function') ? bootdna : window.bootdna;
+      var bootdnafn = (typeof bootdna === 'function') ? bootdna : (typeof window !== 'undefined' ? window.bootdna : null);
       if (typeof bootdnafn !== 'function') {
         throw new Error('[processpipelineelement] bootdna function not available');
       }
 
-      var nestedPipelineId = childenv.pipelineid;
-      if (!rawDNA.id && !(rawDNA.identity && rawDNA.identity.id)) {
-        rawDNA.id = nestedPipelineId;
-      }
+      // R3: wrap bootdna result under the element's single declared output key.
+      return bootdnafn(rawDNA, childoptions).then(function(result) {
+        var wrapped = wrapBlockResult(result, { outputs: el.outputs || {} });
+        var mapped = mapoutputs(wrapped, Object.keys(el.outputs || {}));
+        Object.keys(mapped).forEach(function(k) { parentenv[k] = mapped[k]; });
+        return wrapped;
+      });
+    });
+  };
 
-      return bootdnafn(rawDNA, childoptions)
-        .then(function(result) {
-          var outputkeys = Object.keys(el.outputs || {});
-          var mapped = mapoutputs(result, outputkeys);
-          Object.keys(mapped).forEach(function(k) { parentenv[k] = mapped[k]; });
-          return result;
-        })
-        .catch(function(err) {
-          throw err;
-        });
-    };
-
-    return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
-  });
+  return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
 }
 
 // ---- OP-196: registereventstage via sendandawait ----
