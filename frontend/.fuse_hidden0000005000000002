@@ -1,0 +1,143 @@
+// ============================================================
+// UPDATED FILE: appinit.js
+// Changes applied:
+//   - MailActor started before all other actors
+//   - actor startup/ping functions now use MailActor wrappers
+//     (their enqueue functions internally use tag-based messaging)
+//   - status bar creation after DOM ready (previous fix)
+//   - actor starts wrapped in try/catch
+// ============================================================
+
+import { startHypervisorActor, enqueueHypervisorPing } from 'https://gassahara.github.io/pipelines/js/actors/hypervisoractor.js';
+import { startRenderActor, enqueueRenderPing } from 'https://gassahara.github.io/pipelines/js/actors/renderactor.js';
+import { startExecutionActor, enqueueExecutionPing } from 'https://gassahara.github.io/pipelines/js/actors/executionactor.js';
+import { startDebugActor, enqueueDebugPing } from 'https://gassahara.github.io/pipelines/js/actors/debugactor.js';
+import { startMailActor } from 'https://gassahara.github.io/pipelines/js/actors/mailactor.js';
+import { loadPipeline } from 'https://gassahara.github.io/pipelines/js/factory/blockcompiler.js';
+import { updateworldmap } from 'https://gassahara.github.io/pipelines/js/context.js';
+import shelldna from './pipelines/shell.js';
+import {
+  createVerbosityConstants,
+  getverbosity,
+  setverbosity,
+  getverbosityname,
+  loginfo
+} from 'https://gassahara.github.io/pipelines/js/verbosity.js';
+import { startDbActor } from 'https://gassahara.github.io/pipelines/js/actors/dbactor.js';
+import { startApiActor } from 'https://gassahara.github.io/pipelines/js/actors/apiactor.js';
+import { startWorldmapActor } from 'https://gassahara.github.io/pipelines/js/actors/worldmapactor.js';
+
+var verbosityConstants = createVerbosityConstants();
+var appState = Object.freeze({ level: verbosityConstants.DEBUG });
+
+function appLogInfo() {
+  var args = Array.prototype.slice.call(arguments);
+  loginfo.apply(null, [appState, '[APPINIT]'].concat(args));
+}
+
+var createstatusbar = function() {
+  var statusbar = document.createElement('div');
+  statusbar.id = 'verbosity-statusbar';
+  statusbar.style.cssText = 'position:fixed; bottom:10px; right:10px; background:rgba(0,0,0,0.8); color:#fff; padding:5px 10px; border-radius:5px; font-family:monospace; font-size:12px; z-index:9999; cursor:pointer;';
+  statusbar.title = 'Click to cycle verbosity level';
+
+  var updatedisplay = function() {
+    var level = getverbosity(appState);
+    var name = getverbosityname(level);
+    statusbar.textContent = 'Verbosity: ' + name + ' (' + level + ')';
+  };
+
+  statusbar.onclick = function() {
+    var current = getverbosity(appState);
+    var next = (current + 1) % (verbosityConstants.DEBUG + 1);
+    appState = setverbosity(appState, next);
+    updatedisplay();
+    appLogInfo('Verbosity changed to:', getverbosityname(next));
+  };
+
+  updatedisplay();
+  document.body.appendChild(statusbar);
+};
+
+var shellPipelineId = (shelldna && shelldna.identity && shelldna.identity.id) || 'shell';
+var sinks = [{ fn: updateworldmap, args: [] }];
+
+var baseEnv = {
+  rngactive: true,
+  stack: {},
+  updateworldmap: updateworldmap,
+  containerid: 'approot',
+  pipelineid: shellPipelineId
+};
+
+function waitForBootReady() {
+  return new Promise(function(resolve) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function onDomReady() {
+        document.removeEventListener('DOMContentLoaded', onDomReady);
+        resolve();
+      }, { once: true });
+      return;
+    }
+    if (document.readyState !== 'complete') {
+      window.addEventListener('load', function onLoad() {
+        window.removeEventListener('load', onLoad);
+        resolve();
+      }, { once: true });
+      return;
+    }
+    resolve();
+  });
+}
+
+function waitForStylesReady() {
+  if (document.fonts && document.fonts.ready) {
+    return document.fonts.ready.then(function() {});
+  }
+  if (document.readyState !== 'complete') {
+    return new Promise(function(resolve) {
+      window.addEventListener('load', resolve, { once: true });
+    });
+  }
+  return Promise.resolve();
+}
+
+await waitForBootReady();
+await waitForStylesReady();
+
+// P25: create status bar only after DOM is ready
+createstatusbar();
+
+// Synchronized actor boot with MailActor first
+try {
+  // Start MailActor first; other actors depend on it for messaging
+  await startMailActor();
+
+  await startHypervisorActor();
+  await enqueueHypervisorPing();
+  await startRenderActor();
+  await enqueueRenderPing();
+  await startExecutionActor();
+  await enqueueExecutionPing();
+  await startDebugActor();
+  await enqueueDebugPing();
+
+  // Explicit start for remaining framework actors
+  startDbActor();
+  startApiActor();
+  startWorldmapActor();
+
+  try {
+    await loadPipeline(shelldna.pipeline, shellPipelineId, {
+      baseEnv: baseEnv,
+      updateworldmap: updateworldmap
+    });
+    appLogInfo('SHELL PIPELINE LOADED');
+  } catch (err) {
+    console.error('[APPINIT] Shell pipeline load failed:', err);
+    throw err;
+  }
+} catch (err) {
+  console.error('[APPINIT] Actor startup failed:', err);
+  throw err;
+}

@@ -428,6 +428,22 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       if (typeof props.classname === 'string' && (containspathaccessorchars(props.classname) || (sig.inputs || []).indexOf(props.classname) !== -1)) {
         resolvedclassname = compilepathaccessor(props.classname)(env);
       }
+      var resolvedrules = props.rules;
+      if (typeof props.rules === 'string' && (containspathaccessorchars(props.rules) || (sig.inputs || []).indexOf(props.rules) !== -1)) {
+        resolvedrules = compilepathaccessor(props.rules)(env);
+      }
+      var resolvedsafeprops = props.safeprops;
+      if (typeof props.safeprops === 'string' && (containspathaccessorchars(props.safeprops) || (sig.inputs || []).indexOf(props.safeprops) !== -1)) {
+        resolvedsafeprops = compilepathaccessor(props.safeprops)(env);
+      }
+      var resolvedthemestyles = props.themestyles;
+      if (typeof props.themestyles === 'string' && (containspathaccessorchars(props.themestyles) || (sig.inputs || []).indexOf(props.themestyles) !== -1)) {
+        resolvedthemestyles = compilepathaccessor(props.themestyles)(env);
+      }
+      var resolvedoptions = props.options;
+      if (typeof props.options === 'string' && (containspathaccessorchars(props.options) || (sig.inputs || []).indexOf(props.options) !== -1)) {
+        resolvedoptions = compilepathaccessor(props.options)(env);
+      }
 
       var msgtype;
       switch (cmd) {
@@ -446,6 +462,29 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         case 'getviewport': msgtype = MESSAGETYPES.GETVIEWPORT; break;
         case 'getscreen': msgtype = MESSAGETYPES.GETSCREEN; break;
         case 'matchmedia': msgtype = MESSAGETYPES.MATCHMEDIA; break;
+        case 'getelements': msgtype = MESSAGETYPES.GETELEMENTS; break;
+        case 'checkoverflow':            msgtype = MESSAGETYPES.CHECKOVERFLOW; break;
+        case 'checkspacing':             msgtype = MESSAGETYPES.CHECKSPACING; break;
+        case 'checkoverlap':             msgtype = MESSAGETYPES.CHECKOVERLAP; break;
+        case 'checkscrollability':       msgtype = MESSAGETYPES.CHECKSCROLLABILITY; break;
+        case 'checkcontrolledoverlay':   msgtype = MESSAGETYPES.CHECKCONTROLLEDOVERLAY; break;
+        case 'correctoverflow':          msgtype = MESSAGETYPES.CORRECTOVERFLOW; break;
+        case 'correctspacing':           msgtype = MESSAGETYPES.CORRECTSPACING; break;
+        case 'correctoverlap':           msgtype = MESSAGETYPES.CORRECTOVERLAP; break;
+        case 'correctscrollability':     msgtype = MESSAGETYPES.CORRECTSCROLLABILITY; break;
+        case 'correctcontrolledoverlay': msgtype = MESSAGETYPES.CORRECTCONTROLLEDOVERLAY; break;
+        // P7 (frozen RUN 37): stylizer command family
+        case 'rewritestyleattrs':        msgtype = MESSAGETYPES.REWRITESTYLEATTRS; break;
+        case 'consolidatestyles':        msgtype = MESSAGETYPES.CONSOLIDATESTYLES; break;
+        case 'optimizecontrast':         msgtype = MESSAGETYPES.OPTIMIZECONTRAST; break;
+        case 'optimizeharmony':          msgtype = MESSAGETYPES.OPTIMIZEHARMONY; break;
+        case 'optimizetextvisibility':   msgtype = MESSAGETYPES.OPTIMIZETEXTVISIBILITY; break;
+        case 'optimizebuttonvisibility': msgtype = MESSAGETYPES.OPTIMIZEBUTTONVISIBILITY; break;
+        case 'verifycontrast':           msgtype = MESSAGETYPES.VERIFYCONTRAST; break;
+        case 'verifytextvisibility':     msgtype = MESSAGETYPES.VERIFYTEXTVISIBILITY; break;
+        case 'verifybuttonvisibility':   msgtype = MESSAGETYPES.VERIFYBUTTONVISIBILITY; break;
+        case 'verifyharmony':            msgtype = MESSAGETYPES.VERIFYHARMONY; break;
+        case 'checkfocusvisibility':     msgtype = MESSAGETYPES.CHECKFOCUSVISIBILITY; break;
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
 
@@ -453,10 +492,17 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         ID: props.id,
         VALUE: resolvedvalue,
         CLASSNAME: resolvedclassname,
+        RULES: resolvedrules,
+        SAFEPROPS: resolvedsafeprops,
+        THEMESTYLES: resolvedthemestyles,
+        MINRATIO: props.minratio,
         FORCE: props.force,
         QUERY: props.query,
         ARGUMENTS: props.arguments,
-        NAME: props.name
+        NAME: props.name,
+        TAGNAME: props.tagname,
+        LIMIT: props.limit,
+        OPTIONS: resolvedoptions
       }, mailboxwaittimeout, 'domresult')
         .then(function(r) { return wrapBlockResult(r, sig); });
     };

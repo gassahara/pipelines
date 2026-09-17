@@ -329,22 +329,25 @@ function validateblocktype(block) {
   return [];
 }
 
+// P5 (frozen RUN 11 / executed RUN 12): delegate to the validator exposed by
+// RENDERACTOR. The validator is resolved at runtime — typesystem.js loads
+// before renderactor.js in the bootloader manifest, so a load-time capture
+// would be undefined. The caller adapts the validator's {valid, errors}
+// result to its existing return contract (array of error strings prefixed
+// with 'DOMQUERY: block "<id>" ').
 function validatedomqueryblock(block) {
   if (block.type !== 'domquery') return [];
   var command = block.command || {};
   var cmd = command.COMMAND;
-  if (!cmd) return ['DOMQUERY: block "' + block.id + '" requires command.COMMAND'];
-  var all = domquerymessages.concat(['getviewport', 'getscreen', 'matchmedia']);
-  if (all.indexOf(cmd) === -1) return ['DOMQUERY: block "' + block.id + '" unknown COMMAND: ' + cmd];
   var props = command.properties || {};
-  if (['getviewport', 'getscreen', 'matchmedia'].indexOf(cmd) === -1 && (!props.id || typeof props.id !== 'string')) {
-    return ['DOMQUERY: block "' + block.id + '" requires command.properties.id'];
+  if (typeof validatedomquerycommand !== 'function') {
+    return ['DOMQUERY: block "' + block.id + '" validator unavailable'];
   }
-  if (domquerysetters.indexOf(cmd) !== -1) {
-    if (cmd === 'toggleclass' && (!props.classname || typeof props.classname !== 'string')) return ['DOMQUERY: block "' + block.id + '" toggleclass requires classname'];
-    if (cmd !== 'toggleclass' && props.value === undefined) return ['DOMQUERY: block "' + block.id + '" setter requires value'];
-  }
-  return [];
+  var result = validatedomquerycommand(cmd, props);
+  if (result.valid) return [];
+  return result.errors.map(function(e) {
+    return 'DOMQUERY: block "' + block.id + '" ' + e;
+  });
 }
 
 // P10: Align with actual compiler support (only six commands)

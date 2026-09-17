@@ -207,11 +207,6 @@ function rewritefunctionsource(source, destructure) {
   return source;
 }
 
-
-
-
-
-
 // ============================================================
 // §2b — Identifier skip helper (delivers forward reference from segment 1)
 // ============================================================
@@ -539,46 +534,115 @@ function preparednaforserialization(node, env, briefcase, deps, analyzer) {
   return node;
 }
 
-// ---- END segment 2 of 3 ----
-
-
-
 // ============================================================
 // §7 — fn-block analysis
 // ============================================================
 
-// ---- OP-176: containsstyleaccess ----
+// ---- OP-176 (P4-refined, RUN 24): containsstyleaccess ----
+// Refined per @proposal=P4 (frozen RUN 7; executed RUN 24).
+// Changes vs. the source's OP-176:
+//   (a) string literals and comments are masked before scanning;
+//   (b) local var/let/const bindings whose identifier ends in "style"
+//       are collected and excluded from the trigger;
+//   (c) the trigger is preserved for non-local `X.style.` accesses.
 function containsstyleaccess(source) {
   if (typeof source !== 'string') return false;
 
-  function matchestyl(j, k) {
-    var expected = 'tyle';
-    if (k >= expected.length) return j;
-    if (j >= source.length || source.charAt(j).toLowerCase() !== expected.charAt(k)) return -1;
-    return matchestyl(j + 1, k + 1);
+  var len = source.length;
+  var masked = new Array(len);
+  var i;
+
+  function isidstart(c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_' || c === '$';
+  }
+  function isidchar(c) {
+    return isidstart(c) || (c >= '0' && c <= '9');
   }
 
-  function skipwhitespace(j) {
-    if (j >= source.length) return j;
-    var c = source.charAt(j);
-    if (c === ' ' || c === '\t' || c === '\n') return skipwhitespace(j + 1);
-    return j;
+  // Pass 1 — mask string literals and comments.
+  i = 0;
+  while (i < len) {
+    var c = source.charAt(i);
+    if (c === '/' && i + 1 < len && source.charAt(i + 1) === '/') {
+      masked[i] = 1; masked[i + 1] = 1; i += 2;
+      while (i < len && source.charAt(i) !== '\n') { masked[i] = 1; i++; }
+      continue;
+    }
+    if (c === '/' && i + 1 < len && source.charAt(i + 1) === '*') {
+      masked[i] = 1; masked[i + 1] = 1; i += 2;
+      while (i + 1 < len && !(source.charAt(i) === '*' && source.charAt(i + 1) === '/')) { masked[i] = 1; i++; }
+      if (i + 1 < len) { masked[i] = 1; masked[i + 1] = 1; i += 2; }
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      masked[i] = 1; i++;
+      while (i < len) {
+        var sc = source.charAt(i);
+        if (sc === '\\') { masked[i] = 1; if (i + 1 < len) masked[i + 1] = 1; i += 2; continue; }
+        masked[i] = 1;
+        if (sc === c) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    i++;
   }
 
-  function scan(i) {
-    if (i >= source.length) return false;
-    var ch = source.charAt(i);
-    if (ch === 's' || ch === 'S') {
-      var after = matchestyl(i + 1, 0);
-      if (after !== -1) {
-        var ws = skipwhitespace(after);
-        if (source.charAt(ws) === '.') return true;
+  // Pass 2 — collect local var/let/const bindings ending in "style".
+  var localbindings = {};
+  i = 0;
+  while (i < len) {
+    if (masked[i]) { i++; continue; }
+    if (i > 0 && isidchar(source.charAt(i - 1))) { i++; continue; }
+    var kind = 0;
+    if (source.substr(i, 4) === 'var ') kind = 4;
+    else if (source.substr(i, 4) === 'let ') kind = 4;
+    else if (source.substr(i, 6) === 'const ') kind = 6;
+    if (kind === 0) { i++; continue; }
+    if (i + kind < len && isidchar(source.charAt(i + kind))) { i++; continue; }
+    var j = i + kind;
+    while (j < len && (source.charAt(j) === ' ' || source.charAt(j) === '\t')) j++;
+    var namestart = j;
+    if (j < len && isidstart(source.charAt(j))) {
+      j++;
+      while (j < len && isidchar(source.charAt(j))) j++;
+      var name = source.substring(namestart, j);
+      var lowername = name.toLowerCase();
+      if (lowername.length >= 5 && lowername.slice(-5) === 'style') {
+        localbindings[name] = true;
       }
     }
-    return scan(i + 1);
+    i = j > i + kind ? j : i + kind;
   }
 
-  return scan(0);
+  // Pass 3 — scan for `[sS]tyle` + optional whitespace + "." at an
+  // unmasked position whose base identifier is not a local binding.
+  i = 0;
+  while (i + 5 <= len) {
+    if (masked[i]) { i++; continue; }
+    var ch = source.charAt(i);
+    if (ch === 's' || ch === 'S') {
+      if (source.substr(i, 5).toLowerCase() === 'style') {
+        var after = i + 5;
+        while (after < len && !masked[after]) {
+          var wc = source.charAt(after);
+          if (wc === ' ' || wc === '\t' || wc === '\n' || wc === '\r') { after++; continue; }
+          break;
+        }
+        if (after < len && !masked[after] && source.charAt(after) === '.') {
+          var idstart = i;
+          while (idstart > 0 && !masked[idstart - 1] && isidchar(source.charAt(idstart - 1))) idstart--;
+          var identifier = source.substring(idstart, i + 5);
+          if (!localbindings[identifier]) return true;
+          i = after + 1;
+          continue;
+        }
+      }
+    }
+    i++;
+  }
+
+  return false;
 }
 
 // ---- OP-177: mapoutputs ----
@@ -763,9 +827,6 @@ function analyzefnblock(block, depsmap, env, parser) {
     } catch (_) { /* non-fatal */ }
     return {
       valid: false,
-      // OP-027 (R-29b): the violation TEXT itself must announce a failed analysis, so that a consumer which
-      // reads only the string (as the purity branch did) cannot mistake it for computed free identifiers.
-      // diagnostics.kind stays 'parser-rejected' for compatibility with existing readers.
       violations: ['analysis could not complete (the parser rejected the source): ' + errstr],
       free: [], declared: [],
       diagnostics: {
