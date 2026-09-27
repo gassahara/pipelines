@@ -119,6 +119,31 @@ function STARTWORLDMAPACTOR(OPTIONS) {
   });
 }
 
+// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+//
+// The three operations are sourced from CREATEACTORHANDLE (declared at
+// Cycle 18 in actorcore.js). WORLDMAPACTOR'S behavior is unchanged; the
+// handle is a thin wrapper that routes SUBMIT through the mail system
+// (Q6) and queries the mail-system records for EXPECT / GETACTIONRESULT
+// (Q8).
+//
+// The handle is created lazily on first access so that the module's
+// load-time declarations (WORLDMAPVERBOSITYCONSTANTS, WORLDMAPSTATE) are
+// established before any handle is constructed.
+
+var WORLDMAPHANDLE = null;
+
+function WORLDMAPHANDLEINSTANCE() {
+  if (!WORLDMAPHANDLE) {
+    WORLDMAPHANDLE = CREATEACTORHANDLE('WORLDMAPACTOR');
+  }
+  return WORLDMAPHANDLE;
+}
+
+function SUBMIT(ACTION) { return WORLDMAPHANDLEINSTANCE().SUBMIT(ACTION); }
+function EXPECT(ID, INTERVAL, TIMEOUT) { return WORLDMAPHANDLEINSTANCE().EXPECT(ID, INTERVAL, TIMEOUT); }
+function GETACTIONRESULT(ID) { return WORLDMAPHANDLEINSTANCE().GETACTIONRESULT(ID); }
+
 function SENDWORLDMAPPATCH(PATCH, RESPONSESPEC) {
   if (PATCH && PATCH.UPDATES) {
     var TAG = GENERATETAG();

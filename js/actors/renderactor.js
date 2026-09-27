@@ -1,7 +1,12 @@
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
 // ---- P5 (frozen RUN 11): domquery interface, plain data + validator ----
-var domquerycommandregistry = {
+// @proposal=P3 — renamed from domquerycommandregistry to
+// DOMQUERYCOMMANDREGISTRY (actor-role per Q1). The object-literal
+// property keys (getters, setters, messages, id_exempt, setter_reqs)
+// and the command-name string values are data; they are not
+// identifiers and are out of C3/C4 scope.
+var DOMQUERYCOMMANDREGISTRY = {
   getters: [
     'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout',
     'getviewport', 'getscreen', 'matchmedia', 'getelements',
@@ -51,17 +56,17 @@ function validatedomquerycommand(cmd, props) {
     errors.push('requires command.COMMAND');
     return { valid: false, errors: errors };
   }
-  if (domquerycommandregistry.messages.indexOf(cmd) === -1) {
+  if (DOMQUERYCOMMANDREGISTRY.messages.indexOf(cmd) === -1) {
     errors.push('unknown COMMAND: ' + cmd);
     return { valid: false, errors: errors };
   }
-  if (domquerycommandregistry.id_exempt.indexOf(cmd) === -1) {
+  if (DOMQUERYCOMMANDREGISTRY.id_exempt.indexOf(cmd) === -1) {
     if (!props || !props.id || typeof props.id !== 'string') {
       errors.push('requires command.properties.id');
     }
   }
-  if (domquerycommandregistry.setters.indexOf(cmd) !== -1) {
-    var reqs = domquerycommandregistry.setter_reqs[cmd] || [];
+  if (DOMQUERYCOMMANDREGISTRY.setters.indexOf(cmd) !== -1) {
+    var reqs = DOMQUERYCOMMANDREGISTRY.setter_reqs[cmd] || [];
     reqs.forEach(function(field) {
       if (!props || props[field] === undefined) {
         if (field === 'classname') {
@@ -1625,6 +1630,29 @@ var ENQUEUEGETVIEWPORT = CREATEENQUEUER(MESSAGETYPES.GETVIEWPORT, false);
 var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
 var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(REST) { return { QUERY: REST[0] }; });
 
+// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+//
+// The three operations are sourced from CREATEACTORHANDLE (declared at
+// Cycle 18 in actorcore.js). RENDERBEHAVIOR, the HANDLERS table, the
+// SU_* / LC_* helper families, and the ENQUEUE* helpers are unchanged.
+// SUBMIT routes through the mail system (Q6); EXPECT polls
+// GETACTIONRESULT until a response (including error) is obtained, and
+// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
+// read of the mail-system records (Q8).
+
+var RENDERACTORHANDLE = null;
+
+function RENDERACTORHANDLEINSTANCE() {
+  if (!RENDERACTORHANDLE) {
+    RENDERACTORHANDLE = CREATEACTORHANDLE('RENDERACTOR');
+  }
+  return RENDERACTORHANDLE;
+}
+
+function SUBMIT(ACTION) { return RENDERACTORHANDLEINSTANCE().SUBMIT(ACTION); }
+function EXPECT(ID, INTERVAL, TIMEOUT) { return RENDERACTORHANDLEINSTANCE().EXPECT(ID, INTERVAL, TIMEOUT); }
+function GETACTIONRESULT(ID) { return RENDERACTORHANDLEINSTANCE().GETACTIONRESULT(ID); }
+
 var STARTRENDERACTOR = function(OPTIONS) {
   if (OPTIONS !== undefined) {
     var LVL = typeof OPTIONS === 'number' ? OPTIONS :
@@ -1636,7 +1664,10 @@ var STARTRENDERACTOR = function(OPTIONS) {
   }
   return {
     GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    DISPATCH: function(MESSAGE) { return DISPATCHTOACTOR('RENDERACTOR', RENDERBEHAVIOR, MESSAGE); }
+    DISPATCH: function(MESSAGE) { return DISPATCHTOACTOR('RENDERACTOR', RENDERBEHAVIOR, MESSAGE); },
+    SUBMIT: SUBMIT,
+    EXPECT: EXPECT,
+    GETACTIONRESULT: GETACTIONRESULT
   };
 };
 

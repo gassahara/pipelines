@@ -271,4 +271,113 @@ function GETTRIGGERMAP(REGISTRY) {
   return REGISTRY.MAP;
 }
 
+// ---------- ACTOR HANDLE — three-operation protocol (@proposal=P4) ----------
+//
+// Per the frozen P4 (RUN 9, ITERATION 4):
+//   - every actor exposes SUBMIT(ACTION)              → ID
+//   - every actor exposes EXPECT(ID, INTERVAL, TIMEOUT) → Promise
+//   - every actor exposes GETACTIONRESULT(ID)          → STATUS
+//
+// SUBMIT routes the ACTION through the mail system (Q6 re-derivation,
+// RUN 8): the identifier returned is the mail-system correlation
+// identifier (the envelope's TAG). No out-of-band path exists.
+//
+// EXPECT polls GETACTIONRESULT at INTERVAL. A response — including an
+// error response — terminates polling (Q7). On timeout, and on an
+// EXPIRED record, the promise rejects.
+//
+// GETACTIONRESULT queries the mail system's per-message records by
+// ID; no parallel store is introduced (Q8). The query is delegated
+// to MAILGETACTIONSTATUS(ID), declared by mailactor.js at File Cycle
+// 20. The typeof guard avoids a ReferenceError in the interim.
+
+function CREATEACTORHANDLE(ACTORNAME) {
+  if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
+    throw new Error('[CREATEACTORHANDLE] ACTORNAME must be a non-empty string');
+  }
+
+  function SUBMIT(ACTION) {
+    if (!ACTION || typeof ACTION !== 'object') {
+      throw new Error('[SUBMIT] ACTION must be a non-null object');
+    }
+    if (!ACTION.TYPE || typeof ACTION.TYPE !== 'string') {
+      throw new Error('[SUBMIT] ACTION.TYPE must be a non-empty string');
+    }
+
+    var REGISTRY = (typeof MESSAGEREGISTRY !== 'undefined') ? MESSAGEREGISTRY : null;
+    if (REGISTRY && typeof REGISTRY.getinterfaces === 'function' && typeof REGISTRY.validate === 'function') {
+      var IFACES = REGISTRY.getinterfaces(ACTORNAME);
+      if (IFACES && Object.keys(IFACES).length > 0) {
+        var VALIDATION = REGISTRY.validate(ACTORNAME, ACTION);
+        if (VALIDATION.valid === false) {
+          throw new Error('[SUBMIT] ' + VALIDATION.error);
+        }
+      }
+    }
+
+    var TAG = GENERATETAG();
+    var SENDER = ACTION.SENDER || 'system';
+    var RESPONSESPEC = ACTION.RESPONSESPEC;
+
+    var PAYLOAD = {};
+    Object.keys(ACTION).forEach(function(K) {
+      if (K !== 'TYPE' && K !== 'SENDER' && K !== 'TAG' && K !== 'RESPONSESPEC' && K !== 'CONTEXT') {
+        PAYLOAD[K] = ACTION[K];
+      }
+    });
+
+    SENDINSTRUCTION(ACTORNAME, ACTION.TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC);
+    return TAG;
+  }
+
+  function EXPECT(ID, INTERVAL, TIMEOUT) {
+    if (typeof ID !== 'string' || ID.length === 0) {
+      return Promise.reject(new Error('[EXPECT] ID must be a non-empty string'));
+    }
+    var IV = (typeof INTERVAL === 'number' && INTERVAL > 0) ? INTERVAL : 50;
+    var TO = (typeof TIMEOUT === 'number' && TIMEOUT > 0) ? TIMEOUT : 20000;
+
+    return new Promise(function(RESOLVE, REJECT) {
+      var START = Date.now();
+
+      function POLL() {
+        var RECORD = GETACTIONRESULT(ID);
+        if (RECORD !== null && RECORD !== undefined) {
+          if (RECORD.STATUS === 'RESOLVED') {
+            RESOLVE(RECORD.RESULT);
+            return;
+          }
+          if (RECORD.STATUS === 'FAILED') {
+            RESOLVE(RECORD.ERROR);
+            return;
+          }
+          if (RECORD.STATUS === 'EXPIRED') {
+            REJECT(new Error('[EXPECT] action expired: ' + ID));
+            return;
+          }
+        }
+        if (Date.now() - START > TO) {
+          REJECT(new Error('[EXPECT] timeout for ' + ID));
+          return;
+        }
+        setTimeout(POLL, IV);
+      }
+      POLL();
+    });
+  }
+
+  function GETACTIONRESULT(ID) {
+    if (typeof ID !== 'string' || ID.length === 0) return null;
+    var MAILFN = (typeof MAILGETACTIONSTATUS === 'function') ? MAILGETACTIONSTATUS : null;
+    if (!MAILFN) return null;
+    return MAILFN(ID);
+  }
+
+  return {
+    SUBMIT: SUBMIT,
+    EXPECT: EXPECT,
+    GETACTIONRESULT: GETACTIONRESULT
+  };
+}
+
 // ---------- EXPORT ----------

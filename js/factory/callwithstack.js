@@ -1,3 +1,5 @@
+var callstackstate = initialevalstack();
+
 function safeshallowclone(obj) {
     if (obj == null || typeof obj !== 'object') return obj;
     try { return JSON.parse(JSON.stringify(obj)); }
@@ -46,7 +48,7 @@ function applyccc(fn, typecheck) {
     };
 }
 
-function callwithstack(evalstack, label, type, fn, args, options) {
+function callwithstack(initialstate, label, type, fn, args, options) {
     if (options === undefined) options = {};
     if (label && label.indexOf('fn:') === 0 && !options.typecheck) {
         var merged = {};
@@ -85,10 +87,11 @@ function callwithstack(evalstack, label, type, fn, args, options) {
         k = resolve;
         var meta = { label: label };
         if (context && context.callerid) meta.callerid = context.callerid;
-        evalstack.pushframe(wrappedfn, args, context && context.pipestate, k, meta);
+        callstackstate = pushframe(callstackstate, wrappedfn, args, context && context.pipestate, k, meta);
 
         var onsuccess = function(result) {
-            evalstack.popframe();
+            var popped = popframe(callstackstate);
+            callstackstate = popped.state;
             if (captured && attachcontinuation && result && typeof result === 'object' && !Array.isArray(result)) {
                 result.CONTINUATION = captured;
             }
@@ -97,9 +100,10 @@ function callwithstack(evalstack, label, type, fn, args, options) {
         };
         var onfailure = function(err) {
             if (!err.diagnostic) err.diagnostic = {};
-            if (!err.diagnostic.DEBUGTRACE) err.diagnostic.DEBUGTRACE = evalstack.snapshot();
+            if (!err.diagnostic.DEBUGTRACE) err.diagnostic.DEBUGTRACE = snapshotstack(callstackstate);
             if (captured && !err.diagnostic.CONTINUATION) err.diagnostic.CONTINUATION = captured;
-            evalstack.popframe();
+            var popped = popframe(callstackstate);
+            callstackstate = popped.state;
 
             var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : null;
             var gentagfn = (typeof GENERATETAG === 'function') ? GENERATETAG : function() { return 'tag'; };

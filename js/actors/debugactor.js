@@ -405,3 +405,25 @@ function ENQUEUEDEBUGRECOVER(RESPONSESPEC) {
   var TAG = GENERATETAG();
   SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.RECOVER, {}, TAG, 'system', RESPONSESPEC);
 }
+
+// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+//
+// The three operations are sourced from CREATEACTORHANDLE (declared at
+// Cycle 18 in actorcore.js). DEBUGBEHAVIOR and the ENQUEUE helpers are
+// unchanged. SUBMIT routes through the mail system (Q6); EXPECT polls
+// GETACTIONRESULT until a response (including error) is obtained, and
+// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
+// read of the mail-system records (Q8).
+
+var DEBUGHANDLE = null;
+
+function DEBUGHANDLEINSTANCE() {
+  if (!DEBUGHANDLE) {
+    DEBUGHANDLE = CREATEACTORHANDLE('DEBUGACTOR');
+  }
+  return DEBUGHANDLE;
+}
+
+function SUBMIT(ACTION) { return DEBUGHANDLEINSTANCE().SUBMIT(ACTION); }
+function EXPECT(ID, INTERVAL, TIMEOUT) { return DEBUGHANDLEINSTANCE().EXPECT(ID, INTERVAL, TIMEOUT); }
+function GETACTIONRESULT(ID) { return DEBUGHANDLEINSTANCE().GETACTIONRESULT(ID); }

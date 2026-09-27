@@ -2,6 +2,8 @@
 // Middle of the DAG: reads tokenscanner.js globals; provides the parser surface.
 // Consolidations applied: iteratestates (PS-1), withscope (PS-2),
 // declareifidentifier (PS-3), bufferparser (PS-4).
+// @proposal=P2 — addfreevarsfromtokens / addfreevarsfrombuffer converted
+// to trampolined recursion; no `for` remains in this file.
 
 // ============================================================
 // §1 — State guards (OP-128)
@@ -22,10 +24,6 @@ function peek(state) {
     peekerr.diagnostic = peekdiag;
     throw peekerr;
   }
-  // OP-025 (R-31): end-of-input is EXPLICIT. The accessor validates the state object above; it must not also
-  // return `undefined` past the last token, because every caller dereferences the result (`t.type`) and would
-  // die with an anonymous TypeError instead of reaching the parser's own diagnostics. An 'eof' token type
-  // already exists in this parser (done() tests `t.type === 'eof'`), so consuming it requires no new concept.
   if (state.index >= state.tokens.length) return { type: 'eof', value: null, kind: 'eof' };
   return state.tokens[state.index];
 }
@@ -222,23 +220,27 @@ function findkind(kindkey) {
   return found;
 }
 
+// @proposal=P2 — recursion replaces the imperative for-loop.
 function addfreevarsfromtokens(state, tokens) {
-  var next = state;
-  for (var i = 0; i < tokens.length; i++) {
+  function scan(i, next) {
+    if (i >= tokens.length) return next;
     var t = tokens[i];
-    if (t.type === 'identifier') next = addfreevar(next, t.value);
+    var nextstate = (t.type === 'identifier') ? addfreevar(next, t.value) : next;
+    return function() { return scan(i + 1, nextstate); };
   }
-  return next;
+  return trampoline(scan)(0, state);
 }
 
+// @proposal=P2 — recursion replaces the imperative for-loop.
 function addfreevarsfrombuffer(state, tokens, from, to) {
-  var next = state;
   var end = (to === undefined) ? tokens.length : to;
-  for (var i = from; i < end; i++) {
+  function scan(i, next) {
+    if (i >= end) return next;
     var t = tokens[i];
-    if (t.type === 'identifier') next = addfreevar(next, t.value);
+    var nextstate = (t.type === 'identifier') ? addfreevar(next, t.value) : next;
+    return function() { return scan(i + 1, nextstate); };
   }
-  return next;
+  return trampoline(scan)(from, state);
 }
 
 // ============================================================
@@ -353,11 +355,6 @@ function parsetemplatefrombuffer(state, tokens) {
   next = advance(next);
   return next;
 }
-
-// ============================================================
-// §12 — Tentative-kind registry (OP-139)
-// ============================================================
-
 
 // ============================================================
 // §12 — Tentative-kind registry (OP-139)
@@ -590,12 +587,6 @@ function parseprogram(state) {
 }
 
 // ---- (1b) parsestatement (OP-004) — relocated verbatim.
-//      The OP-141 trampoline generation calls this dispatcher from its parseprogram and parseblock steps but
-//      never defined it, and the function was not in the manifest, so those call sites raised
-//      `ReferenceError: parsestatement is not defined`. All sixteen callees exist in this file: peek,
-//      assertparserstate, nextis, advance, parseblock, parsevariabledeclaration, parsefunctiondeclaration,
-//      parseifstatement, parseforstatement, parsewhilestatement, parsedostatement, parsetrystatement,
-//      parseswitchstatement, parseclassdeclaration, parseexpression, consumesemicolon.
 function parsestatement(state) {
   var t = peek(state);
 

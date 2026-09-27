@@ -1,5 +1,149 @@
+// blockcompiler.js — pipeline compiler concern
+//
+// @proposal=P5 (corrected) — the blockcompiler is a DECLARATIVE SEMAPHORE.
+// It EXPOSES construction functions that pipeline programs call in a
+// linear sequence, and a finalizer (run / compile). No DNA. The pipeline
+// state is a value threaded by argument; no id.
+//
+// @proposal=P5 (Cycle 39R-ter) — the WAITFORMAILBOX filter literals are
+// aligned with the reader (mailactor.js, post-Cycle 39R). Filters use
+// the authoritative UPPERCASE keys (Q12). This is the third and last
+// file of the DEV-C20-ALIASING closure.
+
 // ============================================================
-// §1 — Constants & path accessors
+// §1 — Construction API (Cycle 32R)
+// ============================================================
+
+function makelib(src, provides) {
+  return { src: src, provides: provides };
+}
+
+function makeprogram(src, provides) {
+  return { src: src, provides: provides };
+}
+
+function makestage(id, control) {
+  return { element: 'STAGE', id: id, control: control, elements: [] };
+}
+
+function makeblock(id, type, behaviour, attrs) {
+  var a = attrs || {};
+  var b = { element: 'BLOCK', id: id, type: type };
+  if (behaviour !== null && behaviour !== undefined) b.behaviour = behaviour;
+  Object.keys(a).forEach(function(k) { b[k] = a[k]; });
+  return b;
+}
+
+function makepipelineelement(id, dnathunk, attrs) {
+  var a = attrs || {};
+  var b = { element: 'PIPELINE', id: id, dna: dnathunk };
+  Object.keys(a).forEach(function(k) { b[k] = a[k]; });
+  return b;
+}
+
+function pipeline(type, name) {
+  return { type: type, name: name, libs: [], programs: [], elements: [] };
+}
+
+function deepreplace(nodes, target, transform) {
+  return nodes.map(function(node) {
+    if (node === target) return transform(node);
+    if (node.element === 'STAGE' && node.elements && node.elements.length > 0) {
+      var newchildren = deepreplace(node.elements, target, transform);
+      var changed = newchildren.some(function(c, i) { return c !== node.elements[i]; });
+      if (changed) {
+        var clone = {};
+        Object.keys(node).forEach(function(k) { clone[k] = node[k]; });
+        clone.elements = newchildren;
+        return clone;
+      }
+    }
+    return node;
+  });
+}
+
+function appendlib(p, parent, child) {
+  if (parent !== null) {
+    throw new Error('[appendlib] libs attach only at pipeline level (parent must be null)');
+  }
+  var next = {};
+  Object.keys(p).forEach(function(k) { next[k] = p[k]; });
+  next.libs = p.libs.concat([child]);
+  return next;
+}
+
+function appendprogram(p, parent, child) {
+  if (parent !== null) {
+    throw new Error('[appendprogram] programs attach only at pipeline level (parent must be null)');
+  }
+  var next = {};
+  Object.keys(p).forEach(function(k) { next[k] = p[k]; });
+  next.programs = p.programs.concat([child]);
+  return next;
+}
+
+function appendstage(p, parent, child) {
+  if (child.element !== 'STAGE') {
+    throw new Error('[appendstage] child must be a stage value');
+  }
+  if (parent === null) {
+    var next = {};
+    Object.keys(p).forEach(function(k) { next[k] = p[k]; });
+    next.elements = p.elements.concat([child]);
+    return next;
+  }
+  var replaced = deepreplace(p.elements, parent, function(parentstage) {
+    var clone = {};
+    Object.keys(parentstage).forEach(function(k) { clone[k] = parentstage[k]; });
+    clone.elements = parentstage.elements.concat([child]);
+    return clone;
+  });
+  var nextp = {};
+  Object.keys(p).forEach(function(k) { nextp[k] = p[k]; });
+  nextp.elements = replaced;
+  return nextp;
+}
+
+function appendblock(p, parent, child) {
+  if (parent === null) {
+    throw new Error('[appendblock] parent must be a stage value (not null)');
+  }
+  if (child.element !== 'BLOCK') {
+    throw new Error('[appendblock] child must be a block value');
+  }
+  var replaced = deepreplace(p.elements, parent, function(parentstage) {
+    var clone = {};
+    Object.keys(parentstage).forEach(function(k) { clone[k] = parentstage[k]; });
+    clone.elements = parentstage.elements.concat([child]);
+    return clone;
+  });
+  var nextp = {};
+  Object.keys(p).forEach(function(k) { nextp[k] = p[k]; });
+  nextp.elements = replaced;
+  return nextp;
+}
+
+function appendpipelineelement(p, parent, child) {
+  if (parent === null) {
+    throw new Error('[appendpipelineelement] parent must be a stage value (not null)');
+  }
+  if (child.element !== 'PIPELINE') {
+    throw new Error('[appendpipelineelement] child must be a pipelineelement value');
+  }
+  var replaced = deepreplace(p.elements, parent, function(parentstage) {
+    var clone = {};
+    Object.keys(parentstage).forEach(function(k) { clone[k] = parentstage[k]; });
+    clone.elements = parentstage.elements.concat([child]);
+    return clone;
+  });
+  var nextp = {};
+  Object.keys(p).forEach(function(k) { nextp[k] = p[k]; });
+  nextp.elements = replaced;
+  return nextp;
+}
+
+// ============================================================
+// §2 — Constants & path accessors (Cycle 29 / 32R)
 // ============================================================
 
 var BLOCKCOMPILERSTATE = { level: createverbosityconstants().DEBUG };
@@ -8,7 +152,6 @@ var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/
 var scriptwitnesstimeout = 5000;
 var mailboxwaittimeout = 25000;
 
-// ---- Injected tools for parser/serializer independence ----
 var blockcompilertools = {
   parsesource: (typeof parsesource === 'function') ? parsesource :
     (typeof detectfreeidentifiers === 'function') ? function(src) {
@@ -40,7 +183,6 @@ function createblockcompilerconstants() {
   };
 }
 
-// ---- C.2.3: entry-walker ----
 function walkentries(source, acc, step) {
   var keys = Object.keys(source || {});
   for (var i = 0; i < keys.length; i++) {
@@ -51,10 +193,6 @@ function walkentries(source, acc, step) {
 
 function cloneobject(obj) {
   return walkentries(obj || {}, {}, function(acc, k, v) { acc[k] = v; return acc; });
-}
-
-function extendobject(target, source) {
-  return walkentries(source || {}, target, function(acc, k, v) { acc[k] = v; return acc; });
 }
 
 function stripquotes(str) {
@@ -100,7 +238,7 @@ function compilepathaccessor(pathstr) {
 function buildproperties(merged, inherited) {
   if (inherited === undefined) inherited = {};
   return Object.keys(merged).reduce(function(result, key) {
-    if (key !== 'fn') result[key] = merged[key];
+    if (key !== 'fn' && key !== 'behaviour') result[key] = merged[key];
     return result;
   }, cloneobject(inherited));
 }
@@ -117,11 +255,11 @@ function resolvepipelinepath(path, dependencies) {
   }, dependencies);
 }
 
-function resolvestagefrompath(dnaenvelope, stagepath) {
+function resolvestagefrompath(pipelinestate, stagepath) {
   return (stagepath || []).reduce(function(current, segment) {
     if (current == null) return undefined;
     return current[segment];
-  }, dnaenvelope.definition);
+  }, pipelinestate);
 }
 
 function buildblockproperties(merged, inherited, io, env, dependencies) {
@@ -208,12 +346,11 @@ function createerrorcontext(id, stagetype) {
   };
 }
 
-// ---- C.2.1: unwrap response envelope (P43: reaches through payload / PAYLOAD) ----
 function unwrap(response) {
   if (!response) return {};
   if (response.RESULT !== undefined) return response.RESULT;
   if (response.result !== undefined) return response.result;
-  var inner = response.payload !== undefined ? response.payload : response.PAYLOAD;
+  var inner = response.PAYLOAD !== undefined ? response.PAYLOAD : response.payload;
   if (inner && typeof inner === 'object') {
     if (inner.RESULT !== undefined) return inner.RESULT;
     if (inner.result !== undefined) return inner.result;
@@ -221,14 +358,7 @@ function unwrap(response) {
   return response;
 }
 
-// ---- P42: wrap a compiler-driven dispatcher response under the block's
-//      declared single output key. Applied by every compiler-driven blockfn
-//      (domquery, api, fetch, crypto, executionquery, io, wait).
-//      - 0 declared keys      → return {}
-//      - 1 declared key       → return { <key>: response }
-//      - many declared keys   → return response (the block author's obligation)
-//      fn and writer blocks are exempt: their source already shapes the return.
-function wrapBlockResult(response, sig) {
+function wrapblockresult(response, sig) {
   var outputkeys = Object.keys(sig.outputs || {});
   if (outputkeys.length === 0) return {};
   if (outputkeys.length === 1) {
@@ -239,14 +369,15 @@ function wrapBlockResult(response, sig) {
   return response;
 }
 
-// ---- C.2.2: send-and-await triad ----
+// @proposal=P5 (Cycle 39R-ter) — WAITFORMAILBOX filter keys aligned with
+// the reader. UPPERCASE (Q12) is authoritative; the OP-011 aliasing is
+// removed from mailactor (Cycle 39R).
 function sendandawait(recipient, type, payload, timeout, responsetype) {
   var tag = GENERATETAG();
   SENDINSTRUCTION(recipient, type, payload, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
-  return WAITFORMAILBOX({ tag: tag, sender: recipient, type: responsetype }, timeout).then(unwrap);
+  return WAITFORMAILBOX({ TAG: tag, SENDER: recipient, TYPE: responsetype }, timeout).then(unwrap);
 }
 
-// ---- C.2.4: loader factorisation ----
 function loadscripts(entries, basepath, timeout, label) {
   if (typeof timeout === 'undefined') timeout = scriptwitnesstimeout;
   var normalized = normalizeentries(entries);
@@ -254,10 +385,9 @@ function loadscripts(entries, basepath, timeout, label) {
   return loadscriptssequentially(normalized, basepath, timeout);
 }
 
-// ---- A8 / P24: shared wrapper for compiled block functions ----
 function wrapcompiledfn(innerfn, kind, id, blockkind) {
   var blockfn = function(env) {
-    return callwithstack(evalstack, kind + ':' + id, 'async-await',
+    return callwithstack(null, kind + ':' + id, 'async-await',
       function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
@@ -270,7 +400,7 @@ function wrapcompiledfn(innerfn, kind, id, blockkind) {
 }
 
 // ============================================================
-// §2 — Block compilers
+// §3 — Block compilers (Cycle 29 / 32R)
 // ============================================================
 
 function buildpayload(mappingobj, data) {
@@ -295,8 +425,6 @@ function buildresponse(mappingobj, raw) {
   }, {});
 }
 
-// ---- OP-193: compilehttpblock response handler via sendandawait ----
-// P42: wraps the http result under the block's declared single output key.
 function compilehttpblock(merged, id, sig, istextual, options) {
   var innerfn = function(env) {
     var label = (istextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
@@ -330,7 +458,7 @@ function compilehttpblock(merged, id, sig, istextual, options) {
         if (merged.mapping && merged.mapping.response && result && typeof result === 'object') {
           finalresult = buildresponse(merged.mapping.response, result);
         }
-        return wrapBlockResult(finalresult, sig);
+        return wrapblockresult(finalresult, sig);
       });
   };
 
@@ -346,7 +474,6 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       logdebug: logdebug,
       logblockdebug: logblockdebug,
       callwithstack: callwithstack,
-      evalstack: evalstack,
       compilepathaccessor: compilepathaccessor,
       buildblockproperties: buildblockproperties,
       createerrorcontext: createerrorcontext
@@ -357,13 +484,14 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
   compilers[blocktypes.api] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, false, options); };
   compilers[blocktypes.fetch] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, true, options); };
 
-  // ---- OP-194: writer via sendandawait ----
   compilers[blocktypes.writer] = function(merged, id, sig, inheritedproperties) {
     if (inheritedproperties === undefined) inheritedproperties = {};
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
     var innerfn = function(env) {
       logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
-      var fn = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
+      var fn = (typeof merged.behaviour === 'function') ? merged.behaviour :
+               (typeof merged.fn === 'function') ? merged.fn :
+               (typeof merged.ref === 'function') ? merged.ref : null;
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
       var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
@@ -394,25 +522,25 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
     return wrapcompiledfn(innerfn, 'writer', id);
   };
 
-  // ---- P42: io wraps its result under the declared single output key.
   compilers[blocktypes.io] = function(merged, id, sig) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling IO block:', id);
     var innerfn = function(env) {
       logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing IO block:', id);
-      var io = typeof merged.fn === 'function' ? merged.fn : (typeof merged.ref === 'function' ? merged.ref : null);
-      if (!io) throw new Error('io block "' + id + '" must declare an inline fn or a ref function');
-      var ioname = (typeof merged.fn === 'function') ? id : (merged.ref || id);
+      var io = (typeof merged.behaviour === 'function') ? merged.behaviour :
+               (typeof merged.fn === 'function') ? merged.fn :
+               (typeof merged.ref === 'function') ? merged.ref : null;
+      if (!io) throw new Error('io block "' + id + '" must declare a behaviour');
+      var ioname = id;
       var inputdata = {};
       (sig.inputs || []).forEach(function(inp) { inputdata[inp] = compilepathaccessor(inp)(env); });
-      return callwithstack(evalstack, 'io:' + ioname, 'async-await', function(e) {
+      return callwithstack(null, 'io:' + ioname, 'async-await', function(e) {
         return Promise.resolve(io(inputdata, e));
       }, [env], { context: { env: env }, capturecontinuation: true, errk: createerrorcontext(id, 'io') })
-        .then(function(r) { return wrapBlockResult(r, sig); });
+        .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'io', id);
   };
 
-  // ---- OP-195 + P42: domquery wraps its response under the declared single output key.
   compilers[blocktypes.domquery] = function(merged, id, sig) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling DOMQUERY block:', id, 'command:', merged.command && merged.command.COMMAND);
     var innerfn = function(env) {
@@ -473,7 +601,6 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         case 'correctoverlap':           msgtype = MESSAGETYPES.CORRECTOVERLAP; break;
         case 'correctscrollability':     msgtype = MESSAGETYPES.CORRECTSCROLLABILITY; break;
         case 'correctcontrolledoverlay': msgtype = MESSAGETYPES.CORRECTCONTROLLEDOVERLAY; break;
-        // P7 (frozen RUN 37): stylizer command family
         case 'rewritestyleattrs':        msgtype = MESSAGETYPES.REWRITESTYLEATTRS; break;
         case 'consolidatestyles':        msgtype = MESSAGETYPES.CONSOLIDATESTYLES; break;
         case 'optimizecontrast':         msgtype = MESSAGETYPES.OPTIMIZECONTRAST; break;
@@ -504,12 +631,11 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         LIMIT: props.limit,
         OPTIONS: resolvedoptions
       }, mailboxwaittimeout, 'domresult')
-        .then(function(r) { return wrapBlockResult(r, sig); });
+        .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'domquery', id);
   };
 
-  // ---- P42: crypto wraps its response under the declared single output key.
   compilers[blocktypes.crypto] = function(merged, id, sig) {
     var innerfn = function(env) {
       var outputkey = Object.keys(sig.outputs || {})[0];
@@ -517,23 +643,21 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
       return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxwaittimeout, 'domresult')
-        .then(function(r) { return wrapBlockResult(r, sig); });
+        .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'crypto', id);
   };
 
-  // ---- P42: wait wraps its (empty) result under the declared single output key.
   compilers[blocktypes.wait] = function(merged, id, sig) {
     var innerfn = function(env) {
       var ms = typeof merged.ms === 'number' ? merged.ms : compilepathaccessor(merged.ms)(env);
       if (typeof ms !== 'number' || ms < 0) throw new Error('[wait] invalid ms');
       return new Promise(function(r) { setTimeout(r, ms); })
-        .then(function() { return wrapBlockResult({}, sig); });
+        .then(function() { return wrapblockresult({}, sig); });
     };
     return wrapcompiledfn(innerfn, 'wait', id);
   };
 
-  // ---- P42: executionquery wraps its response under the declared single output key.
   compilers[blocktypes.executionquery] = function(merged, id, sig) {
     var innerfn = function(env) {
       var command = merged.command || {};
@@ -551,7 +675,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
         default: throw new Error('[executionquery] unknown command: ' + cmd);
       }
       return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxwaittimeout, responsetype)
-        .then(function(r) { return wrapBlockResult(r, sig); });
+        .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'executionquery', id);
   };
@@ -562,15 +686,22 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
 function compileblock(block, inheritedbriefcase, constants, options) {
   if (inheritedbriefcase === undefined) inheritedbriefcase = {};
   if (options && options.tools) setblockcompilertools(options.tools);
-  if (block.ref && typeof block.ref === 'string') {
-    var refTarget = (typeof window !== 'undefined') ? window[block.ref] : (typeof globalthis !== 'undefined' ? globalthis[block.ref] : undefined);
-    if (typeof refTarget !== 'function') {
-      throw new Error('[compileblock] ref function not found: ' + block.ref);
+
+  if (typeof block.behaviour !== 'function' && options && options.strictrefonly === true) {
+    var hasbehaviour = typeof block.behaviour === 'function';
+    var haslegacyfn = typeof block.fn === 'function';
+    var hasref = block.ref && typeof block.ref === 'string';
+    if (!hasbehaviour && (haslegacyfn || hasref)) {
+      throw new Error('[compileblock] P5 violation: block "' + (block.id || 'unknown') +
+        '" uses inline fn: or ref:; the target program model requires behaviour: <exposed function>');
     }
-    block.fn = refTarget;
-    if (!block.deps) block.deps = {};
-    block.deps[block.ref] = refTarget;
   }
+
+  if (block.ref && typeof block.ref === 'string' && typeof block.behaviour !== 'function') {
+    var refTarget = (typeof window !== 'undefined') ? window[block.ref] : (typeof globalthis !== 'undefined' ? globalthis[block.ref] : undefined);
+    if (typeof refTarget === 'function') block.behaviour = refTarget;
+  }
+
   var compiler = constants.compilers[block.type];
   if (!compiler) throw new Error('[compileblock] Unknown block type: ' + block.type);
   var analyzer = constants.analyzers[block.type];
@@ -582,13 +713,10 @@ function compileblock(block, inheritedbriefcase, constants, options) {
   return compiler(block, block.id, blockio, inheritedbriefcase);
 }
 
-// ---- END segment 1 of 3 ----
-
 // ============================================================
-// §3 — Pipeline orchestration
+// §4 — Pipeline orchestration (Cycle 32R)
 // ============================================================
 
-// ---- OP-197 (BC-2): blockfn tagging helper ----
 function tagfn(fn, meta) {
   if (meta.blockmeta !== undefined) fn.blockmeta = meta.blockmeta;
   if (meta.originalfn !== undefined) fn.originalfn = meta.originalfn;
@@ -601,20 +729,19 @@ function resolvenextelement(stage, index) {
   return stage.elements[index];
 }
 
-// ---- OP-198: processelement via tagfn ----
 function processelement(el, pipelineid, stagepath, inheritedbriefcase, constants, dnaconstants, dependencies, options) {
   var fn = compileblock(el, inheritedbriefcase, constants, options);
   tagfn(fn, {
-    blockmeta: { id: el.id, type: el.type, ref: el.ref, replace: el.replace, sync: el.sync || 'awaited' },
-    originalfn: (typeof el.fn === 'function') ? el.fn : (typeof el.ref === 'function' ? el.ref : null),
+    blockmeta: { id: el.id, type: el.type, replace: el.replace, sync: el.sync || 'awaited' },
+    originalfn: (typeof el.behaviour === 'function') ? el.behaviour : null,
     kind: 'element'
   });
   return createpersistentelementwrapper(fn, el, stagepath, pipelineid, options);
 }
 
-function loadpipelinedependencies(container, options) {
-  var libs = (container && container.libs) || [];
-  var deps = (container && container.deps) || (container && container.programs) || [];
+function loadpipelinedependencies(pipelineslice, options) {
+  var libs = (pipelineslice && pipelineslice.libs) || [];
+  var deps = (pipelineslice && pipelineslice.programs) || [];
   var frameworkbase = (typeof pipelinesbase !== 'undefined') ? pipelinesbase : '';
   var frontbase = options && options.frontendbase ? options.frontendbase : (typeof frontendbase !== 'undefined' ? frontendbase : '');
   var witnesstimeout = options && options.witnesstimeout ? options.witnesstimeout : scriptwitnesstimeout;
@@ -624,81 +751,45 @@ function loadpipelinedependencies(container, options) {
       return loadfrontendprograms(deps, frontbase, witnesstimeout);
     })
     .then(function() {
-      return builddependenciesregistry(deps);
+      return builddependenciesregistry(libs.concat(deps));
     });
 }
 
-// ---- P3: PIPELINE elements carry `dna` (a zero-arg thunk returning the DNA).
-// The element no longer resolves a string path against any namespace; it
-// invokes the thunk at element-execution time and hands the DNA to bootdna,
-// which handles dependency loading, seeding, and stage orchestration.
 function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, dependencies, options) {
   var elementid = el.id || 'pipelineunknown';
 
-  // --- P3 schema gate (element-compile time) ---
-  if (el.pipeline !== undefined) {
-    var gateerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must not declare "pipeline"; use "dna" (zero-arg thunk) instead');
-    gateerr.diagnostic = { KIND: 'pipeline-property-removed', ELEMENTID: elementid };
-    throw gateerr;
-  }
   if (typeof el.dna !== 'function') {
     var thunkerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must declare "dna" as a zero-argument function');
     thunkerr.diagnostic = { KIND: 'dna-thunk-required', ELEMENTID: elementid, RECEIVED: typeof el.dna };
     throw thunkerr;
   }
-  var declaredoutputkeys = Object.keys(el.outputs || {});
-  if (declaredoutputkeys.length > 1) {
-    var multiout = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must declare at most one output key');
-    multiout.diagnostic = { KIND: 'pipeline-multi-output-unsupported', ELEMENTID: elementid, OUTPUTKEYS: declaredoutputkeys };
-    throw multiout;
-  }
-
-  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'processpipelineelement:', elementid, 'dna: <thunk>');
 
   var innerfn = function(env) {
     var parentenv = env;
-
-    // Fresh childenv built ONLY from declared inputs (per R-4/R-5).
     var childenv = {};
     var inputkeys = el.inputs || [];
     inputkeys.forEach(function(key) {
       childenv[key] = compilepathaccessor(key)(parentenv);
     });
 
-    // Invoke the DNA thunk (async-tolerant) at element-execution time.
-    return Promise.resolve(el.dna()).then(function(rawDNA) {
-      if (!rawDNA || typeof rawDNA !== 'object' || !rawDNA.pipeline) {
-        var dnaerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" dna() returned invalid DNA');
-        dnaerr.diagnostic = { KIND: 'dna-invalid', ELEMENTID: elementid, RECEIVED: typeof rawDNA };
+    return Promise.resolve(el.dna()).then(function(childstate) {
+      if (!childstate || typeof childstate !== 'object') {
+        var dnaerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" dna() returned invalid state');
+        dnaerr.diagnostic = { KIND: 'state-invalid', ELEMENTID: elementid, RECEIVED: typeof childstate };
         throw dnaerr;
       }
 
-      var derivedid = el.pipelineidoverride
-        || (rawDNA.identity && rawDNA.identity.id)
-        || rawDNA.id
-        || ('pipeline' + elementid);
-      childenv.pipelineid = derivedid;
+      var derivedname = el.pipelineidoverride || childstate.name || ('pipeline' + elementid);
+      childenv.pipelinename = derivedname;
       if (el.container) childenv.containerid = el.container;
 
       var childoptions = el.options || {};
       if (childoptions.autorun === undefined) childoptions.autorun = true;
       if (childoptions.baseenv === undefined) childoptions.baseenv = childenv;
-      if (childoptions.updateworldmap === undefined) childoptions.updateworldmap = parentenv.updateworldmap;
-      if (childoptions.verbosity === undefined && options && options.verbosity !== undefined) childoptions.verbosity = options.verbosity;
-      if (childoptions.containerid === undefined && el.container) childoptions.containerid = el.container;
+      if (childoptions.strictrefonly === undefined && options && options.strictrefonly !== undefined) childoptions.strictrefonly = options.strictrefonly;
 
-      if (!rawDNA.id && !(rawDNA.identity && rawDNA.identity.id)) {
-        rawDNA.id = derivedid;
-      }
-
-      var bootdnafn = (typeof bootdna === 'function') ? bootdna : (typeof window !== 'undefined' ? window.bootdna : null);
-      if (typeof bootdnafn !== 'function') {
-        throw new Error('[processpipelineelement] bootdna function not available');
-      }
-
-      // R3: wrap bootdna result under the element's single declared output key.
-      return bootdnafn(rawDNA, childoptions).then(function(result) {
-        var wrapped = wrapBlockResult(result, { outputs: el.outputs || {} });
+      return run(childstate, childoptions).then(function(result) {
+        var wrapped = wrapblockresult(result, { outputs: el.outputs || {} });
         var mapped = mapoutputs(wrapped, Object.keys(el.outputs || {}));
         Object.keys(mapped).forEach(function(k) { parentenv[k] = mapped[k]; });
         return wrapped;
@@ -709,15 +800,14 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
   return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
 }
 
-// ---- OP-196: registereventstage via sendandawait ----
-function registereventstage(stage, pipelineid, stagepath, options) {
+function registereventstage(stage, pipelinename, stagepath, options) {
   var sourceid = stage.control.sourceid;
   var event = stage.control.event;
   if (!sourceid || !event) {
     return Promise.reject(new Error('[registereventstage] EVENT stage missing sourceid/event'));
   }
   var payload = {
-    PIPELINEID: pipelineid,
+    PIPELINEID: pipelinename,
     STAGEID: stage.id,
     STAGEPATH: stagepath,
     SOURCEID: sourceid,
@@ -732,18 +822,13 @@ function registereventstage(stage, pipelineid, stagepath, options) {
       if (response && response.error) {
         throw new Error('[registereventstage] Registration failed for ' + stage.id + ': ' + response.error);
       }
-      if (response && response.RESULT !== undefined) {
-        return response.RESULT;
-      }
-      if (response && response.result !== undefined) {
-        return response.result;
-      }
+      if (response && response.RESULT !== undefined) return response.RESULT;
+      if (response && response.result !== undefined) return response.result;
       return true;
     });
 }
 
-// R-ARC-25: processnestedstage does not use tagfn (no blockmeta/originalfn/kind)
-function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcase, constants, dnaconstants, dependencies, options) {
+function processnestedstage(childstage, pipelinename, stagepath, inheritedbriefcase, constants, dnaconstants, dependencies, options) {
   var childstagepath = stagepath.concat([childstage.id]);
   var childbriefcase = cloneobject(inheritedbriefcase || {});
   if (childstage.briefcase) {
@@ -751,7 +836,7 @@ function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcas
   }
 
   if (childstage.control && childstage.control.command === 'EVENT') {
-    return registereventstage(childstage, pipelineid, childstagepath, options)
+    return registereventstage(childstage, pipelinename, childstagepath, options)
       .then(function() {
         var noopwrapper = function(env) { return Promise.resolve(env); };
         noopwrapper.iseventregistration = true;
@@ -762,11 +847,11 @@ function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcas
   if (childstage.async === true) {
     var asyncwrapper = function(env) {
       return callwithstack(
-        evalstack,
+        null,
         'nested-stage:' + childstage.id,
         'async-await',
         function() {
-          orchestratestage(childstage, pipelineid, dependencies, env, childstagepath, options || {}, null)
+          orchestratestage(childstage, pipelinename, dependencies, env, childstagepath, options || {}, null)
             .catch(function(err) {
               logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
             });
@@ -781,11 +866,11 @@ function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcas
   } else {
     var syncwrapper = function(env) {
       return callwithstack(
-        evalstack,
+        null,
         'nested-stage:' + childstage.id,
         'async-await',
         function() {
-          return orchestratestage(childstage, pipelineid, dependencies, env, childstagepath, options || {}, null);
+          return orchestratestage(childstage, pipelinename, dependencies, env, childstagepath, options || {}, null);
         },
         [env],
         { context: { env: env }, capturecontinuation: true, attachcontinuation: false }
@@ -796,33 +881,7 @@ function processnestedstage(childstage, pipelineid, stagepath, inheritedbriefcas
   }
 }
 
-function buildnextstagemessage(pipeline, stageindex, pipelineid, env, options) {
-  var nextindex = stageindex + 1;
-  if (!pipeline || !pipeline.elements || nextindex >= pipeline.elements.length) return null;
-  return {
-    type: 'compilestage',
-    pipeline: pipeline,
-    pipelineid: pipelineid,
-    stageindex: nextindex,
-    stagepath: ['pipeline', 'elements', nextindex],
-    briefcase: {},
-    env: env || {},
-    options: options || {}
-  };
-}
-
-// ---- OP-192: sendstagecompleted via sendandawait with R-ARC-03 postprocessing ----
-function sendstagecompleted(pipelineid, stageid, nextstagemessage, env) {
-  return sendandawait('HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETED, {
-    PIPELINEID: pipelineid,
-    STAGEID: stageid,
-    NEXTSTAGEMESSAGE: nextstagemessage,
-    ENV: env || {}
-  }, mailboxwaittimeout, 'stagecompletedack')
-    .then(function() { return; });
-}
-
-function orchestratestage(stage, pipelineid, dependencies, env, stagepath, options, nextstagemessage) {
+function orchestratestage(stage, pipelinename, dependencies, env, stagepath, options, nextstagemessage) {
   var constants = createblockcompilerconstants();
   var blocktypes = constants.blocktypes;
   var inheritedkeys = constants.inheritedkeys;
@@ -836,7 +895,7 @@ function orchestratestage(stage, pipelineid, dependencies, env, stagepath, optio
 
   function runnext() {
     if (index >= (stage.elements || []).length) {
-      return sendstagecompleted(pipelineid, stage.id, nextstagemessage || null, env);
+      return Promise.resolve(env);
     }
 
     var elementdef = resolvenextelement(stage, index);
@@ -847,11 +906,11 @@ function orchestratestage(stage, pipelineid, dependencies, env, stagepath, optio
 
     var elementfn;
     if (elementdef.element === 'BLOCK') {
-      elementfn = processelement(elementdef, pipelineid, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, dependencies, options);
+      elementfn = processelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, dependencies, options);
     } else if (elementdef.element === 'PIPELINE') {
-      elementfn = processpipelineelement(elementdef, pipelineid, stagepath.concat([elementdef.id]), {}, dependencies, options);
+      elementfn = processpipelineelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, dependencies, options);
     } else if (elementdef.element === 'STAGE') {
-      elementfn = processnestedstage(elementdef, pipelineid, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, dependencies, options);
+      elementfn = processnestedstage(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, dependencies, options);
     } else {
       throw new Error('[orchestratestage] unexpected element type: ' + elementdef.element);
     }
@@ -877,7 +936,7 @@ function orchestratestage(stage, pipelineid, dependencies, env, stagepath, optio
   return runnext();
 }
 
-function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelineid, options) {
+function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
     var path = stagepath;
@@ -889,15 +948,15 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     var blockinputs = elementdef && elementdef.inputs ? elementdef.inputs : [];
     var blockoutputs = elementdef && elementdef.outputs ? elementdef.outputs : {};
     var inputargs = blockinputs.map(function(inp) { return compilepathaccessor(inp)(execenv); });
-    var originalfn = compiledelement.originalfn || elementdef.fn || elementdef.ref;
+    var originalfn = compiledelement.originalfn || elementdef.behaviour || null;
     var closureserialized = null;
     if (blockcompilertools.serializeclosure && typeof originalfn === 'function') {
       closureserialized = blockcompilertools.serializeclosure(originalfn, inputargs, execenv, elementdef.deps || {});
     }
-    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelineid, 'stagepath:', JSON.stringify(stagepath));
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelinename, 'stagepath:', JSON.stringify(stagepath));
     var tag = GENERATETAG();
     var descriptor = {
-      PIPELINEID: pipelineid,
+      PIPELINEID: pipelinename,
       PATH: path,
       ELEMENTID: elementid,
       ENV: execenv,
@@ -909,23 +968,14 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       PROGRAMREF: null
     };
 
-    if (typeof logblockdebug === 'function') {
-      logblockdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', elementid, {
-        descriptorKeys: Object.keys(descriptor),
-        hasEnv: typeof descriptor.ENV !== 'undefined',
-        hasExecutor: typeof descriptor.EXECUTOR === 'function',
-        hasSignature: typeof descriptor.SIGNATURE === 'object'
-      });
-    }
-
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'taskresult' });
 
-    return WAITFORMAILBOX({ tag: tag, sender: 'EXECUTIONACTOR', type: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
+    // @proposal=P5 (Cycle 39R-ter) — filter keys aligned with the reader.
+    return WAITFORMAILBOX({ TAG: tag, SENDER: 'EXECUTIONACTOR', TYPE: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
       .then(function(mailboxmessage) {
-        var payload = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
+        var payload = mailboxmessage && mailboxmessage.PAYLOAD ? mailboxmessage.PAYLOAD : {};
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
         var result = outerresult.RESULT !== undefined ? outerresult.RESULT : (outerresult.result !== undefined ? outerresult.result : outerresult);
-        // ----- R-2 / P2 : surface task failure BEFORE output mapping -----
         if (result && typeof result === 'object' && result.ERROR !== undefined) {
           var failuremessage = typeof result.ERROR === 'string'
             ? result.ERROR
@@ -935,19 +985,14 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
           var failureError = new Error(failuremessage);
           failureError.diagnostic = failureError.diagnostic || {};
           failureError.diagnostic.BLOCKID = elementid;
-          failureError.diagnostic.PIPELINEID = pipelineid;
+          failureError.diagnostic.PIPELINEID = pipelinename;
           failureError.diagnostic.TASKID = result.TASKID || null;
-          failureError.diagnostic.ORIGIN = 'createpersistentelementwrapper';
           throw failureError;
         }
-        // ----- end R-2 / P2 -----
         var outputkeys = Object.keys(blockoutputs || {});
         var mapped = mapoutputs(result, outputkeys);
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
-        logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelineid);
-        if (typeof logblockdebug === 'function') {
-          logblockdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', elementid, { result: result });
-        }
+        logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelinename);
         return result;
       });
   }
@@ -957,10 +1002,8 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
   return wrapper;
 }
 
-// ---- END segment 2 of 3 ----
-
 // ============================================================
-// §4 — Loader & boot
+// §5 — Loader primitives (Cycle 29 / 32R)
 // ============================================================
 
 function waitforwitness(entry, timeout) {
@@ -1049,156 +1092,46 @@ function builddependenciesregistry(entries) {
   return registry;
 }
 
-function BLOCKCOMPILERCOMPILESTAGE(dnaenvelope, stagepath, env, options) {
-  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'blockcompilercompilestage:', dnaenvelope.pipelineid, 'stagepath', JSON.stringify(stagepath));
-  if (!dnaenvelope || !dnaenvelope.definition || !dnaenvelope.definition.pipeline) {
-    throw new Error('[blockcompilercompilestage] invalid DNA envelope');
-  }
-  options = options || {};
-  options.pipelineid = dnaenvelope.pipelineid;
-  options.dependencies = dnaenvelope.dependencies || {};
+// ============================================================
+// §6 — Finalizers (Cycle 32R)
+// ============================================================
 
-  var pipeline = dnaenvelope.definition.pipeline;
-  var stage = resolvestagefrompath(dnaenvelope, stagepath);
+function orchestratepipeline(p, stageindex, env, options) {
+  if (stageindex >= p.elements.length) return Promise.resolve(env);
+  var stage = p.elements[stageindex];
   if (!stage || stage.element !== 'STAGE') {
-    throw new Error('[blockcompilercompilestage] stage not found at path: ' + JSON.stringify(stagepath));
+    return orchestratepipeline(p, stageindex + 1, env, options);
   }
-
-  var stageindex = stagepath[stagepath.length - 1];
-  var iseventstage = stage.control && stage.control.command === 'EVENT';
-  var iseventtrigger = options.iseventtrigger === true;
-
-  if (iseventstage && !iseventtrigger) {
-    return registereventstage(stage, dnaenvelope.pipelineid, stagepath, options)
-      .then(function() {
-        var nextstagemessage = buildnextstagemessage(pipeline, stageindex, dnaenvelope.pipelineid, env, options);
-        return sendstagecompleted(dnaenvelope.pipelineid, stage.id, nextstagemessage, env);
-      });
-  }
-
-  var nextstagemessage = buildnextstagemessage(pipeline, stageindex, dnaenvelope.pipelineid, env, options);
-  return orchestratestage(stage, dnaenvelope.pipelineid, dnaenvelope.dependencies || {}, env || {}, stagepath, options, nextstagemessage);
-}
-
-function LOADPIPELINE(dna, stageIndex, env, options) {
-  if (stageIndex === undefined) stageIndex = 0;
-  if (env === undefined) env = {};
-  if (options === undefined) options = {};
-
-  var pipelineDef = dna.pipeline;
-  if (!pipelineDef) {
-    var err = new Error('loadpipeline: DNA missing pipeline property');
-    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown' };
-    return Promise.reject(err);
-  }
-
-  var stages = pipelineDef.elements || pipelineDef.stages || [];
-  if (stageIndex >= stages.length) {
-    var err = new Error('loadpipeline: stage index ' + stageIndex + ' out of bounds (max ' + stages.length + ')');
-    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
-    return Promise.reject(err);
-  }
-  var stage = stages[stageIndex];
-  if (!stage || stage.element !== 'STAGE') {
-    var err = new Error('loadpipeline: element at index ' + stageIndex + ' is not a STAGE');
-    err.diagnostic = { dnaId: dna.id || (dna.identity && dna.identity.id) || 'unknown', stageIndex: stageIndex };
-    return Promise.reject(err);
-  }
-
-  var pipelineId = dna.id || (dna.identity && dna.identity.id) || 'temp';
-  var dnaEnvelope = {
-    pipelineid: pipelineId,
-    definition: { pipeline: pipelineDef },
-    dependencies: {}
-  };
-
-  var stagePath = ['pipeline', 'elements', stageIndex];
-
-  return BLOCKCOMPILERCOMPILESTAGE(dnaEnvelope, stagePath, env, options)
-    .then(function(result) {
-      var nextStageIndex = null;
-      if (result && result.nextStageMessage) {
-        var nextMsg = result.nextStageMessage;
-        if (nextMsg && nextMsg.stageindex !== undefined) {
-          nextStageIndex = nextMsg.stageindex;
-        } else if (nextMsg && nextMsg.stageIndex !== undefined) {
-          nextStageIndex = nextMsg.stageIndex;
-        }
-      }
-      return {
-        env: result.env || env,
-        nextStageIndex: nextStageIndex,
-        result: result
-      };
+  var stagepath = ['elements', stageindex];
+  return orchestratestage(stage, p.name, {}, env, stagepath, options, null)
+    .then(function() {
+      return orchestratepipeline(p, stageindex + 1, env, options);
     });
 }
 
-function bootdna(dna, options) {
+function loadpipelineresources(p, options) {
+  return loadpipelinedependencies(p, options);
+}
+
+function run(p, options) {
   if (options === undefined) options = {};
-  var dnaId = dna.id || (dna.identity && dna.identity.id) || 'defaultpipeline';
-  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'bootdna start for pipeline:', dnaId);
-
-  return loadpipelinedependencies(dna, options)
-    .then(function(depsregistry) {
-      loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'dependencies loaded for bootdna:', dnaId);
-
-      var tag = GENERATETAG();
-      var bootedType = MESSAGETYPES.PIPELINEBOOTED;
-      SENDINSTRUCTION('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
-        DNA: dna,
-        PIPELINEID: dnaId,
-        OPTIONS: options,
-        SENDER: 'BLOCKCOMPILER',
-        TAG: tag
-      }, tag, 'BLOCKCOMPILER', {
-        responsetype: bootedType
-      });
-
-      return WAITFORMAILBOX({ tag: tag, sender: 'HYPERVISORACTOR', type: bootedType }, mailboxwaittimeout)
-        .then(function(mailboxmessage) {
-          var response = mailboxmessage && mailboxmessage.payload ? mailboxmessage.payload : {};
-          var result = response.RESULT;
-          if (result && result.ERROR) {
-            var err = new Error(result.ERROR);
-            err.diagnostic = result.DIAGNOSTIC || {};
-            throw err;
-          }
-          // ---- P4 (boot-outcome-propagation): a BOOTERROR from HYPERVISOR is a
-          // stage failure. Reject the outer promise so callers such as appinit.js
-          // cannot receive a resolved `undefined` when the boot actually failed.
-          // This path is already in place; P4 records it as the frozen contract.
-          if (result && result.TYPE === 'BOOTERROR') {
-            var err = new Error(result.ERROR || 'BOOTERROR received');
-            err.diagnostic = result.DIAGNOSTIC || {};
-            throw err;
-          }
-          return result;
-        });
+  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
+  return loadpipelineresources(p, options)
+    .then(function() {
+      return orchestratepipeline(p, 0, options.baseenv || {}, options);
+    })
+    .then(function(env) {
+      loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
+      return env;
     });
 }
 
-function validatepipelinebriefcase(briefcase) {
-  var errors = [];
-  if (briefcase === undefined || briefcase === null) {
-    return { valid: true, errors: [] };
-  }
-  if (typeof briefcase !== 'object') {
-    errors.push('[validatepipelinebriefcase] briefcase must be an object');
-    return { valid: false, errors: errors };
-  }
-  try {
-    var dnaconstants = creatednaserializerconstants();
-    var revivabilityerrors = validaterevivableobject(briefcase, 'briefcase', dnaconstants);
-    errors = errors.concat(revivabilityerrors);
-  } catch (err) {
-    errors.push('[validatepipelinebriefcase] validation error: ' + err.message);
-  }
-  return {
-    valid: errors.length === 0,
-    errors: errors
-  };
+function compile(p, options) {
+  if (options === undefined) options = {};
+  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compile pipeline:', p.name, 'type:', p.type);
+  return loadpipelineresources(p, options).then(function() { return p; });
 }
 
 // ============================================================
-// §5 — Exports
+// §7 — Exports
 // ============================================================

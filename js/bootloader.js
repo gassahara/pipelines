@@ -1,3 +1,20 @@
+// bootloader.js — framework bootstrap and load manifest.
+//
+// @proposal=P5 (corrected, Cycle 32R) — blockcompiler.js no longer
+// provides LOADPIPELINE / BLOCKCOMPILERCOMPILESTAGE; it exposes the
+// construction API (pipeline/make*/append*/run/compile) plus the
+// orchestration surface.
+//
+// @proposal=P4 (Cycles 18–28) — actor modules now expose the three-
+// operation protocol (SUBMIT/EXPECT/GETACTIONRESULT); actorcore.js
+// exposes CREATEACTORHANDLE; mailactor.js exposes MAILGETACTIONSTATUS.
+//
+// @proposal=P5 (Cycle 37R) — hypervisoractor.js no longer exposes
+// ENQUEUEHYPERVISORSTAGECOMPLETED; the DNA-era cases are removed.
+//
+// Cycle 38R aligns every manifest entry's provides list with the
+// actual post-refactor surface. Load order and src paths are unchanged.
+
 var pipelinesmanifest = [
   { src: 'factory/tuning/limits.js', provides: [
     'fnmaxsourcechars'
@@ -16,47 +33,147 @@ var pipelinesmanifest = [
     'containsstyleaccess', 'mapoutputs', 'analyzefnblock', 'createblockanalyzer',
     'createblockanalyzers', 'compilefnblock'
   ] },
-  { src: 'messageregistry.js', provides: ['MESSAGEREGISTRY', 'MESSAGETYPES'] },
+  { src: 'messageregistry.js', provides: [
+    'MESSAGEREGISTRY', 'MESSAGETYPES',
+    'MAILBOXFILTERTYPES', 'MESSAGEREGISTRYSTORE'
+  ] },
   { src: 'verbosity.js', provides: [
     'createverbosityconstants', 'getverbosity', 'setverbosity',
     'logcritical', 'logerror', 'logwarn', 'loginfo', 'logdebug', 'getverbosityname'
   ] },
   { src: 'functorial/maybe.js', provides: ['just', 'nothing', 'fromnullable', 'getorelselazy', 'maybealgebra'] },
-  { src: 'evalstack.js', provides: ['createevalstack', 'evalstack', 'frames', 'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack', 'currentcontinuation', 'chaincontinuations'] },
+  { src: 'evalstack.js', provides: [
+    'evalstackidentity', 'initialevalstack', 'evalstackstate',
+    'pushframe', 'popframe', 'peekframe', 'snapshotstack', 'restorestack',
+    'currentcontinuation', 'chaincontinuations', 'getcurrentcallerid'
+  ] },
   { src: 'factory/callwithstack.js', provides: ['callwithstack'] },
   { src: 'factory/colorutils.js', provides: ['colorcore', 'colorharmony', 'colorcontrast'] },
   { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
-  { src: 'actors/actorcore.js', provides: ['CREATEGARBAGECOLLECTOR', 'REGISTEROBJECT', 'UPDATESTATUS', 'INCREMENTSENT', 'INCREMENTRECEIVED', 'COLLECTENDED', 'LISTOBJECTS', 'REGISTERACTORSTATE', 'GETACTORSTATE', 'SETACTORSTATE', 'DISPATCHIMMUTABLE', 'DISPATCHTOACTOR', 'ENSUREENVSLICE', 'CREATEMESSAGEVALIDATOR', 'PINGACTOR', 'GETACTORREGISTRY', 'CREATEACTORREGISTRY', 'SETRENDERACTOR', 'GETRENDERACTOR', 'CREATETRIGGERREGISTRY', 'REGISTERTRIGGER', 'UNREGISTERTRIGGER', 'REVALIDATEALL', 'GETTRIGGERMAP'] },
+  { src: 'actors/actorcore.js', provides: [
+    'CREATEGARBAGECOLLECTOR', 'REGISTEROBJECT', 'UPDATESTATUS', 'INCREMENTSENT',
+    'INCREMENTRECEIVED', 'COLLECTENDED', 'LISTOBJECTS', 'REGISTERACTORSTATE',
+    'GETACTORSTATE', 'SETACTORSTATE', 'DISPATCHIMMUTABLE', 'DISPATCHTOACTOR',
+    'ENSUREENVSLICE', 'CREATEMESSAGEVALIDATOR', 'PINGACTOR', 'GETACTORREGISTRY',
+    'CREATEACTORREGISTRY', 'SETRENDERACTOR', 'GETRENDERACTOR',
+    'CREATETRIGGERREGISTRY', 'REGISTERTRIGGER', 'UNREGISTERTRIGGER',
+    'REVALIDATEALL', 'GETTRIGGERMAP', 'CREATEACTORHANDLE'
+  ] },
   { src: 'factory/layoutdirectives.js', provides: ['createlayoutdirectives'] },
   { src: 'fundamental/domref.js', provides: ['getrawelement', 'createdomref', 'removeref', 'isvaliddomref'] },
-  { src: 'typesystem.js', provides: ['typeschema', 'validatefields', 'validate', 'validatecall', 'validateschema', 'validateformalblock', 'validatestageflow', 'validatemonadalgebra', 'validateblockio', 'validateblockfnio', 'validatecontainerrefs', 'validatespawncontracts', 'validateblocktype', 'validatedomqueryblock', 'validateexecutionqueryblock', 'validatestorequeryblock', 'validateblockproperties', 'validateeventstage'] },
+  { src: 'typesystem.js', provides: [
+    'typeschema', 'validatefields', 'validate', 'validatecall', 'validateschema',
+    'validateformalblock', 'validatestageflow', 'validatemonadalgebra',
+    'validateblockio', 'validateblockfnio', 'validatecontainerrefs', 'validatespawncontracts',
+    'validateblocktype', 'validatedomqueryblock', 'validateexecutionqueryblock',
+    'validatestorequeryblock', 'validateblockproperties', 'validateeventstage'
+  ] },
   { src: 'factory/stylizerutilities.js', provides: ['stylizercore', 'stylizerrewrite'] },
   { src: 'debugformatter.js', provides: ['formatdebugtrace'] },
-  { src: 'utils.js', provides: ['createapiconstants', 'escapehtml', 'markdowntohtml', 'formataitext', 'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty', 'createnodefromtemplate', 'deepmerge'] },
-  { src: 'actors/dbactor.js', provides: ['DBBEHAVIOR', 'STORESEND', 'STOREWAIT', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE', 'STARTDBACTOR'] },
-  { src: 'actors/mailactor.js', provides: ['MAILBEHAVIOR', 'GENERATETAG', 'SENDINSTRUCTION', 'SENDRESPONSE', 'QUERYMAILBOX', 'WAITFORMAILBOX', 'STARTMAILACTOR'], owner: 'MAILACTOR', types: ['SEND', 'ACK'] },
-  { src: 'actors/worldmapactor.js', provides: ['WORLDMAPBEHAVIOR', 'STARTWORLDMAPACTOR', 'SENDWORLDMAPPATCH', 'UPDATEWORLDMAPFN', 'OBSERVEWORLDMAP', 'UNOBSERVEWORLDMAP', 'GETWORLDMAP'], owner: 'WORLDMAPACTOR', types: ['UPDATE', 'UPDATEFN', 'OBSERVE', 'UNOBSERVE', 'GETWORLDMAP'] },
-  { src: 'actors/apiactor.js', provides: ['APIBEHAVIOR', 'ENQUEUEAPI', 'ENQUEUEFETCH'], owner: 'APIACTOR', types: ['API', 'FETCH'] },
-  { src: 'actors/debugactor.js', provides: ['DEBUGBEHAVIOR', 'ENQUEUEDEBUGPING', 'ENQUEUEDEBUGRECOVER'], owner: 'DEBUGACTOR', types: ['INITOVERLAY', 'SHOW', 'HIDE', 'RECOVER', 'PING', 'LOGLINE'] },
-  { src: 'actors/executionactor.js', provides: ['EXECUTIONBEHAVIOR', 'ENQUEUEEXECUTIONPIPELINELOADED', 'ENQUEUEEXECUTIONSUBMIT', 'ENQUEUEEXECUTIONAWAITTASK', 'ENQUEUEEXECUTIONGETTASKS', 'ENQUEUEEXECUTIONGETTASKSTATUS', 'ENQUEUEEXECUTIONCANCELTASK', 'ENQUEUEEXECUTIONSTOPTASK', 'ENQUEUEEXECUTIONGETSTATUS', 'ENQUEUEEXECUTIONENVUPDATED', 'ENQUEUEEXECUTIONCCCABORT', 'ENQUEUEEXECUTIONCCCCONTINUE', 'ENQUEUEEXECUTIONCCCRETRY', 'ENQUEUEEXECUTIONREGISTERPIPELINE', 'ENQUEUEEXECUTIONRECOVER', 'ENQUEUEEXECUTIONPING', 'STARTEXECUTIONACTOR', 'ENSUREEXECUTIONACTORREADY'], owner: 'EXECUTIONACTOR', types: ['PIPELINELOADED', 'ENVUPDATED', 'GETSTATUS', 'EXECUTEELEMENT', 'AWAITTASK', 'GETTASKS', 'GETTASKSTATUS', 'CANCELTASK', 'STOPTASK', 'CCCABORT', 'CCCCONTINUE', 'CCCRETRY', 'TASKSETTLED', 'RECOVER', 'REGISTERPIPELINE', 'PING'] },
-  { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
-  { src: 'actors/renderactor.js', provides: ['RENDERBEHAVIOR', 'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE', 'ENQUEUESTYLES', 'ENQUEUESETATTR', 'ENQUEUETOGGLECLASS', 'ENQUEUECREATEELEMENT', 'ENQUEUECREATECONTAINER', 'ENQUEUECREATEFROMHTML', 'ENQUEUEGETHTML', 'ENQUEUEGETVALUE', 'ENQUEUEGETSTYLE', 'ENQUEUEGETPOSITION', 'ENQUEUEGETLAYOUT', 'ENQUEUESETHTML', 'ENQUEUESETPOSITION', 'ENQUEUESETSTYLE', 'ENQUEUESETVALUE', 'ENQUEUEPROPERTY', 'ENQUEUESETLAYOUT', 'ENQUEUEGETVIEWPORT', 'ENQUEUEGETSCREEN', 'ENQUEUEMATCHMEDIA', 'STARTRENDERACTOR', 'EXPECTELEMENT', 'HANDLEFILEREADERREQUEST', 'validatedomquerycommand'], owner: 'RENDERACTOR', types: ['RENDER', 'CLEAR', 'HTML', 'REMOVE', 'SETSTYLES', 'SETATTR', 'TOGGLECLASS', 'CRYPTO', 'GEOLOCATION', 'PERSISTENCE', 'CREATEELEMENT', 'CREATECONTAINER', 'CREATEFROMHTML', 'PROPERTY', 'GETHTML', 'GETVALUE', 'GETSTYLE', 'GETPOSITION', 'GETLAYOUT', 'SETHTML', 'SETPOSITION', 'SETSTYLE', 'SETVALUE', 'SETLAYOUT', 'GETVIEWPORT', 'GETSCREEN', 'MATCHMEDIA', 'GETBODYHTML', 'RESTOREBODYHTML', 'RECOVER', 'PING', 'REGISTEREVENTLISTENER'] },
-  { src: 'factory/blockcompiler.js', provides: [
-    'LOADPIPELINE', 'resolvenextelement', 'orchestratestage', 'validatepipelinebriefcase',
-    'BLOCKCOMPILERCOMPILESTAGE', 'createblockcompilerconstants', 'buildblockproperties',
-    'processelement', 'processpipelineelement', 'registereventstage', 'processnestedstage',
-    'createpersistentelementwrapper'
+  { src: 'utils.js', provides: [
+    'createapiconstants', 'escapehtml', 'markdowntohtml', 'formataitext',
+    'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty',
+    'createnodefromtemplate', 'deepmerge'
   ] },
-  { src: 'actors/hypervisoractor.js', provides: ['HYPERVISORBEHAVIOR', 'ENQUEUEHYPERVISORLOAD', 'ENQUEUEHYPERVISORSAVE', 'ENQUEUEHYPERVISORGETENV', 'ENQUEUEHYPERVISORSETENV', 'ENQUEUEHYPERVISORGETLATESTENV', 'ENQUEUEHYPERVISORGETRENDERHTML', 'ENQUEUEHYPERVISORSETRENDERHTML', 'ENQUEUEHYPERVISORGETEXECUTIONSTACK', 'ENQUEUEHYPERVISORSETEXECUTIONSTACK', 'ENQUEUEHYPERVISORGETROUTE', 'ENQUEUEHYPERVISORSETROUTE', 'ENQUEUEHYPERVISORGETACTIVEPIPELINES', 'ENQUEUEHYPERVISORREGISTERPIPELINE', 'ENQUEUEHYPERVISORUNREGISTERPIPELINE', 'ENQUEUEHYPERVISORSETPROGRAM', 'ENQUEUEHYPERVISORGETPROGRAM', 'ENQUEUEHYPERVISORMARKBOOT', 'ENQUEUEHYPERVISORPING', 'ENQUEUEHYPERVISORACTIVATEACTORS', 'ENQUEUEHYPERVISORSTAGECOMPLETED', 'STARTHYPERVISORACTOR'], owner: 'HYPERVISORACTOR', types: [
+  { src: 'actors/dbactor.js', provides: [
+    'DBBEHAVIOR', 'STORESEND', 'STOREWAIT', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE',
+    'STARTDBACTOR', 'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+  ] },
+  { src: 'actors/mailactor.js', provides: [
+    'MAILBEHAVIOR', 'GENERATETAG', 'SENDINSTRUCTION', 'SENDRESPONSE',
+    'QUERYMAILBOX', 'WAITFORMAILBOX', 'STARTMAILACTOR', 'MAILGETACTIONSTATUS'
+  ], owner: 'MAILACTOR', types: ['SEND', 'ACK'] },
+  { src: 'actors/worldmapactor.js', provides: [
+    'WORLDMAPBEHAVIOR', 'STARTWORLDMAPACTOR', 'SENDWORLDMAPPATCH',
+    'UPDATEWORLDMAPFN', 'OBSERVEWORLDMAP', 'UNOBSERVEWORLDMAP', 'GETWORLDMAP',
+    'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+  ], owner: 'WORLDMAPACTOR', types: ['UPDATE', 'UPDATEFN', 'OBSERVE', 'UNOBSERVE', 'GETWORLDMAP'] },
+  { src: 'actors/apiactor.js', provides: [
+    'APIBEHAVIOR', 'ENQUEUEAPI', 'ENQUEUEFETCH',
+    'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+  ], owner: 'APIACTOR', types: ['API', 'FETCH'] },
+  { src: 'actors/debugactor.js', provides: [
+    'DEBUGBEHAVIOR', 'ENQUEUEDEBUGPING', 'ENQUEUEDEBUGRECOVER',
+    'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+  ], owner: 'DEBUGACTOR', types: ['INITOVERLAY', 'SHOW', 'HIDE', 'RECOVER', 'PING', 'LOGLINE'] },
+  { src: 'actors/executionactor.js', provides: [
+    'EXECUTIONBEHAVIOR',
+    'ENQUEUEEXECUTIONPIPELINELOADED', 'ENQUEUEEXECUTIONSUBMIT', 'ENQUEUEEXECUTIONAWAITTASK',
+    'ENQUEUEEXECUTIONGETTASKS', 'ENQUEUEEXECUTIONGETTASKSTATUS', 'ENQUEUEEXECUTIONCANCELTASK',
+    'ENQUEUEEXECUTIONSTOPTASK', 'ENQUEUEEXECUTIONGETSTATUS', 'ENQUEUEEXECUTIONENVUPDATED',
+    'ENQUEUEEXECUTIONCCCABORT', 'ENQUEUEEXECUTIONCCCCONTINUE', 'ENQUEUEEXECUTIONCCCRETRY',
+    'ENQUEUEEXECUTIONREGISTERPIPELINE', 'ENQUEUEEXECUTIONRECOVER', 'ENQUEUEEXECUTIONPING',
+    'STARTEXECUTIONACTOR', 'ENSUREEXECUTIONACTORREADY',
+    'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+  ], owner: 'EXECUTIONACTOR', types: ['PIPELINELOADED', 'ENVUPDATED', 'GETSTATUS', 'EXECUTEELEMENT',
+    'AWAITTASK', 'GETTASKS', 'GETTASKSTATUS', 'CANCELTASK', 'STOPTASK', 'CCCABORT',
+    'CCCCONTINUE', 'CCCRETRY', 'TASKSETTLED', 'RECOVER', 'REGISTERPIPELINE', 'PING'] },
+  { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
+  { src: 'actors/renderactor.js', provides: [
+    'RENDERBEHAVIOR',
+    'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE',
+    'ENQUEUESTYLES', 'ENQUEUESETATTR', 'ENQUEUETOGGLECLASS',
+    'ENQUEUECREATEELEMENT', 'ENQUEUECREATECONTAINER', 'ENQUEUECREATEFROMHTML',
+    'ENQUEUEGETHTML', 'ENQUEUEGETVALUE', 'ENQUEUEGETSTYLE',
+    'ENQUEUEGETPOSITION', 'ENQUEUEGETLAYOUT',
+    'ENQUEUESETHTML', 'ENQUEUESETPOSITION', 'ENQUEUESETSTYLE', 'ENQUEUESETVALUE',
+    'ENQUEUEPROPERTY', 'ENQUEUESETLAYOUT',
+    'ENQUEUEGETVIEWPORT', 'ENQUEUEGETSCREEN', 'ENQUEUEMATCHMEDIA',
+    'STARTRENDERACTOR', 'EXPECTELEMENT', 'HANDLEFILEREADERREQUEST',
+    'validatedomquerycommand', 'DOMQUERYCOMMANDREGISTRY',
+    'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+  ], owner: 'RENDERACTOR', types: [
+    'RENDER', 'CLEAR', 'HTML', 'REMOVE', 'SETSTYLES', 'SETATTR', 'TOGGLECLASS',
+    'CRYPTO', 'GEOLOCATION', 'PERSISTENCE', 'CREATEELEMENT', 'CREATECONTAINER',
+    'CREATEFROMHTML', 'PROPERTY', 'GETHTML', 'GETVALUE', 'GETSTYLE', 'GETPOSITION',
+    'GETLAYOUT', 'SETHTML', 'SETPOSITION', 'SETSTYLE', 'SETVALUE', 'SETLAYOUT',
+    'GETVIEWPORT', 'GETSCREEN', 'MATCHMEDIA', 'GETBODYHTML', 'RESTOREBODYHTML',
+    'RECOVER', 'PING', 'REGISTEREVENTLISTENER',
+    'GETELEMENTS',
+    'CHECKOVERFLOW', 'CHECKSPACING', 'CHECKOVERLAP', 'CHECKSCROLLABILITY',
+    'CHECKCONTROLLEDOVERLAY', 'CORRECTOVERFLOW', 'CORRECTSPACING', 'CORRECTOVERLAP',
+    'CORRECTSCROLLABILITY', 'CORRECTCONTROLLEDOVERLAY',
+    'REWRITESTYLEATTRS', 'CONSOLIDATESTYLES', 'OPTIMIZECONTRAST', 'OPTIMIZEHARMONY',
+    'OPTIMIZETEXTVISIBILITY', 'OPTIMIZEBUTTONVISIBILITY',
+    'VERIFYCONTRAST', 'VERIFYTEXTVISIBILITY', 'VERIFYBUTTONVISIBILITY',
+    'VERIFYHARMONY', 'CHECKFOCUSVISIBILITY'
+  ] },
+  { src: 'factory/blockcompiler.js', provides: [
+    'pipeline',
+    'makelib', 'makeprogram', 'makestage', 'makeblock', 'makepipelineelement',
+    'appendlib', 'appendprogram', 'appendstage', 'appendblock', 'appendpipelineelement',
+    'run', 'compile',
+    'orchestratepipeline', 'loadpipelineresources',
+    'resolvenextelement', 'orchestratestage', 'validatepipelinebriefcase',
+    'createblockcompilerconstants', 'buildblockproperties',
+    'processelement', 'processpipelineelement', 'registereventstage',
+    'processnestedstage', 'createpersistentelementwrapper', 'wrapblockresult',
+    'BLOCKCOMPILERSTATE'
+  ] },
+  { src: 'actors/hypervisoractor.js', provides: [
+    'HYPERVISORBEHAVIOR',
+    'ENQUEUEHYPERVISORLOAD', 'ENQUEUEHYPERVISORSAVE',
+    'ENQUEUEHYPERVISORGETENV', 'ENQUEUEHYPERVISORSETENV', 'ENQUEUEHYPERVISORGETLATESTENV',
+    'ENQUEUEHYPERVISORGETRENDERHTML', 'ENQUEUEHYPERVISORSETRENDERHTML',
+    'ENQUEUEHYPERVISORGETEXECUTIONSTACK', 'ENQUEUEHYPERVISORSETEXECUTIONSTACK',
+    'ENQUEUEHYPERVISORGETROUTE', 'ENQUEUEHYPERVISORSETROUTE',
+    'ENQUEUEHYPERVISORGETACTIVEPIPELINES',
+    'ENQUEUEHYPERVISORREGISTERPIPELINE', 'ENQUEUEHYPERVISORUNREGISTERPIPELINE',
+    'ENQUEUEHYPERVISORSETPROGRAM', 'ENQUEUEHYPERVISORGETPROGRAM',
+    'ENQUEUEHYPERVISORMARKBOOT', 'ENQUEUEHYPERVISORPING',
+    'ENQUEUEHYPERVISORACTIVATEACTORS',
+    'STARTHYPERVISORACTOR',
+    'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+  ], owner: 'HYPERVISORACTOR', types: [
     'LOAD', 'SAVE', 'GETENV', 'SETENV', 'GETLATESTENV',
-    'GETRENDERHTML', 'SETRENDERHTML', 'GETEXECUTIONSTACK', 'SETEXECUTIONSTACK',
+    'GETRENDERHTML', 'SETRENDERHTML',
+    'GETEXECUTIONSTACK', 'SETEXECUTIONSTACK',
     'GETROUTE', 'SETROUTE', 'GETACTIVEPIPELINES',
     'REGISTERPIPELINE', 'UNREGISTERPIPELINE',
     'SETPROGRAM', 'GETPROGRAM', 'MARKBOOT',
-    'EVENTTRIGGERED', 'PING', 'RECOVER', 'ACTIVATEACTORS',
-    'COMPILESTAGE', 'STAGECOMPLETED'
+    'EVENTTRIGGERED', 'PING', 'RECOVER', 'ACTIVATEACTORS'
   ] },
-  { src: 'registerconsumers.js', provides: ['registeredconsumers'] }
+  { src: 'registerconsumers.js', provides: ['REGISTEREDCONSUMERS'] }
 ];
 
 function getroot() {
@@ -102,13 +219,9 @@ function runpipelineboot(loadprogram, report, manifest) {
       entries.forEach(function(entry) {
         if (entry.owner) {
           var reg = checkregistration(entry);
-          if (!reg.ok) {
-            regfailures.push({ src: entry.src, missingtypes: reg.missing });
-          }
+          if (!reg.ok) regfailures.push({ src: entry.src, missingtypes: reg.missing });
           var st = checkstateregistration(entry);
-          if (!st.ok) {
-            regfailures.push({ src: entry.src, missingstate: st.missing });
-          }
+          if (!st.ok) regfailures.push({ src: entry.src, missingstate: st.missing });
         }
       });
       if (regfailures.length) {

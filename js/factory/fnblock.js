@@ -2,6 +2,13 @@
 // Top of the DAG: reads tokenscanner.js and parser.js globals;
 // provides the fn-value surface and re-exports the parser surface
 // for out-of-browser Node consumers.
+//
+// @proposal=P2 — assertdefinedinputs and containsstyleaccess converted
+// to trampolined recursion. No `for` / `while` remains in this file.
+// @proposal=P3 — camelCase local identifiers normalized to lowercase.
+// @proposal=P5 — compilefnblock no longer reads runtime.evalstack; the
+//   callwithstack call passes null as its first argument (per Cycle 02
+//   Q1_9', the argument is retained for arity and ignored).
 
 // ============================================================
 // §1 — Serializer constants
@@ -386,11 +393,11 @@ function serializedepvalue(value, seen, analyzer) {
   if (t === 'function') {
     var key = getdepstorekey(value);
     if (!serializeddepsstore[key]) {
-      var serializedFn = serializefunctionwithdeps(value, {}, {}, seen, analyzer);
-      if (serializedFn.opaque) {
-        serializeddepsstore[key] = { type: 'opaque-fn', source: serializedFn.source };
+      var serializedfn = serializefunctionwithdeps(value, {}, {}, seen, analyzer);
+      if (serializedfn.opaque) {
+        serializeddepsstore[key] = { type: 'opaque-fn', source: serializedfn.source };
       } else {
-        serializeddepsstore[key] = { type: 'fn', source: serializedFn.source, deps: serializedFn.deps || {} };
+        serializeddepsstore[key] = { type: 'fn', source: serializedfn.source, deps: serializedfn.deps || {} };
       }
     }
     return { depref: key };
@@ -420,11 +427,11 @@ function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
   if (!parsed || parsed.ok !== true || !Array.isArray(parsed.identifiers)) {
     return { source: src, deps: {}, opaque: true };
   }
-  var freeIds = parsed.identifiers;
+  var freeids = parsed.identifiers;
   var bindings = {};
   var order = [];
 
-  freeIds.forEach(function(id) {
+  freeids.forEach(function(id) {
     if (deps && deps[id] !== undefined) {
       bindings[id] = deps[id];
       order.push(id);
@@ -434,15 +441,15 @@ function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
     }
   });
 
-  var serializedDepsMap = {};
+  var serializeddepsmap = {};
   order.forEach(function(name) {
     var val = bindings[name];
     var sval = serializedepvalue(val, seen || [], analyzer);
-    serializedDepsMap[name] = sval;
+    serializeddepsmap[name] = sval;
   });
 
-  var depLines = order.map(function(name) {
-    var serialized = serializedDepsMap[name];
+  var deplines = order.map(function(name) {
+    var serialized = serializeddepsmap[name];
     if (serialized && serialized.depref) {
       return '  var ' + name + ' = __recallDep(' + JSON.stringify(serialized.depref) + ');';
     }
@@ -452,7 +459,7 @@ function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
   var openparen = src.indexOf('(');
   var closeparen = openparen === -1 ? -1 : findmatchingparen(src, openparen);
   if (openparen === -1 || closeparen === -1) {
-    return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap, opaque: false };
+    return { source: 'function() { ' + deplines + '\n  return (' + src + ');\n}', deps: serializeddepsmap, opaque: false };
   }
 
   var bodybrace = findbodybrace(src, closeparen + 1);
@@ -460,18 +467,18 @@ function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
     var afterarrowmaybe = closeparen + 1;
     var arrowidx = src.indexOf('=>', afterarrowmaybe);
     if (arrowidx === -1) {
-      return { source: 'function() { ' + depLines + '\n  return (' + src + ');\n}', deps: serializedDepsMap, opaque: false };
+      return { source: 'function() { ' + deplines + '\n  return (' + src + ');\n}', deps: serializeddepsmap, opaque: false };
     }
     var afterarrow = skipspaces(src, arrowidx + 2, src.length);
     var expr = src.slice(afterarrow);
-    return { source: '(function() {\n' + depLines + '\n  return (' + expr + ');\n})', deps: serializedDepsMap, opaque: false };
+    return { source: '(function() {\n' + deplines + '\n  return (' + expr + ');\n})', deps: serializeddepsmap, opaque: false };
   }
 
   var bodystart = bodybrace + 1;
   var bodyend = src.lastIndexOf('}');
   var innerbody = src.slice(bodystart, bodyend);
-  var zeroargsource = 'function() {\n' + depLines + '\n' + innerbody + '\n}';
-  return { source: zeroargsource, deps: serializedDepsMap, opaque: false };
+  var zeroargsource = 'function() {\n' + deplines + '\n' + innerbody + '\n}';
+  return { source: zeroargsource, deps: serializeddepsmap, opaque: false };
 }
 
 // ---- OP-174: serializeselfcontainedclosure ----
@@ -487,19 +494,19 @@ function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyz
     };
   }
   var source = serialized.source;
-  var depsObj = serialized.deps || {};
+  var depsobj = serialized.deps || {};
 
-  var depDefs = [];
+  var depdefs = [];
   Object.keys(serializeddepsstore).forEach(function(key) {
     var entry = serializeddepsstore[key];
     if (entry.type === 'fn') {
-      depDefs.push('  __depStore[' + JSON.stringify(key) + '] = ' + entry.source + ';');
+      depdefs.push('  __depStore[' + JSON.stringify(key) + '] = ' + entry.source + ';');
     }
   });
 
   var iife = '(function() {\n' +
     '  var __depStore = {};\n' +
-    depDefs.join('\n') + '\n' +
+    depdefs.join('\n') + '\n' +
     '  function __recallDep(key) {\n' +
     '    return __depStore[key] || null;\n' +
     '  }\n' +
@@ -509,7 +516,7 @@ function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyz
   return {
     fn: true,
     source: iife,
-    deps: depsObj
+    deps: depsobj
   };
 }
 
@@ -545,12 +552,13 @@ function preparednaforserialization(node, env, briefcase, deps, analyzer) {
 //   (b) local var/let/const bindings whose identifier ends in "style"
 //       are collected and excluded from the trigger;
 //   (c) the trigger is preserved for non-local `X.style.` accesses.
+//
+// @proposal=P2 — all while loops converted to trampolined recursion.
 function containsstyleaccess(source) {
   if (typeof source !== 'string') return false;
 
   var len = source.length;
   var masked = new Array(len);
-  var i;
 
   function isidstart(c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_' || c === '$';
@@ -559,90 +567,130 @@ function containsstyleaccess(source) {
     return isidstart(c) || (c >= '0' && c <= '9');
   }
 
-  // Pass 1 — mask string literals and comments.
-  i = 0;
-  while (i < len) {
+  // ---- Pass 1 helpers — mask string literals and comments. ----
+  function scanline(i) {
+    if (i >= len) return i;
+    if (source.charAt(i) === '\n') return i;
+    masked[i] = 1;
+    return function() { return scanline(i + 1); };
+  }
+  function scanblock(i) {
+    if (i + 1 >= len) return i;
+    if (source.charAt(i) === '*' && source.charAt(i + 1) === '/') {
+      masked[i] = 1;
+      masked[i + 1] = 1;
+      return i + 2;
+    }
+    masked[i] = 1;
+    return function() { return scanblock(i + 1); };
+  }
+  function scanstring(i, quote) {
+    if (i >= len) return i;
+    var sc = source.charAt(i);
+    if (sc === '\\') {
+      masked[i] = 1;
+      if (i + 1 < len) masked[i + 1] = 1;
+      return function() { return scanstring(i + 2, quote); };
+    }
+    masked[i] = 1;
+    if (sc === quote) return i + 1;
+    return function() { return scanstring(i + 1, quote); };
+  }
+  function maskpass(i) {
+    if (i >= len) return null;
     var c = source.charAt(i);
     if (c === '/' && i + 1 < len && source.charAt(i + 1) === '/') {
-      masked[i] = 1; masked[i + 1] = 1; i += 2;
-      while (i < len && source.charAt(i) !== '\n') { masked[i] = 1; i++; }
-      continue;
+      masked[i] = 1;
+      masked[i + 1] = 1;
+      var lineend = trampoline(scanline)(i + 2);
+      return function() { return maskpass(lineend); };
     }
     if (c === '/' && i + 1 < len && source.charAt(i + 1) === '*') {
-      masked[i] = 1; masked[i + 1] = 1; i += 2;
-      while (i + 1 < len && !(source.charAt(i) === '*' && source.charAt(i + 1) === '/')) { masked[i] = 1; i++; }
-      if (i + 1 < len) { masked[i] = 1; masked[i + 1] = 1; i += 2; }
-      continue;
+      masked[i] = 1;
+      masked[i + 1] = 1;
+      var blockend = trampoline(scanblock)(i + 2);
+      return function() { return maskpass(blockend); };
     }
     if (c === '"' || c === "'" || c === '`') {
-      masked[i] = 1; i++;
-      while (i < len) {
-        var sc = source.charAt(i);
-        if (sc === '\\') { masked[i] = 1; if (i + 1 < len) masked[i + 1] = 1; i += 2; continue; }
-        masked[i] = 1;
-        if (sc === c) { i++; break; }
-        i++;
-      }
-      continue;
+      masked[i] = 1;
+      var stringend = trampoline(scanstring)(i + 1, c);
+      return function() { return maskpass(stringend); };
     }
-    i++;
+    return function() { return maskpass(i + 1); };
   }
+  trampoline(maskpass)(0);
 
-  // Pass 2 — collect local var/let/const bindings ending in "style".
+  // ---- Pass 2 helpers — collect local var/let/const bindings ending in "style". ----
   var localbindings = {};
-  i = 0;
-  while (i < len) {
-    if (masked[i]) { i++; continue; }
-    if (i > 0 && isidchar(source.charAt(i - 1))) { i++; continue; }
+
+  function skipspacesat(j) {
+    if (j >= len) return j;
+    var c = source.charAt(j);
+    if (c === ' ' || c === '\t') return function() { return skipspacesat(j + 1); };
+    return j;
+  }
+  function scanident(j) {
+    if (j >= len) return j;
+    if (isidchar(source.charAt(j))) return function() { return scanident(j + 1); };
+    return j;
+  }
+  function pass2(i) {
+    if (i >= len) return null;
+    if (masked[i]) return function() { return pass2(i + 1); };
+    if (i > 0 && isidchar(source.charAt(i - 1))) return function() { return pass2(i + 1); };
     var kind = 0;
     if (source.substr(i, 4) === 'var ') kind = 4;
     else if (source.substr(i, 4) === 'let ') kind = 4;
     else if (source.substr(i, 6) === 'const ') kind = 6;
-    if (kind === 0) { i++; continue; }
-    if (i + kind < len && isidchar(source.charAt(i + kind))) { i++; continue; }
-    var j = i + kind;
-    while (j < len && (source.charAt(j) === ' ' || source.charAt(j) === '\t')) j++;
+    if (kind === 0) return function() { return pass2(i + 1); };
+    if (i + kind < len && isidchar(source.charAt(i + kind))) return function() { return pass2(i + 1); };
+    var j = trampoline(skipspacesat)(i + kind);
     var namestart = j;
     if (j < len && isidstart(source.charAt(j))) {
-      j++;
-      while (j < len && isidchar(source.charAt(j))) j++;
+      j = trampoline(scanident)(j + 1);
       var name = source.substring(namestart, j);
       var lowername = name.toLowerCase();
       if (lowername.length >= 5 && lowername.slice(-5) === 'style') {
         localbindings[name] = true;
       }
     }
-    i = j > i + kind ? j : i + kind;
+    var nexti = j > i + kind ? j : i + kind;
+    return function() { return pass2(nexti); };
   }
+  trampoline(pass2)(0);
 
-  // Pass 3 — scan for `[sS]tyle` + optional whitespace + "." at an
-  // unmasked position whose base identifier is not a local binding.
-  i = 0;
-  while (i + 5 <= len) {
-    if (masked[i]) { i++; continue; }
+  // ---- Pass 3 helpers — scan for `[sS]tyle` + optional whitespace + "." ----
+  function skipwhitespaceafterstyle(start) {
+    if (start >= len) return start;
+    if (masked[start]) return start;
+    var wc = source.charAt(start);
+    if (wc === ' ' || wc === '\t' || wc === '\n' || wc === '\r') {
+      return function() { return skipwhitespaceafterstyle(start + 1); };
+    }
+    return start;
+  }
+  function findidstart(k) {
+    if (k <= 0) return k;
+    if (masked[k - 1]) return k;
+    if (!isidchar(source.charAt(k - 1))) return k;
+    return function() { return findidstart(k - 1); };
+  }
+  function pass3(i) {
+    if (i + 5 > len) return false;
+    if (masked[i]) return function() { return pass3(i + 1); };
     var ch = source.charAt(i);
-    if (ch === 's' || ch === 'S') {
-      if (source.substr(i, 5).toLowerCase() === 'style') {
-        var after = i + 5;
-        while (after < len && !masked[after]) {
-          var wc = source.charAt(after);
-          if (wc === ' ' || wc === '\t' || wc === '\n' || wc === '\r') { after++; continue; }
-          break;
-        }
-        if (after < len && !masked[after] && source.charAt(after) === '.') {
-          var idstart = i;
-          while (idstart > 0 && !masked[idstart - 1] && isidchar(source.charAt(idstart - 1))) idstart--;
-          var identifier = source.substring(idstart, i + 5);
-          if (!localbindings[identifier]) return true;
-          i = after + 1;
-          continue;
-        }
+    if ((ch === 's' || ch === 'S') && source.substr(i, 5).toLowerCase() === 'style') {
+      var after = trampoline(skipwhitespaceafterstyle)(i + 5);
+      if (after < len && !masked[after] && source.charAt(after) === '.') {
+        var idstart = trampoline(findidstart)(i);
+        var identifier = source.substring(idstart, i + 5);
+        if (!localbindings[identifier]) return true;
+        return function() { return pass3(after + 1); };
       }
     }
-    i++;
+    return function() { return pass3(i + 1); };
   }
-
-  return false;
+  return trampoline(pass3)(0);
 }
 
 // ---- OP-177: mapoutputs ----
@@ -665,15 +713,17 @@ function mapoutputs(rawresult, outputkeys) {
   return scan(0, {});
 }
 
-// ---- OP-178: assertdefinedinputs (imperative loop accepted; R-ARC-20) ----
+// ---- OP-178: assertdefinedinputs — @proposal=P2 recursion ----
 function assertdefinedinputs(blockid, iokeys, env, accessor, allowundefined) {
   if (allowundefined === true) return;
   var keys = iokeys || [];
-  var missing = [];
-  for (var i = 0; i < keys.length; i++) {
+  function scan(i, acc) {
+    if (i >= keys.length) return acc;
     var value = accessor(keys[i])(env);
-    if (typeof value === 'undefined') missing.push(keys[i]);
+    var nextacc = (typeof value === 'undefined') ? acc.concat([keys[i]]) : acc;
+    return function() { return scan(i + 1, nextacc); };
   }
+  var missing = trampoline(scan)(0, []);
   if (missing.length > 0) {
     var err = new Error('[BLOCK_INPUT_UNDEFINED] block "' + blockid +
       '" has undefined inputs: ' + missing.join(', '));
@@ -910,14 +960,17 @@ function createblockanalyzers(blocktypes, dnaconstants) {
   return analyzers;
 }
 
-// ---- OP-185: compilefnblock ----
+// ---- OP-185: compilefnblock — @proposal=P5 second-pass ----
+// The runtime object passed by blockcompiler.js no longer includes an
+// evalstack field (removed at Cycle 29). This function no longer reads
+// runtime.evalstack. The callwithstack call passes null as its first
+// argument, per Cycle 02 Q1_9'.
 function compilefnblock(merged, id, sig, inheritedproperties, dependencies, options, runtime) {
   if (inheritedproperties === undefined) inheritedproperties = {};
   var blockcompilerstate = runtime.blockcompilerstate;
   var logdebug = runtime.logdebug;
   var logblockdebug = runtime.logblockdebug;
   var callwithstack = runtime.callwithstack;
-  var evalstack = runtime.evalstack;
   var compilepathaccessor = runtime.compilepathaccessor;
   var buildblockproperties = runtime.buildblockproperties;
   var createerrorcontext = runtime.createerrorcontext;
@@ -930,7 +983,7 @@ function compilefnblock(merged, id, sig, inheritedproperties, dependencies, opti
     var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
     var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
     var fnargs = [properties].concat(inputargs);
-    return callwithstack(evalstack, 'fn:' + (merged.ref || id), 'async-await', function() {
+    return callwithstack(null, 'fn:' + (merged.ref || id), 'async-await', function() {
       return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
     }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
     .then(function(result) {

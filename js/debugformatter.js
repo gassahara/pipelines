@@ -25,7 +25,7 @@ function formatdebugtrace(error, framelist) {
         try {
           var str = JSON.stringify(a, function(key, value) {
             if (key === 'container' || key === 'canvas' ||
-                (typeof HTMLELEMENT !== 'undefined' && value instanceof HTMLELEMENT)) return '[DOM_NODE]';
+                (typeof htmlelement !== 'undefined' && value instanceof htmlelement)) return '[DOM_NODE]';
             return value;
           });
           return str.length > 120 ? str.slice(0, 120) + '...' : str;

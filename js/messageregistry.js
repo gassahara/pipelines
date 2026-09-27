@@ -117,7 +117,7 @@ var MESSAGETYPES = Object.freeze({
   LOGLINE: 'LOGLINE'
 });
 
-var mailboxfiltertypes = Object.freeze({
+var MAILBOXFILTERTYPES = Object.freeze({
   RESPONSE: MESSAGETYPES.RESPONSE,
   APIRESULT: MESSAGETYPES.APIRESULT,
   FETCHRESULT: MESSAGETYPES.FETCHRESULT,
@@ -129,14 +129,14 @@ var mailboxfiltertypes = Object.freeze({
   EVENTLISTENERREGISTERED: MESSAGETYPES.EVENTLISTENERREGISTERED
 });
 
-var messageregistrystore = {};
+var MESSAGEREGISTRYSTORE = {};
 
 var MESSAGEREGISTRY = {
   register: function(owner, type, iface, handler) {
-    var entry = messageregistrystore[owner];
+    var entry = MESSAGEREGISTRYSTORE[owner];
     if (!entry) {
       entry = {};
-      messageregistrystore[owner] = entry;
+      MESSAGEREGISTRYSTORE[owner] = entry;
     }
     entry[type] = { iface: iface, handler: handler };
     if (typeof ACTORCONSUMERS !== 'undefined') {
@@ -145,7 +145,7 @@ var MESSAGEREGISTRY = {
     }
   },
   getinterfaces: function(owner) {
-    var entry = messageregistrystore[owner] || {};
+    var entry = MESSAGEREGISTRYSTORE[owner] || {};
     var map = {};
     Object.keys(entry).forEach(function(type) {
       map[type] = entry[type].iface;
@@ -153,7 +153,7 @@ var MESSAGEREGISTRY = {
     return map;
   },
   gethandler: function(owner, type) {
-    var entry = messageregistrystore[owner];
+    var entry = MESSAGEREGISTRYSTORE[owner];
     if (entry && entry[type]) return entry[type].handler;
     return undefined;
   },
@@ -165,7 +165,7 @@ var MESSAGEREGISTRY = {
     if (!type || typeof type !== 'string') {
       return { valid: false, error: 'message type must be a string, got: ' + typeof type, type: String(type) };
     }
-    var entry = messageregistrystore[owner];
+    var entry = MESSAGEREGISTRYSTORE[owner];
     var iface = (entry && entry[type]) ? entry[type].iface : null;
     if (!iface) {
       return { valid: false, error: 'unknown message type: ' + type, type: type };

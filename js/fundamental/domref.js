@@ -21,8 +21,8 @@ function removerawelementref(ref) {
 }
 
 function createdomref(rawelement, actorregistry) {
-  if (!rawelement || (typeof HTMLELEMENT !== 'undefined' && !(rawelement instanceof HTMLELEMENT))) {
-    if (typeof HTMLELEMENT !== 'undefined') {
+  if (!rawelement || (typeof htmlelement !== 'undefined' && !(rawelement instanceof htmlelement))) {
+    if (typeof htmlelement !== 'undefined') {
       throw new Error('[createdomref] invalid element');
     }
   }

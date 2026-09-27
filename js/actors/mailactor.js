@@ -1,12 +1,26 @@
+// mailactor.js — mail transport concern.
+//
+// @proposal=P5 (corrected, Cycle 39R) — the OP-011 (FB-14) payload-key
+// case aliasing is removed. UPPERCASE is the single authoritative key
+// form (Q12). Writers emit UPPERCASE; readers read UPPERCASE; filters
+// are expressed with UPPERCASE keys.
+//
+// The three removed sites:
+//   1. SENDINSTRUCTION's twin-key loop (STRUCTURALKEYS + per-key twin)
+//   2. MAILBEHAVIOR's ENVELOPE.payload = ENVELOPE.PAYLOAD alias
+//   3. QUERYMAILBOX's / WAITFORMAILBOX's filter-key aliasing loop
+//
+// The coupled writer (executionactor's ENQUEUEEXECUTION* helpers) and
+// reader (blockcompiler's WAITFORMAILBOX filter literals) are aligned
+// in Cycles 39R-bis and 39R-ter respectively.
+
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
-// Global registries
 var ACTORCONSUMERS = {};
 var EXPECTATIONS = {};
 var MAILBOX = [];
 
-// Index maps for efficient lookup
 var INDEXBYTAG = {};
 var INDEXBYSENDER = {};
 var INDEXBYTYPE = {};
@@ -159,11 +173,6 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
       TIMESTAMP: Date.now(),
       PAYLOAD: FLATMESSAGE
     };
-    // ---- P3 (envelope-payload-case): expose both PAYLOAD and payload. The
-    // mailbox reader in blockcompiler.js (createpersistentelementwrapper) reads
-    // `mailboxmessage.payload` (lowercase) while this producer writes PAYLOAD
-    // (uppercase). Non-destructive aliasing — the uppercase form is preserved.
-    ENVELOPE.payload = ENVELOPE.PAYLOAD;
 
     ADDENVELOPETOMAILBOX(ENVELOPE);
 
@@ -220,20 +229,6 @@ function GETMAILBOX() {
 function QUERYMAILBOX(FILTER) {
   if (!FILTER) FILTER = {};
 
-  // ---- P1 (mailbox-filter-case): non-destructive case-aliasing of filter keys.
-  // QUERYMAILBOX / WAITFORMAILBOX read FILTER.TYPE / FILTER.TAG / FILTER.SENDER /
-  // FILTER.RECIPIENT (UPPERCASE); every current caller passes { tag, sender, type }
-  // (lowercase). Before this change every predicate was inert and the query returned
-  // the first unread mailbox record of any shape. Aliasing both cases preserves the
-  // readers' uppercase reads and the callers' lowercase writes without overwriting
-  // either. Mirrors the OP-011 pattern in SENDINSTRUCTION.
-  Object.keys(FILTER).forEach(function(FKEY) {
-    var FUP = FKEY.toUpperCase();
-    var FLOW = FKEY.toLowerCase();
-    if (FUP !== FKEY && FILTER[FUP] === undefined) FILTER[FUP] = FILTER[FKEY];
-    if (FLOW !== FKEY && FILTER[FLOW] === undefined) FILTER[FLOW] = FILTER[FKEY];
-  });
-
   var FILTERTYPE = FILTER.TYPE;
   if (FILTERTYPE !== undefined) {
     var ALLOWEDTYPES = Object.keys(MESSAGETYPES).map(function(K) { return MESSAGETYPES[K]; });
@@ -264,10 +259,6 @@ function QUERYMAILBOX(FILTER) {
   }
 
   var MATCHED = CANDIDATES.filter(function(ITEM) {
-    // ---- P2 (record-role-discrimination): EXPECTATION records are settlement
-    // bookkeeping, not message envelopes; they carry no PAYLOAD. A payload-consuming
-    // query must never receive one. Restrict candidates to records that carry a
-    // PAYLOAD (equivalently, to ENVELOPE records).
     if (!ITEM || !ITEM.PAYLOAD) return false;
     var MATCHES = true;
     var ITEMRECIPIENT = ITEM.RECIPIENT;
@@ -341,16 +332,6 @@ function QUERYMAILBOX(FILTER) {
 
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = EXPECTATIONTIMEOUT;
-  // ---- P1: same non-destructive filter key-case aliasing as in QUERYMAILBOX, so
-  // WAITFORMAILBOX's own TAGVAL read (FILTER.TAG) also sees lowercase callers.
-  if (FILTER && typeof FILTER === 'object') {
-    Object.keys(FILTER).forEach(function(FKEY) {
-      var FUP = FKEY.toUpperCase();
-      var FLOW = FKEY.toLowerCase();
-      if (FUP !== FKEY && FILTER[FUP] === undefined) FILTER[FUP] = FILTER[FKEY];
-      if (FLOW !== FKEY && FILTER[FLOW] === undefined) FILTER[FLOW] = FILTER[FKEY];
-    });
-  }
   return new Promise(function(RESOLVE, REJECT) {
     if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       REJECT(new Error('Cancelled'));
@@ -430,30 +411,6 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     FLATMESSAGE.CONTEXT = CONTEXT;
   }
 
-  // ---- OP-011 (FB-14): NON-DESTRUCTIVE payload-key case aliasing ----
-  // The framework's senders and readers disagree on payload key case: many send sites across the actor set
-  // place UPPERCASE keys (UPDATES / PATH / VALUE / PIPELINEID / ELEMENTID / …) in payloads while a few
-  // ENQUEUE-helper senders still write lowercase (pipelineid / taskid / env / dna / path / elementid /
-  // continuation). The registry's validator is case-insensitive, so the outgoing gate certifies the message
-  // either way, and a handler that reads only one spelling would silently drop the value. This block makes
-  // every reader's spelling resolve by defining the opposite-case twin of each payload key, WITHOUT EVER
-  // OVERWRITING an existing key. It deliberately does NOT rewrite the sender's casing: many handlers read
-  // UPPERCASE strictly (MESSAGE.PIPELINEID, MESSAGE.ERROR, MESSAGE.FN, MESSAGE.ENV …), so a rewrite would
-  // break them. Structural keys are excluded — readers already agree on those.
-  //
-  // NESTED entry-level aliasing was discharged in cycle 11 (BLUEPRINT-EXECUTION-CYCLE): every WORLDMAPACTOR
-  // UPDATE producer was canonicalized to UPPER / PATH / VALUE in cycles 2–6, and the sole consumer
-  // (WORLDMAPBEHAVIOR → APPLYVALUESET) reads uppercase only. See SCOPE-AIA-003 / ISSUE-11.1 for the remaining
-  // top-level layer, which is still load-bearing for the ENQUEUE helpers listed above.
-  var STRUCTURALKEYS = ['TYPE', 'SENDER', 'TAG', 'RESPONSESPEC', 'CONTEXT'];
-  Object.keys(FLATMESSAGE).forEach(function(KEY) {
-    if (STRUCTURALKEYS.indexOf(KEY) !== -1) return;
-    var LOWER = KEY.toLowerCase();
-    var UPPER = KEY.toUpperCase();
-    if (LOWER !== KEY && FLATMESSAGE[LOWER] === undefined) FLATMESSAGE[LOWER] = FLATMESSAGE[KEY];
-    if (UPPER !== KEY && FLATMESSAGE[UPPER] === undefined) FLATMESSAGE[UPPER] = FLATMESSAGE[KEY];
-  });
-
   if (MESSAGEREGISTRY && typeof MESSAGEREGISTRY.getinterfaces === 'function') {
     var GETIFACES = MESSAGEREGISTRY.getinterfaces;
     var IFACES = GETIFACES(RECIPIENT);
@@ -480,6 +437,55 @@ function SENDRESPONSE(RECIPIENT, TAG, RESULT, SENDER, RESPONSETYPE) {
   var TYPE = RESPONSETYPE;
   var PAYLOAD = { RESULT: RESULT };
   SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, undefined, null);
+}
+
+function MAILGETACTIONSTATUS(ID) {
+  if (typeof ID !== 'string' || ID.length === 0) return null;
+
+  var EXP = EXPECTATIONS[ID];
+  if (EXP) {
+    if (EXP.STATUS === 'PENDING') {
+      return { STATUS: 'PENDING', RESULT: null, ERROR: null };
+    }
+    if (EXP.STATUS === 'TIMEOUT') {
+      return { STATUS: 'EXPIRED', RESULT: null, ERROR: EXP.ERROR || null };
+    }
+  }
+
+  var RESPONSETYPESET = {};
+  if (typeof MAILBOXFILTERTYPES !== 'undefined') {
+    Object.keys(MAILBOXFILTERTYPES).forEach(function(K) {
+      RESPONSETYPESET[MAILBOXFILTERTYPES[K]] = true;
+    });
+  }
+  var ENVELOPES = INDEXBYTAG[ID] || [];
+  var RESPONSEENVELOPE = null;
+  ENVELOPES.forEach(function(E) {
+    var PAYLOADTYPE = E.PAYLOAD && E.PAYLOAD.TYPE;
+    if (PAYLOADTYPE && RESPONSETYPESET[PAYLOADTYPE]) {
+      RESPONSEENVELOPE = E;
+    }
+  });
+
+  if (RESPONSEENVELOPE) {
+    var PAYLOAD = RESPONSEENVELOPE.PAYLOAD || {};
+    var HASERROR = PAYLOAD.ERROR !== undefined ||
+                   (PAYLOAD.RESULT && typeof PAYLOAD.RESULT === 'object' && PAYLOAD.RESULT.ERROR !== undefined);
+    if (HASERROR) {
+      return {
+        STATUS: 'FAILED',
+        RESULT: null,
+        ERROR: PAYLOAD.ERROR !== undefined ? PAYLOAD.ERROR : PAYLOAD.RESULT.ERROR
+      };
+    }
+    return {
+      STATUS: 'RESOLVED',
+      RESULT: PAYLOAD.RESULT !== undefined ? PAYLOAD.RESULT : PAYLOAD,
+      ERROR: null
+    };
+  }
+
+  return null;
 }
 
 function STARTMAILACTOR(OPTIONS) {

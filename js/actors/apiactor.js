@@ -83,3 +83,25 @@ function ENQUEUEFETCH(ENDPOINT, METHOD, PAYLOAD, OPTIONS, RESPONSESPEC) {
     TOKEN: (OPTIONS && OPTIONS.TOKEN) || ''
   }, TAG, 'system', RESPONSESPEC);
 }
+
+// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+//
+// The three operations are sourced from CREATEACTORHANDLE (declared at
+// Cycle 18 in actorcore.js). APIBEHAVIOR and the ENQUEUE helpers are
+// unchanged. SUBMIT routes through the mail system (Q6); EXPECT polls
+// GETACTIONRESULT until a response (including error) is obtained, and
+// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
+// read of the mail-system records (Q8).
+
+var APIHANDLE = null;
+
+function APIHANDLEINSTANCE() {
+  if (!APIHANDLE) {
+    APIHANDLE = CREATEACTORHANDLE('APIACTOR');
+  }
+  return APIHANDLE;
+}
+
+function SUBMIT(ACTION) { return APIHANDLEINSTANCE().SUBMIT(ACTION); }
+function EXPECT(ID, INTERVAL, TIMEOUT) { return APIHANDLEINSTANCE().EXPECT(ID, INTERVAL, TIMEOUT); }
+function GETACTIONRESULT(ID) { return APIHANDLEINSTANCE().GETACTIONRESULT(ID); }

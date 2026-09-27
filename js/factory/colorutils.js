@@ -1,4 +1,3 @@
-
 // ---- OP-094: rangemap helper (extracted from 4 call sites) ----
 function rangemap(count, fn) {
   return Array.apply(null, new Array(count)).map(function(unused, i) { return fn(i); });

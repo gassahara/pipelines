@@ -1,5 +1,5 @@
 function createverbosityconstants() {
-  var LEVELS = {
+  var levels = {
     none: 0,
     critical: 0,
     error: 1,
@@ -9,11 +9,11 @@ function createverbosityconstants() {
     all: 4
   };
 
-  Object.keys(LEVELS).forEach(function(NAME) {
-    var UPPER = NAME.toUpperCase();
-    if (UPPER !== NAME && LEVELS[UPPER] === undefined) LEVELS[UPPER] = LEVELS[NAME];
+  Object.keys(levels).forEach(function(name) {
+    var upper = name.toUpperCase();
+    if (upper !== name && levels[upper] === undefined) levels[upper] = levels[name];
   });
-  return LEVELS;
+  return levels;
 }
 
 var constants = createverbosityconstants();
@@ -113,8 +113,6 @@ function getverbosityname(levelvalue) {
     default: return 'unknown';
   }
 }
-
-
 
 // ===== ADDED: logblockdebug helper =====
 function logblockdebug(state, prefix, blockid, values) {

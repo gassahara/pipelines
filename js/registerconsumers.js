@@ -1,4 +1,4 @@
-var registeredconsumers = true;
+var REGISTEREDCONSUMERS = true;
 
 // APIACTOR
 MESSAGEREGISTRY.register('APIACTOR', MESSAGETYPES.API, {

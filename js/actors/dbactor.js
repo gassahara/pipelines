@@ -469,6 +469,32 @@ function DBDELETE(KEY) {
   return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
 }
 
+// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+//
+// The three operations are sourced from CREATEACTORHANDLE (declared at
+// Cycle 18 in actorcore.js). DBBEHAVIOR and the direct DB API are
+// unchanged. SUBMIT routes through the mail system (Q6); EXPECT polls
+// GETACTIONRESULT until a response (including error) is obtained, and
+// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
+// read of the mail-system records (Q8).
+//
+// The handle is exposed via DBACTORHANDLEINSTANCE (lazy module-level
+// accessor) and also as three members on the object returned by
+// STARTDBACTOR.
+
+var DBACTORHANDLE = null;
+
+function DBACTORHANDLEINSTANCE() {
+  if (!DBACTORHANDLE) {
+    DBACTORHANDLE = CREATEACTORHANDLE('DBACTOR');
+  }
+  return DBACTORHANDLE;
+}
+
+function SUBMIT(ACTION) { return DBACTORHANDLEINSTANCE().SUBMIT(ACTION); }
+function EXPECT(ID, INTERVAL, TIMEOUT) { return DBACTORHANDLEINSTANCE().EXPECT(ID, INTERVAL, TIMEOUT); }
+function GETACTIONRESULT(ID) { return DBACTORHANDLEINSTANCE().GETACTIONRESULT(ID); }
+
 // ==================== START FUNCTION ====================
 
 function STARTDBACTOR(OPTIONS) {
@@ -482,6 +508,9 @@ function STARTDBACTOR(OPTIONS) {
   }
   return {
     GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    DISPATCH: function(MESSAGE) { return DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MESSAGE); }
+    DISPATCH: function(MESSAGE) { return DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MESSAGE); },
+    SUBMIT: SUBMIT,
+    EXPECT: EXPECT,
+    GETACTIONRESULT: GETACTIONRESULT
   };
 }
