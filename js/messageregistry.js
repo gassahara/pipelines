@@ -7,6 +7,11 @@
 // Their producers were removed at Cycles 32R (blockcompiler.js) and
 // 37R (hypervisoractor.js). Their consumers were removed at the same
 // cycles. No caller references them.
+//
+// @proposal=P-Q — LOADSCRIPT and SCRIPTLOADED message types added to
+// support routing lib/program script loading through RENDERACTOR.
+// SCRIPTLOADED added to MAILBOXFILTERTYPES so sendandawait can
+// resolve its expectation when the response arrives.
 
 var MESSAGETYPES = Object.freeze({
   RENDER: 'RENDER',
@@ -118,6 +123,8 @@ var MESSAGETYPES = Object.freeze({
   DOMRESULT: 'DOMRESULT',
   DBRESULT: 'DBRESULT',
   EVENTLISTENERREGISTERED: 'EVENTLISTENERREGISTERED',
+  LOADSCRIPT: 'LOADSCRIPT',
+  SCRIPTLOADED: 'SCRIPTLOADED',
   LOGLINE: 'LOGLINE'
 });
 
@@ -128,7 +135,8 @@ var MAILBOXFILTERTYPES = Object.freeze({
   TASKRESULT: MESSAGETYPES.TASKRESULT,
   DOMRESULT: MESSAGETYPES.DOMRESULT,
   DBRESULT: MESSAGETYPES.DBRESULT,
-  EVENTLISTENERREGISTERED: MESSAGETYPES.EVENTLISTENERREGISTERED
+  EVENTLISTENERREGISTERED: MESSAGETYPES.EVENTLISTENERREGISTERED,
+  SCRIPTLOADED: MESSAGETYPES.SCRIPTLOADED
 });
 
 var MESSAGEREGISTRYSTORE = {};

@@ -31,6 +31,23 @@
 // `SERIALIZED` field was never non-null at any live call site. Both
 // the hook and the field are removed. The `originalfn` local that
 // fed the hook is removed with it.
+//
+// @proposal=P-J (path-addressed structural appends) — appendstage,
+// appendblock, and appendpipelineelement are rewritten to descend by
+// a positional path (an array of indices) and construct a fresh
+// pipeline value; the shared recursive worker is appendat. No node
+// is compared with ===. The input pipeline is not modified.
+//
+// @proposal=P-L — nodeat / nodeatat added as the positional reader,
+// sharing the same descent rule as the appends.
+//
+// @proposal=P-M — deepreplace removed; it had no caller after P-J.
+//
+// @proposal=P-Q — loadscriptwithwitness routes the DOM side effect
+// of loading a <script src> through RENDERACTOR via the LOADSCRIPT
+// message and the SCRIPTLOADED response. No document.* call remains
+// in this file. appendlib / appendprogram keep their top-level-only
+// parent argument (Class B, R-1).
 
 // ============================================================
 // §1 — Construction API
@@ -67,22 +84,72 @@ function pipeline(type, name) {
   return { type: type, name: name, libs: [], programs: [], elements: [] };
 }
 
-function deepreplace(nodes, target, transform) {
-  return nodes.map(function(node) {
-    if (node === target) return transform(node);
-    if (node.element === 'STAGE' && node.elements && node.elements.length > 0) {
-      var newchildren = deepreplace(node.elements, target, transform);
-      var changed = newchildren.some(function(c, i) { return c !== node.elements[i]; });
-      if (changed) {
-        var clone = {};
-        Object.keys(node).forEach(function(k) { clone[k] = node[k]; });
-        clone.elements = newchildren;
-        return clone;
-      }
-    }
-    return node;
+// ---- P-J — shared helpers for the path-addressed appends ----
+
+function pipelinewith(p, elements) {
+  var next = {};
+  Object.keys(p).forEach(function(k) { next[k] = p[k]; });
+  next.elements = elements;
+  return next;
+}
+
+function appendat(elements, level, i, child) {
+  if (i >= level.length) return elements.concat([child]);
+  var idx = level[i];
+  var target = elements[idx];
+  if (!target || !target.elements) {
+    throw new Error('[append] path does not address a node with an elements array');
+  }
+  return elements.map(function(node, j) {
+    if (j !== idx) return node;
+    var extended = {};
+    Object.keys(node).forEach(function(k) { extended[k] = node[k]; });
+    extended.elements = appendat(node.elements, level, i + 1, child);
+    return extended;
   });
 }
+
+// ---- P-L — positional reader ----
+
+function nodeat(p, path) {
+  return nodeatat(p, path, 0);
+}
+
+function nodeatat(node, path, index) {
+  if (index >= path.length) return node;
+  return nodeatat(node.elements[path[index]], path, index + 1);
+}
+
+// ---- P-J — path-addressed structural appends (Class A) ----
+
+function appendstage(p, level, child) {
+  if (child.element !== 'STAGE') {
+    throw new Error('[appendstage] child must be a stage value');
+  }
+  return pipelinewith(p, appendat(p.elements, level, 0, child));
+}
+
+function appendblock(p, level, child) {
+  if (level.length === 0) {
+    throw new Error('[appendblock] level must address a stage (not the pipeline root)');
+  }
+  if (child.element !== 'BLOCK') {
+    throw new Error('[appendblock] child must be a block value');
+  }
+  return pipelinewith(p, appendat(p.elements, level, 0, child));
+}
+
+function appendpipelineelement(p, level, child) {
+  if (level.length === 0) {
+    throw new Error('[appendpipelineelement] level must address a stage (not the pipeline root)');
+  }
+  if (child.element !== 'PIPELINE') {
+    throw new Error('[appendpipelineelement] child must be a pipelineelement value');
+  }
+  return pipelinewith(p, appendat(p.elements, level, 0, child));
+}
+
+// ---- Class B — pre-execution recorders (top-level-only, R-1) ----
 
 function appendlib(p, parent, child) {
   if (parent !== null) {
@@ -102,66 +169,6 @@ function appendprogram(p, parent, child) {
   Object.keys(p).forEach(function(k) { next[k] = p[k]; });
   next.programs = p.programs.concat([child]);
   return next;
-}
-
-function appendstage(p, parent, child) {
-  if (child.element !== 'STAGE') {
-    throw new Error('[appendstage] child must be a stage value');
-  }
-  if (parent === null) {
-    var next = {};
-    Object.keys(p).forEach(function(k) { next[k] = p[k]; });
-    next.elements = p.elements.concat([child]);
-    return next;
-  }
-  var replaced = deepreplace(p.elements, parent, function(parentstage) {
-    var clone = {};
-    Object.keys(parentstage).forEach(function(k) { clone[k] = parentstage[k]; });
-    clone.elements = parentstage.elements.concat([child]);
-    return clone;
-  });
-  var nextp = {};
-  Object.keys(p).forEach(function(k) { nextp[k] = p[k]; });
-  nextp.elements = replaced;
-  return nextp;
-}
-
-function appendblock(p, parent, child) {
-  if (parent === null) {
-    throw new Error('[appendblock] parent must be a stage value (not null)');
-  }
-  if (child.element !== 'BLOCK') {
-    throw new Error('[appendblock] child must be a block value');
-  }
-  var replaced = deepreplace(p.elements, parent, function(parentstage) {
-    var clone = {};
-    Object.keys(parentstage).forEach(function(k) { clone[k] = parentstage[k]; });
-    clone.elements = parentstage.elements.concat([child]);
-    return clone;
-  });
-  var nextp = {};
-  Object.keys(p).forEach(function(k) { nextp[k] = p[k]; });
-  nextp.elements = replaced;
-  return nextp;
-}
-
-function appendpipelineelement(p, parent, child) {
-  if (parent === null) {
-    throw new Error('[appendpipelineelement] parent must be a stage value (not null)');
-  }
-  if (child.element !== 'PIPELINE') {
-    throw new Error('[appendpipelineelement] child must be a pipelineelement value');
-  }
-  var replaced = deepreplace(p.elements, parent, function(parentstage) {
-    var clone = {};
-    Object.keys(parentstage).forEach(function(k) { clone[k] = parentstage[k]; });
-    clone.elements = parentstage.elements.concat([child]);
-    return clone;
-  });
-  var nextp = {};
-  Object.keys(p).forEach(function(k) { nextp[k] = p[k]; });
-  nextp.elements = replaced;
-  return nextp;
 }
 
 // ============================================================
@@ -1004,22 +1011,21 @@ function waitforwitness(entry, timeout) {
   });
 }
 
+// @proposal=P-Q — the DOM side effect of loading a <script src> is
+// delegated to RENDERACTOR via LOADSCRIPT. The witness check remains
+// here: it reads host globals (window[name] / globalThis[name]), not
+// the DOM.
 function loadscriptwithwitness(entry, basepath, timeout) {
-  return new Promise(function(resolve, reject) {
-    var s = document.createElement('script');
-    s.src = basepath + entry.src;
-    s.onload = function() {
-      setTimeout(function() {
-        if (entry.provides && entry.provides.length > 0) {
-          waitforwitness(entry, timeout).then(resolve).catch(reject);
-        } else {
-          resolve();
-        }
-      }, 0);
-    };
-    s.onerror = function() { reject(new Error('failed to load ' + entry.src)); };
-    document.head.appendChild(s);
-  });
+  return sendandawait('RENDERACTOR', MESSAGETYPES.LOADSCRIPT,
+                      { SRC: basepath + entry.src },
+                      mailboxwaittimeout,
+                      MESSAGETYPES.SCRIPTLOADED)
+    .then(function(response) {
+      if (response && response.ERROR) throw new Error(response.ERROR);
+      if (entry.provides && entry.provides.length > 0) {
+        return waitforwitness(entry, timeout);
+      }
+    });
 }
 
 function loadscriptssequentially(entries, basepath, timeout) {

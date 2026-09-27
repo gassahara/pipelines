@@ -5,6 +5,10 @@
 //   BOOTDNA, COMPILESTAGE, STAGECOMPLETED
 // The corresponding MESSAGETYPES entries were removed in Cycle P9-02
 // (messageregistry.js).
+//
+// @proposal=P-Q — RENDERACTOR registration for LOADSCRIPT added, so
+// the block compiler can route lib/program script loading through the
+// render actor instead of touching document.* directly.
 
 var REGISTEREDCONSUMERS = true;
 
@@ -282,6 +286,10 @@ MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PING, {}, RENDERBEHAVIOR);
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, {
   PIPELINEID: 'string', STAGEID: 'string', STAGEPATH: 'array', SOURCEID: 'string', EVENT: 'string',
   CONTROL: 'object', ELEMENTS: 'array', BRIEFCASE: 'object?', OPTIONS: 'object?'
+}, RENDERBEHAVIOR);
+
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.LOADSCRIPT, {
+  SRC: 'string'
 }, RENDERBEHAVIOR);
 
 // WORLDMAPACTOR

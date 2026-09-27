@@ -8,6 +8,12 @@
 // use those forms exclusively. The earlier reads of `actorregistry`,
 // `actorRegistry` and `triggerGcScheduled` — OP-011-era aliases —
 // are removed.
+//
+// @proposal=P-Q — a LOADSCRIPT handler is added. It creates a <script
+// src>, appends it to document.head, and responds to the sender when
+// the script's load event (or error event) fires. The block compiler
+// sends LOADSCRIPT for each lib and each program, replacing the
+// direct document.* usage that previously lived in blockcompiler.js.
 
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -662,6 +668,17 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
     RESPONDIFNEEDED(ENV, MSG, { ERROR: ERR.message || String(ERR) });
   });
 };
+
+// @proposal=P-Q — LOADSCRIPT handler: create a <script src>, append it
+// to document.head, respond when the load or error event fires.
+HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
+  var s = document.createElement('script');
+  s.src = MSG.SRC;
+  s.onload = function() { RESPONDIFNEEDED(ENV, MSG, { LOADED: true }); };
+  s.onerror = function() { RESPONDIFNEEDED(ENV, MSG, { LOADED: false, ERROR: 'failed to load ' + MSG.SRC }); };
+  document.head.appendChild(s);
+};
+
 HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
 
 var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER;
