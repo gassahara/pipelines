@@ -1,3 +1,15 @@
+// debugformatter.js — debug trace formatter.
+//
+// @proposal=P3 (Cycle 14) — the P3 sweep produced the lowercase
+// `htmlelement` at the formatdebugtrace replacer. (The source already
+// used the incorrect `HTMLELEMENT`, so the sweep's effect was a
+// spelling change, not a regression; the guard was already inert.)
+//
+// @proposal=P10 (Cycle P10-04, batch 10.3) — the canonical host
+// builtin spelling `HTMLElement` is restored at both sites. The
+// replacer's DOM-node branch is now live: frame argument values that
+// are DOM elements render as `[DOM_NODE]` in the trace.
+
 function formatdebugtrace(error, framelist) {
   if (framelist === undefined) framelist = frames;
 
@@ -25,7 +37,7 @@ function formatdebugtrace(error, framelist) {
         try {
           var str = JSON.stringify(a, function(key, value) {
             if (key === 'container' || key === 'canvas' ||
-                (typeof htmlelement !== 'undefined' && value instanceof htmlelement)) return '[DOM_NODE]';
+                (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement)) return '[DOM_NODE]';
             return value;
           });
           return str.length > 120 ? str.slice(0, 120) + '...' : str;

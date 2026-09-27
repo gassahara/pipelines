@@ -1,3 +1,14 @@
+// domref.js — DOM element reference concern.
+//
+// @proposal=P3 (Cycle 16) — the P3 sweep produced the lowercase
+// `htmlelement` at the createdomref guard. That mangling broke the
+// guard (the branch never fired).
+//
+// @proposal=P10 (Cycle P10-03, batch 10.3) — the canonical host
+// builtin spelling `HTMLElement` is restored at all three sites.
+// The guard is now live: createdomref throws when handed a value
+// that is not a DOM element.
+
 var rawmap = [];
 
 var domrefidcounter = 0;
@@ -21,8 +32,8 @@ function removerawelementref(ref) {
 }
 
 function createdomref(rawelement, actorregistry) {
-  if (!rawelement || (typeof htmlelement !== 'undefined' && !(rawelement instanceof htmlelement))) {
-    if (typeof htmlelement !== 'undefined') {
+  if (!rawelement || (typeof HTMLElement !== 'undefined' && !(rawelement instanceof HTMLElement))) {
+    if (typeof HTMLElement !== 'undefined') {
       throw new Error('[createdomref] invalid element');
     }
   }

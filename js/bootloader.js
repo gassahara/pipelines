@@ -1,12 +1,12 @@
 // bootloader.js — framework bootstrap and load manifest.
 //
-// @proposal=P9 (Cycle P9-01) — the manifest provides lists are aligned
-// with the post-P5-corrected surface:
-//   - `validatepipelinebriefcase` removed from the blockcompiler entry
-//     (function was dropped at Cycle 32R; boot failure attribution at
-//     RUN 65).
-//   - `validaterevivableobject` removed from the fnblock entry (P9.7
-//     removes the function; its last caller was validatepipelinebriefcase).
+// @proposal=P9 (Cycle P9-01) — manifest provides aligned with the
+// post-P5-corrected surface.
+//
+// @proposal=P10 (Cycle P10-01, batch 10.1) — the host builtin is
+// referenced by its canonical spelling `globalThis`. The previous
+// `globalthis` was undeclared and would raise ReferenceError if the
+// fallback branch were reached.
 
 var pipelinesmanifest = [
   { src: 'factory/tuning/limits.js', provides: [
@@ -170,7 +170,7 @@ var pipelinesmanifest = [
 ];
 
 function getroot() {
-  return (typeof window !== 'undefined') ? window : globalthis;
+  return (typeof window !== 'undefined') ? window : globalThis;
 }
 
 function checkexistence(entry) {

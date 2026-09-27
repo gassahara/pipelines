@@ -5,21 +5,23 @@
 //
 // @proposal=P9 (Cycle P9-04) — batches applied:
 //   9.3  Removed: resolvedepsarray, resolvepipelinepath,
-//        resolvestagefrompath, builddependenciesregistry. The
-//        loadpipelinedependencies chain no longer builds the registry.
-//   9.4  Removed: `dependencies` parameter chain
-//        (orchestratestage, createblockcompilers, buildblockproperties,
-//        processelement, processpipelineelement, processnestedstage).
-//        buildblockproperties resolves deps via the shared global space
-//        unconditionally (REF-P9.4-α).
+//        resolvestagefrompath, builddependenciesregistry.
+//   9.4  Removed: `dependencies` parameter chain. buildblockproperties
+//        resolves deps via the shared global space unconditionally.
 //        Renamed: `inheritedbriefcase` → `inherited`.
-//        Removed: `nextstagemessage` parameter from orchestratestage.
-//        Renamed: local `pipelineid` → `pipelinename` in
-//        processpipelineelement.
+//        Removed: `nextstagemessage` parameter.
+//        Renamed: local `pipelineid` → `pipelinename`.
 //   9.5  Renamed: element field `pipelineidoverride` → `nameoverride`;
-//        element field `dna` → `childstate` (in makepipelineelement,
-//        processpipelineelement, and error diagnostics).
+//        element field `dna` → `childstate`.
 //   9.9  Removed: `response.payload` lowercase read in unwrap.
+//
+// @proposal=P9 (Cycle P9-06 call-site correction) — DEV-P9-06-CALLSHAPE
+// closed: compilefnblock is invoked with the 6-arg form matching the
+// fnblock.js signature.
+//
+// @proposal=P10 (Cycle P10-02, batch 10.1) — the host builtin is
+// referenced as `globalThis`. Three sites corrected (waitforwitness,
+// buildblockproperties, compileblock).
 
 // ============================================================
 // §1 — Construction API
@@ -254,9 +256,6 @@ function buildproperties(merged, inherited) {
   }, cloneobject(inherited));
 }
 
-// @proposal=P9 (REF-P9.4-α) — the `dependencies` parameter is removed;
-// deps resolve via the shared global space (window / globalthis)
-// unconditionally.
 function buildblockproperties(merged, inherited, io, env) {
   if (inherited === undefined) inherited = {};
   if (io === undefined) io = { inputs: [], outputs: {} };
@@ -284,7 +283,7 @@ function buildblockproperties(merged, inherited, io, env) {
 
   if (merged && merged.deps) {
     if (Array.isArray(merged.deps)) {
-      var depsmap = (typeof window !== 'undefined') ? window : (typeof globalthis !== 'undefined' ? globalthis : {});
+      var depsmap = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
       var resolveddeps = {};
       var missingdeps = [];
       merged.deps.forEach(function(name) {
@@ -337,8 +336,6 @@ function createerrorcontext(id, stagetype) {
   };
 }
 
-// @proposal=P9 (Cycle P9-04, batch 9.9) — the lowercase `response.payload`
-// fallback is removed; PAYLOAD is authoritative.
 function unwrap(response) {
   if (!response) return {};
   if (response.RESULT !== undefined) return response.RESULT;
@@ -455,7 +452,6 @@ function compilehttpblock(merged, id, sig, istextual, options) {
   return wrapcompiledfn(innerfn, istextual ? 'fetch' : 'api', id);
 }
 
-// @proposal=P9 (Cycle P9-04, batch 9.4) — `dependencies` parameter removed.
 function createblockcompilers(blocktypes, inheritedkeys, options) {
   var compilers = {};
 
@@ -469,7 +465,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       buildblockproperties: buildblockproperties,
       createerrorcontext: createerrorcontext
     };
-    return compilefnblock(merged, id, sig, inheritedproperties, null, options, runtime);
+    return compilefnblock(merged, id, sig, inheritedproperties, options, runtime);
   };
 
   compilers[blocktypes.api] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, false, options); };
@@ -674,8 +670,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
   return compilers;
 }
 
-// @proposal=P9 (Cycle P9-04, batch 9.4) — `inheritedbriefcase` renamed to
-// `inherited`. No other change.
 function compileblock(block, inherited, constants, options) {
   if (inherited === undefined) inherited = {};
   if (options && options.tools) setblockcompilertools(options.tools);
@@ -691,7 +685,7 @@ function compileblock(block, inherited, constants, options) {
   }
 
   if (block.ref && typeof block.ref === 'string' && typeof block.behaviour !== 'function') {
-    var refTarget = (typeof window !== 'undefined') ? window[block.ref] : (typeof globalthis !== 'undefined' ? globalthis[block.ref] : undefined);
+    var refTarget = (typeof window !== 'undefined') ? window[block.ref] : (typeof globalThis !== 'undefined' ? globalThis[block.ref] : undefined);
     if (typeof refTarget === 'function') block.behaviour = refTarget;
   }
 
@@ -732,8 +726,6 @@ function processelement(el, pipelinename, stagepath, inherited, constants, dnaco
   return createpersistentelementwrapper(fn, el, stagepath, pipelinename, options);
 }
 
-// @proposal=P9 (Cycle P9-04, batch 9.3) — the discarded
-// builddependenciesregistry step is removed.
 function loadpipelinedependencies(pipelineslice, options) {
   var libs = (pipelineslice && pipelineslice.libs) || [];
   var deps = (pipelineslice && pipelineslice.programs) || [];
@@ -747,9 +739,6 @@ function loadpipelinedependencies(pipelineslice, options) {
     });
 }
 
-// @proposal=P9 (Cycle P9-04, batches 9.4 and 9.5) — the local `pipelineid`
-// is renamed to `pipelinename`; the element field `dna` is renamed to
-// `childstate`; the field `pipelineidoverride` is renamed to `nameoverride`.
 function processpipelineelement(el, pipelinename, stagepath, inherited, options) {
   var elementid = el.id || 'pipelineunknown';
 
@@ -823,8 +812,6 @@ function registereventstage(stage, pipelinename, stagepath, options) {
     });
 }
 
-// @proposal=P9 (Cycle P9-04, batch 9.4) — `dependencies`, `inheritedbriefcase`
-// and `nextstagemessage` parameters removed.
 function processnestedstage(childstage, pipelinename, stagepath, constants, dnaconstants, options) {
   var childstagepath = stagepath.concat([childstage.id]);
 
@@ -874,8 +861,6 @@ function processnestedstage(childstage, pipelinename, stagepath, constants, dnac
   }
 }
 
-// @proposal=P9 (Cycle P9-04, batch 9.4) — the `dependencies` and
-// `nextstagemessage` parameters are removed.
 function orchestratestage(stage, pipelinename, env, stagepath, options) {
   var constants = createblockcompilerconstants();
   var blocktypes = constants.blocktypes;
@@ -997,7 +982,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 }
 
 // ============================================================
-// §5 — Loader primitives (builddependenciesregistry removed)
+// §5 — Loader primitives
 // ============================================================
 
 function waitforwitness(entry, timeout) {
@@ -1006,7 +991,7 @@ function waitforwitness(entry, timeout) {
     function check() {
       if (!entry.provides || entry.provides.length === 0) return resolve();
       var alldefined = entry.provides.every(function(name) {
-        return typeof window[name] !== 'undefined' || typeof globalthis[name] !== 'undefined';
+        return typeof window[name] !== 'undefined' || typeof globalThis[name] !== 'undefined';
       });
       if (alldefined) return resolve();
       if (Date.now() - start > timeout) return reject(new Error('timeout waiting for witness from ' + entry.src));
