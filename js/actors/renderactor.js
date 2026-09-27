@@ -1,11 +1,16 @@
+// renderactor.js — render concern.
+//
+// @proposal=P4 (Cycle 27) — actor-handle surface established.
+//
+// @proposal=P9 (Cycle P9-08, batch 9.9) — the case-alias reads are
+// removed. The slice's writer (ENSURERENDERSLICE) declares
+// ACTORREGISTRY and TRIGGERGCSCHEDULED (UPPERCASE). The readers now
+// use those forms exclusively. The earlier reads of `actorregistry`,
+// `actorRegistry` and `triggerGcScheduled` — OP-011-era aliases —
+// are removed.
+
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
-// ---- P5 (frozen RUN 11): domquery interface, plain data + validator ----
-// @proposal=P3 — renamed from domquerycommandregistry to
-// DOMQUERYCOMMANDREGISTRY (actor-role per Q1). The object-literal
-// property keys (getters, setters, messages, id_exempt, setter_reqs)
-// and the command-name string values are data; they are not
-// identifiers and are out of C3/C4 scope.
 var DOMQUERYCOMMANDREGISTRY = {
   getters: [
     'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout',
@@ -157,16 +162,15 @@ function CREATEEVENTPRODUCERCONSUMER(MSG) {
   };
 }
 
+// @proposal=P9 (Cycle P9-08, batch 9.9) — the camelCase twin
+// `triggerGcScheduled` is removed; TRIGGERGCSCHEDULED is authoritative.
 function SCHEDULEGCCYCLE(RENDERSLICE) {
   if (!RENDERSLICE) return;
-  var SCHEDULED = RENDERSLICE.TRIGGERGCSCHEDULED || RENDERSLICE.triggerGcScheduled;
-  if (SCHEDULED) return;
+  if (RENDERSLICE.TRIGGERGCSCHEDULED) return;
   RENDERSLICE.TRIGGERGCSCHEDULED = true;
-  RENDERSLICE.triggerGcScheduled = true;
   setTimeout(function() {
     RENDERSLICE.TRIGGERGCSCHEDULED = false;
-    RENDERSLICE.triggerGcScheduled = false;
-    var GC = RENDERSLICE.GC || RENDERSLICE.gc;
+    var GC = RENDERSLICE.GC;
     if (GC) {
       if (typeof COLLECTENDED === 'function') COLLECTENDED(GC);
     }
@@ -174,17 +178,15 @@ function SCHEDULEGCCYCLE(RENDERSLICE) {
 }
 
 function ENSUREEVENTOBSERVER(RENDERSLICE) {
-  var INSTALLED = RENDERSLICE && (RENDERSLICE.TRIGGEROBSERVERINSTALLED || RENDERSLICE.triggerObserverInstalled);
-  if (!RENDERSLICE || INSTALLED) return;
+  if (!RENDERSLICE || RENDERSLICE.TRIGGEROBSERVERINSTALLED) return;
   if (typeof document === 'undefined') return;
   RENDERSLICE.TRIGGEROBSERVERINSTALLED = true;
-  RENDERSLICE.triggerObserverInstalled = true;
   loginfo(RENDERSLICE, '[RENDERACTOR]', 'INSTALLING GLOBAL DOM EVENT OBSERVER FOR EVENT STAGES');
 
   var HANDLER = function(EVENT) {
     var TARGET = EVENT.target;
     var TARGETID = TARGET && TARGET.id;
-    var GC = RENDERSLICE.GC || RENDERSLICE.gc;
+    var GC = RENDERSLICE.GC;
     if (!TARGETID || !GC) return;
 
     var LISTFN = (typeof LISTOBJECTS === 'function') ? LISTOBJECTS : function() { return []; };
@@ -307,18 +309,19 @@ HANDLERS[MESSAGETYPES.PERSISTENCE] = function(ENV, MSG) {
     else return { ERROR: 'unknown persistence action: ' + MSG.ACTION };
   } catch (ERR) { return { ERROR: ERR.message }; }
 };
+// @proposal=P9 (Cycle P9-08, batch 9.9) — ACTORREGISTRY is authoritative.
 HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
   try {
     var EL = document.createElement(MSG.TAG);
     if (MSG.PROPS) Object.keys(MSG.PROPS).forEach(function(PROP) { EL[PROP] = MSG.PROPS[PROP]; });
-    var REG = ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
+    var REG = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return DOMREFFN(EL, REG);
   } catch (ERR) { return { ERROR: ERR.message }; }
 };
 HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(ENV, MSG) {
   try {
-    var REG2 = ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
+    var REG2 = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN2 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return DOMREFFN2(document.createElement('div'), REG2);
   } catch (ERR) { return { ERROR: ERR.message }; }
@@ -328,7 +331,7 @@ HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(ENV, MSG) {
     var WRAPPER = document.createElement('div');
     WRAPPER.innerHTML = MSG.HTML;
     var CHILD = WRAPPER.firstElementChild || WRAPPER;
-    var REG3 = ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
+    var REG3 = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN3 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return DOMREFFN3(CHILD, REG3);
   } catch (ERR) { return { ERROR: ERR.message }; }
@@ -346,7 +349,6 @@ HANDLERS[MESSAGETYPES.GETHTML] = function(ENV, MSG) {
   return { TAG: EL.tagName.toLowerCase(), INNERHTML: EL.innerHTML };
 };
 
-// ---- P3 (frozen RUN 7 / RUN 11): GETELEMENTS returns a descriptor set ----
 HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
@@ -375,12 +377,6 @@ HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
   walk(ROOT);
   return { DESCRIPTORS: DESCRIPTORS };
 };
-
-// ---- P6 (frozen RUN 19): layout-correction command handlers ----
-// The layoutcorrection methods, re-hosted. Each handler scopes its walk
-// to the container element identified by MSG.ID. Checks return
-// violations; corrects apply mutations to the live DOM and return a
-// count.
 
 function LAYOUTEXTRACTID(descriptor) {
   var hash = descriptor.indexOf('#');
@@ -472,8 +468,6 @@ HANDLERS[MESSAGETYPES.CORRECTCONTROLLEDOVERLAY] = function(ENV, MSG) {
   var APPLIED = LC_correctcontrolledoverlaydoc(ROOT);
   return { APPLIED: APPLIED.length };
 };
-
-// ---- P7 (frozen RUN 37): stylizer rewrite, optimization, and verification command handlers ----
 
 HANDLERS[MESSAGETYPES.REWRITESTYLEATTRS] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
@@ -673,7 +667,7 @@ HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
 var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER;
 HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
   var RENDERSLICE = ENSURERENDERSLICE(ENV);
-  var GC = RENDERSLICE.GC || RENDERSLICE.gc;
+  var GC = RENDERSLICE.GC;
   if (!GC) {
     GC = (typeof CREATEGARBAGECOLLECTOR === 'function') ? CREATEGARBAGECOLLECTOR() : {};
     RENDERSLICE.GC = GC;
@@ -727,8 +721,6 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
 
   return { REGISTERED: true, SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT };
 };
-
-// ---- P7 (frozen RUN 37): stylizer DOM helper family (C1..C7 and stylizer DOM operations) ----
 
 function SU_getancestors(el) {
   function climb(p, acc) {
@@ -1344,10 +1336,6 @@ function SU_checkfocusvisibility(root, sc) {
   });
 }
 
-// ---- P6 (frozen RUN 19): layout-correction helper methods ----
-// Moved from ./js/factory/layoutdirectives.js. Behaviour preserved.
-// The walk root is now the container element, not a parsed document.
-
 function LC_getcandidateelements(root, stylizercore) {
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
   var applyfn = (sc && sc.applystep) ? sc.applystep : SU_applystep;
@@ -1630,15 +1618,7 @@ var ENQUEUEGETVIEWPORT = CREATEENQUEUER(MESSAGETYPES.GETVIEWPORT, false);
 var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
 var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(REST) { return { QUERY: REST[0] }; });
 
-// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
-//
-// The three operations are sourced from CREATEACTORHANDLE (declared at
-// Cycle 18 in actorcore.js). RENDERBEHAVIOR, the HANDLERS table, the
-// SU_* / LC_* helper families, and the ENQUEUE* helpers are unchanged.
-// SUBMIT routes through the mail system (Q6); EXPECT polls
-// GETACTIONRESULT until a response (including error) is obtained, and
-// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
-// read of the mail-system records (Q8).
+// ---------- ACTOR HANDLE SURFACE — @proposal=P4 (Cycle 27) ----------
 
 var RENDERACTORHANDLE = null;
 
@@ -1671,6 +1651,9 @@ var STARTRENDERACTOR = function(OPTIONS) {
   };
 };
 
+// @proposal=P9 (Cycle P9-08, batch 9.9) — the two EXPECTELEMENT sites
+// that read `actorregistry` / `actorRegistry` are corrected to the
+// authoritative ACTORREGISTRY.
 var EXPECTELEMENT = function(ID, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = 30000;
   return new Promise(function(RESOLVE, REJECT) {
@@ -1678,7 +1661,7 @@ var EXPECTELEMENT = function(ID, TIMEOUT) {
     var DOMREFFN = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     if (EXISTING) {
       var ENV = GETACTORSTATE('WORLDMAPACTOR');
-      var REG = ENV && ENV.RENDER && (ENV.RENDER.actorregistry || ENV.RENDER.actorRegistry);
+      var REG = ENV && ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
       return RESOLVE(DOMREFFN(EXISTING, REG));
     }
     var OBSERVER = null;
@@ -1689,7 +1672,7 @@ var EXPECTELEMENT = function(ID, TIMEOUT) {
         clearTimeout(TIMEOUTID);
         OBSERVER.disconnect();
         var ENVNOW = GETACTORSTATE('WORLDMAPACTOR');
-        var REGNOW = ENVNOW && ENVNOW.RENDER && (ENVNOW.RENDER.actorregistry || ENVNOW.RENDER.actorRegistry);
+        var REGNOW = ENVNOW && ENVNOW.RENDER && ENVNOW.RENDER.ACTORREGISTRY;
         RESOLVE(DOMREFFN(EL, REGNOW));
       }
     });

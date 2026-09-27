@@ -1,19 +1,12 @@
 // bootloader.js — framework bootstrap and load manifest.
 //
-// @proposal=P5 (corrected, Cycle 32R) — blockcompiler.js no longer
-// provides LOADPIPELINE / BLOCKCOMPILERCOMPILESTAGE; it exposes the
-// construction API (pipeline/make*/append*/run/compile) plus the
-// orchestration surface.
-//
-// @proposal=P4 (Cycles 18–28) — actor modules now expose the three-
-// operation protocol (SUBMIT/EXPECT/GETACTIONRESULT); actorcore.js
-// exposes CREATEACTORHANDLE; mailactor.js exposes MAILGETACTIONSTATUS.
-//
-// @proposal=P5 (Cycle 37R) — hypervisoractor.js no longer exposes
-// ENQUEUEHYPERVISORSTAGECOMPLETED; the DNA-era cases are removed.
-//
-// Cycle 38R aligns every manifest entry's provides list with the
-// actual post-refactor surface. Load order and src paths are unchanged.
+// @proposal=P9 (Cycle P9-01) — the manifest provides lists are aligned
+// with the post-P5-corrected surface:
+//   - `validatepipelinebriefcase` removed from the blockcompiler entry
+//     (function was dropped at Cycle 32R; boot failure attribution at
+//     RUN 65).
+//   - `validaterevivableobject` removed from the fnblock entry (P9.7
+//     removes the function; its last caller was validatepipelinebriefcase).
 
 var pipelinesmanifest = [
   { src: 'factory/tuning/limits.js', provides: [
@@ -27,7 +20,7 @@ var pipelinesmanifest = [
   ] },
   { src: 'factory/fnblock.js', provides: [
     'containsidentifier', 'findmatchingparen', 'findbodybrace',
-    'creatednaserializerconstants', 'validaterevivablefunctionblock', 'validaterevivableobject',
+    'creatednaserializerconstants', 'validaterevivablefunctionblock',
     'resolvefrombriefcase', 'preparefunctionforserialization', 'serializeselfcontainedclosure',
     'preparednaforserialization', 'structuralhash', 'serializefunctionwithdeps', 'serializedepvalue',
     'containsstyleaccess', 'mapoutputs', 'analyzefnblock', 'createblockanalyzer',
@@ -144,7 +137,7 @@ var pipelinesmanifest = [
     'appendlib', 'appendprogram', 'appendstage', 'appendblock', 'appendpipelineelement',
     'run', 'compile',
     'orchestratepipeline', 'loadpipelineresources',
-    'resolvenextelement', 'orchestratestage', 'validatepipelinebriefcase',
+    'resolvenextelement', 'orchestratestage',
     'createblockcompilerconstants', 'buildblockproperties',
     'processelement', 'processpipelineelement', 'registereventstage',
     'processnestedstage', 'createpersistentelementwrapper', 'wrapblockresult',

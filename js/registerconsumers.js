@@ -1,3 +1,11 @@
+// registerconsumers.js — actor consumer registration.
+//
+// @proposal=P9 (Cycle P9-03) — the HYPERVISORACTOR registrations for
+// the DNA-era message types are removed:
+//   BOOTDNA, COMPILESTAGE, STAGECOMPLETED
+// The corresponding MESSAGETYPES entries were removed in Cycle P9-02
+// (messageregistry.js).
+
 var REGISTEREDCONSUMERS = true;
 
 // APIACTOR
@@ -104,14 +112,6 @@ MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.REGISTERPIPELINE, { PIP
 
 MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.UNREGISTERPIPELINE, { PIPELINEID: 'string' }, HYPERVISORBEHAVIOR);
 
-MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.BOOTDNA, {
-  DNA: 'object',
-  PIPELINEID: 'string',
-  OPTIONS: 'object?',
-  SENDER: 'string',
-  TAG: 'string'
-}, HYPERVISORBEHAVIOR);
-
 MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.SETPROGRAM, { PROGRAMKEY: 'string', PROGRAMSOURCE: 'string' }, HYPERVISORBEHAVIOR);
 
 MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.GETPROGRAM, { PROGRAMKEY: 'string' }, HYPERVISORBEHAVIOR);
@@ -127,14 +127,6 @@ MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.PING, {}, HYPERVISORBEH
 MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.RECOVER, {}, HYPERVISORBEHAVIOR);
 
 MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.ACTIVATEACTORS, {}, HYPERVISORBEHAVIOR);
-
-MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.COMPILESTAGE, {
-  PIPELINE: 'object', PIPELINEID: 'string', STAGEINDEX: 'number', STAGEPATH: 'array', BRIEFCASE: 'object', ENV: 'object?', OPTIONS: 'object?'
-}, HYPERVISORBEHAVIOR);
-
-MESSAGEREGISTRY.register('HYPERVISORACTOR', MESSAGETYPES.STAGECOMPLETED, {
-  PIPELINEID: 'string', STAGEID: 'string', ENV: 'object?', NEXTSTAGEMESSAGE: 'object?'
-}, HYPERVISORBEHAVIOR);
 
 // RENDERACTOR
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.RENDER, { ID: 'string', RENDERER: 'function', DATA: 'any', ENV: 'object' }, RENDERBEHAVIOR);
@@ -167,15 +159,10 @@ MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PROPERTY, { ID: 'string', N
 
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETHTML, { ID: 'string' }, RENDERBEHAVIOR);
 
-// P3 (frozen RUN 7 / RUN 11): the GETELEMENTS handler returns a descriptor set
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.GETELEMENTS, {
   ID: 'string', TAGNAME: 'string?', LIMIT: 'number?'
 }, RENDERBEHAVIOR);
 
-// P6 (frozen RUN 19): layout-correction command family. Each check
-// returns violations; each correct applies mutations to the live DOM
-// and returns a count. OPTIONS carries per-call parameters
-// (viewportwidth, containerwidths, mingap, …).
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CHECKOVERFLOW, {
   ID: 'string', OPTIONS: 'object?'
 }, RENDERBEHAVIOR);
@@ -216,7 +203,6 @@ MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CORRECTCONTROLLEDOVERLAY, {
   ID: 'string', OPTIONS: 'object?'
 }, RENDERBEHAVIOR);
 
-// P7 (frozen RUN 37): stylizer rewrite, optimization, and verification command family.
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REWRITESTYLEATTRS, {
   ID: 'string', RULES: 'array'
 }, RENDERBEHAVIOR);

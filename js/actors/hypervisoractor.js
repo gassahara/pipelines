@@ -1,23 +1,11 @@
 // hypervisoractor.js — hypervisor concern.
 //
-// @proposal=P5 (corrected) — the hypervisor no longer participates in
-// pipeline boot. The corrected model has no DNA and no bootdna: the
-// frontend imports a pipeline program and calls its init function,
-// which runs the construction sequence and terminates with run(). The
-// DNA-era cases (BOOTDNA, COMPILESTAGE, STAGECOMPLETED) and their
-// helpers are removed. The hypervisor retains its other roles (env
-// storage, render HTML, execution stack, routes, programs, active
-// pipelines, registry, ping, recover, activate actors) and its
-// actor-handle surface (SUBMIT / EXPECT / GETACTIONRESULT) established
-// at Cycle 26.
+// @proposal=P5 (corrected) — the DNA-era boot cases are absent (Cycle 37R).
 //
-// DOM event routing: the EVENTTRIGGERED message from RENDERACTOR had
-// its dispatch path through the removed DNA-era machinery. Under the
-// corrected model the pipeline state is a value threaded by argument
-// to run() and is not centrally stored. The EVENTTRIGGERED case is
-// therefore retained as a defensive stub. A follow-up cycle will
-// define the corrected event routing mechanism. Recorded as
-// DEV-C37R-EVENTROUTING.
+// @proposal=P9 (Cycle P9-05, batch 9.6) — the `NEXTSTAGEMESSAGES` slice
+// field is removed. It had no writer and no reader: its only purpose in
+// the source was to hold per-stage messages for the DNA-era boot; that
+// boot path was removed at Cycle 37R.
 
 var HYPERVISORVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -30,8 +18,7 @@ function ENSUREHYPERVISORSLICE(ENV) {
       EXECUTIONSTACK: [],
       ROUTES: {},
       ACTIVEPIPELINES: [],
-      PROGRAMS: {},
-      NEXTSTAGEMESSAGES: {}
+      PROGRAMS: {}
     };
   });
 }
@@ -160,7 +147,7 @@ function HYPERVISORBEHAVIOR(ENV, MESSAGE) {
       // @proposal=P5 (corrected) — defensive stub. The DNA-era dispatch
       // path (LOADEDPIPELINES + COMPILESTAGEFROMSTOREDDNA) is removed.
       // The corrected event routing mechanism is not yet defined; see
-      // the file header and DEV-C37R-EVENTROUTING.
+      // DEV-C37R-EVENTROUTING.
       logwarn(ENV, '[HYPERVISOR]', 'EVENTTRIGGERED received; event routing under corrected P5 is not yet defined',
         'PIPELINEID:', PIPELINEID, 'STAGEID:', MESSAGE.STAGEID);
       return ENV;
@@ -173,7 +160,7 @@ function HYPERVISORBEHAVIOR(ENV, MESSAGE) {
         if (SAVED && typeof SAVED === 'object') ENV.HYPERVISOR = SAVED;
         else ENV.HYPERVISOR = {
           BOOT: true, ENVBYPIPELINE: {}, RENDERHTML: '', EXECUTIONSTACK: [],
-          ROUTES: {}, ACTIVEPIPELINES: [], PROGRAMS: {}, NEXTSTAGEMESSAGES: {}
+          ROUTES: {}, ACTIVEPIPELINES: [], PROGRAMS: {}
         };
         SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
           UPDATES: [{ PATH: 'HYPERVISOR', VALUE: ENV.HYPERVISOR }]

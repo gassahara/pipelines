@@ -3,12 +3,17 @@
 // provides the fn-value surface and re-exports the parser surface
 // for out-of-browser Node consumers.
 //
-// @proposal=P2 — assertdefinedinputs and containsstyleaccess converted
-// to trampolined recursion. No `for` / `while` remains in this file.
+// @proposal=P2 — assertdefinedinputs and containsstyleaccess use
+// trampolined recursion. No `for` / `while` remains in this file.
 // @proposal=P3 — camelCase local identifiers normalized to lowercase.
-// @proposal=P5 — compilefnblock no longer reads runtime.evalstack; the
-//   callwithstack call passes null as its first argument (per Cycle 02
-//   Q1_9', the argument is retained for arity and ignored).
+// @proposal=P5 — compilefnblock does not read runtime.evalstack;
+// callwithstack receives null as its first argument.
+// @proposal=P9 (Cycle P9-06):
+//   9.7 — `validaterevivableobject` removed; its sole caller
+//         (validatepipelinebriefcase) was removed at Cycle 32R.
+//   P9.4 alignment — `dependencies` parameter removed from
+//         compilefnblock and from its call into buildblockproperties
+//         (REF-P9.4-α resolves deps via the shared global space).
 
 // ============================================================
 // §1 — Serializer constants
@@ -224,7 +229,7 @@ function skipidentifierpart(source, i, len) {
 }
 
 // ============================================================
-// §4 — Function-value validation (OP-164..OP-166; FB-1)
+// §4 — Function-value validation
 // ============================================================
 
 function checkfnvalue(fn, label, defaultfnkeys) {
@@ -257,23 +262,8 @@ function validaterevivablefunctionblock(block, blocktypes, constants) {
   return checkfnvalue(fn, label, constants.defaultfnkeys);
 }
 
-function validaterevivableobject(obj, label, constants) {
-  if (label === undefined) label = 'briefcase';
-  var errors = [];
-  if (typeof obj !== 'object' || obj === null) return errors;
-  Object.keys(obj).forEach(function(key) {
-    var value = obj[key];
-    if (typeof value === 'function') {
-      errors = errors.concat(checkfnvalue(value, label + '.' + key, constants.defaultfnkeys));
-    } else if (typeof value === 'object' && value !== null) {
-      errors = errors.concat(validaterevivableobject(value, label + '.' + key, constants));
-    }
-  });
-  return errors;
-}
-
 // ============================================================
-// §5 — Briefcase resolution (OP-167)
+// §5 — Briefcase resolution
 // ============================================================
 
 function resolvefrombriefcase(id, container) {
@@ -300,10 +290,8 @@ function resolvefrombriefcase(id, container) {
 // §6 — Serialization pipeline
 // ============================================================
 
-// ---- OP-155 + OP-188 (FB-3): single module-level dep store; two dead vars removed ----
 var serializeddepsstore = {};
 
-// ---- OP-168: preparefunctionforserialization ----
 function preparefunctionforserialization(fn, env, briefcase, deps) {
   if (deps === undefined) deps = briefcase;
   var source = fn.toString();
@@ -348,7 +336,6 @@ function preparefunctionforserialization(fn, env, briefcase, deps) {
   return { fn: true, source: rewritten, deps: resolveddeps };
 }
 
-// ---- OP-169: structuralhash (canonical; closureconsolidator re-exports) ----
 function structuralhash(value) {
   try {
     return JSON.stringify(value);
@@ -357,7 +344,6 @@ function structuralhash(value) {
   }
 }
 
-// ---- OP-170: getdepstorekey ----
 function getdepstorekey(value) {
   if (typeof value === 'function') {
     return 'fn:' + structuralhash(value.toString());
@@ -375,12 +361,10 @@ function getdepstorekey(value) {
   return 'val:' + typeof value + ':' + String(value);
 }
 
-// ---- OP-171: defaultanalyzer ----
 function defaultanalyzer(source) {
   return { ok: false, identifiers: [], errors: ['analyzer not provided'] };
 }
 
-// ---- OP-172: serializedepvalue ----
 function serializedepvalue(value, seen, analyzer) {
   if (analyzer === undefined) analyzer = defaultanalyzer;
   if (seen === undefined) seen = [];
@@ -415,7 +399,6 @@ function serializedepvalue(value, seen, analyzer) {
   return value;
 }
 
-// ---- OP-173: serializefunctionwithdeps ----
 function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
   if (analyzer === undefined) analyzer = defaultanalyzer;
   if (typeof fn !== 'function') return { source: 'function() {}', deps: {}, opaque: false };
@@ -481,7 +464,6 @@ function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
   return { source: zeroargsource, deps: serializeddepsmap, opaque: false };
 }
 
-// ---- OP-174: serializeselfcontainedclosure ----
 function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyzer) {
   if (analyzer === undefined) analyzer = defaultanalyzer;
   if (typeof fn !== 'function') return null;
@@ -520,7 +502,6 @@ function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyz
   };
 }
 
-// ---- OP-175: preparednaforserialization ----
 function preparednaforserialization(node, env, briefcase, deps, analyzer) {
   if (analyzer === undefined) analyzer = defaultanalyzer;
   if (typeof node === 'function') {
@@ -545,15 +526,6 @@ function preparednaforserialization(node, env, briefcase, deps, analyzer) {
 // §7 — fn-block analysis
 // ============================================================
 
-// ---- OP-176 (P4-refined, RUN 24): containsstyleaccess ----
-// Refined per @proposal=P4 (frozen RUN 7; executed RUN 24).
-// Changes vs. the source's OP-176:
-//   (a) string literals and comments are masked before scanning;
-//   (b) local var/let/const bindings whose identifier ends in "style"
-//       are collected and excluded from the trigger;
-//   (c) the trigger is preserved for non-local `X.style.` accesses.
-//
-// @proposal=P2 — all while loops converted to trampolined recursion.
 function containsstyleaccess(source) {
   if (typeof source !== 'string') return false;
 
@@ -567,7 +539,6 @@ function containsstyleaccess(source) {
     return isidstart(c) || (c >= '0' && c <= '9');
   }
 
-  // ---- Pass 1 helpers — mask string literals and comments. ----
   function scanline(i) {
     if (i >= len) return i;
     if (source.charAt(i) === '\n') return i;
@@ -620,7 +591,6 @@ function containsstyleaccess(source) {
   }
   trampoline(maskpass)(0);
 
-  // ---- Pass 2 helpers — collect local var/let/const bindings ending in "style". ----
   var localbindings = {};
 
   function skipspacesat(j) {
@@ -659,7 +629,6 @@ function containsstyleaccess(source) {
   }
   trampoline(pass2)(0);
 
-  // ---- Pass 3 helpers — scan for `[sS]tyle` + optional whitespace + "." ----
   function skipwhitespaceafterstyle(start) {
     if (start >= len) return start;
     if (masked[start]) return start;
@@ -693,7 +662,6 @@ function containsstyleaccess(source) {
   return trampoline(pass3)(0);
 }
 
-// ---- OP-177: mapoutputs ----
 function mapoutputs(rawresult, outputkeys) {
   if (rawresult === null || typeof rawresult !== 'object' || Array.isArray(rawresult)) {
     throw new Error('mapoutputs: rawresult must be an object');
@@ -713,7 +681,6 @@ function mapoutputs(rawresult, outputkeys) {
   return scan(0, {});
 }
 
-// ---- OP-178: assertdefinedinputs — @proposal=P2 recursion ----
 function assertdefinedinputs(blockid, iokeys, env, accessor, allowundefined) {
   if (allowundefined === true) return;
   var keys = iokeys || [];
@@ -736,7 +703,6 @@ function assertdefinedinputs(blockid, iokeys, env, accessor, allowundefined) {
   }
 }
 
-// ---- OP-179: analyzecontainerusage (FR-3 recursion applied) ----
 function analyzecontainerusage(src, container, declared, opts) {
   if (opts === undefined) opts = {};
   var usealiases = opts.aliases === true;
@@ -813,17 +779,14 @@ function analyzecontainerusage(src, container, declared, opts) {
   };
 }
 
-// ---- OP-180: analyzeinputusage ----
 function analyzeinputusage(src, declared) {
   return analyzecontainerusage(src, 'inputs', declared, { aliases: false });
 }
 
-// ---- OP-181: analyzedepusage ----
 function analyzedepusage(src, declared) {
   return analyzecontainerusage(src, 'deps', declared, { aliases: true });
 }
 
-// ---- OP-182: analyzefnblock ----
 function analyzefnblock(block, depsmap, env, parser) {
   if (parser === undefined) parser = parsesource;
   var fn = block.fn;
@@ -923,7 +886,6 @@ function analyzefnblock(block, depsmap, env, parser) {
   };
 }
 
-// ---- OP-183: createblockanalyzer ----
 function createblockanalyzer(rules) {
   return function(block) {
     var errors = [];
@@ -942,7 +904,6 @@ function createblockanalyzer(rules) {
   };
 }
 
-// ---- OP-184: createblockanalyzers ----
 function createblockanalyzers(blocktypes, dnaconstants) {
   var analyzers = {};
   analyzers[blocktypes.fn] = function(block) {
@@ -960,12 +921,10 @@ function createblockanalyzers(blocktypes, dnaconstants) {
   return analyzers;
 }
 
-// ---- OP-185: compilefnblock — @proposal=P5 second-pass ----
-// The runtime object passed by blockcompiler.js no longer includes an
-// evalstack field (removed at Cycle 29). This function no longer reads
-// runtime.evalstack. The callwithstack call passes null as its first
-// argument, per Cycle 02 Q1_9'.
-function compilefnblock(merged, id, sig, inheritedproperties, dependencies, options, runtime) {
+// @proposal=P9 (Cycle P9-06, batch 9.4 alignment) — the `dependencies`
+// parameter is removed from compilefnblock; the call into
+// buildblockproperties uses the 4-arg form.
+function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) {
   if (inheritedproperties === undefined) inheritedproperties = {};
   var blockcompilerstate = runtime.blockcompilerstate;
   var logdebug = runtime.logdebug;
@@ -980,7 +939,7 @@ function compilefnblock(merged, id, sig, inheritedproperties, dependencies, opti
     logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing FN block:', id);
     var fn = merged.fn;
     if (!fn) throw new Error('fn block must have a function: ' + id);
-    var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
+    var properties = buildblockproperties(merged, inheritedproperties, sig, env);
     var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
     var fnargs = [properties].concat(inputargs);
     return callwithstack(null, 'fn:' + (merged.ref || id), 'async-await', function() {
@@ -1002,5 +961,5 @@ function compilefnblock(merged, id, sig, inheritedproperties, dependencies, opti
 }
 
 // ============================================================
-// §8 — Exports (OP-186)
+// §8 — Exports
 // ============================================================

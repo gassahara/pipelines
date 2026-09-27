@@ -1,17 +1,28 @@
-// blockcompiler.js — pipeline compiler concern
+// blockcompiler.js — pipeline compiler concern.
 //
 // @proposal=P5 (corrected) — the blockcompiler is a DECLARATIVE SEMAPHORE.
-// It EXPOSES construction functions that pipeline programs call in a
-// linear sequence, and a finalizer (run / compile). No DNA. The pipeline
-// state is a value threaded by argument; no id.
+// Construction API + finalizers (run / compile). No DNA envelope.
 //
-// @proposal=P5 (Cycle 39R-ter) — the WAITFORMAILBOX filter literals are
-// aligned with the reader (mailactor.js, post-Cycle 39R). Filters use
-// the authoritative UPPERCASE keys (Q12). This is the third and last
-// file of the DEV-C20-ALIASING closure.
+// @proposal=P9 (Cycle P9-04) — batches applied:
+//   9.3  Removed: resolvedepsarray, resolvepipelinepath,
+//        resolvestagefrompath, builddependenciesregistry. The
+//        loadpipelinedependencies chain no longer builds the registry.
+//   9.4  Removed: `dependencies` parameter chain
+//        (orchestratestage, createblockcompilers, buildblockproperties,
+//        processelement, processpipelineelement, processnestedstage).
+//        buildblockproperties resolves deps via the shared global space
+//        unconditionally (REF-P9.4-α).
+//        Renamed: `inheritedbriefcase` → `inherited`.
+//        Removed: `nextstagemessage` parameter from orchestratestage.
+//        Renamed: local `pipelineid` → `pipelinename` in
+//        processpipelineelement.
+//   9.5  Renamed: element field `pipelineidoverride` → `nameoverride`;
+//        element field `dna` → `childstate` (in makepipelineelement,
+//        processpipelineelement, and error diagnostics).
+//   9.9  Removed: `response.payload` lowercase read in unwrap.
 
 // ============================================================
-// §1 — Construction API (Cycle 32R)
+// §1 — Construction API
 // ============================================================
 
 function makelib(src, provides) {
@@ -34,9 +45,9 @@ function makeblock(id, type, behaviour, attrs) {
   return b;
 }
 
-function makepipelineelement(id, dnathunk, attrs) {
+function makepipelineelement(id, childstate, attrs) {
   var a = attrs || {};
-  var b = { element: 'PIPELINE', id: id, dna: dnathunk };
+  var b = { element: 'PIPELINE', id: id, childstate: childstate };
   Object.keys(a).forEach(function(k) { b[k] = a[k]; });
   return b;
 }
@@ -143,7 +154,7 @@ function appendpipelineelement(p, parent, child) {
 }
 
 // ============================================================
-// §2 — Constants & path accessors (Cycle 29 / 32R)
+// §2 — Constants & path accessors
 // ============================================================
 
 var BLOCKCOMPILERSTATE = { level: createverbosityconstants().DEBUG };
@@ -243,26 +254,10 @@ function buildproperties(merged, inherited) {
   }, cloneobject(inherited));
 }
 
-function resolvedepsarray(depsarray) {
-  throw new Error('[resolvedepsarray] This function is deprecated; use builddependenciesregistry instead.');
-}
-
-function resolvepipelinepath(path, dependencies) {
-  if (typeof path !== 'string') return path;
-  return path.split('.').reduce(function(value, part) {
-    if (value === undefined || value === null) return undefined;
-    return value[part];
-  }, dependencies);
-}
-
-function resolvestagefrompath(pipelinestate, stagepath) {
-  return (stagepath || []).reduce(function(current, segment) {
-    if (current == null) return undefined;
-    return current[segment];
-  }, pipelinestate);
-}
-
-function buildblockproperties(merged, inherited, io, env, dependencies) {
+// @proposal=P9 (REF-P9.4-α) — the `dependencies` parameter is removed;
+// deps resolve via the shared global space (window / globalthis)
+// unconditionally.
+function buildblockproperties(merged, inherited, io, env) {
   if (inherited === undefined) inherited = {};
   if (io === undefined) io = { inputs: [], outputs: {} };
   if (env === undefined) env = {};
@@ -289,16 +284,12 @@ function buildblockproperties(merged, inherited, io, env, dependencies) {
 
   if (merged && merged.deps) {
     if (Array.isArray(merged.deps)) {
-      var depsmap = dependencies || (typeof window !== 'undefined' ? window : (typeof globalthis !== 'undefined' ? globalthis : {}));
+      var depsmap = (typeof window !== 'undefined') ? window : (typeof globalthis !== 'undefined' ? globalthis : {});
       var resolveddeps = {};
       var missingdeps = [];
       merged.deps.forEach(function(name) {
         if (typeof depsmap[name] !== 'undefined') {
           resolveddeps[name] = depsmap[name];
-        } else if (typeof window !== 'undefined' && typeof window[name] !== 'undefined') {
-          resolveddeps[name] = window[name];
-        } else if (typeof globalthis !== 'undefined' && typeof globalthis[name] !== 'undefined') {
-          resolveddeps[name] = globalthis[name];
         } else {
           missingdeps.push(name);
         }
@@ -346,11 +337,13 @@ function createerrorcontext(id, stagetype) {
   };
 }
 
+// @proposal=P9 (Cycle P9-04, batch 9.9) — the lowercase `response.payload`
+// fallback is removed; PAYLOAD is authoritative.
 function unwrap(response) {
   if (!response) return {};
   if (response.RESULT !== undefined) return response.RESULT;
   if (response.result !== undefined) return response.result;
-  var inner = response.PAYLOAD !== undefined ? response.PAYLOAD : response.payload;
+  var inner = response.PAYLOAD;
   if (inner && typeof inner === 'object') {
     if (inner.RESULT !== undefined) return inner.RESULT;
     if (inner.result !== undefined) return inner.result;
@@ -369,9 +362,6 @@ function wrapblockresult(response, sig) {
   return response;
 }
 
-// @proposal=P5 (Cycle 39R-ter) — WAITFORMAILBOX filter keys aligned with
-// the reader. UPPERCASE (Q12) is authoritative; the OP-011 aliasing is
-// removed from mailactor (Cycle 39R).
 function sendandawait(recipient, type, payload, timeout, responsetype) {
   var tag = GENERATETAG();
   SENDINSTRUCTION(recipient, type, payload, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
@@ -400,7 +390,7 @@ function wrapcompiledfn(innerfn, kind, id, blockkind) {
 }
 
 // ============================================================
-// §3 — Block compilers (Cycle 29 / 32R)
+// §3 — Block compilers
 // ============================================================
 
 function buildpayload(mappingobj, data) {
@@ -465,7 +455,8 @@ function compilehttpblock(merged, id, sig, istextual, options) {
   return wrapcompiledfn(innerfn, istextual ? 'fetch' : 'api', id);
 }
 
-function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) {
+// @proposal=P9 (Cycle P9-04, batch 9.4) — `dependencies` parameter removed.
+function createblockcompilers(blocktypes, inheritedkeys, options) {
   var compilers = {};
 
   compilers[blocktypes.fn] = function(merged, id, sig, inheritedproperties) {
@@ -478,7 +469,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
       buildblockproperties: buildblockproperties,
       createerrorcontext: createerrorcontext
     };
-    return compilefnblock(merged, id, sig, inheritedproperties, dependencies, options, runtime);
+    return compilefnblock(merged, id, sig, inheritedproperties, null, options, runtime);
   };
 
   compilers[blocktypes.api] = function(merged, id, sig) { return compilehttpblock(merged, id, sig, false, options); };
@@ -493,7 +484,7 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
                (typeof merged.fn === 'function') ? merged.fn :
                (typeof merged.ref === 'function') ? merged.ref : null;
       if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
-      var properties = buildblockproperties(merged, inheritedproperties, sig, env, dependencies);
+      var properties = buildblockproperties(merged, inheritedproperties, sig, env);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       return Promise.resolve(fn(properties, inputargs)).then(function(result) {
         if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) {
@@ -683,8 +674,10 @@ function createblockcompilers(blocktypes, inheritedkeys, dependencies, options) 
   return compilers;
 }
 
-function compileblock(block, inheritedbriefcase, constants, options) {
-  if (inheritedbriefcase === undefined) inheritedbriefcase = {};
+// @proposal=P9 (Cycle P9-04, batch 9.4) — `inheritedbriefcase` renamed to
+// `inherited`. No other change.
+function compileblock(block, inherited, constants, options) {
+  if (inherited === undefined) inherited = {};
   if (options && options.tools) setblockcompilertools(options.tools);
 
   if (typeof block.behaviour !== 'function' && options && options.strictrefonly === true) {
@@ -710,11 +703,11 @@ function compileblock(block, inheritedbriefcase, constants, options) {
     if (!check.valid) throw new Error('[compileblock] Analysis failed: ' + check.errors.join(', '));
   }
   var blockio = { inputs: block.inputs || [], outputs: block.outputs || {} };
-  return compiler(block, block.id, blockio, inheritedbriefcase);
+  return compiler(block, block.id, blockio, inherited);
 }
 
 // ============================================================
-// §4 — Pipeline orchestration (Cycle 32R)
+// §4 — Pipeline orchestration
 // ============================================================
 
 function tagfn(fn, meta) {
@@ -729,16 +722,18 @@ function resolvenextelement(stage, index) {
   return stage.elements[index];
 }
 
-function processelement(el, pipelineid, stagepath, inheritedbriefcase, constants, dnaconstants, dependencies, options) {
-  var fn = compileblock(el, inheritedbriefcase, constants, options);
+function processelement(el, pipelinename, stagepath, inherited, constants, dnaconstants, options) {
+  var fn = compileblock(el, inherited, constants, options);
   tagfn(fn, {
     blockmeta: { id: el.id, type: el.type, replace: el.replace, sync: el.sync || 'awaited' },
     originalfn: (typeof el.behaviour === 'function') ? el.behaviour : null,
     kind: 'element'
   });
-  return createpersistentelementwrapper(fn, el, stagepath, pipelineid, options);
+  return createpersistentelementwrapper(fn, el, stagepath, pipelinename, options);
 }
 
+// @proposal=P9 (Cycle P9-04, batch 9.3) — the discarded
+// builddependenciesregistry step is removed.
 function loadpipelinedependencies(pipelineslice, options) {
   var libs = (pipelineslice && pipelineslice.libs) || [];
   var deps = (pipelineslice && pipelineslice.programs) || [];
@@ -749,18 +744,18 @@ function loadpipelinedependencies(pipelineslice, options) {
   return loadframeworklibs(libs, frameworkbase, witnesstimeout)
     .then(function() {
       return loadfrontendprograms(deps, frontbase, witnesstimeout);
-    })
-    .then(function() {
-      return builddependenciesregistry(libs.concat(deps));
     });
 }
 
-function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, dependencies, options) {
+// @proposal=P9 (Cycle P9-04, batches 9.4 and 9.5) — the local `pipelineid`
+// is renamed to `pipelinename`; the element field `dna` is renamed to
+// `childstate`; the field `pipelineidoverride` is renamed to `nameoverride`.
+function processpipelineelement(el, pipelinename, stagepath, inherited, options) {
   var elementid = el.id || 'pipelineunknown';
 
-  if (typeof el.dna !== 'function') {
-    var thunkerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must declare "dna" as a zero-argument function');
-    thunkerr.diagnostic = { KIND: 'dna-thunk-required', ELEMENTID: elementid, RECEIVED: typeof el.dna };
+  if (typeof el.childstate !== 'function') {
+    var thunkerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" must declare "childstate" as a zero-argument function');
+    thunkerr.diagnostic = { KIND: 'childstate-thunk-required', ELEMENTID: elementid, RECEIVED: typeof el.childstate };
     throw thunkerr;
   }
 
@@ -772,14 +767,14 @@ function processpipelineelement(el, pipelineid, stagepath, inheritedbriefcase, d
       childenv[key] = compilepathaccessor(key)(parentenv);
     });
 
-    return Promise.resolve(el.dna()).then(function(childstate) {
+    return Promise.resolve(el.childstate()).then(function(childstate) {
       if (!childstate || typeof childstate !== 'object') {
-        var dnaerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" dna() returned invalid state');
-        dnaerr.diagnostic = { KIND: 'state-invalid', ELEMENTID: elementid, RECEIVED: typeof childstate };
-        throw dnaerr;
+        var stateerr = new Error('[processpipelineelement] PIPELINE element "' + elementid + '" childstate() returned invalid state');
+        stateerr.diagnostic = { KIND: 'state-invalid', ELEMENTID: elementid, RECEIVED: typeof childstate };
+        throw stateerr;
       }
 
-      var derivedname = el.pipelineidoverride || childstate.name || ('pipeline' + elementid);
+      var derivedname = el.nameoverride || childstate.name || ('pipeline' + elementid);
       childenv.pipelinename = derivedname;
       if (el.container) childenv.containerid = el.container;
 
@@ -828,12 +823,10 @@ function registereventstage(stage, pipelinename, stagepath, options) {
     });
 }
 
-function processnestedstage(childstage, pipelinename, stagepath, inheritedbriefcase, constants, dnaconstants, dependencies, options) {
+// @proposal=P9 (Cycle P9-04, batch 9.4) — `dependencies`, `inheritedbriefcase`
+// and `nextstagemessage` parameters removed.
+function processnestedstage(childstage, pipelinename, stagepath, constants, dnaconstants, options) {
   var childstagepath = stagepath.concat([childstage.id]);
-  var childbriefcase = cloneobject(inheritedbriefcase || {});
-  if (childstage.briefcase) {
-    Object.keys(childstage.briefcase).forEach(function(key) { childbriefcase[key] = childstage.briefcase[key]; });
-  }
 
   if (childstage.control && childstage.control.command === 'EVENT') {
     return registereventstage(childstage, pipelinename, childstagepath, options)
@@ -851,7 +844,7 @@ function processnestedstage(childstage, pipelinename, stagepath, inheritedbriefc
         'nested-stage:' + childstage.id,
         'async-await',
         function() {
-          orchestratestage(childstage, pipelinename, dependencies, env, childstagepath, options || {}, null)
+          orchestratestage(childstage, pipelinename, env, childstagepath, options || {})
             .catch(function(err) {
               logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
             });
@@ -870,7 +863,7 @@ function processnestedstage(childstage, pipelinename, stagepath, inheritedbriefc
         'nested-stage:' + childstage.id,
         'async-await',
         function() {
-          return orchestratestage(childstage, pipelinename, dependencies, env, childstagepath, options || {}, null);
+          return orchestratestage(childstage, pipelinename, env, childstagepath, options || {});
         },
         [env],
         { context: { env: env }, capturecontinuation: true, attachcontinuation: false }
@@ -881,13 +874,15 @@ function processnestedstage(childstage, pipelinename, stagepath, inheritedbriefc
   }
 }
 
-function orchestratestage(stage, pipelinename, dependencies, env, stagepath, options, nextstagemessage) {
+// @proposal=P9 (Cycle P9-04, batch 9.4) — the `dependencies` and
+// `nextstagemessage` parameters are removed.
+function orchestratestage(stage, pipelinename, env, stagepath, options) {
   var constants = createblockcompilerconstants();
   var blocktypes = constants.blocktypes;
   var inheritedkeys = constants.inheritedkeys;
   var dnaconstants = creatednaserializerconstants();
   var analyzers = createblockanalyzers(blocktypes, dnaconstants);
-  var compilers = createblockcompilers(blocktypes, inheritedkeys, dependencies, options);
+  var compilers = createblockcompilers(blocktypes, inheritedkeys, options);
   var compilerconstants = { blocktypes: blocktypes, inheritedkeys: inheritedkeys, analyzers: analyzers, compilers: compilers };
 
   var index = 0;
@@ -906,11 +901,11 @@ function orchestratestage(stage, pipelinename, dependencies, env, stagepath, opt
 
     var elementfn;
     if (elementdef.element === 'BLOCK') {
-      elementfn = processelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, dependencies, options);
+      elementfn = processelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, options);
     } else if (elementdef.element === 'PIPELINE') {
-      elementfn = processpipelineelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, dependencies, options);
+      elementfn = processpipelineelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, options);
     } else if (elementdef.element === 'STAGE') {
-      elementfn = processnestedstage(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, dependencies, options);
+      elementfn = processnestedstage(elementdef, pipelinename, stagepath.concat([elementdef.id]), compilerconstants, dnaconstants, options);
     } else {
       throw new Error('[orchestratestage] unexpected element type: ' + elementdef.element);
     }
@@ -970,7 +965,6 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'taskresult' });
 
-    // @proposal=P5 (Cycle 39R-ter) — filter keys aligned with the reader.
     return WAITFORMAILBOX({ TAG: tag, SENDER: 'EXECUTIONACTOR', TYPE: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
       .then(function(mailboxmessage) {
         var payload = mailboxmessage && mailboxmessage.PAYLOAD ? mailboxmessage.PAYLOAD : {};
@@ -1003,7 +997,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 }
 
 // ============================================================
-// §5 — Loader primitives (Cycle 29 / 32R)
+// §5 — Loader primitives (builddependenciesregistry removed)
 // ============================================================
 
 function waitforwitness(entry, timeout) {
@@ -1071,29 +1065,8 @@ function loadfrontendprograms(programs, basepath, timeout) {
   return loadscripts(programs, basepath, timeout, 'loading frontend programs:');
 }
 
-function builddependenciesregistry(entries) {
-  var registry = {};
-  var missing = [];
-  (entries || []).forEach(function(entry) {
-    (entry.provides || []).forEach(function(name) {
-      if (typeof window !== 'undefined' && typeof window[name] !== 'undefined') {
-        registry[name] = window[name];
-      } else if (typeof globalthis !== 'undefined' && typeof globalthis[name] !== 'undefined') {
-        registry[name] = globalthis[name];
-      } else {
-        missing.push(name);
-      }
-    });
-  });
-  if (missing.length > 0) {
-    throw new Error('[builddependenciesregistry] Missing global(s): ' + missing.join(', '));
-  }
-  logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'dependencies registry keys:', Object.keys(registry));
-  return registry;
-}
-
 // ============================================================
-// §6 — Finalizers (Cycle 32R)
+// §6 — Finalizers
 // ============================================================
 
 function orchestratepipeline(p, stageindex, env, options) {
@@ -1103,7 +1076,7 @@ function orchestratepipeline(p, stageindex, env, options) {
     return orchestratepipeline(p, stageindex + 1, env, options);
   }
   var stagepath = ['elements', stageindex];
-  return orchestratestage(stage, p.name, {}, env, stagepath, options, null)
+  return orchestratestage(stage, p.name, env, stagepath, options)
     .then(function() {
       return orchestratepipeline(p, stageindex + 1, env, options);
     });
