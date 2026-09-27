@@ -1,12 +1,16 @@
 // bootloader.js — framework bootstrap and load manifest.
 //
 // @proposal=P9 (Cycle P9-01) — manifest provides aligned with the
-// post-P5-corrected surface.
+// post-P5-corrected surface (validatepipelinebriefcase and
+// validaterevivableobject removed).
 //
-// @proposal=P10 (Cycle P10-01, batch 10.1) — the host builtin is
-// referenced by its canonical spelling `globalThis`. The previous
-// `globalthis` was undeclared and would raise ReferenceError if the
-// fallback branch were reached.
+// @proposal=P10 (Cycle P10-01, batch 10.1) — `globalthis` →
+// `globalThis`.
+//
+// @proposal=P11 (Cycle P11-06, batch 11.2) — the fnblock.js manifest
+// entry is aligned with the reduced surface after Cycle P11-03's
+// serialization-pipeline removal. The nine removed names no longer
+// appear as provides.
 
 var pipelinesmanifest = [
   { src: 'factory/tuning/limits.js', provides: [
@@ -19,12 +23,10 @@ var pipelinesmanifest = [
     'parsesource', 'detectfreeidentifiers'
   ] },
   { src: 'factory/fnblock.js', provides: [
-    'containsidentifier', 'findmatchingparen', 'findbodybrace',
-    'creatednaserializerconstants', 'validaterevivablefunctionblock',
-    'resolvefrombriefcase', 'preparefunctionforserialization', 'serializeselfcontainedclosure',
-    'preparednaforserialization', 'structuralhash', 'serializefunctionwithdeps', 'serializedepvalue',
-    'containsstyleaccess', 'mapoutputs', 'analyzefnblock', 'createblockanalyzer',
-    'createblockanalyzers', 'compilefnblock'
+    'containsidentifier', 'creatednaserializerconstants',
+    'validaterevivablefunctionblock', 'containsstyleaccess', 'mapoutputs',
+    'analyzefnblock', 'createblockanalyzer', 'createblockanalyzers',
+    'compilefnblock'
   ] },
   { src: 'messageregistry.js', provides: [
     'MESSAGEREGISTRY', 'MESSAGETYPES',

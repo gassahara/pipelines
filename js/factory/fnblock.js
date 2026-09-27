@@ -1,19 +1,27 @@
 // fnblock.js — function-value concern
 // Top of the DAG: reads tokenscanner.js and parser.js globals;
-// provides the fn-value surface and re-exports the parser surface
-// for out-of-browser Node consumers.
+// provides the fn-value surface.
 //
 // @proposal=P2 — assertdefinedinputs and containsstyleaccess use
 // trampolined recursion. No `for` / `while` remains in this file.
 // @proposal=P3 — camelCase local identifiers normalized to lowercase.
-// @proposal=P5 — compilefnblock does not read runtime.evalstack;
-// callwithstack receives null as its first argument.
-// @proposal=P9 (Cycle P9-06):
-//   9.7 — `validaterevivableobject` removed; its sole caller
-//         (validatepipelinebriefcase) was removed at Cycle 32R.
-//   P9.4 alignment — `dependencies` parameter removed from
-//         compilefnblock and from its call into buildblockproperties
-//         (REF-P9.4-α resolves deps via the shared global space).
+// @proposal=P5 — compilefnblock does not read runtime.evalstack.
+// @proposal=P9 (Cycle P9-06) — validaterevivableobject removed;
+// compilefnblock signature aligned (no `dependencies` parameter).
+// @proposal=P11 (Cycle P11-01) — reader alignment: the fn/writer block's
+// behaviour lives on the canonical `behaviour` field.
+// @proposal=P11 (Cycle P11-03, batch 11.2) — the DNA-era serialization
+// pipeline is removed. Under the corrected P5 model, a pipeline is a
+// program and its fn blocks are live function values passed by
+// reference; nothing is serialized and nothing is revived. The
+// string-scanning helpers (`skipspaces`, `readidentifier`,
+// `skipquoted`, `findmatchingparen`, `findbodybrace`,
+// `skipidentifierpart`) and `rewritefunctionsource` existed only to
+// serve the removed pipeline and are removed with it.
+// `resolvefrombriefcase`, `structuralhash`, `getdepstorekey`,
+// `defaultanalyzer`, `serializedepvalue`, `serializefunctionwithdeps`,
+// `serializeselfcontainedclosure`, `preparednaforserialization`, and
+// `preparefunctionforserialization` are removed.
 
 // ============================================================
 // §1 — Serializer constants
@@ -29,19 +37,9 @@ function creatednaserializerconstants() {
 // §2 — String primitives
 // ============================================================
 
-function skipspaces(source, i, len) {
-  if (i < len && source[i] === ' ') return skipspaces(source, i + 1, len);
-  return i;
-}
-
-function readidentifier(source, i, len) {
-  function scan(pos, word) {
-    if (pos < len && isidentifierpart(source[pos])) return scan(pos + 1, word + source[pos]);
-    return { word: word, end: pos };
-  }
-  return scan(i, '');
-}
-
+// containsidentifier is retained: it is the source-identifier test used
+// by checkfnvalue. It uses isidentifierstart / isidentifierpart from
+// tokenscanner.js.
 function containsidentifier(src, target) {
   var len = src.length;
 
@@ -65,171 +63,8 @@ function containsidentifier(src, target) {
   return scan(0);
 }
 
-// ---- TS-1: shared quoted-string skipper ----
-function skipquoted(src, i, quote) {
-  if (i >= src.length) return i;
-  if (src[i] === '\\') return skipquoted(src, i + 2, quote);
-  if (src[i] === quote) return i + 1;
-  return skipquoted(src, i + 1, quote);
-}
-
-// ---- TS-1: find matching close paren, skipping strings ----
-function findmatchingparen(src, openindex) {
-  function loop(i, depth) {
-    if (i >= src.length) return -1;
-    var ch = src[i];
-    if (ch === '"' || ch === "'" || ch === '`') {
-      return function() { return loop(skipquoted(src, i + 1, ch), depth); };
-    }
-    if (ch === '(') return function() { return loop(i + 1, depth + 1); };
-    if (ch === ')') {
-      var d = depth - 1;
-      if (d === 0) return i;
-      return function() { return loop(i + 1, d); };
-    }
-    return function() { return loop(i + 1, depth); };
-  }
-
-  return trampoline(loop)(openindex, 0);
-}
-
-// ---- TS-1 + TS-2: find body opening brace, skipping strings and comments ----
-function findbodybrace(src, startindex) {
-  function loop(i, depthparen, depthbrace, depthbracket) {
-    if (i >= src.length) return -1;
-    var ch = src[i];
-
-    if (ch === '"' || ch === "'" || ch === '`') {
-      return function() { return loop(skipquoted(src, i + 1, ch), depthparen, depthbrace, depthbracket); };
-    }
-
-    if (ch === '/' && i + 1 < src.length && src[i + 1] === '/') {
-      return function() { return loop(skiplinecomment(src, i + 2), depthparen, depthbrace, depthbracket); };
-    }
-    if (ch === '/' && i + 1 < src.length && src[i + 1] === '*') {
-      return function() { return loop(skipblockcomment(src, i + 2), depthparen, depthbrace, depthbracket); };
-    }
-
-    if (ch === '(') return function() { return loop(i + 1, depthparen + 1, depthbrace, depthbracket); };
-    if (ch === ')') return function() { return loop(i + 1, depthparen - 1, depthbrace, depthbracket); };
-    if (ch === '[') return function() { return loop(i + 1, depthparen, depthbrace, depthbracket + 1); };
-    if (ch === ']') return function() { return loop(i + 1, depthparen, depthbrace, depthbracket - 1); };
-    if (ch === '{') {
-      if (depthparen === 0 && depthbracket === 0) return i;
-      return function() { return loop(i + 1, depthparen, depthbrace + 1, depthbracket); };
-    }
-    if (ch === '}') {
-      return function() { return loop(i + 1, depthparen, depthbrace > 0 ? depthbrace - 1 : 0, depthbracket); };
-    }
-
-    return function() { return loop(i + 1, depthparen, depthbrace, depthbracket); };
-  }
-
-  return trampoline(loop)(startindex, 0, 0, 0);
-}
-
 // ============================================================
-// §3 — Source rewriter
-// ============================================================
-
-function rewritefunctionsource(source, destructure) {
-  var len = source.length;
-
-  var i = skipspaces(source, 0, len);
-  if (source.slice(i, i + 5) === 'async') {
-    i += 5;
-    i = skipspaces(source, i, len);
-  }
-
-  var idresult = readidentifier(source, i, len);
-  var nextword = idresult.word;
-  var j = idresult.end;
-
-  function injectdeps(newsource, openparen) {
-    var closeparen = findmatchingparen(newsource, openparen);
-    if (closeparen === -1) return null;
-    var params = newsource.slice(openparen + 1, closeparen).trim();
-    var newparams = params.length === 0 ? '__deps' : params + ', __deps';
-    return newsource.slice(0, openparen + 1) + newparams + newsource.slice(closeparen);
-  }
-
-  function insertdestructure(newsource, closeparen) {
-    var bodybrace = findbodybrace(newsource, closeparen + 1);
-    if (bodybrace === -1) return null;
-    return newsource.slice(0, bodybrace + 1) + destructure + newsource.slice(bodybrace + 1);
-  }
-
-  if (nextword === 'function') {
-    i = skipspaces(source, j, len);
-    if (isidentifierstart(source[i])) {
-      i = skipidentifierpart(source, i, len);
-      i = skipspaces(source, i, len);
-    }
-    if (source[i] !== '(') throw new Error('[dnaserializer] invalid function signature');
-    var newsource = injectdeps(source, i);
-    if (!newsource) throw new Error('[dnaserializer] unmatched paren');
-    var newcloseparen = findmatchingparen(newsource, i);
-    if (newcloseparen === -1) throw new Error('[dnaserializer] unmatched paren after injection');
-    var out = insertdestructure(newsource, newcloseparen);
-    if (!out) throw new Error('[dnaserializer] function body not found');
-    return out;
-  }
-
-  if (source[i] === '(') {
-    var newsource2 = injectdeps(source, i);
-    if (!newsource2) throw new Error('[dnaserializer] unmatched paren');
-    var newcloseparen2 = findmatchingparen(newsource2, i);
-    if (newcloseparen2 === -1) throw new Error('[dnaserializer] unmatched paren after injection');
-    var arrowindex = newsource2.indexOf('=>', newcloseparen2 + 1);
-    if (arrowindex === -1) throw new Error('[dnaserializer] arrow not found');
-    var afterarrow = skipspaces(newsource2, arrowindex + 2, newsource2.length);
-    if (newsource2[afterarrow] !== '{') {
-      if (destructure) {
-        var exprbody = newsource2.slice(afterarrow);
-        return newsource2.slice(0, afterarrow) + '{' + destructure + '\n    return ' + exprbody + ';\n  }';
-      }
-      return source;
-    }
-    return insertdestructure(newsource2, afterarrow) || source;
-  }
-
-  if (isidentifierstart(source[i])) {
-    var identstart = i;
-    i = skipidentifierpart(source, i, len);
-    var ident = source.slice(identstart, i);
-    i = skipspaces(source, i, len);
-    if (source.slice(i, i + 2) !== '=>') return source;
-
-    var newparams3 = '(' + ident + ', __deps) =>';
-    var newsource3 = source.slice(0, identstart) + newparams3 + source.slice(i);
-    var arrowpos3 = newsource3.indexOf('=>');
-    if (arrowpos3 === -1) return source;
-
-    var afterarrow3 = skipspaces(newsource3, arrowpos3 + 2, newsource3.length);
-    if (newsource3[afterarrow3] !== '{') {
-      if (destructure) {
-        var exprbody3 = newsource3.slice(afterarrow3);
-        return newsource3.slice(0, afterarrow3) + '{' + destructure + '\n    return ' + exprbody3 + ';\n  }';
-      }
-      return source;
-    }
-    return insertdestructure(newsource3, afterarrow3) || source;
-  }
-
-  return source;
-}
-
-// ============================================================
-// §2b — Identifier skip helper (delivers forward reference from segment 1)
-// ============================================================
-
-function skipidentifierpart(source, i, len) {
-  if (i < len && isidentifierpart(source[i])) return skipidentifierpart(source, i + 1, len);
-  return i;
-}
-
-// ============================================================
-// §4 — Function-value validation
+// §3 — Function-value validation
 // ============================================================
 
 function checkfnvalue(fn, label, defaultfnkeys) {
@@ -253,9 +88,11 @@ function checkfnvalue(fn, label, defaultfnkeys) {
   return errors;
 }
 
+// @proposal=P11 (Cycle P11-01) — the fn/writer block's behaviour lives on
+// the canonical `behaviour` field.
 function validaterevivablefunctionblock(block, blocktypes, constants) {
   if (block.type !== blocktypes.fn && block.type !== blocktypes.writer) return [];
-  var fn = block.type === blocktypes.fn ? block.fn : (block.fn || block.ref);
+  var fn = block.behaviour;
   if (typeof fn !== 'function') return [];
 
   var label = 'block "' + block.id + '"';
@@ -263,267 +100,7 @@ function validaterevivablefunctionblock(block, blocktypes, constants) {
 }
 
 // ============================================================
-// §5 — Briefcase resolution
-// ============================================================
-
-function resolvefrombriefcase(id, container) {
-  if (container === null || typeof container !== 'object') {
-    return { found: false, value: undefined };
-  }
-  if (container[id] !== undefined) {
-    return { found: true, value: container[id] };
-  }
-  var values = Object.keys(container).map(function(k) { return container[k]; });
-  function scan(i) {
-    if (i >= values.length) return { found: false, value: undefined };
-    var value = values[i];
-    if (value && typeof value === 'object') {
-      var result = resolvefrombriefcase(id, value);
-      if (result.found) return result;
-    }
-    return scan(i + 1);
-  }
-  return scan(0);
-}
-
-// ============================================================
-// §6 — Serialization pipeline
-// ============================================================
-
-var serializeddepsstore = {};
-
-function preparefunctionforserialization(fn, env, briefcase, deps) {
-  if (deps === undefined) deps = briefcase;
-  var source = fn.toString();
-  var freeids = detectfreeidentifiers(source);
-  var resolveddeps = {};
-  var missing = [];
-
-  freeids.forEach(function(id) {
-    var resolved = resolvefrombriefcase(id, deps);
-    if (resolved.found) {
-      resolveddeps[id] = resolved.value;
-    } else if (deps !== briefcase) {
-      var fb = resolvefrombriefcase(id, briefcase);
-      if (fb.found) {
-        resolveddeps[id] = fb.value;
-      } else if (env && env[id] !== undefined) {
-        resolveddeps[id] = env[id];
-        if (briefcase) briefcase[id] = env[id];
-      } else {
-        missing.push(id);
-      }
-    } else if (env && env[id] !== undefined) {
-      resolveddeps[id] = env[id];
-      if (briefcase) briefcase[id] = env[id];
-    } else {
-      missing.push(id);
-    }
-  });
-
-  if (missing.length > 0) {
-    throw new Error('[preparednaforserialization] Missing dependencies for function ' +
-      (fn.name || '<anonymous>') + ': ' + missing.join(', ') +
-      '. Add them to the briefcase or deps.');
-  }
-
-  var depkeys = Object.keys(resolveddeps);
-  var destructure = depkeys.length
-    ? '\n    ' + depkeys.map(function(k) { return 'var ' + k + ' = __deps.' + k + ';'; }).join('\n    ')
-    : '';
-  var rewritten = depkeys.length ? rewritefunctionsource(source, destructure) : source;
-
-  return { fn: true, source: rewritten, deps: resolveddeps };
-}
-
-function structuralhash(value) {
-  try {
-    return JSON.stringify(value);
-  } catch (e) {
-    return String(value);
-  }
-}
-
-function getdepstorekey(value) {
-  if (typeof value === 'function') {
-    return 'fn:' + structuralhash(value.toString());
-  }
-  if (value && typeof value === 'object') {
-    try {
-      return 'obj:' + structuralhash(JSON.stringify(value, function(k, v) {
-        if (typeof v === 'function') return v.toString();
-        return v;
-      }));
-    } catch (e) {
-      return 'obj:' + String(value);
-    }
-  }
-  return 'val:' + typeof value + ':' + String(value);
-}
-
-function defaultanalyzer(source) {
-  return { ok: false, identifiers: [], errors: ['analyzer not provided'] };
-}
-
-function serializedepvalue(value, seen, analyzer) {
-  if (analyzer === undefined) analyzer = defaultanalyzer;
-  if (seen === undefined) seen = [];
-  if (seen.indexOf(value) !== -1) return { circular: true };
-  seen.push(value);
-
-  if (value === null || value === undefined) return value;
-  var t = typeof value;
-  if (t === 'string' || t === 'boolean' || t === 'number') return value;
-  if (t === 'function') {
-    var key = getdepstorekey(value);
-    if (!serializeddepsstore[key]) {
-      var serializedfn = serializefunctionwithdeps(value, {}, {}, seen, analyzer);
-      if (serializedfn.opaque) {
-        serializeddepsstore[key] = { type: 'opaque-fn', source: serializedfn.source };
-      } else {
-        serializeddepsstore[key] = { type: 'fn', source: serializedfn.source, deps: serializedfn.deps || {} };
-      }
-    }
-    return { depref: key };
-  }
-  if (Array.isArray(value)) {
-    return value.map(function(item) { return serializedepvalue(item, seen.slice(), analyzer); });
-  }
-  if (t === 'object') {
-    var out = {};
-    Object.keys(value).forEach(function(k) {
-      out[k] = serializedepvalue(value[k], seen.slice(), analyzer);
-    });
-    return out;
-  }
-  return value;
-}
-
-function serializefunctionwithdeps(fn, deps, capturedenv, seen, analyzer) {
-  if (analyzer === undefined) analyzer = defaultanalyzer;
-  if (typeof fn !== 'function') return { source: 'function() {}', deps: {}, opaque: false };
-  var src = fn.toString();
-  if (src.indexOf('[native code]') !== -1) {
-    return { source: src, deps: {}, opaque: true };
-  }
-  var parsed = analyzer(src);
-  if (!parsed || parsed.ok !== true || !Array.isArray(parsed.identifiers)) {
-    return { source: src, deps: {}, opaque: true };
-  }
-  var freeids = parsed.identifiers;
-  var bindings = {};
-  var order = [];
-
-  freeids.forEach(function(id) {
-    if (deps && deps[id] !== undefined) {
-      bindings[id] = deps[id];
-      order.push(id);
-    } else if (capturedenv && capturedenv[id] !== undefined) {
-      bindings[id] = capturedenv[id];
-      order.push(id);
-    }
-  });
-
-  var serializeddepsmap = {};
-  order.forEach(function(name) {
-    var val = bindings[name];
-    var sval = serializedepvalue(val, seen || [], analyzer);
-    serializeddepsmap[name] = sval;
-  });
-
-  var deplines = order.map(function(name) {
-    var serialized = serializeddepsmap[name];
-    if (serialized && serialized.depref) {
-      return '  var ' + name + ' = __recallDep(' + JSON.stringify(serialized.depref) + ');';
-    }
-    return '  var ' + name + ' = ' + JSON.stringify(serialized) + ';';
-  }).join('\n');
-
-  var openparen = src.indexOf('(');
-  var closeparen = openparen === -1 ? -1 : findmatchingparen(src, openparen);
-  if (openparen === -1 || closeparen === -1) {
-    return { source: 'function() { ' + deplines + '\n  return (' + src + ');\n}', deps: serializeddepsmap, opaque: false };
-  }
-
-  var bodybrace = findbodybrace(src, closeparen + 1);
-  if (bodybrace === -1) {
-    var afterarrowmaybe = closeparen + 1;
-    var arrowidx = src.indexOf('=>', afterarrowmaybe);
-    if (arrowidx === -1) {
-      return { source: 'function() { ' + deplines + '\n  return (' + src + ');\n}', deps: serializeddepsmap, opaque: false };
-    }
-    var afterarrow = skipspaces(src, arrowidx + 2, src.length);
-    var expr = src.slice(afterarrow);
-    return { source: '(function() {\n' + deplines + '\n  return (' + expr + ');\n})', deps: serializeddepsmap, opaque: false };
-  }
-
-  var bodystart = bodybrace + 1;
-  var bodyend = src.lastIndexOf('}');
-  var innerbody = src.slice(bodystart, bodyend);
-  var zeroargsource = 'function() {\n' + deplines + '\n' + innerbody + '\n}';
-  return { source: zeroargsource, deps: serializeddepsmap, opaque: false };
-}
-
-function serializeselfcontainedclosure(fn, actualargs, capturedenv, deps, analyzer) {
-  if (analyzer === undefined) analyzer = defaultanalyzer;
-  if (typeof fn !== 'function') return null;
-  var serialized = serializefunctionwithdeps(fn, deps || {}, capturedenv || {}, [], analyzer);
-  if (serialized.opaque) {
-    return {
-      fn: true,
-      source: '(function() { return ' + JSON.stringify(serialized.source) + '; })()',
-      deps: {}
-    };
-  }
-  var source = serialized.source;
-  var depsobj = serialized.deps || {};
-
-  var depdefs = [];
-  Object.keys(serializeddepsstore).forEach(function(key) {
-    var entry = serializeddepsstore[key];
-    if (entry.type === 'fn') {
-      depdefs.push('  __depStore[' + JSON.stringify(key) + '] = ' + entry.source + ';');
-    }
-  });
-
-  var iife = '(function() {\n' +
-    '  var __depStore = {};\n' +
-    depdefs.join('\n') + '\n' +
-    '  function __recallDep(key) {\n' +
-    '    return __depStore[key] || null;\n' +
-    '  }\n' +
-    '  return (' + source + ');\n' +
-    '})()';
-
-  return {
-    fn: true,
-    source: iife,
-    deps: depsobj
-  };
-}
-
-function preparednaforserialization(node, env, briefcase, deps, analyzer) {
-  if (analyzer === undefined) analyzer = defaultanalyzer;
-  if (typeof node === 'function') {
-    return preparefunctionforserialization(node, env, briefcase, deps);
-  }
-  if (Array.isArray(node)) {
-    return node.map(function(item) {
-      return preparednaforserialization(item, env, briefcase, deps, analyzer);
-    });
-  }
-  if (node && typeof node === 'object') {
-    var out = {};
-    Object.keys(node).forEach(function(key) {
-      out[key] = preparednaforserialization(node[key], env, briefcase, deps, analyzer);
-    });
-    return out;
-  }
-  return node;
-}
-
-// ============================================================
-// §7 — fn-block analysis
+// §4 — fn-block analysis
 // ============================================================
 
 function containsstyleaccess(source) {
@@ -787,11 +364,13 @@ function analyzedepusage(src, declared) {
   return analyzecontainerusage(src, 'deps', declared, { aliases: true });
 }
 
+// @proposal=P11 (Cycle P11-01) — analyzefnblock reads the canonical
+// `behaviour` field.
 function analyzefnblock(block, depsmap, env, parser) {
   if (parser === undefined) parser = parsesource;
-  var fn = block.fn;
+  var fn = block.behaviour;
   if (typeof fn !== 'function') {
-    return { valid: false, violations: ['fn is not a function'], free: [], declared: [] };
+    return { valid: false, violations: ['behaviour is not a function'], free: [], declared: [] };
   }
   var src = fn.toString();
   if (src.indexOf('[native code]') !== -1) {
@@ -908,9 +487,9 @@ function createblockanalyzers(blocktypes, dnaconstants) {
   var analyzers = {};
   analyzers[blocktypes.fn] = function(block) {
     var errors = [];
-    if (!block.fn) errors.push('fn block must have a function');
-    if (typeof block.fn === 'function') {
-      if (block.fn.toString().indexOf('document.') !== -1 || containsstyleaccess(block.fn.toString())) {
+    if (typeof block.behaviour !== 'function') errors.push('fn block must have a behaviour function');
+    if (typeof block.behaviour === 'function') {
+      if (block.behaviour.toString().indexOf('document.') !== -1 || containsstyleaccess(block.behaviour.toString())) {
         errors.push('[KLEISLI VIOLATION] fn block accesses DOM directly');
       }
       errors = errors.concat(validaterevivablefunctionblock(block, blocktypes, dnaconstants));
@@ -921,9 +500,7 @@ function createblockanalyzers(blocktypes, dnaconstants) {
   return analyzers;
 }
 
-// @proposal=P9 (Cycle P9-06, batch 9.4 alignment) — the `dependencies`
-// parameter is removed from compilefnblock; the call into
-// buildblockproperties uses the 4-arg form.
+// @proposal=P11 (Cycle P11-01) — compilefnblock reads `merged.behaviour`.
 function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) {
   if (inheritedproperties === undefined) inheritedproperties = {};
   var blockcompilerstate = runtime.blockcompilerstate;
@@ -937,12 +514,12 @@ function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) 
   logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling FN block:', id);
   var blockfn = function(env) {
     logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'executing FN block:', id);
-    var fn = merged.fn;
-    if (!fn) throw new Error('fn block must have a function: ' + id);
+    var fn = merged.behaviour;
+    if (typeof fn !== 'function') throw new Error('fn block must have a behaviour function: ' + id);
     var properties = buildblockproperties(merged, inheritedproperties, sig, env);
     var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
     var fnargs = [properties].concat(inputargs);
-    return callwithstack(null, 'fn:' + (merged.ref || id), 'async-await', function() {
+    return callwithstack(null, 'fn:' + id, 'async-await', function() {
       return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
     }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
     .then(function(result) {
@@ -959,7 +536,3 @@ function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) 
   blockfn.id = id;
   return blockfn;
 }
-
-// ============================================================
-// §8 — Exports
-// ============================================================

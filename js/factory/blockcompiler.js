@@ -16,12 +16,21 @@
 //   9.9  Removed: `response.payload` lowercase read in unwrap.
 //
 // @proposal=P9 (Cycle P9-06 call-site correction) — DEV-P9-06-CALLSHAPE
-// closed: compilefnblock is invoked with the 6-arg form matching the
-// fnblock.js signature.
+// closed.
 //
-// @proposal=P10 (Cycle P10-02, batch 10.1) — the host builtin is
-// referenced as `globalThis`. Three sites corrected (waitforwitness,
-// buildblockproperties, compileblock).
+// @proposal=P10 (Cycle P10-02, batch 10.1) — `globalthis` →
+// `globalThis` at three sites.
+//
+// @proposal=P11 (Cycle P11-02, batch 11.1 blockcompiler side) — the
+// writer and io compilers now read `merged.behaviour` only.
+//
+// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era
+// serialization hook is removed. `blockcompilertools.serializeclosure`
+// was the sole consumer of `serializeselfcontainedclosure` (now
+// removed from fnblock.js by Cycle P11-03); the descriptor's
+// `SERIALIZED` field was never non-null at any live call site. Both
+// the hook and the field are removed. The `originalfn` local that
+// fed the hook is removed with it.
 
 // ============================================================
 // §1 — Construction API
@@ -165,6 +174,9 @@ var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/
 var scriptwitnesstimeout = 5000;
 var mailboxwaittimeout = 25000;
 
+// @proposal=P11 (Cycle P11-04, batch 11.2) — the `serializeclosure`
+// hook is removed; the corrected P5 model passes live function
+// references, not serialized sources.
 var blockcompilertools = {
   parsesource: (typeof parsesource === 'function') ? parsesource :
     (typeof detectfreeidentifiers === 'function') ? function(src) {
@@ -175,14 +187,12 @@ var blockcompilertools = {
       }
     } : function() {
       return { ok: false, identifiers: [], errors: ['no free variable parser available'] };
-    },
-  serializeclosure: (typeof serializeselfcontainedclosure === 'function') ? serializeselfcontainedclosure : null
+    }
 };
 
 function setblockcompilertools(tools) {
   if (!tools || typeof tools !== 'object') return;
   if (typeof tools.parsesource === 'function') blockcompilertools.parsesource = tools.parsesource;
-  if (typeof tools.serializeclosure === 'function') blockcompilertools.serializeclosure = tools.serializeclosure;
 }
 
 function createblockcompilerconstants() {
@@ -476,10 +486,8 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling WRITER block:', id);
     var innerfn = function(env) {
       logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing WRITER block:', id);
-      var fn = (typeof merged.behaviour === 'function') ? merged.behaviour :
-               (typeof merged.fn === 'function') ? merged.fn :
-               (typeof merged.ref === 'function') ? merged.ref : null;
-      if (!fn) throw new Error('[WRITER] Block "' + id + '" failed validation');
+      var fn = merged.behaviour;
+      if (typeof fn !== 'function') throw new Error('[WRITER] Block "' + id + '" failed validation');
       var properties = buildblockproperties(merged, inheritedproperties, sig, env);
       var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
       return Promise.resolve(fn(properties, inputargs)).then(function(result) {
@@ -513,10 +521,8 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling IO block:', id);
     var innerfn = function(env) {
       logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing IO block:', id);
-      var io = (typeof merged.behaviour === 'function') ? merged.behaviour :
-               (typeof merged.fn === 'function') ? merged.fn :
-               (typeof merged.ref === 'function') ? merged.ref : null;
-      if (!io) throw new Error('io block "' + id + '" must declare a behaviour');
+      var io = merged.behaviour;
+      if (typeof io !== 'function') throw new Error('io block "' + id + '" must declare a behaviour');
       var ioname = id;
       var inputdata = {};
       (sig.inputs || []).forEach(function(inp) { inputdata[inp] = compilepathaccessor(inp)(env); });
@@ -916,6 +922,11 @@ function orchestratestage(stage, pipelinename, env, stagepath, options) {
   return runnext();
 }
 
+// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era `SERIALIZED`
+// field and its producer are removed. Under the corrected P5 model the
+// element's EXECUTOR function is passed by reference; nothing is
+// serialized. The `originalfn` local (which fed only the removed
+// serialization hook) is removed with it.
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
@@ -927,12 +938,6 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     };
     var blockinputs = elementdef && elementdef.inputs ? elementdef.inputs : [];
     var blockoutputs = elementdef && elementdef.outputs ? elementdef.outputs : {};
-    var inputargs = blockinputs.map(function(inp) { return compilepathaccessor(inp)(execenv); });
-    var originalfn = compiledelement.originalfn || elementdef.behaviour || null;
-    var closureserialized = null;
-    if (blockcompilertools.serializeclosure && typeof originalfn === 'function') {
-      closureserialized = blockcompilertools.serializeclosure(originalfn, inputargs, execenv, elementdef.deps || {});
-    }
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelinename, 'stagepath:', JSON.stringify(stagepath));
     var tag = GENERATETAG();
     var descriptor = {
@@ -943,9 +948,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       SIGNATURE: { INPUTS: blockinputs, OUTPUTS: blockoutputs },
       EXECUTOR: executor,
       PROPERTIES: elementdef || {},
-      SERIALIZED: closureserialized,
-      ORIGIN: compiledelement.origin || null,
-      PROGRAMREF: null
+      ORIGIN: compiledelement.origin || null
     };
 
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'taskresult' });

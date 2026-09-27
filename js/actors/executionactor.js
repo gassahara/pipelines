@@ -3,11 +3,17 @@
 // @proposal=P4 (Cycle 25) — actor-handle surface (SUBMIT/EXPECT/
 // GETACTIONRESULT) retained verbatim.
 //
-// @proposal=P5 (corrected, Cycle 39R-bis) — the writer-side payload
-// keys in the ENQUEUEEXECUTION* helpers are aligned with the
-// authoritative UPPERCASE form (Q12). The OP-011 aliasing is removed
-// (Cycle 39R); without this alignment the helpers would emit keys the
-// handler reads as undefined.
+// @proposal=P5 (corrected, Cycle 39R-bis) — writer-side payload keys
+// aligned with the UPPERCASE form (Q12).
+//
+// @proposal=P11 (Cycle P11-05, batch 11.2) — the dead
+// PROGREF/PROGSOURCE branch in RUNELEMENTTASK is removed. Under the
+// corrected P5 model the descriptor carries the compiled block's
+// function on the EXECUTOR field; nothing is transported as source.
+// The `new Function` path was entered only when both PROGRAMREF and
+// PROGSOURCE were non-null, which no live call site produces
+// (createpersistentelementwrapper at Cycle P11-04 no longer emits
+// either field).
 
 var EXECUTIONVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -362,6 +368,11 @@ function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
   logdebug(ENV, '[EXECUTIONACTOR]', 'SETTLETASK COMPLETED:', TASKID, 'CONSUMERS NOTIFIED:', CONSUMERS.length);
 }
 
+// @proposal=P11 (Cycle P11-05, batch 11.2) — the dead
+// PROGREF/PROGSOURCE branch is removed. The descriptor's EXECUTOR
+// field is the sole carrier of the compiled block function; the
+// former source-revival path (`new Function`) had no live producer
+// after Cycle P11-04 stopped emitting PROGRAMREF/SERIALIZED.
 function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
   var EXECUTIONCONTEXT = {
     ENV: DESCRIPTOR.ENV || {},
@@ -372,38 +383,16 @@ function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
 
   logdebug(ENV, '[EXECUTIONACTOR]', 'RUNELEMENTTASK START:', TASKID, DESCRIPTOR.ELEMENTID, 'PIPELINE:', DESCRIPTOR.PIPELINEID);
 
-  function RUNWITHPROGRAM() {
-    var PROGREF = DESCRIPTOR.PROGRAMREF || null;
-    var PROGSOURCE = DESCRIPTOR.PROGRAMSOURCE || null;
-    var EXECUTOR = DESCRIPTOR.EXECUTOR;
-    if (PROGREF && PROGSOURCE) {
-      try {
-        var PROGRAM = new Function('return ' + PROGSOURCE)();
-        if (PROGRAM && typeof PROGRAM[DESCRIPTOR.ELEMENTID] === 'function') {
-          return Promise.resolve(PROGRAM[DESCRIPTOR.ELEMENTID](EXECUTIONCONTEXT)).then(function(R) {
-            return R;
-          }).catch(function(ERR) {
-            logwarn(ENV, '[EXECUTIONACTOR]', 'PROGRAM RESTORATION FAILED:', ERR);
-            if (typeof EXECUTOR === 'function') {
-              return EXECUTOR(EXECUTIONCONTEXT);
-            }
-            throw ERR;
-          });
-        }
-      } catch (ERR) {
-        logwarn(ENV, '[EXECUTIONACTOR]', 'PROGRAM RESTORATION FAILED:', ERR);
-      }
-    }
-    if (typeof EXECUTOR !== 'function') {
-      var FAILUREERROR = new Error('[EXECUTIONACTOR] DESCRIPTOR.executor is not a function');
-      return Promise.reject(FAILUREERROR);
-    }
-    return Promise.resolve(EXECUTOR(EXECUTIONCONTEXT));
+  var EXECUTOR = DESCRIPTOR.EXECUTOR;
+  if (typeof EXECUTOR !== 'function') {
+    var FAILUREERROR = new Error('[EXECUTIONACTOR] DESCRIPTOR.EXECUTOR is not a function');
+    SETTLETASK(TASKID, 'FAILED', null, FAILUREERROR, ENV);
+    return;
   }
 
   var EXECUTIONPROMISE;
   try {
-    EXECUTIONPROMISE = RUNWITHPROGRAM();
+    EXECUTIONPROMISE = Promise.resolve(EXECUTOR(EXECUTIONCONTEXT));
   } catch (SYNCERR) {
     EXECUTIONPROMISE = Promise.reject(SYNCERR);
   }
