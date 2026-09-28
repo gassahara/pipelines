@@ -48,6 +48,11 @@
 // message and the SCRIPTLOADED response. No document.* call remains
 // in this file. appendlib / appendprogram keep their top-level-only
 // parent argument (Class B, R-1).
+//
+// @proposal=P-AO — the writer compiler's behaviour invocation is
+// aligned with the fn compiler convention: the writer body receives
+// (inputs, deps, properties). (P-AM in pipelines/blocks.js declared
+// this convention for the writer bodies; the compiler is now aligned.)
 
 // ============================================================
 // §1 — Construction API
@@ -496,8 +501,9 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       var fn = merged.behaviour;
       if (typeof fn !== 'function') throw new Error('[WRITER] Block "' + id + '" failed validation');
       var properties = buildblockproperties(merged, inheritedproperties, sig, env);
-      var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
-      return Promise.resolve(fn(properties, inputargs)).then(function(result) {
+      var inputs = properties.inputs || {};
+      var deps   = properties.deps   || {};
+      return Promise.resolve(fn(inputs, deps, properties)).then(function(result) {
         if (!result || typeof result !== 'object' || result.html === undefined || result.id === undefined) {
           throw new Error('[WRITER] Block "' + id + '" returned invalid result');
         }
