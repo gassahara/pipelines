@@ -63,7 +63,7 @@ var pipelinesmanifest = [
     'validateblocktype', 'validatedomqueryblock', 'validateexecutionqueryblock',
     'validatestorequeryblock', 'validateblockproperties', 'validateeventstage'
   ] },
-  { src: 'factory/stylizerutilities.js', provides: ['stylizercore', 'stylizerrewrite'] },
+  { src: 'factory/stylizerutilities.js', provides: ['stylizercore'] },
   { src: 'debugformatter.js', provides: ['formatdebugtrace'] },
   { src: 'utils.js', provides: [
     'createapiconstants', 'escapehtml', 'markdowntohtml', 'formataitext',
@@ -131,12 +131,14 @@ var pipelinesmanifest = [
     'REWRITESTYLEATTRS', 'CONSOLIDATESTYLES', 'OPTIMIZECONTRAST', 'OPTIMIZEHARMONY',
     'OPTIMIZETEXTVISIBILITY', 'OPTIMIZEBUTTONVISIBILITY',
     'VERIFYCONTRAST', 'VERIFYTEXTVISIBILITY', 'VERIFYBUTTONVISIBILITY',
-    'VERIFYHARMONY', 'CHECKFOCUSVISIBILITY'
+    'VERIFYHARMONY', 'CHECKFOCUSVISIBILITY',
+    'LOADSCRIPT'
   ] },
   { src: 'factory/blockcompiler.js', provides: [
     'pipeline',
     'makelib', 'makeprogram', 'makestage', 'makeblock', 'makepipelineelement',
     'appendlib', 'appendprogram', 'appendstage', 'appendblock', 'appendpipelineelement',
+    'nodeat',
     'run', 'compile',
     'orchestratepipeline', 'loadpipelineresources',
     'resolvenextelement', 'orchestratestage',

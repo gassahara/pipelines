@@ -1,3 +1,20 @@
+// stylizerutilities.js — style-string utility concern.
+//
+// @proposal=P-U — the pre-P6/P7 vestiges are removed:
+//   stylizercore.has / isarray                (no caller)
+//   stylizercore.debug / warn / error / info  (no caller)
+//   defaultverbositystate                     (only the loggers used it)
+//   stylizerrewrite                           (the whole object: the two
+//                                              string-HTML methods it
+//                                              carried had no caller,
+//                                              and the DOM helpers it
+//                                              once carried moved to
+//                                              renderactor.js under
+//                                              P7, frozen RUN 37)
+//
+// What remains is pure string / length / spacing computation. No DOM
+// operations, no string→string HTML transforms, no verbosity state.
+
 function scannumberend(str, i) {
   if (i >= str.length) return i;
   var c = str.charAt(i);
@@ -5,17 +22,7 @@ function scannumberend(str, i) {
   return i;
 }
 
-var defaultverbositystate = Object.freeze({ level: createverbosityconstants().DEBUG });
-
 var stylizercore = {
-  has: function(obj, key) {
-    return Object.prototype.hasOwnProperty.call(obj, key);
-  },
-
-  isarray: function(value) {
-    return Object.prototype.toString.call(value) === '[object Array]';
-  },
-
   createstylizerconstants: function() {
     return Object.freeze({
       safeprops: Object.freeze([
@@ -158,25 +165,6 @@ var stylizercore = {
     var l = tokens[3] !== undefined ? stylizercore.parselength(tokens[3], referencepx) : r;
 
     return { top: t, right: r, bottom: b, left: l };
-  },
-
-  // ---- P7 (frozen RUN 37): C1..C7 DOM helpers moved into ./js/actors/renderactor.js ----
-
-  debug: function() {
-    var args = Array.prototype.slice.call(arguments);
-    logdebug.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
-  },
-  warn: function() {
-    var args = Array.prototype.slice.call(arguments);
-    logwarn.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
-  },
-  error: function() {
-    var args = Array.prototype.slice.call(arguments);
-    logerror.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
-  },
-  info: function() {
-    var args = Array.prototype.slice.call(arguments);
-    loginfo.apply(null, [defaultverbositystate, '[stylizercore]'].concat(args));
   }
 };
 
@@ -185,74 +173,4 @@ stylizercore.color = {
   core: colorcore,
   harmony: colorharmony,
   contrast: colorcontrast
-};
-
-var stylizerrewrite = {
-  injectresponsivestyles: function(html, breakpointrules, stylizercore) {
-    if (!breakpointrules || !breakpointrules.length) return html;
-
-    var css = '<style data-responsive="true">';
-
-    breakpointrules.forEach(function(bp) {
-      var min = bp.minwidth !== undefined ? '(min-width: ' + bp.minwidth + 'px)' : '';
-      var max = bp.maxwidth !== undefined ? '(max-width: ' + bp.maxwidth + 'px)' : '';
-      css += '@media ' + [min, max].filter(Boolean).join(' and ') + ' {\n';
-
-      bp.rules.forEach(function(rule) {
-        var sel = rule.id ? '#' + rule.id : rule.tag || '*';
-        css += '  ' + sel + ' {\n';
-        Object.keys(rule.style).forEach(function(prop) {
-          css += '    ' + stylizercore.cameltokebab(prop) + ': ' + rule.style[prop] + ';\n';
-        });
-        css += '  }\n';
-      });
-
-      css += '}\n';
-    });
-
-    css += '</style>';
-    var lastdiv = html.lastIndexOf('</div>');
-    return lastdiv !== -1 ? html.slice(0, lastdiv) + css + html.slice(lastdiv) : html + css;
-  },
-
-  computecolorscheme: function(pos, tilecols, cellw, cellh, gridcols, stylizercore) {
-    var colstart = Math.max(0, Math.min(Math.floor((pos.clientx || 0) / cellw), gridcols - 1));
-    var rowstart = Math.max(0, Math.min(Math.floor((pos.clienty || 0) / cellh), gridcols - 1));
-    var colend = Math.max(1, Math.min(Math.ceil(((pos.clientx || 0) + (pos.width || cellw)) / cellw), gridcols));
-    var rowend = Math.max(1, Math.min(Math.ceil(((pos.clienty || 0) + (pos.height || cellh)) / cellh), gridcols));
-
-    function rowsrange(r, acc) {
-      if (r >= rowend) return acc;
-      function colsrange(c, inner) {
-        if (c >= colend) return inner;
-        var idx = r * gridcols + c;
-        if (idx < tilecols.length) {
-          inner.sumh += tilecols[idx].h;
-          inner.sums += tilecols[idx].s;
-          inner.suml += tilecols[idx].l;
-          inner.count++;
-        }
-        return colsrange(c + 1, inner);
-      }
-      return rowsrange(r + 1, colsrange(colstart, acc));
-    }
-
-    var totals = rowsrange(rowstart, { sumh: 0, sums: 0, suml: 0, count: 0 });
-    var sumh = totals.sumh, sums = totals.sums, suml = totals.suml, count = totals.count;
-
-    var avgh = count ? (sumh / count) % 360 : 0;
-    var avgs = count ? sums / count : 50;
-    var avgl = count ? suml / count : 50;
-    var offset = (Math.floor((pos.clientx || 0) / 50) * 7 + Math.floor((pos.clienty || 0) / 50) * 13) % 60;
-    var huecont = (avgh + 180 + offset) % 360;
-    var satcont = avgs < 30 ? 75 : (avgs >= 50 ? 50 : 60);
-    var bglight = avgl < 50 ? 75 : 25;
-    var fglight = avgl < 50 ? 15 : 90;
-
-    return {
-      background: 'hsl(' + huecont + ', ' + satcont + '%, ' + bglight + '%)',
-      color: 'hsl(' + huecont + ', ' + Math.max(satcont - 10, 10) + '%, ' + fglight + '%)',
-      bordercolor: 'hsl(' + huecont + ', ' + satcont + '%, ' + Math.round((bglight + fglight) / 2) + '%)'
-    };
-  }
 };

@@ -1,3 +1,14 @@
+// layoutdirectives.js — layout-directive concern.
+//
+// @proposal=P-V — the pre-P6 vestiges are removed:
+//   layoutdirectivecorealias                 (duplicate binding, no caller)
+//   layoutdirectivecore.has                  (bound to hasobj; no caller)
+//   the `stylizer` argument of
+//     createlayoutdirectives                 (read by nothing)
+// The header comment names only layoutdirectivecore, matching the
+// P6 (frozen RUN 19) relocation of the layout-correction subsystem
+// to renderactor.js.
+
 function hasobj(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
@@ -180,18 +191,11 @@ var directiveemitters = {
 
 // ---- P6 (frozen RUN 19): the layout-correction subsystem is no longer
 // implemented here. It has been re-hosted as the LC_* helper family and
-// the ten layout-correction HANDLERS inside ./js/actors/renderactor.js,
-// per @proposal=P6. The goalhandlers table, extractelementid helper, and
-// the layoutcorrection object previously declared in this file have been
-// removed. This file now provides only layoutdirectivecore.
+// the ten layout-correction HANDLERS inside ./js/actors/renderactor.js.
+// This file now provides only layoutdirectivecore.
 
-function createlayoutdirectives(stylizer) {
-  var stylizercore = stylizer.stylizercore;
-  var stylizerrewrite = stylizer.stylizerrewrite;
-
+function createlayoutdirectives() {
   var layoutdirectivecore = {
-    has: hasobj,  // ---- OP-088 ----
-
     createlayoutconstants: function() {
       return Object.freeze({
         positionmap: Object.freeze({
@@ -290,7 +294,6 @@ function createlayoutdirectives(stylizer) {
   };
 
   return {
-    layoutdirectivecore: layoutdirectivecore,
-    layoutdirectivecorealias: layoutdirectivecore
+    layoutdirectivecore: layoutdirectivecore
   };
 }
