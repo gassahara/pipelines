@@ -11,17 +11,20 @@
 // @proposal=P11 (Cycle P11-01) — reader alignment: the fn/writer block's
 // behaviour lives on the canonical `behaviour` field.
 // @proposal=P11 (Cycle P11-03, batch 11.2) — the DNA-era serialization
-// pipeline is removed. Under the corrected P5 model, a pipeline is a
-// program and its fn blocks are live function values passed by
-// reference; nothing is serialized and nothing is revived. The
-// string-scanning helpers (`skipspaces`, `readidentifier`,
-// `skipquoted`, `findmatchingparen`, `findbodybrace`,
-// `skipidentifierpart`) and `rewritefunctionsource` existed only to
-// serve the removed pipeline and are removed with it.
-// `resolvefrombriefcase`, `structuralhash`, `getdepstorekey`,
-// `defaultanalyzer`, `serializedepvalue`, `serializefunctionwithdeps`,
-// `serializeselfcontainedclosure`, `preparednaforserialization`, and
-// `preparefunctionforserialization` are removed.
+// pipeline is removed.
+//
+// @proposal=P-AE — the fn block calling convention changes: the
+// behaviour receives (inputs, deps, properties) instead of
+// (properties, ...positional). `inputs` and `deps` are the objects
+// buildblockproperties already constructs; passing them as dedicated
+// parameters means the behaviour reads inputs.X / deps.Y instead of
+// properties.inputs.X / properties.deps.Y.
+//
+// @proposal=P-AF — bindaliases is tightened so it no longer aliases a
+// local bound to `properties.inputs.Y` (only the whole-object form
+// `properties.inputs` aliases). After P-AE no fn body reaches the
+// former pattern anyway; the tightening removes the false-positive
+// class at its source.
 
 // ============================================================
 // §1 — Serializer constants
@@ -301,6 +304,12 @@ function analyzecontainerusage(src, container, declared, opts) {
   function isdot(t) { return t && t.type === 'punctuator' && t.value === '.'; }
   function iseq(t) { return t && t.type === 'punctuator' && t.value === '='; }
 
+  // @proposal=P-AF — the branch that matches `var X = properties.<container>`
+  // now also requires that the RHS ends immediately after `<container>`.
+  // A trailing `.` means the RHS continues past the container object and
+  // the local is bound to a field of it, not to the container itself; no
+  // alias is recorded in that case, so subsequent `X.field` accesses are
+  // not misread as container reads.
   function bindaliases(i) {
     if (i >= tokens.length) return;
     var t = tokens[i];
@@ -309,8 +318,11 @@ function analyzecontainerusage(src, container, declared, opts) {
       var localname = tokens[i + 1].value;
       if (tokens[i + 2] && iseq(tokens[i + 2])) {
         var rhs = tokens[i + 3];
+        var aftercontainer = tokens[i + 6];
+        var rhscontinues = aftercontainer && aftercontainer.type === 'punctuator' && aftercontainer.value === '.';
         if (rhs && rhs.type === 'identifier' && rhs.value === 'properties' &&
-            isdot(tokens[i + 4]) && isident(tokens[i + 5], container)) {
+            isdot(tokens[i + 4]) && isident(tokens[i + 5], container) &&
+            !rhscontinues) {
           aliases[localname] = true;
           aliasroot[localname] = container;
         } else if (usealiases && rhs && rhs.type === 'identifier' && aliasroot[rhs.value] === container) {
@@ -501,6 +513,10 @@ function createblockanalyzers(blocktypes, dnaconstants) {
 }
 
 // @proposal=P11 (Cycle P11-01) — compilefnblock reads `merged.behaviour`.
+// @proposal=P-AE — the fn block behaviour receives (inputs, deps, properties).
+// The blockcompiler constructs `inputs` and `deps` from the built properties
+// and passes them directly; the behaviour reads inputs.X / deps.Y instead
+// of properties.inputs.X / properties.deps.Y.
 function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) {
   if (inheritedproperties === undefined) inheritedproperties = {};
   var blockcompilerstate = runtime.blockcompilerstate;
@@ -517,16 +533,16 @@ function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) 
     var fn = merged.behaviour;
     if (typeof fn !== 'function') throw new Error('fn block must have a behaviour function: ' + id);
     var properties = buildblockproperties(merged, inheritedproperties, sig, env);
-    var inputargs = (sig.inputs || []).map(compilepathaccessor).map(function(f) { return f(env); });
-    var fnargs = [properties].concat(inputargs);
+    var inputs = properties.inputs || {};
+    var deps = properties.deps || {};
     return callwithstack(null, 'fn:' + id, 'async-await', function() {
-      return Promise.resolve(fn.apply(null, fnargs)).then(function(result) { return result || {}; });
+      return Promise.resolve(fn.apply(null, [inputs, deps, properties])).then(function(result) { return result || {}; });
     }, [env], { context: { env: env, pipestate: env.pipestate }, capturecontinuation: true, errk: createerrorcontext(id, 'fn') })
     .then(function(result) {
       if (typeof logblockdebug === 'function') {
         logblockdebug(blockcompilerstate, '[BLOCKCOMPILER]', id, {
-          inputs: properties.inputs,
-          deps: Object.keys(properties.deps || {}),
+          inputs: inputs,
+          deps: Object.keys(deps),
           result: result
         });
       }
