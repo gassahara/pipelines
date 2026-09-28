@@ -12,19 +12,14 @@
 // behaviour lives on the canonical `behaviour` field.
 // @proposal=P11 (Cycle P11-03, batch 11.2) — the DNA-era serialization
 // pipeline is removed.
-//
 // @proposal=P-AE — the fn block calling convention changes: the
-// behaviour receives (inputs, deps, properties) instead of
-// (properties, ...positional). `inputs` and `deps` are the objects
-// buildblockproperties already constructs; passing them as dedicated
-// parameters means the behaviour reads inputs.X / deps.Y instead of
-// properties.inputs.X / properties.deps.Y.
-//
-// @proposal=P-AF — bindaliases is tightened so it no longer aliases a
-// local bound to `properties.inputs.Y` (only the whole-object form
-// `properties.inputs` aliases). After P-AE no fn body reaches the
-// former pattern anyway; the tightening removes the false-positive
-// class at its source.
+// behaviour receives (inputs, deps, properties).
+// @proposal=P-AF — bindaliases is tightened.
+// @proposal=P-AL — the erroneous guard in containsstyleaccess's pass2
+// is removed. The previous guard skipped every `var`/`let`/`const`
+// declaration because `isidchar` is true for every valid identifier
+// start; localbindings was therefore never populated and the heuristic
+// false-positived on any local name ending in `style`.
 
 // ============================================================
 // §1 — Serializer constants
@@ -40,9 +35,6 @@ function creatednaserializerconstants() {
 // §2 — String primitives
 // ============================================================
 
-// containsidentifier is retained: it is the source-identifier test used
-// by checkfnvalue. It uses isidentifierstart / isidentifierpart from
-// tokenscanner.js.
 function containsidentifier(src, target) {
   var len = src.length;
 
@@ -91,8 +83,6 @@ function checkfnvalue(fn, label, defaultfnkeys) {
   return errors;
 }
 
-// @proposal=P11 (Cycle P11-01) — the fn/writer block's behaviour lives on
-// the canonical `behaviour` field.
 function validaterevivablefunctionblock(block, blocktypes, constants) {
   if (block.type !== blocktypes.fn && block.type !== blocktypes.writer) return [];
   var fn = block.behaviour;
@@ -184,6 +174,11 @@ function containsstyleaccess(source) {
     if (isidchar(source.charAt(j))) return function() { return scanident(j + 1); };
     return j;
   }
+  // @proposal=P-AL — the guard that previously appeared here
+  //   `if (i + kind < len && isidchar(source.charAt(i + kind)))
+  //      return function() { return pass2(i + 1); };`
+  // has been removed. It fired for every valid declaration and
+  // prevented localbindings from being populated.
   function pass2(i) {
     if (i >= len) return null;
     if (masked[i]) return function() { return pass2(i + 1); };
@@ -193,7 +188,6 @@ function containsstyleaccess(source) {
     else if (source.substr(i, 4) === 'let ') kind = 4;
     else if (source.substr(i, 6) === 'const ') kind = 6;
     if (kind === 0) return function() { return pass2(i + 1); };
-    if (i + kind < len && isidchar(source.charAt(i + kind))) return function() { return pass2(i + 1); };
     var j = trampoline(skipspacesat)(i + kind);
     var namestart = j;
     if (j < len && isidstart(source.charAt(j))) {
@@ -304,12 +298,6 @@ function analyzecontainerusage(src, container, declared, opts) {
   function isdot(t) { return t && t.type === 'punctuator' && t.value === '.'; }
   function iseq(t) { return t && t.type === 'punctuator' && t.value === '='; }
 
-  // @proposal=P-AF — the branch that matches `var X = properties.<container>`
-  // now also requires that the RHS ends immediately after `<container>`.
-  // A trailing `.` means the RHS continues past the container object and
-  // the local is bound to a field of it, not to the container itself; no
-  // alias is recorded in that case, so subsequent `X.field` accesses are
-  // not misread as container reads.
   function bindaliases(i) {
     if (i >= tokens.length) return;
     var t = tokens[i];
@@ -376,8 +364,6 @@ function analyzedepusage(src, declared) {
   return analyzecontainerusage(src, 'deps', declared, { aliases: true });
 }
 
-// @proposal=P11 (Cycle P11-01) — analyzefnblock reads the canonical
-// `behaviour` field.
 function analyzefnblock(block, depsmap, env, parser) {
   if (parser === undefined) parser = parsesource;
   var fn = block.behaviour;
@@ -512,11 +498,6 @@ function createblockanalyzers(blocktypes, dnaconstants) {
   return analyzers;
 }
 
-// @proposal=P11 (Cycle P11-01) — compilefnblock reads `merged.behaviour`.
-// @proposal=P-AE — the fn block behaviour receives (inputs, deps, properties).
-// The blockcompiler constructs `inputs` and `deps` from the built properties
-// and passes them directly; the behaviour reads inputs.X / deps.Y instead
-// of properties.inputs.X / properties.deps.Y.
 function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) {
   if (inheritedproperties === undefined) inheritedproperties = {};
   var blockcompilerstate = runtime.blockcompilerstate;

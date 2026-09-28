@@ -1,19 +1,17 @@
 // layoutdirectives.js — layout-directive concern.
 //
-// @proposal=P-V — the pre-P6 vestiges are removed:
-//   layoutdirectivecorealias                 (duplicate binding, no caller)
-//   layoutdirectivecore.has                  (bound to hasobj; no caller)
-//   the `stylizer` argument of
-//     createlayoutdirectives                 (read by nothing)
-// The header comment names only layoutdirectivecore, matching the
-// P6 (frozen RUN 19) relocation of the layout-correction subsystem
-// to renderactor.js.
+// @proposal=P-V — the pre-P6 vestiges are removed.
+// @proposal=P-AJ — a parser and emitter for the `flex` keyword are
+// added. The pipeline programs emit `flex: dir=X, wrap=Y, gap=W`; the
+// parser collects the key=value pairs; the emitter maps them to
+// concrete CSS properties (display, flexDirection, flexWrap,
+// justifyContent, alignItems, gap).
 
 function hasobj(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-// ---- OP-089: per-kind directive parsers (extracted from the switch in parsedirectives) ----
+// ---- OP-089: per-kind directive parsers ----
 function dpedge(d, params) {
   d.target = params[0];
   if (params[1]) d.offset = parseFloat(params[1]);
@@ -68,6 +66,21 @@ function dpscreencorner(d, params) {
   d.corner = params[0];
 }
 
+// @proposal=P-AJ — parser for the `flex` keyword. Recognises the
+// comma-separated `key=value` pairs (dir, wrap, justify, align, gap)
+// and stores them in d.pairs. Unrecognised pairs are also stored so
+// the emitter can decide whether to map them.
+function dpflex(d, params) {
+  d.pairs = params.reduce(function(acc, part) {
+    var eq = part.indexOf('=');
+    if (eq === -1) return acc;
+    return acc.concat([{
+      key: part.slice(0, eq).trim(),
+      value: part.slice(eq + 1).trim()
+    }]);
+  }, []);
+}
+
 var directiveparsers = {
   'left-of': dpedge,
   'right-of': dpedge,
@@ -84,10 +97,11 @@ var directiveparsers = {
   'overflow': dpmode,
   'respect-margins': dprespectmargins,
   'overflow-margins': dpoverflowmargins,
-  'screen-corner': dpscreencorner
+  'screen-corner': dpscreencorner,
+  'flex': dpflex
 };
 
-// ---- OP-090: per-kind CSS emitters (extracted from the switch in generatecssfromdirectives) ----
+// ---- OP-090: per-kind CSS emitters ----
 function deleftof(acc, d, offsetstr) { acc.order = -1; acc.marginRight = offsetstr; return acc; }
 function derightof(acc, d, offsetstr) { acc.order = 1; acc.marginLeft = offsetstr; return acc; }
 function deabove(acc, d, offsetstr) { acc.marginBottom = offsetstr; return acc; }
@@ -171,6 +185,26 @@ function descreencorner(acc, d, offsetstr, positionmap, cornermap) {
   return acc;
 }
 
+// @proposal=P-AJ — emitter for the `flex` keyword. Each recognised
+// key maps to a concrete CSS property; unrecognised keys are ignored.
+function deflex(acc, d) {
+  (d.pairs || []).forEach(function(pair) {
+    if (pair.key === 'dir') {
+      acc.display = 'flex';
+      acc.flexDirection = pair.value;
+    } else if (pair.key === 'wrap') {
+      acc.flexWrap = pair.value;
+    } else if (pair.key === 'justify') {
+      acc.justifyContent = pair.value;
+    } else if (pair.key === 'align') {
+      acc.alignItems = pair.value;
+    } else if (pair.key === 'gap') {
+      acc.gap = pair.value;
+    }
+  });
+  return acc;
+}
+
 var directiveemitters = {
   'left-of': deleftof,
   'right-of': derightof,
@@ -186,14 +220,12 @@ var directiveemitters = {
   'overflow': deoverflow,
   'respect-margins': derespectmargins,
   'overflow-margins': deoverflowmargins,
-  'screen-corner': descreencorner
+  'screen-corner': descreencorner,
+  'flex': deflex
 };
 
-// ---- P6 (frozen RUN 19): the layout-correction subsystem is no longer
-// implemented here. It has been re-hosted as the LC_* helper family and
-// the ten layout-correction HANDLERS inside ./js/actors/renderactor.js.
-// This file now provides only layoutdirectivecore.
-
+// P6: the layout-correction subsystem lives in renderactor.js.
+// This file provides only layoutdirectivecore.
 function createlayoutdirectives() {
   var layoutdirectivecore = {
     createlayoutconstants: function() {
@@ -237,7 +269,6 @@ function createlayoutdirectives() {
         var directive = { type: type };
         if (breakpoint) directive.breakpoint = breakpoint;
 
-        // ---- OP-089: table-driven dispatch ----
         var parser = directiveparsers[type];
         if (parser) {
           parser(directive, params);
@@ -278,7 +309,6 @@ function createlayoutdirectives() {
         .reduce(function(acc, d) {
           var offsetstr = (d.offset || 0) + (d.unit || 'px');
 
-          // ---- OP-090: table-driven dispatch ----
           var emitter = directiveemitters[d.type];
           if (emitter) {
             return emitter(acc, d, offsetstr, positionmap, cornermap);
