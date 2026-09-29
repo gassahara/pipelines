@@ -25,34 +25,36 @@
 // writer and io compilers now read `merged.behaviour` only.
 //
 // @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era
-// serialization hook is removed. `blockcompilertools.serializeclosure`
-// was the sole consumer of `serializeselfcontainedclosure` (now
-// removed from fnblock.js by Cycle P11-03); the descriptor's
-// `SERIALIZED` field was never non-null at any live call site. Both
-// the hook and the field are removed. The `originalfn` local that
-// fed the hook is removed with it.
+// serialization hook is removed.
 //
 // @proposal=P-J (path-addressed structural appends) — appendstage,
-// appendblock, and appendpipelineelement are rewritten to descend by
-// a positional path (an array of indices) and construct a fresh
-// pipeline value; the shared recursive worker is appendat. No node
-// is compared with ===. The input pipeline is not modified.
+// appendblock, and appendpipelineelement descend by a positional path.
 //
-// @proposal=P-L — nodeat / nodeatat added as the positional reader,
-// sharing the same descent rule as the appends.
+// @proposal=P-L — nodeat / nodeatat added as the positional reader.
 //
-// @proposal=P-M — deepreplace removed; it had no caller after P-J.
+// @proposal=P-M — deepreplace removed.
 //
-// @proposal=P-Q — loadscriptwithwitness routes the DOM side effect
-// of loading a <script src> through RENDERACTOR via the LOADSCRIPT
-// message and the SCRIPTLOADED response. No document.* call remains
-// in this file. appendlib / appendprogram keep their top-level-only
-// parent argument (Class B, R-1).
+// @proposal=P-Q — loadscriptwithwitness routes DOM side effects through
+// RENDERACTOR via LOADSCRIPT/SCRIPTLOADED.
 //
-// @proposal=P-AO — the writer compiler's behaviour invocation is
-// aligned with the fn compiler convention: the writer body receives
-// (inputs, deps, properties). (P-AM in pipelines/blocks.js declared
-// this convention for the writer bodies; the compiler is now aligned.)
+// @proposal=P-AO — the writer compiler's behaviour invocation is aligned
+// with the fn compiler convention: the writer body receives
+// (inputs, deps, properties).
+//
+// @proposal=P-AR — the blockcompiler becomes the trigger point of the
+// existing execution flow. appendblock triggers the flow for the block
+// being appended. The framework's injection mechanism
+// (buildblockproperties), the extraction mechanism (mapoutputs), and
+// the env-write (execenv[k]) are unchanged. run() is reduced to
+// resource loading plus a structural pass for EVENT stages and
+// PIPELINE elements. pipeline() carries env, compileonly, and the
+// append-time pending chain.
+//
+// @proposal=P-AT — orchestratepipeline dispatches top-level EVENT
+// stages to registereventstage and skips their blocks during the
+// structural walk. EVENT stages are trigger stages: their blocks are
+// supposed to execute when the event fires, not when the walk reaches
+// them. The nested-EVENT handler in processnestedstage is unchanged.
 
 // ============================================================
 // §1 — Construction API
@@ -85,8 +87,33 @@ function makepipelineelement(id, childstate, attrs) {
   return b;
 }
 
-function pipeline(type, name) {
-  return { type: type, name: name, libs: [], programs: [], elements: [] };
+// @proposal=P-AR — pipeline() now carries the running env, the
+// compileonly flag, the append-time pending chain, and the per-pipeline
+// compiler setup that appendblock needs in order to trigger the flow.
+function pipeline(type, name, options) {
+  var opts = options || {};
+  var constants = createblockcompilerconstants();
+  var dnaconstants = creatednaserializerconstants();
+  var analyzers = createblockanalyzers(constants.blocktypes, dnaconstants);
+  var compilers = createblockcompilers(constants.blocktypes, constants.inheritedkeys, opts);
+  return {
+    type: type,
+    name: name,
+    libs: [],
+    programs: [],
+    elements: [],
+    env: opts.baseenv || {},
+    compileonly: opts.compileonly === true,
+    pending: null,
+    compilerconstants: {
+      blocktypes: constants.blocktypes,
+      inheritedkeys: constants.inheritedkeys,
+      analyzers: analyzers,
+      compilers: compilers
+    },
+    dnaconstants: dnaconstants,
+    compileroptions: opts
+  };
 }
 
 // ---- P-J — shared helpers for the path-addressed appends ----
@@ -134,6 +161,8 @@ function appendstage(p, level, child) {
   return pipelinewith(p, appendat(p.elements, level, 0, child));
 }
 
+// @proposal=P-AR — appendblock triggers the flow for the block being
+// appended. Under compileonly the block is attached but not executed.
 function appendblock(p, level, child) {
   if (level.length === 0) {
     throw new Error('[appendblock] level must address a stage (not the pipeline root)');
@@ -141,7 +170,38 @@ function appendblock(p, level, child) {
   if (child.element !== 'BLOCK') {
     throw new Error('[appendblock] child must be a block value');
   }
-  return pipelinewith(p, appendat(p.elements, level, 0, child));
+  var attached = pipelinewith(p, appendat(p.elements, level, 0, child));
+
+  if (p.compileonly === true) {
+    return attached;
+  }
+
+  var prev = p.pending || Promise.resolve();
+  var elementid = child.id || 'elementunknown';
+  var stagepath = level;
+
+  attached.pending = prev.then(function() {
+    return triggerblockflow(attached, child, elementid, stagepath);
+  }).then(function(updatedenv) {
+    attached.env = updatedenv;
+    return attached;
+  });
+
+  return attached;
+}
+
+// @proposal=P-AR — triggerblockflow is the append-time entry point of
+// the existing flow.
+function triggerblockflow(p, child, elementid, stagepath) {
+  var env = p.env || {};
+  var constants = p.compilerconstants;
+  var dnaconstants = p.dnaconstants;
+  var options = p.compileroptions;
+  var compiled = compileblock(child, {}, constants, options);
+  var elementfn = createpersistentelementwrapper(compiled, child, stagepath, p.name, options);
+  return Promise.resolve(elementfn(env)).then(function() {
+    return env;
+  });
 }
 
 function appendpipelineelement(p, level, child) {
@@ -186,9 +246,6 @@ var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/
 var scriptwitnesstimeout = 5000;
 var mailboxwaittimeout = 25000;
 
-// @proposal=P11 (Cycle P11-04, batch 11.2) — the `serializeclosure`
-// hook is removed; the corrected P5 model passes live function
-// references, not serialized sources.
 var blockcompilertools = {
   parsesource: (typeof parsesource === 'function') ? parsesource :
     (typeof detectfreeidentifiers === 'function') ? function(src) {
@@ -831,7 +888,7 @@ function registereventstage(stage, pipelinename, stagepath, options) {
     });
 }
 
-function processnestedstage(childstage, pipelinename, stagepath, constants, dnaconstants, options) {
+function processnestedstage(childstage, pipelinename, stagepath, constants, dnaconstants, options, runblocks) {
   var childstagepath = stagepath.concat([childstage.id]);
 
   if (childstage.control && childstage.control.command === 'EVENT') {
@@ -850,7 +907,7 @@ function processnestedstage(childstage, pipelinename, stagepath, constants, dnac
         'nested-stage:' + childstage.id,
         'async-await',
         function() {
-          orchestratestage(childstage, pipelinename, env, childstagepath, options || {})
+          orchestratestage(childstage, pipelinename, env, childstagepath, options || {}, runblocks)
             .catch(function(err) {
               logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
             });
@@ -869,7 +926,7 @@ function processnestedstage(childstage, pipelinename, stagepath, constants, dnac
         'nested-stage:' + childstage.id,
         'async-await',
         function() {
-          return orchestratestage(childstage, pipelinename, env, childstagepath, options || {});
+          return orchestratestage(childstage, pipelinename, env, childstagepath, options || {}, runblocks);
         },
         [env],
         { context: { env: env }, capturecontinuation: true, attachcontinuation: false }
@@ -880,7 +937,11 @@ function processnestedstage(childstage, pipelinename, stagepath, constants, dnac
   }
 }
 
-function orchestratestage(stage, pipelinename, env, stagepath, options) {
+// @proposal=P-AR — orchestratestage accepts a `runblocks` flag.
+// @proposal=P-AT — top-level EVENT stages are dispatched in
+// orchestratepipeline before reaching orchestratestage; this function
+// continues to handle ordinary stages and nested-EVENT stages.
+function orchestratestage(stage, pipelinename, env, stagepath, options, runblocks) {
   var constants = createblockcompilerconstants();
   var blocktypes = constants.blocktypes;
   var inheritedkeys = constants.inheritedkeys;
@@ -891,6 +952,7 @@ function orchestratestage(stage, pipelinename, env, stagepath, options) {
 
   var index = 0;
   var stagetoken = { CANCELLED: false };
+  var execute = runblocks === true;
 
   function runnext() {
     if (index >= (stage.elements || []).length) {
@@ -903,13 +965,18 @@ function orchestratestage(stage, pipelinename, env, stagepath, options) {
       return runnext();
     }
 
+    if (elementdef.element === 'BLOCK' && !execute) {
+      index++;
+      return runnext();
+    }
+
     var elementfn;
     if (elementdef.element === 'BLOCK') {
       elementfn = processelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, options);
     } else if (elementdef.element === 'PIPELINE') {
       elementfn = processpipelineelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, options);
     } else if (elementdef.element === 'STAGE') {
-      elementfn = processnestedstage(elementdef, pipelinename, stagepath.concat([elementdef.id]), compilerconstants, dnaconstants, options);
+      elementfn = processnestedstage(elementdef, pipelinename, stagepath.concat([elementdef.id]), compilerconstants, dnaconstants, options, execute);
     } else {
       throw new Error('[orchestratestage] unexpected element type: ' + elementdef.element);
     }
@@ -935,11 +1002,10 @@ function orchestratestage(stage, pipelinename, env, stagepath, options) {
   return runnext();
 }
 
-// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era `SERIALIZED`
-// field and its producer are removed. Under the corrected P5 model the
-// element's EXECUTOR function is passed by reference; nothing is
-// serialized. The `originalfn` local (which fed only the removed
-// serialization hook) is removed with it.
+// @proposal=P-AR — createpersistentelementwrapper's internals are
+// preserved. Under Design A the wrapper is invoked from
+// triggerblockflow at append time, and from orchestratestage at run
+// time for compileonly pipelines.
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
@@ -1017,10 +1083,6 @@ function waitforwitness(entry, timeout) {
   });
 }
 
-// @proposal=P-Q — the DOM side effect of loading a <script src> is
-// delegated to RENDERACTOR via LOADSCRIPT. The witness check remains
-// here: it reads host globals (window[name] / globalThis[name]), not
-// the DOM.
 function loadscriptwithwitness(entry, basepath, timeout) {
   return sendandawait('RENDERACTOR', MESSAGETYPES.LOADSCRIPT,
                       { SRC: basepath + entry.src },
@@ -1069,16 +1131,34 @@ function loadfrontendprograms(programs, basepath, timeout) {
 // §6 — Finalizers
 // ============================================================
 
-function orchestratepipeline(p, stageindex, env, options) {
+// @proposal=P-AR — orchestratepipeline walks the tree to dispatch EVENT
+// stages and PIPELINE elements. Under Design A, BLOCK elements are
+// already executed at append time; this walker uses runblocks=false so
+// that BLOCK elements are skipped. Compileonly pipelines use
+// runblocks=true to execute the deferred blocks.
+//
+// @proposal=P-AT — the walker dispatches top-level EVENT stages to
+// registereventstage. The stage's blocks are not walked. Ordinary
+// stages (including those with `async` or no control) fall through to
+// orchestratestage.
+function orchestratepipeline(p, stageindex, env, options, runblocks) {
   if (stageindex >= p.elements.length) return Promise.resolve(env);
   var stage = p.elements[stageindex];
   if (!stage || stage.element !== 'STAGE') {
-    return orchestratepipeline(p, stageindex + 1, env, options);
+    return orchestratepipeline(p, stageindex + 1, env, options, runblocks);
   }
   var stagepath = ['elements', stageindex];
-  return orchestratestage(stage, p.name, env, stagepath, options)
+
+  if (stage.control && stage.control.command === 'EVENT') {
+    return registereventstage(stage, p.name, stagepath, options)
+      .then(function() {
+        return orchestratepipeline(p, stageindex + 1, env, options, runblocks);
+      });
+  }
+
+  return orchestratestage(stage, p.name, env, stagepath, options, runblocks)
     .then(function() {
-      return orchestratepipeline(p, stageindex + 1, env, options);
+      return orchestratepipeline(p, stageindex + 1, env, options, runblocks);
     });
 }
 
@@ -1086,17 +1166,41 @@ function loadpipelineresources(p, options) {
   return loadpipelinedependencies(p, options);
 }
 
+// @proposal=P-AR — run() is reduced to:
+//   1. resource loading;
+//   2. for non-compileonly pipelines, awaiting the append-time pending
+//      chain, then a structural walk (runblocks=false) to register EVENT
+//      stages and construct PIPELINE children;
+//      for compileonly pipelines, a structural walk with runblocks=true
+//      (the deferred blocks execute at that point).
+//
+// @proposal=P-AT — the structural walk itself dispatches top-level EVENT
+// stages to registereventstage; their blocks are not executed at walk
+// time even under runblocks=true.
 function run(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
-  return loadpipelineresources(p, options)
-    .then(function() {
-      return orchestratepipeline(p, 0, options.baseenv || {}, options);
-    })
-    .then(function(env) {
-      loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
-      return env;
+
+  return loadpipelineresources(p, options).then(function() {
+    if (p.compileonly === true) {
+      var cenv = p.env || options.baseenv || {};
+      return orchestratepipeline(p, 0, cenv, options, true).then(function(finalenv) {
+        p.env = finalenv;
+        loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete (compileonly):', p.name);
+        return finalenv;
+      });
+    }
+
+    var pending = p.pending || Promise.resolve(p);
+    return Promise.resolve(pending).then(function() {
+      var renv = p.env || options.baseenv || {};
+      return orchestratepipeline(p, 0, renv, options, false).then(function(finalenv) {
+        p.env = finalenv;
+        loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
+        return finalenv;
+      });
     });
+  });
 }
 
 function compile(p, options) {
