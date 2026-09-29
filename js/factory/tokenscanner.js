@@ -131,14 +131,22 @@ function matchpunctuator(source, i) {
 // ============================================================
 
 function skiplinecomment(source, i) {
-  if (i < source.length && source.charAt(i) !== '\n') return skiplinecomment(i + 1);
-  return i;
+  function loop(j) {
+    if (j < source.length && source.charAt(j) !== '\n') {
+      return function() { return loop(j + 1); };
+    }
+    return j;
+  }
+  return trampoline(loop)(i);
 }
 
 function skipblockcomment(source, i) {
-  if (i >= source.length) return i;
-  if (source.charAt(i) === '*' && source.charAt(i + 1) === '/') return i + 2;
-  return skipblockcomment(i + 1);
+  function loop(j) {
+    if (j >= source.length) return j;
+    if (source.charAt(j) === '*' && source.charAt(j + 1) === '/') return j + 2;
+    return function() { return loop(j + 1); };
+  }
+  return trampoline(loop)(i);
 }
 
 // ============================================================
