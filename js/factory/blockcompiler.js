@@ -3,58 +3,32 @@
 // @proposal=P5 (corrected) — the blockcompiler is a DECLARATIVE SEMAPHORE.
 // Construction API + finalizers (run / compile). No DNA envelope.
 //
-// @proposal=P9 (Cycle P9-04) — batches applied:
-//   9.3  Removed: resolvedepsarray, resolvepipelinepath,
-//        resolvestagefrompath, builddependenciesregistry.
-//   9.4  Removed: `dependencies` parameter chain. buildblockproperties
-//        resolves deps via the shared global space unconditionally.
-//        Renamed: `inheritedbriefcase` → `inherited`.
-//        Removed: `nextstagemessage` parameter.
-//        Renamed: local `pipelineid` → `pipelinename`.
-//   9.5  Renamed: element field `pipelineidoverride` → `nameoverride`;
-//        element field `dna` → `childstate`.
-//   9.9  Removed: `response.payload` lowercase read in unwrap.
+// @proposal=P9 (Cycle P9-04) — batches applied.
 //
-// @proposal=P9 (Cycle P9-06 call-site correction) — DEV-P9-06-CALLSHAPE
-// closed.
+// @proposal=P10 (Cycle P10-02, batch 10.1) — `globalthis` → `globalThis`.
 //
-// @proposal=P10 (Cycle P10-02, batch 10.1) — `globalthis` →
-// `globalThis` at three sites.
+// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era serialization
+// hook is removed.
 //
-// @proposal=P11 (Cycle P11-02, batch 11.1 blockcompiler side) — the
-// writer and io compilers now read `merged.behaviour` only.
-//
-// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era
-// serialization hook is removed.
-//
-// @proposal=P-J (path-addressed structural appends) — appendstage,
-// appendblock, and appendpipelineelement descend by a positional path.
-//
+// @proposal=P-J — path-addressed structural appends.
 // @proposal=P-L — nodeat / nodeatat added as the positional reader.
-//
 // @proposal=P-M — deepreplace removed.
-//
 // @proposal=P-Q — loadscriptwithwitness routes DOM side effects through
 // RENDERACTOR via LOADSCRIPT/SCRIPTLOADED.
-//
 // @proposal=P-AO — the writer compiler's behaviour invocation is aligned
-// with the fn compiler convention: the writer body receives
-// (inputs, deps, properties).
-//
+// with the fn compiler convention.
 // @proposal=P-AR — the blockcompiler becomes the trigger point of the
 // existing execution flow. appendblock triggers the flow for the block
-// being appended. The framework's injection mechanism
-// (buildblockproperties), the extraction mechanism (mapoutputs), and
-// the env-write (execenv[k]) are unchanged. run() is reduced to
-// resource loading plus a structural pass for EVENT stages and
-// PIPELINE elements. pipeline() carries env, compileonly, and the
-// append-time pending chain.
-//
+// being appended. run() is reduced to resource loading plus a
+// structural pass. pipeline() carries env / compileonly / pending /
+// per-pipeline compiler setup.
 // @proposal=P-AT — orchestratepipeline dispatches top-level EVENT
-// stages to registereventstage and skips their blocks during the
-// structural walk. EVENT stages are trigger stages: their blocks are
-// supposed to execute when the event fires, not when the walk reaches
-// them. The nested-EVENT handler in processnestedstage is unchanged.
+// stages to registereventstage; their blocks are deferred to the event.
+// @proposal=P-AV — automatic env inheritance at child creation.
+// processpipelineelement seeds the child's env (childstate.env) from
+// the caller's env (parentenv), fill-only, at the moment the childstate
+// thunk resolves. The el.inputs projection and the childoptions.baseenv
+// assignment are removed; the env-as-p.env invariant is preserved.
 
 // ============================================================
 // §1 — Construction API
@@ -87,9 +61,9 @@ function makepipelineelement(id, childstate, attrs) {
   return b;
 }
 
-// @proposal=P-AR — pipeline() now carries the running env, the
-// compileonly flag, the append-time pending chain, and the per-pipeline
-// compiler setup that appendblock needs in order to trigger the flow.
+// @proposal=P-AR — pipeline() carries the running env, the compileonly
+// flag, the append-time pending chain, and the per-pipeline compiler
+// setup that appendblock needs in order to trigger the flow.
 function pipeline(type, name, options) {
   var opts = options || {};
   var constants = createblockcompilerconstants();
@@ -815,6 +789,12 @@ function loadpipelinedependencies(pipelineslice, options) {
     });
 }
 
+// @proposal=P-AV — automatic env inheritance at child creation.
+// processpipelineelement builds the child pipeline value (childstate),
+// then seeds the child's env (childstate.env) from the caller's env
+// (parentenv), fill-only, before invoking run on the child.
+// The child's env is its p.env; the caller's env is the parent's
+// p.env; both are the single env under the env-as-p.env invariant.
 function processpipelineelement(el, pipelinename, stagepath, inherited, options) {
   var elementid = el.id || 'pipelineunknown';
 
@@ -826,11 +806,6 @@ function processpipelineelement(el, pipelinename, stagepath, inherited, options)
 
   var innerfn = function(env) {
     var parentenv = env;
-    var childenv = {};
-    var inputkeys = el.inputs || [];
-    inputkeys.forEach(function(key) {
-      childenv[key] = compilepathaccessor(key)(parentenv);
-    });
 
     return Promise.resolve(el.childstate()).then(function(childstate) {
       if (!childstate || typeof childstate !== 'object') {
@@ -839,14 +814,31 @@ function processpipelineelement(el, pipelinename, stagepath, inherited, options)
         throw stateerr;
       }
 
+      // @proposal=P-AV — automatic env inheritance at child creation:
+      // the caller's env (parentenv) is written into the child's env
+      // (childstate.env) fill-only. The child's env is its p.env; the
+      // caller's env is the parent's p.env; both are the single env
+      // under the env-as-p.env invariant.
+      if (!childstate.env) childstate.env = {};
+      Object.keys(parentenv).forEach(function(k) {
+        if (childstate.env[k] === undefined) {
+          childstate.env[k] = parentenv[k];
+        }
+      });
+
       var derivedname = el.nameoverride || childstate.name || ('pipeline' + elementid);
-      childenv.pipelinename = derivedname;
-      if (el.container) childenv.containerid = el.container;
+      if (childstate.env.pipelinename === undefined) {
+        childstate.env.pipelinename = derivedname;
+      }
+      if (el.container && childstate.env.containerid === undefined) {
+        childstate.env.containerid = el.container;
+      }
 
       var childoptions = el.options || {};
       if (childoptions.autorun === undefined) childoptions.autorun = true;
-      if (childoptions.baseenv === undefined) childoptions.baseenv = childenv;
-      if (childoptions.strictrefonly === undefined && options && options.strictrefonly !== undefined) childoptions.strictrefonly = options.strictrefonly;
+      if (childoptions.strictrefonly === undefined && options && options.strictrefonly !== undefined) {
+        childoptions.strictrefonly = options.strictrefonly;
+      }
 
       return run(childstate, childoptions).then(function(result) {
         var wrapped = wrapblockresult(result, { outputs: el.outputs || {} });
@@ -937,10 +929,6 @@ function processnestedstage(childstage, pipelinename, stagepath, constants, dnac
   }
 }
 
-// @proposal=P-AR — orchestratestage accepts a `runblocks` flag.
-// @proposal=P-AT — top-level EVENT stages are dispatched in
-// orchestratepipeline before reaching orchestratestage; this function
-// continues to handle ordinary stages and nested-EVENT stages.
 function orchestratestage(stage, pipelinename, env, stagepath, options, runblocks) {
   var constants = createblockcompilerconstants();
   var blocktypes = constants.blocktypes;
@@ -1002,10 +990,6 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
   return runnext();
 }
 
-// @proposal=P-AR — createpersistentelementwrapper's internals are
-// preserved. Under Design A the wrapper is invoked from
-// triggerblockflow at append time, and from orchestratestage at run
-// time for compileonly pipelines.
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
@@ -1131,16 +1115,6 @@ function loadfrontendprograms(programs, basepath, timeout) {
 // §6 — Finalizers
 // ============================================================
 
-// @proposal=P-AR — orchestratepipeline walks the tree to dispatch EVENT
-// stages and PIPELINE elements. Under Design A, BLOCK elements are
-// already executed at append time; this walker uses runblocks=false so
-// that BLOCK elements are skipped. Compileonly pipelines use
-// runblocks=true to execute the deferred blocks.
-//
-// @proposal=P-AT — the walker dispatches top-level EVENT stages to
-// registereventstage. The stage's blocks are not walked. Ordinary
-// stages (including those with `async` or no control) fall through to
-// orchestratestage.
 function orchestratepipeline(p, stageindex, env, options, runblocks) {
   if (stageindex >= p.elements.length) return Promise.resolve(env);
   var stage = p.elements[stageindex];
@@ -1166,17 +1140,6 @@ function loadpipelineresources(p, options) {
   return loadpipelinedependencies(p, options);
 }
 
-// @proposal=P-AR — run() is reduced to:
-//   1. resource loading;
-//   2. for non-compileonly pipelines, awaiting the append-time pending
-//      chain, then a structural walk (runblocks=false) to register EVENT
-//      stages and construct PIPELINE children;
-//      for compileonly pipelines, a structural walk with runblocks=true
-//      (the deferred blocks execute at that point).
-//
-// @proposal=P-AT — the structural walk itself dispatches top-level EVENT
-// stages to registereventstage; their blocks are not executed at walk
-// time even under runblocks=true.
 function run(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
