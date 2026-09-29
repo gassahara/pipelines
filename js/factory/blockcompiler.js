@@ -27,8 +27,16 @@
 // @proposal=P-AV — automatic env inheritance at child creation.
 // processpipelineelement seeds the child's env (childstate.env) from
 // the caller's env (parentenv), fill-only, at the moment the childstate
-// thunk resolves. The el.inputs projection and the childoptions.baseenv
-// assignment are removed; the env-as-p.env invariant is preserved.
+// thunk resolves.
+// @proposal=P-BA — unified stage-kind dispatcher. A single function
+// `runstage` dispatches every stage by kind (NULL / EVENT / LOOP) at
+// every depth. `registereventstage` carries the compiled stage value
+// and the env reference in its payload, so HYPERVISOR can run the
+// stage on event firing without any identifier-based lookup. `runloop`
+// implements LOOP dispatch: control.inputs resolved against env per
+// iteration; control.fn invoked with (properties, state, loopcount);
+// terminate on falsy. `processnestedstage` becomes a thin wrapper
+// delegating to runstage. `orchestratepipeline` delegates to runstage.
 
 // ============================================================
 // §1 — Construction API
@@ -61,9 +69,6 @@ function makepipelineelement(id, childstate, attrs) {
   return b;
 }
 
-// @proposal=P-AR — pipeline() carries the running env, the compileonly
-// flag, the append-time pending chain, and the per-pipeline compiler
-// setup that appendblock needs in order to trigger the flow.
 function pipeline(type, name, options) {
   var opts = options || {};
   var constants = createblockcompilerconstants();
@@ -793,8 +798,6 @@ function loadpipelinedependencies(pipelineslice, options) {
 // processpipelineelement builds the child pipeline value (childstate),
 // then seeds the child's env (childstate.env) from the caller's env
 // (parentenv), fill-only, before invoking run on the child.
-// The child's env is its p.env; the caller's env is the parent's
-// p.env; both are the single env under the env-as-p.env invariant.
 function processpipelineelement(el, pipelinename, stagepath, inherited, options) {
   var elementid = el.id || 'pipelineunknown';
 
@@ -814,11 +817,6 @@ function processpipelineelement(el, pipelinename, stagepath, inherited, options)
         throw stateerr;
       }
 
-      // @proposal=P-AV — automatic env inheritance at child creation:
-      // the caller's env (parentenv) is written into the child's env
-      // (childstate.env) fill-only. The child's env is its p.env; the
-      // caller's env is the parent's p.env; both are the single env
-      // under the env-as-p.env invariant.
       if (!childstate.env) childstate.env = {};
       Object.keys(parentenv).forEach(function(k) {
         if (childstate.env[k] === undefined) {
@@ -852,7 +850,12 @@ function processpipelineelement(el, pipelinename, stagepath, inherited, options)
   return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
 }
 
-function registereventstage(stage, pipelinename, stagepath, options) {
+// @proposal=P-BA — registereventstage carries the compiled stage value
+// (STAGE) and the env reference (ENV) in its payload, so HYPERVISOR
+// can run the stage on event firing without any identifier-based
+// lookup. ELEMENTS, CONTROL, and every other field are preserved for
+// backward compatibility.
+function registereventstage(stage, pipelinename, stagepath, env, options) {
   var sourceid = stage.control.sourceid;
   var event = stage.control.event;
   if (!sourceid || !event) {
@@ -866,6 +869,8 @@ function registereventstage(stage, pipelinename, stagepath, options) {
     EVENT: event,
     CONTROL: stage.control,
     ELEMENTS: stage.elements,
+    STAGE: stage,
+    ENV: env || {},
     BRIEFCASE: stage.briefcase || {},
     OPTIONS: options || {}
   };
@@ -880,55 +885,85 @@ function registereventstage(stage, pipelinename, stagepath, options) {
     });
 }
 
+// @proposal=P-BA — processnestedstage is a thin wrapper that delegates
+// to runstage. The caller (orchestratestage's runnext) passes a
+// stagepath already including the child stage's id; the previous
+// concatenation of childstage.id is removed.
 function processnestedstage(childstage, pipelinename, stagepath, constants, dnaconstants, options, runblocks) {
-  var childstagepath = stagepath.concat([childstage.id]);
-
-  if (childstage.control && childstage.control.command === 'EVENT') {
-    return registereventstage(childstage, pipelinename, childstagepath, options)
-      .then(function() {
-        var noopwrapper = function(env) { return Promise.resolve(env); };
-        noopwrapper.iseventregistration = true;
-        return noopwrapper;
-      });
-  }
-
-  if (childstage.async === true) {
-    var asyncwrapper = function(env) {
-      return callwithstack(
-        null,
-        'nested-stage:' + childstage.id,
-        'async-await',
-        function() {
-          orchestratestage(childstage, pipelinename, env, childstagepath, options || {}, runblocks)
-            .catch(function(err) {
-              logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
-            });
-          return undefined;
-        },
-        [env],
-        { context: { env: env }, capturecontinuation: true, attachcontinuation: false }
-      );
-    };
-    asyncwrapper.asyncstage = true;
-    return asyncwrapper;
-  } else {
-    var syncwrapper = function(env) {
-      return callwithstack(
-        null,
-        'nested-stage:' + childstage.id,
-        'async-await',
-        function() {
-          return orchestratestage(childstage, pipelinename, env, childstagepath, options || {}, runblocks);
-        },
-        [env],
-        { context: { env: env }, capturecontinuation: true, attachcontinuation: false }
-      );
-    };
-    syncwrapper.asyncstage = false;
-    return syncwrapper;
-  }
+  return function(env) {
+    return runstage(childstage, pipelinename, stagepath, env, options, runblocks);
+  };
 }
 
+// @proposal=P-BA — unified stage-kind dispatcher.
+// Every walk (the initial walk via orchestratepipeline, the fired walk
+// via HYPERVISOR, and any nested walk reached during either) enters
+// through runstage. It dispatches by stage.control.command:
+//   EVENT  → register the listener; the stage's elements are deferred
+//            to the event.
+//   LOOP   → iterate per control.fn and control.inputs.
+//   NULL   → walk the elements; if `async` is set, dispatch via an
+//            async wrapper.
+function runstage(stage, pipelinename, stagepath, env, options, runblocks) {
+  if (!stage) return Promise.resolve(env);
+  var kind = (stage.control && stage.control.command) || null;
+
+  if (kind === 'EVENT') {
+    return registereventstage(stage, pipelinename, stagepath, env, options)
+      .then(function() { return env; });
+  }
+
+  if (kind === 'LOOP') {
+    return runloop(stage, pipelinename, stagepath, env, options, 0, runblocks);
+  }
+
+  if (stage.async === true) {
+    return callwithstack(
+      null,
+      'nested-stage:' + stage.id,
+      'async-await',
+      function() {
+        orchestratestage(stage, pipelinename, env, stagepath, options || {}, runblocks)
+          .catch(function(err) {
+            logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
+          });
+        return undefined;
+      },
+      [env],
+      { context: { env: env }, capturecontinuation: true, attachcontinuation: false }
+    );
+  }
+
+  return orchestratestage(stage, pipelinename, env, stagepath, options, runblocks);
+}
+
+// @proposal=P-BA — LOOP iteration. Each iteration:
+//   · resolves the values bound to the names in control.inputs against
+//     env into a `state` object;
+//   · invokes control.fn(properties, state, loopcount) — the control
+//     object serves as the properties bag;
+//   · if the fn returns a falsy value, the loop terminates, returning
+//     the current env;
+//   · otherwise the stage's elements are walked once, then the loop
+//     recurses with loopcount + 1.
+function runloop(stage, pipelinename, stagepath, env, options, loopcount, runblocks) {
+  var inputs = (stage.control && stage.control.inputs) || [];
+  var state = {};
+  inputs.forEach(function(k) { state[k] = env[k]; });
+
+  var proceed = stage.control.fn(stage.control, state, loopcount);
+  if (!proceed) return Promise.resolve(env);
+
+  return orchestratestage(stage, pipelinename, env, stagepath, options, runblocks)
+    .then(function() {
+      return runloop(stage, pipelinename, stagepath, env, options, loopcount + 1, runblocks);
+    });
+}
+
+// @proposal=P-BA — orchestratestage walks a stage's element list. It
+// does not itself dispatch on the stage's kind; that is runstage's
+// role. It dispatches on element kind (BLOCK / PIPELINE / STAGE) and,
+// for STAGE elements, delegates to runstage.
 function orchestratestage(stage, pipelinename, env, stagepath, options, runblocks) {
   var constants = createblockcompilerconstants();
   var blocktypes = constants.blocktypes;
@@ -1115,6 +1150,10 @@ function loadfrontendprograms(programs, basepath, timeout) {
 // §6 — Finalizers
 // ============================================================
 
+// @proposal=P-BA — orchestratepipeline delegates each top-level stage
+// to runstage, which dispatches by kind (NULL / EVENT / LOOP) at every
+// depth. The inline EVENT branch and the inline orchestratestage call
+// are replaced by a single runstage call.
 function orchestratepipeline(p, stageindex, env, options, runblocks) {
   if (stageindex >= p.elements.length) return Promise.resolve(env);
   var stage = p.elements[stageindex];
@@ -1122,15 +1161,7 @@ function orchestratepipeline(p, stageindex, env, options, runblocks) {
     return orchestratepipeline(p, stageindex + 1, env, options, runblocks);
   }
   var stagepath = ['elements', stageindex];
-
-  if (stage.control && stage.control.command === 'EVENT') {
-    return registereventstage(stage, p.name, stagepath, options)
-      .then(function() {
-        return orchestratepipeline(p, stageindex + 1, env, options, runblocks);
-      });
-  }
-
-  return orchestratestage(stage, p.name, env, stagepath, options, runblocks)
+  return runstage(stage, p.name, stagepath, env, options, runblocks)
     .then(function() {
       return orchestratepipeline(p, stageindex + 1, env, options, runblocks);
     });
@@ -1140,6 +1171,18 @@ function loadpipelineresources(p, options) {
   return loadpipelinedependencies(p, options);
 }
 
+// @proposal=P-AR — run() is reduced to:
+//   1. resource loading;
+//   2. for non-compileonly pipelines, awaiting the append-time pending
+//      chain, then a structural walk (runblocks=false);
+//      for compileonly pipelines, a structural walk with runblocks=true.
+//
+// @proposal=P-AT — top-level EVENT stages are registered during the
+// structural walk; their blocks are not executed at walk time even
+// under runblocks=true.
+//
+// @proposal=P-BA — the structural walk enters through runstage, which
+// dispatches every stage by kind uniformly at every depth.
 function run(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);

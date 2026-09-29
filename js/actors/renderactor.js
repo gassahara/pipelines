@@ -5,15 +5,18 @@
 // @proposal=P9 (Cycle P9-08, batch 9.9) — the case-alias reads are
 // removed. The slice's writer (ENSURERENDERSLICE) declares
 // ACTORREGISTRY and TRIGGERGCSCHEDULED (UPPERCASE). The readers now
-// use those forms exclusively. The earlier reads of `actorregistry`,
-// `actorRegistry` and `triggerGcScheduled` — OP-011-era aliases —
-// are removed.
+// use those forms exclusively.
 //
 // @proposal=P-Q — a LOADSCRIPT handler is added. It creates a <script
 // src>, appends it to document.head, and responds to the sender when
-// the script's load event (or error event) fires. The block compiler
-// sends LOADSCRIPT for each lib and each program, replacing the
-// direct document.* usage that previously lived in blockcompiler.js.
+// the script's load event (or error event) fires.
+//
+// @proposal=P-BA — the REGISTEREVENTLISTENER payload now carries
+// STAGE (the compiled stage value) and OPTIONS alongside the existing
+// ELEMENTS/CONTROL/ENV fields. The GC object's METADATA stores them
+// opaquely; the global event observer forwards them in the
+// EVENTTRIGGERED payload so HYPERVISOR can run the stage without any
+// identifier-based lookup.
 
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -160,16 +163,26 @@ function WAITFORDOMREADY() {
   return Promise.resolve();
 }
 
+// @proposal=P-BA — METADATA gains STAGE and OPTIONS alongside the
+// existing STAGEPATH / CONTROL / CHILDREN / ENV fields. The stage
+// value and the options travel with the registration; they will be
+// forwarded in the EVENTTRIGGERED payload so HYPERVISOR can run the
+// stage without any identifier-based lookup.
 function CREATEEVENTPRODUCERCONSUMER(MSG) {
   return {
     PRODUCER: { TYPE: 'domevent', ID: MSG.SOURCEID, EVENT: MSG.EVENT },
     CONSUMER: { TYPE: 'eventtrigger', PIPELINEID: MSG.PIPELINEID, STAGEID: MSG.STAGEID },
-    METADATA: { STAGEPATH: MSG.STAGEPATH || [], CONTROL: MSG.CONTROL, CHILDREN: MSG.ELEMENTS, ENV: MSG.ENV || {} }
+    METADATA: {
+      STAGEPATH: MSG.STAGEPATH || [],
+      CONTROL: MSG.CONTROL,
+      CHILDREN: MSG.ELEMENTS,
+      STAGE: MSG.STAGE,
+      ENV: MSG.ENV || {},
+      OPTIONS: MSG.OPTIONS || {}
+    }
   };
 }
 
-// @proposal=P9 (Cycle P9-08, batch 9.9) — the camelCase twin
-// `triggerGcScheduled` is removed; TRIGGERGCSCHEDULED is authoritative.
 function SCHEDULEGCCYCLE(RENDERSLICE) {
   if (!RENDERSLICE) return;
   if (RENDERSLICE.TRIGGERGCSCHEDULED) return;
@@ -223,11 +236,19 @@ function ENSUREEVENTOBSERVER(RENDERSLICE) {
       var STAGEID = CONSUMER.STAGEID;
       var STAGEPATH = METADATA.STAGEPATH || [STAGEID];
 
+      // @proposal=P-BA — the EVENTTRIGGERED payload now forwards the
+      // compiled stage value (STAGE), the env reference (ENV), and
+      // the OPTIONS along with the existing identifiers. HYPERVISOR
+      // runs the received stage directly; no lookup by STAGEID
+      // occurs on the firing path.
       var EVENTTRIGGERPAYLOAD = {
         PIPELINEID: PIPELINEID,
         STAGEID: STAGEID,
         STAGEPATH: STAGEPATH,
-        EVENTPAYLOAD: { TYPE: EVENT.type, TARGETID: TARGETID }
+        EVENTPAYLOAD: { TYPE: EVENT.type, TARGETID: TARGETID },
+        STAGE: METADATA.STAGE,
+        ENV: METADATA.ENV,
+        OPTIONS: METADATA.OPTIONS
       };
 
       var MSGTYPE = MESSAGETYPES.EVENTTRIGGERED;
@@ -315,7 +336,6 @@ HANDLERS[MESSAGETYPES.PERSISTENCE] = function(ENV, MSG) {
     else return { ERROR: 'unknown persistence action: ' + MSG.ACTION };
   } catch (ERR) { return { ERROR: ERR.message }; }
 };
-// @proposal=P9 (Cycle P9-08, batch 9.9) — ACTORREGISTRY is authoritative.
 HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
   try {
     var EL = document.createElement(MSG.TAG);
@@ -669,8 +689,6 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
   });
 };
 
-// @proposal=P-Q — LOADSCRIPT handler: create a <script src>, append it
-// to document.head, respond when the load or error event fires.
 HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
   var s = document.createElement('script');
   s.src = MSG.SRC;
@@ -697,6 +715,9 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
     STAGEID: MSG.STAGEID
   });
 
+  // @proposal=P-BA — CREATEEVENTPRODUCERCONSUMER now places the stage
+  // value (STAGE) and the OPTIONS on METADATA alongside CHILDREN and
+  // ENV. They are stored opaquely; the firing path forwards them.
   var PC = CREATEEVENTPRODUCERCONSUMER(MSG);
   var LISTFN = (typeof LISTOBJECTS === 'function') ? LISTOBJECTS : function() { return []; };
   var REGOBJFN = (typeof REGISTEROBJECT === 'function') ? REGISTEROBJECT : function() {};
@@ -1668,9 +1689,6 @@ var STARTRENDERACTOR = function(OPTIONS) {
   };
 };
 
-// @proposal=P9 (Cycle P9-08, batch 9.9) — the two EXPECTELEMENT sites
-// that read `actorregistry` / `actorRegistry` are corrected to the
-// authoritative ACTORREGISTRY.
 var EXPECTELEMENT = function(ID, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = 30000;
   return new Promise(function(RESOLVE, REJECT) {

@@ -3,9 +3,13 @@
 // @proposal=P5 (corrected) — the DNA-era boot cases are absent (Cycle 37R).
 //
 // @proposal=P9 (Cycle P9-05, batch 9.6) — the `NEXTSTAGEMESSAGES` slice
-// field is removed. It had no writer and no reader: its only purpose in
-// the source was to hold per-stage messages for the DNA-era boot; that
-// boot path was removed at Cycle 37R.
+// field is removed.
+//
+// @proposal=P-BA — the EVENTTRIGGERED case is no longer a stub. The
+// registration carries the compiled stage value (STAGE) and the env
+// reference (ENV); the fired walk runs the stage's elements against
+// the received env via `orchestratestage`. No identifier-based lookup
+// occurs; the value is present.
 
 var HYPERVISORVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -144,13 +148,34 @@ function HYPERVISORBEHAVIOR(ENV, MESSAGE) {
       }, GENERATETAG(), 'HYPERVISORACTOR');
       return ENV;
     case MESSAGETYPES.EVENTTRIGGERED: {
-      // @proposal=P5 (corrected) — defensive stub. The DNA-era dispatch
-      // path (LOADEDPIPELINES + COMPILESTAGEFROMSTOREDDNA) is removed.
-      // The corrected event routing mechanism is not yet defined; see
-      // DEV-C37R-EVENTROUTING.
-      logwarn(ENV, '[HYPERVISOR]', 'EVENTTRIGGERED received; event routing under corrected P5 is not yet defined',
-        'PIPELINEID:', PIPELINEID, 'STAGEID:', MESSAGE.STAGEID);
-      return ENV;
+      // @proposal=P-BA — the registration carries the compiled stage
+      // value (MESSAGE.STAGE) and the env reference (MESSAGE.ENV). The
+      // event fired; the stage's element list must be walked against
+      // the received env.
+      //
+      // `orchestratestage` walks a stage's element list, dispatching
+      // every element by kind: BLOCKs execute, PIPELINE elements
+      // construct their child, and nested STAGE elements go through
+      // the unified `runstage` dispatcher (which handles EVENT, LOOP,
+      // and NULL at every depth). No STAGEID-based lookup occurs; the
+      // value is present.
+      //
+      // runblocks=true: the fired walk executes BLOCK elements. This
+      // is the deferred-execution half of the EVENT stage's compile
+      // contract.
+      if (!MESSAGE.STAGE) {
+        logwarn(ENV, '[HYPERVISOR]', 'EVENTTRIGGERED received without STAGE; no walk performed',
+          'PIPELINEID:', PIPELINEID, 'STAGEID:', MESSAGE.STAGEID);
+        return ENV;
+      }
+      return orchestratestage(
+        MESSAGE.STAGE,
+        MESSAGE.PIPELINEID || 'event',
+        MESSAGE.ENV || {},
+        MESSAGE.STAGEPATH || [],
+        MESSAGE.OPTIONS || {},
+        true
+      );
     }
     case MESSAGETYPES.PING:
       if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
@@ -237,12 +262,6 @@ function ENQUEUEHYPERVISORACTIVATEACTORS(RESPONSESPEC) {
 }
 
 // ---------- ACTOR HANDLE SURFACE — @proposal=P4 (Cycle 26) ----------
-//
-// The three operations are sourced from CREATEACTORHANDLE (Cycle 18).
-// SUBMIT routes through the mail system (Q6); EXPECT polls
-// GETACTIONRESULT until a response (including error) is obtained, and
-// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
-// read of the mail-system records (Q8).
 
 var HYPERVISORACTORHANDLE = null;
 
