@@ -110,8 +110,8 @@ function callwithstack(initialstate, label, type, fn, args, options) {
             if (sendinstfn && typeof MESSAGETYPES !== 'undefined') {
                 try {
                     sendinstfn('DEBUGACTOR', MESSAGETYPES.SHOW, {
-                        error: err,
-                        continuation: (err.diagnostic && err.diagnostic.CONTINUATION) || null
+                        ERROR: err,
+                        CONTINUATION: (err.diagnostic && err.diagnostic.CONTINUATION) || null
                     }, gentagfn(), 'callwithstack');
                 } catch (notifyerr) {}
             }
