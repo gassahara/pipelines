@@ -23,6 +23,25 @@
 // stylizercore.computepanemaxwidth), margin auto, flex display, the
 // shape as flexDirection, and a spacing-derived gap. No literal pixel
 // constant is written to maxWidth.
+//
+// @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — the correction subsystem
+// and the intrinsic-size heuristics measure before assuming. Two helpers
+// — SU_detectviewportwidth and SU_detectfontsize — replace the literals
+// 1024 and 16 as primary defaults. The literal 1024 no longer appears in
+// a viewport-default position; 16 remains only as the last layer of
+// SU_detectfontsize's cascade.
+//
+// @proposal=P-CORRECTIONS-EQUILIBRIUM (Cycle C2) — every LC_correct*
+// function is restructured as a per-invocation fixed-point loop: a
+// register of already-corrected elements, iteration in DOM order,
+// re-derivation of the violation set after each pass, and termination
+// either on convergence or at LC_CORRECTION_MAXITER. Return contract is
+// { applied, converged }.
+//
+// @proposal=P-CORRECT-OVERFLOW-SCOPE (Cycle C2) — form 1: the correction
+// site (LC_correctoverflowdoc) skips elements whose inline overflow is
+// 'hidden' or 'clip'. An element that declares its own width and clips
+// is not a defect; wrapping it destroys the surrounding layout.
 
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -169,6 +188,67 @@ function WAITFORDOMREADY() {
   return Promise.resolve();
 }
 
+// ============================================================
+// @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — detection helpers.
+// The cascade is: caller-supplied value ?? runtime detection ?? literal.
+// The literal is last. Two literals remain, both inside SU_detectfontsize
+// as the final layer of its own cascade (16), and one inside
+// SU_detectviewportwidth as the devicePixelRatio fallback (1). No other
+// literal appears as a primary default for a measurable quantity.
+// ============================================================
+
+function SU_detectviewportwidth() {
+  if (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientWidth > 0) {
+    return document.documentElement.clientWidth;
+  }
+  if (typeof window !== 'undefined' && typeof window.innerWidth === 'number' && window.innerWidth > 0) {
+    return window.innerWidth;
+  }
+  if (typeof window !== 'undefined' && window.screen && typeof window.screen.width === 'number' && window.screen.width > 0) {
+    var dpr = (typeof window.devicePixelRatio === 'number' && window.devicePixelRatio > 0) ? window.devicePixelRatio : 1;
+    return Math.round(window.screen.width / dpr);
+  }
+  return null;
+}
+
+function SU_detectfontsize(node) {
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    try {
+      if (node && typeof node === 'object' && node.nodeType === 1) {
+        var cs = window.getComputedStyle(node);
+        if (cs && cs.fontSize) {
+          var v = parseFloat(cs.fontSize);
+          if (isFinite(v) && v > 0) return v;
+        }
+      }
+      if (typeof document !== 'undefined' && document.documentElement) {
+        var csr = window.getComputedStyle(document.documentElement);
+        if (csr && csr.fontSize) {
+          var vr = parseFloat(csr.fontSize);
+          if (isFinite(vr) && vr > 0) return vr;
+        }
+      }
+    } catch (_) { /* non-fatal; fall through to literal */ }
+  }
+  return 16;
+}
+
+// @proposal=P-CORRECT-OVERFLOW-SCOPE (form 1) — an element that declares
+// its own clipping overflow is designed to clip; it is not an overflow
+// defect. The predicate reads inline style, which is where the pipeline
+// rules write when they mutate an element.
+function LC_isintentionalclip(el) {
+  if (!el || !el.style) return false;
+  var ov = el.style.overflow;
+  if (ov === 'hidden' || ov === 'clip') return true;
+  return false;
+}
+
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — iteration cap for the fixed-point
+// loops. Convergence is expected well below this bound; the cap exists so
+// that a pathological DOM cannot make the correction subsystem diverge.
+var LC_CORRECTION_MAXITER = 32;
+
 // @proposal=P-BA — METADATA gains STAGE and OPTIONS alongside the
 // existing STAGEPATH / CONTROL / CHILDREN / ENV fields. The stage
 // value and the options travel with the registration; they will be
@@ -242,11 +322,6 @@ function ENSUREEVENTOBSERVER(RENDERSLICE) {
       var STAGEID = CONSUMER.STAGEID;
       var STAGEPATH = METADATA.STAGEPATH || [STAGEID];
 
-      // @proposal=P-BA — the EVENTTRIGGERED payload now forwards the
-      // compiled stage value (STAGE), the env reference (ENV), and
-      // the OPTIONS along with the existing identifiers. HYPERVISOR
-      // runs the received stage directly; no lookup by STAGEID
-      // occurs on the firing path.
       var EVENTTRIGGERPAYLOAD = {
         PIPELINEID: PIPELINEID,
         STAGEID: STAGEID,
@@ -416,27 +491,36 @@ function LAYOUTEXTRACTID(descriptor) {
   return descriptor.slice(hash + 1);
 }
 
+// @proposal=P-MEASURABLE-DEFAULTS — site 1 of five. The viewport is
+// detected before the literal 1024 is even considered. If detection
+// fails, the handler skips rather than correcting against a fictional
+// geometry.
 HANDLERS[MESSAGETYPES.CHECKOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
   var OPTS = MSG.OPTIONS || {};
-  var VW = OPTS.viewportwidth || 1024;
+  var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SU_detectviewportwidth();
+  if (VW === null) return { SKIPPED: 'viewport-undetectable' };
   var CW = OPTS.containerwidths || {};
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { ERROR: 'stylizercore unavailable' };
   return { VIOLATIONS: LC_checkoverflowdoc(ROOT, VW, CW, SC) };
 };
+
+// @proposal=P-MEASURABLE-DEFAULTS — site 2 of five.
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — the correct function returns
+// { applied, converged }; the handler surfaces both.
 HANDLERS[MESSAGETYPES.CORRECTOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
   var OPTS = MSG.OPTIONS || {};
-  var VW = OPTS.viewportwidth || 1024;
+  var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SU_detectviewportwidth();
+  if (VW === null) return { SKIPPED: 'viewport-undetectable' };
   var CW = OPTS.containerwidths || {};
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { ERROR: 'stylizercore unavailable' };
-  var VIOLATIONS = LC_checkoverflowdoc(ROOT, VW, CW, SC);
-  var APPLIED = LC_correctoverflowdoc(VIOLATIONS);
-  return { APPLIED: APPLIED.length };
+  var RESULT = LC_correctoverflowdoc(ROOT, VW, CW, SC);
+  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
 };
 
 HANDLERS[MESSAGETYPES.CHECKSPACING] = function(ENV, MSG) {
@@ -458,8 +542,8 @@ HANDLERS[MESSAGETYPES.CORRECTSPACING] = function(ENV, MSG) {
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { ERROR: 'stylizercore unavailable' };
-  var APPLIED = LC_correctspacingdoc(ROOT, MINGAP, SC);
-  return { APPLIED: APPLIED.length };
+  var RESULT = LC_correctspacingdoc(ROOT, MINGAP, SC);
+  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
 };
 
 HANDLERS[MESSAGETYPES.CHECKOVERLAP] = function(ENV, MSG) {
@@ -471,8 +555,8 @@ HANDLERS[MESSAGETYPES.CHECKOVERLAP] = function(ENV, MSG) {
 HANDLERS[MESSAGETYPES.CORRECTOVERLAP] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
-  var APPLIED = LC_correctoverlapdoc(ROOT);
-  return { APPLIED: APPLIED.length };
+  var RESULT = LC_correctoverlapdoc(ROOT);
+  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
 };
 
 HANDLERS[MESSAGETYPES.CHECKSCROLLABILITY] = function(ENV, MSG) {
@@ -484,8 +568,8 @@ HANDLERS[MESSAGETYPES.CHECKSCROLLABILITY] = function(ENV, MSG) {
 HANDLERS[MESSAGETYPES.CORRECTSCROLLABILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
-  var APPLIED = LC_correctscrollabilitydoc(ROOT);
-  return { APPLIED: APPLIED.length };
+  var RESULT = LC_correctscrollabilitydoc(ROOT);
+  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
 };
 
 HANDLERS[MESSAGETYPES.CHECKCONTROLLEDOVERLAY] = function(ENV, MSG) {
@@ -497,8 +581,8 @@ HANDLERS[MESSAGETYPES.CHECKCONTROLLEDOVERLAY] = function(ENV, MSG) {
 HANDLERS[MESSAGETYPES.CORRECTCONTROLLEDOVERLAY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
-  var APPLIED = LC_correctcontrolledoverlaydoc(ROOT);
-  return { APPLIED: APPLIED.length };
+  var RESULT = LC_correctcontrolledoverlaydoc(ROOT);
+  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
 };
 
 HANDLERS[MESSAGETYPES.REWRITESTYLEATTRS] = function(ENV, MSG) {
@@ -519,19 +603,7 @@ HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
 };
 
 // @proposal=P-FW-PANEGRAMMAR — pane-layout command. Applies the pane's
-// base geometry to the element addressed by MSG.ID:
-//   · maxWidth  — derived from stylizercore.computepanemaxwidth using
-//                 MSG.VIEWPORT.VIEWPORTWIDTH and the role implied by
-//                 MSG.SHAPE ('row' → 'app-shell', else 'reading-column')
-//   · margin    — '0 auto' (centering)
-//   · display   — 'flex'
-//   · flexDirection — MSG.SHAPE
-//   · gap       — spacing.gap + 'px' from stylizercore.computebasespacing
-// No literal pixel constant is written to maxWidth. Every operand is
-// either measured (viewport), spacing-derived, or a structural constant
-// inside computepanemaxwidth. The handler mutates only the element
-// addressed by MSG.ID; it is idempotent under repeated same-payload
-// invocation.
+// base geometry to the element addressed by MSG.ID.
 HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
@@ -543,7 +615,9 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
 
   var VIEWPORT = MSG.VIEWPORT || {};
   var VW = (typeof VIEWPORT.VIEWPORTWIDTH === 'number' && VIEWPORT.VIEWPORTWIDTH > 0)
-    ? VIEWPORT.VIEWPORTWIDTH : 1024;
+    ? VIEWPORT.VIEWPORTWIDTH
+    : SU_detectviewportwidth();
+  if (VW === null) return { SKIPPED: 'viewport-undetectable' };
   var SHAPE = MSG.SHAPE === 'row' ? 'row' : 'column';
   var ROLE = SHAPE === 'row' ? 'app-shell' : 'reading-column';
 
@@ -762,9 +836,6 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
     STAGEID: MSG.STAGEID
   });
 
-  // @proposal=P-BA — CREATEEVENTPRODUCERCONSUMER now places the stage
-  // value (STAGE) and the OPTIONS on METADATA alongside CHILDREN and
-  // ENV. They are stored opaquely; the firing path forwards them.
   var PC = CREATEEVENTPRODUCERCONSUMER(MSG);
   var LISTFN = (typeof LISTOBJECTS === 'function') ? LISTOBJECTS : function() { return []; };
   var REGOBJFN = (typeof REGISTEROBJECT === 'function') ? REGISTEROBJECT : function() {};
@@ -893,8 +964,11 @@ function SU_applystep(nodes, step, filterfn, stylizercore) {
   }, []);
 }
 
+// @proposal=P-MEASURABLE-DEFAULTS — site 3 of five. The inherited font
+// size is detected from the root element when the caller does not
+// supply one.
 function SU_buildlayoutpropertymap(rootel, viewportwidth, inheritedfontsize, stylizercore) {
-  if (inheritedfontsize === undefined) inheritedfontsize = 16;
+  if (inheritedfontsize === undefined) inheritedfontsize = SU_detectfontsize(rootel);
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
 
   function walk(el, parentavailablewidth, parentfontsize, acc) {
@@ -976,7 +1050,9 @@ function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore
   if (node.nodeType === 3) {
     var txt = node.nodeValue.trim();
     if (!txt) return { width: 0, height: 0 };
-    var fontsize = inheritedprops.fontsize || 16;
+    // @proposal=P-MEASURABLE-DEFAULTS — site 5 of five. Font size is
+    // detected from the parent element before the literal is considered.
+    var fontsize = inheritedprops.fontsize || SU_detectfontsize(node.parentElement);
     var lines = txt.split('\n');
     var isnowrap = inheritedprops.whitespace === 'nowrap' || inheritedprops.whitespace === 'pre';
     var maxlinelen = Math.max.apply(null, lines.map(function(line) {
@@ -1050,12 +1126,14 @@ function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore
   return { width: (isflexrow ? totalw : maxw) + padh, height: totalh + padv };
 }
 
+// @proposal=P-MEASURABLE-DEFAULTS — site 4 of five. The heuristic's
+// font-size seed comes from detection before the literal is considered.
 function SU_estimaterecursivebounds(node, stylizercore) {
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
   if (node.nodeType === 3) {
     var txt = node.nodeValue.trim();
     if (!txt) return 0;
-    var fsize = 16;
+    var fsize = SU_detectfontsize(node.parentElement || node);
     var isnowrap = false;
     function climb(p, size, nowrap) {
       if (!p || !p.style) return { size: size, nowrap: nowrap };
@@ -1480,17 +1558,29 @@ function LC_checkspacingdoc(root, mingap, stylizercore) {
   return walk(root, []);
 }
 
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — LC_correctspacingdoc is now a
+// fixed-point loop. The register keys on the element actually corrected
+// (elementa). Signature: (root, mingap, stylizercore). Returns
+// { applied, converged }.
 function LC_correctspacingdoc(root, mingap, stylizercore) {
   if (mingap === undefined) mingap = 12;
-  var violations = LC_checkspacingdoc(root, mingap, stylizercore);
-  var rules = [];
-  for (var i = 0; i < violations.length; i++) {
-    var el = violations[i].elementa;
-    if (!el) continue;
-    el.style.marginBottom = mingap + 'px';
-    rules.push({ selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() }, styles: { marginBottom: mingap + 'px' } });
+  var register = new WeakSet();
+  var applied = 0;
+  var converged = false;
+  var iter = 0;
+  while (iter < LC_CORRECTION_MAXITER) {
+    var violations = LC_checkspacingdoc(root, mingap, stylizercore);
+    var uncorrected = violations.filter(function(v) { return !register.has(v.elementa); });
+    if (uncorrected.length === 0) { converged = true; break; }
+    uncorrected.forEach(function(v) {
+      register.add(v.elementa);
+      if (!v.elementa) return;
+      v.elementa.style.marginBottom = mingap + 'px';
+      applied += 1;
+    });
+    iter += 1;
   }
-  return rules;
+  return { applied: applied, converged: converged };
 }
 
 function LC_checkoverlapdoc(root) {
@@ -1506,7 +1596,7 @@ function LC_checkoverlapdoc(root) {
       if (aw && ah && bw && bh &&
           aleft < bleft + bw && aleft + aw > bleft &&
           atop < btop + bh && atop + ah > btop) {
-        return inneracc.concat([{ elementa: a.tagName + (a.id ? '#' + a.id : ''), elementb: b.tagName + (b.id ? '#' + b.id : '') }]);
+        return inneracc.concat([{ elementa: a.tagName + (a.id ? '#' + a.id : ''), elementb: b.tagName + (b.id ? '#' + b.id : ''), elementaref: a, elementbref: b }]);
       }
       return inneracc;
     }, acc);
@@ -1514,57 +1604,88 @@ function LC_checkoverlapdoc(root) {
   return violations;
 }
 
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
+// on elementbref (the element actually corrected). Returns
+// { applied, converged }.
 function LC_correctoverlapdoc(root) {
-  return LC_checkoverlapdoc(root).map(function(violation) {
-    var id = LAYOUTEXTRACTID(violation.elementb);
-    var el = id !== null ? document.getElementById(id) : null;
-    if (!el) el = root.querySelector(violation.elementb);
-    if (el) {
+  var register = new WeakSet();
+  var applied = 0;
+  var converged = false;
+  var iter = 0;
+  while (iter < LC_CORRECTION_MAXITER) {
+    var violations = LC_checkoverlapdoc(root);
+    var uncorrected = violations.filter(function(v) { return v.elementbref && !register.has(v.elementbref); });
+    if (uncorrected.length === 0) { converged = true; break; }
+    uncorrected.forEach(function(v) {
+      var el = v.elementbref;
+      if (!el) return;
+      register.add(el);
       el.style.position = 'relative';
-      return { selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() }, styles: { position: 'relative' } };
-    }
-    return null;
-  }).filter(Boolean);
+      applied += 1;
+    });
+    iter += 1;
+  }
+  return { applied: applied, converged: converged };
 }
 
 function LC_checkscrollabilitydoc(root) {
   return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) {
     var s = el.style;
     return s && (s.overflow === 'auto' || s.overflow === 'scroll') && !s.touchAction;
-  }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : '') }; });
+  }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : ''), elementref: el }; });
 }
 
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
+// on elementref.
 function LC_correctscrollabilitydoc(root) {
-  return LC_checkscrollabilitydoc(root).map(function(violation) {
-    var id = LAYOUTEXTRACTID(violation.element);
-    var el = id !== null ? document.getElementById(id) : null;
-    if (!el) el = root.querySelector(violation.element);
-    if (el) {
+  var register = new WeakSet();
+  var applied = 0;
+  var converged = false;
+  var iter = 0;
+  while (iter < LC_CORRECTION_MAXITER) {
+    var violations = LC_checkscrollabilitydoc(root);
+    var uncorrected = violations.filter(function(v) { return v.elementref && !register.has(v.elementref); });
+    if (uncorrected.length === 0) { converged = true; break; }
+    uncorrected.forEach(function(v) {
+      var el = v.elementref;
+      if (!el) return;
+      register.add(el);
       el.style.touchAction = 'pan-y';
-      return { selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() }, styles: { touchAction: 'pan-y' } };
-    }
-    return null;
-  }).filter(Boolean);
+      applied += 1;
+    });
+    iter += 1;
+  }
+  return { applied: applied, converged: converged };
 }
 
 function LC_checkcontrolledoverlaydoc(root) {
   return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) {
     var s = el.style;
     return s && (s.position === 'absolute' || s.position === 'fixed') && !s.zIndex;
-  }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : '') }; });
+  }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : ''), elementref: el }; });
 }
 
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
+// on elementref.
 function LC_correctcontrolledoverlaydoc(root) {
-  return LC_checkcontrolledoverlaydoc(root).map(function(violation) {
-    var id = LAYOUTEXTRACTID(violation.element);
-    var el = id !== null ? document.getElementById(id) : null;
-    if (!el) el = root.querySelector(violation.element);
-    if (el) {
+  var register = new WeakSet();
+  var applied = 0;
+  var converged = false;
+  var iter = 0;
+  while (iter < LC_CORRECTION_MAXITER) {
+    var violations = LC_checkcontrolledoverlaydoc(root);
+    var uncorrected = violations.filter(function(v) { return v.elementref && !register.has(v.elementref); });
+    if (uncorrected.length === 0) { converged = true; break; }
+    uncorrected.forEach(function(v) {
+      var el = v.elementref;
+      if (!el) return;
+      register.add(el);
       el.style.zIndex = '10';
-      return { selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() }, styles: { zIndex: '10' } };
-    }
-    return null;
-  }).filter(Boolean);
+      applied += 1;
+    });
+    iter += 1;
+  }
+  return { applied: applied, converged: converged };
 }
 
 function LC_checkoverflowdoc(root, viewportwidth, containerwidths, stylizercore) {
@@ -1598,24 +1719,37 @@ function LC_checkoverflowdoc(root, viewportwidth, containerwidths, stylizercore)
     });
 }
 
-function LC_correctoverflowdoc(overflowelements) {
-  function isinsidescrollwrapper(el) {
-    function climb(parent) {
-      if (!parent) return false;
-      var s = parent.style || {};
-      if (parent.tagName.toLowerCase() === 'div' && (s.width || s.maxWidth) && s.overflow === 'scroll') return true;
-      return climb(parent.parentElement);
-    }
-    return climb(el.parentElement);
+// @proposal=P-CORRECT-OVERFLOW-SCOPE (form 1) — an element that declares
+// its own width and clips is designed to clip; the correction loop
+// registers it (so it is not re-examined on the next iteration) but does
+// not wrap it.
+//
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
+// on the element considered. Signature:
+// (root, viewportwidth, containerwidths, stylizercore).
+// Returns { applied, converged }.
+function LC_correctoverflowdoc(root, viewportwidth, containerwidths, stylizercore) {
+  var register = new WeakSet();
+  var applied = 0;
+  var converged = false;
+  var iter = 0;
+  while (iter < LC_CORRECTION_MAXITER) {
+    var violations = LC_checkoverflowdoc(root, viewportwidth, containerwidths, stylizercore);
+    var uncorrected = violations.filter(function(el) { return !register.has(el); });
+    if (uncorrected.length === 0) { converged = true; break; }
+    uncorrected.forEach(function(el) {
+      register.add(el);
+      if (LC_isintentionalclip(el)) return;
+      var wrapper = document.createElement('div');
+      wrapper.style.width = '80%';
+      wrapper.style.overflow = 'scroll';
+      el.parentNode.insertBefore(wrapper, el);
+      wrapper.appendChild(el);
+      applied += 1;
+    });
+    iter += 1;
   }
-  return overflowelements.filter(function(el) { return !isinsidescrollwrapper(el); }).map(function(el) {
-    var wrapper = document.createElement('div');
-    wrapper.style.width = '80%';
-    wrapper.style.overflow = 'scroll';
-    el.parentNode.insertBefore(wrapper, el);
-    wrapper.appendChild(el);
-    return { selector: el.id ? { id: el.id } : { tag: el.tagName.toLowerCase() }, styles: { wrapped: 'true' } };
-  });
+  return { applied: applied, converged: converged };
 }
 
 function RESPONDIFNEEDED(ENV, MESSAGE, RESULT) {

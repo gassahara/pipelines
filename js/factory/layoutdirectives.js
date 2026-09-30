@@ -1,6 +1,12 @@
 // layoutdirectives.js — layout-directive concern.
 //
 // @proposal=P-V — the pre-P6 vestiges are removed.
+// @proposal=P-SHELL-LAYOUTRULES-MIGRATION (Cycle C2) — positionmap['center']
+// no longer carries a maxWidth. After the shell pane's migration to the
+// PANELAYOUT command, no caller uses `position: center` for #shellroot;
+// the entry remains as `{ margin: '0 auto' }` so that a future caller
+// cannot silently inherit the previous literal 960px. No maxWidth
+// literal remains on any path.
 // @proposal=P-AJ — a parser and emitter for the `flex` keyword are
 // added. The pipeline programs emit `flex: dir=X, wrap=Y, gap=W`; the
 // parser collects the key=value pairs; the emitter maps them to
@@ -236,7 +242,7 @@ function createlayoutdirectives() {
           'left': { position: 'relative', left: '0' },
           'right': { position: 'relative', right: '0' },
           'middle': { position: 'relative', top: '50%', transform: 'translateY(-50%)' },
-          'center': { maxWidth: '960px', margin: '0 auto' },
+          'center': { margin: '0 auto' },
           'top-left': { position: 'relative', top: '0', left: '0' },
           'top-right': { position: 'relative', top: '0', right: '0' },
           'bottom-left': { position: 'relative', bottom: '0', left: '0' },
