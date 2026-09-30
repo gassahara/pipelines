@@ -12,6 +12,13 @@
 //                                              renderactor.js under
 //                                              P7, frozen RUN 37)
 //
+// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — computepanemaxwidth added:
+//   derives a pane's max-width from the detected viewport width and the
+//   pane's structural role. No literal pixel constant is emitted as a
+//   maxWidth; every operand is either measured (viewport), derived from
+//   the spacing system, or a structural constant (character count and
+//   average glyph advance).
+//
 // What remains is pure string / length / spacing computation. No DOM
 // operations, no string→string HTML transforms, no verbosity state.
 
@@ -152,6 +159,33 @@ var stylizercore = {
       gap: round(8 * scale),
       scale: scale
     };
+  },
+
+  // @proposal=P-FW-PANEGRAMMAR — derived pane max-width.
+  // Below the tablet threshold (960px) the pane takes the full viewport.
+  // Above it, the pane is bounded by the smaller of (a) the viewport
+  // minus a spacing-derived gutter, and (b) a reading column expressed
+  // as (characters × reference font-size × average glyph advance).
+  // The 'app-shell' role is bounded only by the viewport minus gutter.
+  // No literal pixel value is emitted as maxWidth.
+  computepanemaxwidth: function(viewportwidth, panerole) {
+    if (typeof viewportwidth !== 'number' || viewportwidth <= 0) viewportwidth = 1024;
+    if (panerole === undefined) panerole = 'reading-column';
+
+    var tablet = 960;
+    if (viewportwidth < tablet) return '100%';
+
+    var spacing = this.computebasespacing(viewportwidth);
+    var gutter = 2 * spacing.pad;
+
+    var fontsize = 16;
+    var charstarget = 72;
+    var charfactor = 0.5;
+    var readingwidth = charstarget * fontsize * charfactor;
+
+    var avail = viewportwidth - gutter;
+    var result = (panerole === 'app-shell') ? avail : Math.min(avail, readingwidth);
+    return Math.round(result) + 'px';
   },
 
   parseshorthandlengths: function(value, referencepx, stylizercore) {

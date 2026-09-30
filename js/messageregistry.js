@@ -12,6 +12,12 @@
 // support routing lib/program script loading through RENDERACTOR.
 // SCRIPTLOADED added to MAILBOXFILTERTYPES so sendandawait can
 // resolve its expectation when the response arrives.
+//
+// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — PANELAYOUT message type
+// added. It is a RENDERACTOR command that applies a pane's base
+// geometry (derived maxWidth, margin auto, flex shape, gap) to the
+// element addressed by ID. The derived maxWidth is computed by
+// stylizercore.computepanemaxwidth from the payload's VIEWPORT.
 
 var MESSAGETYPES = Object.freeze({
   RENDER: 'RENDER',
@@ -42,6 +48,7 @@ var MESSAGETYPES = Object.freeze({
   CORRECTCONTROLLEDOVERLAY: 'CORRECTCONTROLLEDOVERLAY',
   REWRITESTYLEATTRS: 'REWRITESTYLEATTRS',
   CONSOLIDATESTYLES: 'CONSOLIDATESTYLES',
+  PANELAYOUT: 'PANELAYOUT',
   OPTIMIZECONTRAST: 'OPTIMIZECONTRAST',
   OPTIMIZEHARMONY: 'OPTIMIZEHARMONY',
   OPTIMIZETEXTVISIBILITY: 'OPTIMIZETEXTVISIBILITY',

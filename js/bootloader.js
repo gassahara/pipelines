@@ -11,6 +11,10 @@
 // entry is aligned with the reduced surface after Cycle P11-03's
 // serialization-pipeline removal. The nine removed names no longer
 // appear as provides.
+//
+// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — 'PANELAYOUT' added to the
+// RENDERACTOR types list, immediately after 'CONSOLIDATESTYLES', to
+// mirror the registration order in registerconsumers.js.
 
 var pipelinesmanifest = [
   { src: 'factory/tuning/limits.js', provides: [
@@ -128,7 +132,7 @@ var pipelinesmanifest = [
     'CHECKOVERFLOW', 'CHECKSPACING', 'CHECKOVERLAP', 'CHECKSCROLLABILITY',
     'CHECKCONTROLLEDOVERLAY', 'CORRECTOVERFLOW', 'CORRECTSPACING', 'CORRECTOVERLAP',
     'CORRECTSCROLLABILITY', 'CORRECTCONTROLLEDOVERLAY',
-    'REWRITESTYLEATTRS', 'CONSOLIDATESTYLES', 'OPTIMIZECONTRAST', 'OPTIMIZEHARMONY',
+    'REWRITESTYLEATTRS', 'CONSOLIDATESTYLES', 'PANELAYOUT', 'OPTIMIZECONTRAST', 'OPTIMIZEHARMONY',
     'OPTIMIZETEXTVISIBILITY', 'OPTIMIZEBUTTONVISIBILITY',
     'VERIFYCONTRAST', 'VERIFYTEXTVISIBILITY', 'VERIFYBUTTONVISIBILITY',
     'VERIFYHARMONY', 'CHECKFOCUSVISIBILITY',

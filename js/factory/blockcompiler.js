@@ -37,6 +37,11 @@
 // iteration; control.fn invoked with (properties, state, loopcount);
 // terminate on falsy. `processnestedstage` becomes a thin wrapper
 // delegating to runstage. `orchestratepipeline` delegates to runstage.
+//
+// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — the domquery compiler accepts
+// a 'panelayout' command. The compiler's outbound payload is extended
+// conditionally so that SHAPE and VIEWPORT are carried only for the
+// panelayout command. Other commands see byte-identical payloads.
 
 // ============================================================
 // §1 — Construction API
@@ -614,6 +619,14 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (typeof props.options === 'string' && (containspathaccessorchars(props.options) || (sig.inputs || []).indexOf(props.options) !== -1)) {
         resolvedoptions = compilepathaccessor(props.options)(env);
       }
+      // @proposal=P-FW-PANEGRAMMAR — the panelayout command carries a
+      // viewport reference that is resolved against env when it names an
+      // input, mirroring the existing resolvedvalue / resolvedoptions
+      // pattern.
+      var resolvedviewport = props.viewport;
+      if (typeof props.viewport === 'string' && (containspathaccessorchars(props.viewport) || (sig.inputs || []).indexOf(props.viewport) !== -1)) {
+        resolvedviewport = compilepathaccessor(props.viewport)(env);
+      }
 
       var msgtype;
       switch (cmd) {
@@ -645,6 +658,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         case 'correctcontrolledoverlay': msgtype = MESSAGETYPES.CORRECTCONTROLLEDOVERLAY; break;
         case 'rewritestyleattrs':        msgtype = MESSAGETYPES.REWRITESTYLEATTRS; break;
         case 'consolidatestyles':        msgtype = MESSAGETYPES.CONSOLIDATESTYLES; break;
+        case 'panelayout':               msgtype = MESSAGETYPES.PANELAYOUT; break;
         case 'optimizecontrast':         msgtype = MESSAGETYPES.OPTIMIZECONTRAST; break;
         case 'optimizeharmony':          msgtype = MESSAGETYPES.OPTIMIZEHARMONY; break;
         case 'optimizetextvisibility':   msgtype = MESSAGETYPES.OPTIMIZETEXTVISIBILITY; break;
@@ -657,7 +671,10 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
 
-      return sendandawait('RENDERACTOR', msgtype, {
+      // @proposal=P-FW-PANEGRAMMAR — the outbound payload is extended
+      // conditionally. Non-panelayout commands see byte-identical payloads
+      // to before; only panelayout carries SHAPE and VIEWPORT.
+      var outbound = {
         ID: props.id,
         VALUE: resolvedvalue,
         CLASSNAME: resolvedclassname,
@@ -672,7 +689,13 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         TAGNAME: props.tagname,
         LIMIT: props.limit,
         OPTIONS: resolvedoptions
-      }, mailboxwaittimeout, 'domresult')
+      };
+      if (cmd === 'panelayout') {
+        outbound.SHAPE = props.shape;
+        outbound.VIEWPORT = resolvedviewport;
+      }
+
+      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxwaittimeout, 'domresult')
         .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'domquery', id);

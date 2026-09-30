@@ -17,6 +17,12 @@
 // opaquely; the global event observer forwards them in the
 // EVENTTRIGGERED payload so HYPERVISOR can run the stage without any
 // identifier-based lookup.
+//
+// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — PANELAYOUT handler added.
+// The handler applies a pane's base geometry: derived maxWidth (via
+// stylizercore.computepanemaxwidth), margin auto, flex display, the
+// shape as flexDirection, and a spacing-derived gap. No literal pixel
+// constant is written to maxWidth.
 
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -510,6 +516,47 @@ HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
   var SAFEPROPS = MSG.SAFEPROPS || (SC && SC.createstylizerconstants ? SC.createstylizerconstants().safeprops : null);
   var APPLIED = SU_consolidatestyles(ROOT, SAFEPROPS, SC);
   return { APPLIED: APPLIED };
+};
+
+// @proposal=P-FW-PANEGRAMMAR — pane-layout command. Applies the pane's
+// base geometry to the element addressed by MSG.ID:
+//   · maxWidth  — derived from stylizercore.computepanemaxwidth using
+//                 MSG.VIEWPORT.VIEWPORTWIDTH and the role implied by
+//                 MSG.SHAPE ('row' → 'app-shell', else 'reading-column')
+//   · margin    — '0 auto' (centering)
+//   · display   — 'flex'
+//   · flexDirection — MSG.SHAPE
+//   · gap       — spacing.gap + 'px' from stylizercore.computebasespacing
+// No literal pixel constant is written to maxWidth. Every operand is
+// either measured (viewport), spacing-derived, or a structural constant
+// inside computepanemaxwidth. The handler mutates only the element
+// addressed by MSG.ID; it is idempotent under repeated same-payload
+// invocation.
+HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
+  var EL = document.getElementById(MSG.ID);
+  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+
+  var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
+  if (!SC || typeof SC.computepanemaxwidth !== 'function') {
+    return { ERROR: 'stylizercore.computepanemaxwidth unavailable' };
+  }
+
+  var VIEWPORT = MSG.VIEWPORT || {};
+  var VW = (typeof VIEWPORT.VIEWPORTWIDTH === 'number' && VIEWPORT.VIEWPORTWIDTH > 0)
+    ? VIEWPORT.VIEWPORTWIDTH : 1024;
+  var SHAPE = MSG.SHAPE === 'row' ? 'row' : 'column';
+  var ROLE = SHAPE === 'row' ? 'app-shell' : 'reading-column';
+
+  var SPACING = SC.computebasespacing(VW);
+  var MAXW = SC.computepanemaxwidth(VW, ROLE);
+
+  EL.style.maxWidth = MAXW;
+  EL.style.margin = '0 auto';
+  EL.style.display = 'flex';
+  EL.style.flexDirection = SHAPE;
+  EL.style.gap = SPACING.gap + 'px';
+
+  return { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE };
 };
 
 HANDLERS[MESSAGETYPES.OPTIMIZECONTRAST] = function(ENV, MSG) {

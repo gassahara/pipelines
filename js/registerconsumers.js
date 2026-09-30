@@ -9,6 +9,12 @@
 // @proposal=P-Q — RENDERACTOR registration for LOADSCRIPT added, so
 // the block compiler can route lib/program script loading through the
 // render actor instead of touching document.* directly.
+//
+// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — RENDERACTOR registration for
+// PANELAYOUT added. The registration declares the payload shape
+// { ID, SHAPE, VIEWPORT } and binds the message to RENDERBEHAVIOR,
+// which dispatches to HANDLERS[MESSAGETYPES.PANELAYOUT] declared in
+// renderactor.js.
 
 var REGISTEREDCONSUMERS = true;
 
@@ -213,6 +219,10 @@ MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REWRITESTYLEATTRS, {
 
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.CONSOLIDATESTYLES, {
   ID: 'string', SAFEPROPS: 'array?'
+}, RENDERBEHAVIOR);
+
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.PANELAYOUT, {
+  ID: 'string', SHAPE: 'string', VIEWPORT: 'object'
 }, RENDERBEHAVIOR);
 
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.OPTIMIZECONTRAST, {
