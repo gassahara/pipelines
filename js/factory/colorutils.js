@@ -17,6 +17,14 @@ function rangemap(count, fn) {
 // (solvel) using bracket-then-bisect, a numeric clamp, and a thin
 // `generate` wrapper. No palettes are defined here; the framework
 // ships zero rulesets. The palette functions live in the frontend.
+//
+// @proposal=P-BOOT-RECOVERY-COLORUTILS (Cycle C6) — the trailing
+// stylizercore.color attachment that appeared at the end of this
+// file has been removed. colorutils.js is a provider of color
+// primitives; it must not reference any global defined by a later
+// manifest entry. The stylizercore.color attachment lives at the
+// bottom of stylizerutilities.js (manifest position #16), where
+// stylizercore itself is defined.
 // ============================================================
 
 var colorcore = {
@@ -660,11 +668,4 @@ var colorpalettes = {
     }
     return rulesetFn(overrides || {});
   }
-};
-
-// Attach color utilities to stylizercore
-stylizercore.color = {
-  core: colorcore,
-  harmony: colorharmony,
-  contrast: colorcontrast
 };
