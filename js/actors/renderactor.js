@@ -19,29 +19,25 @@
 // identifier-based lookup.
 //
 // @proposal=P-FW-PANEGRAMMAR (Cycle C1) — PANELAYOUT handler added.
-// The handler applies a pane's base geometry: derived maxWidth (via
-// stylizercore.computepanemaxwidth), margin auto, flex display, the
-// shape as flexDirection, and a spacing-derived gap. No literal pixel
-// constant is written to maxWidth.
 //
 // @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — the correction subsystem
 // and the intrinsic-size heuristics measure before assuming. Two helpers
 // — SU_detectviewportwidth and SU_detectfontsize — replace the literals
-// 1024 and 16 as primary defaults. The literal 1024 no longer appears in
-// a viewport-default position; 16 remains only as the last layer of
-// SU_detectfontsize's cascade.
+// 1024 and 16 as primary defaults.
 //
 // @proposal=P-CORRECTIONS-EQUILIBRIUM (Cycle C2) — every LC_correct*
-// function is restructured as a per-invocation fixed-point loop: a
-// register of already-corrected elements, iteration in DOM order,
-// re-derivation of the violation set after each pass, and termination
-// either on convergence or at LC_CORRECTION_MAXITER. Return contract is
-// { applied, converged }.
+// function is restructured as a per-invocation fixed-point loop.
 //
 // @proposal=P-CORRECT-OVERFLOW-SCOPE (Cycle C2) — form 1: the correction
 // site (LC_correctoverflowdoc) skips elements whose inline overflow is
-// 'hidden' or 'clip'. An element that declares its own width and clips
-// is not a defect; wrapping it destroys the surrounding layout.
+// 'hidden' or 'clip'.
+//
+// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — SU_detectviewportheight
+// added (symmetric with SU_detectviewportwidth). The PANELAYOUT handler
+// accepts an optional MSG.HEIGHT: 'viewport' measures the viewport and
+// applies a pixel height; a positive number applies that height; absence
+// leaves the element's height untouched. No literal stands in for the
+// measurement anywhere on the shell root's height path.
 
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -190,11 +186,6 @@ function WAITFORDOMREADY() {
 
 // ============================================================
 // @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — detection helpers.
-// The cascade is: caller-supplied value ?? runtime detection ?? literal.
-// The literal is last. Two literals remain, both inside SU_detectfontsize
-// as the final layer of its own cascade (16), and one inside
-// SU_detectviewportwidth as the devicePixelRatio fallback (1). No other
-// literal appears as a primary default for a measurable quantity.
 // ============================================================
 
 function SU_detectviewportwidth() {
@@ -233,6 +224,26 @@ function SU_detectfontsize(node) {
   return 16;
 }
 
+// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — viewport-height
+// detection. Symmetric with SU_detectviewportwidth. Returns a positive
+// integer when a browser can answer, null otherwise. The literal 1 in
+// the third branch is the devicePixelRatio fallback (a design constant
+// for the ratio itself, not a stand-in for the measured height); no
+// other literal appears on the height path.
+function SU_detectviewportheight() {
+  if (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientHeight > 0) {
+    return document.documentElement.clientHeight;
+  }
+  if (typeof window !== 'undefined' && typeof window.innerHeight === 'number' && window.innerHeight > 0) {
+    return window.innerHeight;
+  }
+  if (typeof window !== 'undefined' && window.screen && typeof window.screen.height === 'number' && window.screen.height > 0) {
+    var dpr = (typeof window.devicePixelRatio === 'number' && window.devicePixelRatio > 0) ? window.devicePixelRatio : 1;
+    return Math.round(window.screen.height / dpr);
+  }
+  return null;
+}
+
 // @proposal=P-CORRECT-OVERFLOW-SCOPE (form 1) — an element that declares
 // its own clipping overflow is designed to clip; it is not an overflow
 // defect. The predicate reads inline style, which is where the pipeline
@@ -244,16 +255,9 @@ function LC_isintentionalclip(el) {
   return false;
 }
 
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — iteration cap for the fixed-point
-// loops. Convergence is expected well below this bound; the cap exists so
-// that a pathological DOM cannot make the correction subsystem diverge.
+// @proposal=P-CORRECTIONS-EQUILIBRIUM — iteration cap.
 var LC_CORRECTION_MAXITER = 32;
 
-// @proposal=P-BA — METADATA gains STAGE and OPTIONS alongside the
-// existing STAGEPATH / CONTROL / CHILDREN / ENV fields. The stage
-// value and the options travel with the registration; they will be
-// forwarded in the EVENTTRIGGERED payload so HYPERVISOR can run the
-// stage without any identifier-based lookup.
 function CREATEEVENTPRODUCERCONSUMER(MSG) {
   return {
     PRODUCER: { TYPE: 'domevent', ID: MSG.SOURCEID, EVENT: MSG.EVENT },
@@ -491,10 +495,6 @@ function LAYOUTEXTRACTID(descriptor) {
   return descriptor.slice(hash + 1);
 }
 
-// @proposal=P-MEASURABLE-DEFAULTS — site 1 of five. The viewport is
-// detected before the literal 1024 is even considered. If detection
-// fails, the handler skips rather than correcting against a fictional
-// geometry.
 HANDLERS[MESSAGETYPES.CHECKOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
@@ -507,9 +507,6 @@ HANDLERS[MESSAGETYPES.CHECKOVERFLOW] = function(ENV, MSG) {
   return { VIOLATIONS: LC_checkoverflowdoc(ROOT, VW, CW, SC) };
 };
 
-// @proposal=P-MEASURABLE-DEFAULTS — site 2 of five.
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — the correct function returns
-// { applied, converged }; the handler surfaces both.
 HANDLERS[MESSAGETYPES.CORRECTOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
@@ -604,6 +601,15 @@ HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
 
 // @proposal=P-FW-PANEGRAMMAR — pane-layout command. Applies the pane's
 // base geometry to the element addressed by MSG.ID.
+//
+// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — the command accepts
+// an optional MSG.HEIGHT:
+//   · 'viewport' → SU_detectviewportheight() is measured, the pixel
+//     value is applied; the applied value is returned as HEIGHT.
+//   · positive number → the number (in pixels) is applied; returned.
+//   · undefined → EL.style.height is not touched (backward-compatible).
+// If detection fails ('viewport' form only), EL.style.height is not
+// touched and HEIGHT is null. No literal stands in for the measurement.
 HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
@@ -630,7 +636,20 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   EL.style.flexDirection = SHAPE;
   EL.style.gap = SPACING.gap + 'px';
 
-  return { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE };
+  // @proposal=P-SHELLROOT-VIEWPORT-HEIGHT — optional vertical fill.
+  var HEIGHTAPPLIED = null;
+  if (MSG.HEIGHT === 'viewport') {
+    var VH = SU_detectviewportheight();
+    if (VH !== null) {
+      EL.style.height = VH + 'px';
+      HEIGHTAPPLIED = VH;
+    }
+  } else if (typeof MSG.HEIGHT === 'number' && MSG.HEIGHT > 0) {
+    EL.style.height = MSG.HEIGHT + 'px';
+    HEIGHTAPPLIED = MSG.HEIGHT;
+  }
+
+  return { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE, HEIGHT: HEIGHTAPPLIED };
 };
 
 HANDLERS[MESSAGETYPES.OPTIMIZECONTRAST] = function(ENV, MSG) {
@@ -964,9 +983,6 @@ function SU_applystep(nodes, step, filterfn, stylizercore) {
   }, []);
 }
 
-// @proposal=P-MEASURABLE-DEFAULTS — site 3 of five. The inherited font
-// size is detected from the root element when the caller does not
-// supply one.
 function SU_buildlayoutpropertymap(rootel, viewportwidth, inheritedfontsize, stylizercore) {
   if (inheritedfontsize === undefined) inheritedfontsize = SU_detectfontsize(rootel);
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
@@ -1050,8 +1066,6 @@ function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore
   if (node.nodeType === 3) {
     var txt = node.nodeValue.trim();
     if (!txt) return { width: 0, height: 0 };
-    // @proposal=P-MEASURABLE-DEFAULTS — site 5 of five. Font size is
-    // detected from the parent element before the literal is considered.
     var fontsize = inheritedprops.fontsize || SU_detectfontsize(node.parentElement);
     var lines = txt.split('\n');
     var isnowrap = inheritedprops.whitespace === 'nowrap' || inheritedprops.whitespace === 'pre';
@@ -1126,8 +1140,6 @@ function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore
   return { width: (isflexrow ? totalw : maxw) + padh, height: totalh + padv };
 }
 
-// @proposal=P-MEASURABLE-DEFAULTS — site 4 of five. The heuristic's
-// font-size seed comes from detection before the literal is considered.
 function SU_estimaterecursivebounds(node, stylizercore) {
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
   if (node.nodeType === 3) {
@@ -1558,10 +1570,6 @@ function LC_checkspacingdoc(root, mingap, stylizercore) {
   return walk(root, []);
 }
 
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — LC_correctspacingdoc is now a
-// fixed-point loop. The register keys on the element actually corrected
-// (elementa). Signature: (root, mingap, stylizercore). Returns
-// { applied, converged }.
 function LC_correctspacingdoc(root, mingap, stylizercore) {
   if (mingap === undefined) mingap = 12;
   var register = new WeakSet();
@@ -1604,9 +1612,6 @@ function LC_checkoverlapdoc(root) {
   return violations;
 }
 
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
-// on elementbref (the element actually corrected). Returns
-// { applied, converged }.
 function LC_correctoverlapdoc(root) {
   var register = new WeakSet();
   var applied = 0;
@@ -1635,8 +1640,6 @@ function LC_checkscrollabilitydoc(root) {
   }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : ''), elementref: el }; });
 }
 
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
-// on elementref.
 function LC_correctscrollabilitydoc(root) {
   var register = new WeakSet();
   var applied = 0;
@@ -1665,8 +1668,6 @@ function LC_checkcontrolledoverlaydoc(root) {
   }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : ''), elementref: el }; });
 }
 
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
-// on elementref.
 function LC_correctcontrolledoverlaydoc(root) {
   var register = new WeakSet();
   var applied = 0;
@@ -1719,15 +1720,6 @@ function LC_checkoverflowdoc(root, viewportwidth, containerwidths, stylizercore)
     });
 }
 
-// @proposal=P-CORRECT-OVERFLOW-SCOPE (form 1) — an element that declares
-// its own width and clips is designed to clip; the correction loop
-// registers it (so it is not re-examined on the next iteration) but does
-// not wrap it.
-//
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — fixed-point loop; register keys
-// on the element considered. Signature:
-// (root, viewportwidth, containerwidths, stylizercore).
-// Returns { applied, converged }.
 function LC_correctoverflowdoc(root, viewportwidth, containerwidths, stylizercore) {
   var register = new WeakSet();
   var applied = 0;

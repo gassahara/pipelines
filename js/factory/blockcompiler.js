@@ -42,6 +42,15 @@
 // a 'panelayout' command. The compiler's outbound payload is extended
 // conditionally so that SHAPE and VIEWPORT are carried only for the
 // panelayout command. Other commands see byte-identical payloads.
+//
+// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — the panelayout
+// conditional outbound block also forwards HEIGHT when the block's
+// command.properties carries a `height` field. The handler (file 1/4 of
+// this cycle) interprets 'viewport' as "measure the viewport and apply
+// the pixel value" and a positive number as an explicit pixel override.
+// When `height` is absent, the field is not added to the payload and the
+// handler performs no height mutation. No other command's payload
+// changes.
 
 // ============================================================
 // §1 — Construction API
@@ -674,6 +683,12 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       // @proposal=P-FW-PANEGRAMMAR — the outbound payload is extended
       // conditionally. Non-panelayout commands see byte-identical payloads
       // to before; only panelayout carries SHAPE and VIEWPORT.
+      //
+      // @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — the panelayout
+      // conditional block also forwards HEIGHT when the block's
+      // command.properties declares `height` (either the string
+      // 'viewport' or a positive number). Absence means the field is not
+      // added and the handler performs no height mutation.
       var outbound = {
         ID: props.id,
         VALUE: resolvedvalue,
@@ -693,6 +708,9 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (cmd === 'panelayout') {
         outbound.SHAPE = props.shape;
         outbound.VIEWPORT = resolvedviewport;
+        if (props.height !== undefined) {
+          outbound.HEIGHT = props.height;
+        }
       }
 
       return sendandawait('RENDERACTOR', msgtype, outbound, mailboxwaittimeout, 'domresult')
