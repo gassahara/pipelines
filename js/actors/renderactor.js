@@ -3,41 +3,36 @@
 // @proposal=P4 (Cycle 27) — actor-handle surface established.
 //
 // @proposal=P9 (Cycle P9-08, batch 9.9) — the case-alias reads are
-// removed. The slice's writer (ENSURERENDERSLICE) declares
-// ACTORREGISTRY and TRIGGERGCSCHEDULED (UPPERCASE). The readers now
-// use those forms exclusively.
+// removed.
 //
-// @proposal=P-Q — a LOADSCRIPT handler is added. It creates a <script
-// src>, appends it to document.head, and responds to the sender when
-// the script's load event (or error event) fires.
+// @proposal=P-Q — a LOADSCRIPT handler is added.
 //
-// @proposal=P-BA — the REGISTEREVENTLISTENER payload now carries
-// STAGE (the compiled stage value) and OPTIONS alongside the existing
-// ELEMENTS/CONTROL/ENV fields. The GC object's METADATA stores them
-// opaquely; the global event observer forwards them in the
-// EVENTTRIGGERED payload so HYPERVISOR can run the stage without any
-// identifier-based lookup.
+// @proposal=P-BA — the REGISTEREVENTLISTENER payload carries STAGE
+// and OPTIONS alongside the existing fields.
 //
 // @proposal=P-FW-PANEGRAMMAR (Cycle C1) — PANELAYOUT handler added.
 //
-// @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — the correction subsystem
-// and the intrinsic-size heuristics measure before assuming. Two helpers
-// — SU_detectviewportwidth and SU_detectfontsize — replace the literals
-// 1024 and 16 as primary defaults.
+// @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — SU_detectviewportwidth
+// and SU_detectfontsize replace the literals 1024 and 16 as primary
+// defaults.
 //
-// @proposal=P-CORRECTIONS-EQUILIBRIUM (Cycle C2) — every LC_correct*
-// function is restructured as a per-invocation fixed-point loop.
+// @proposal=P-CORRECTIONS-EQUILIBRIUM (Cycle C2) — LC_correct* fixed-
+// point loops.
 //
-// @proposal=P-CORRECT-OVERFLOW-SCOPE (Cycle C2) — form 1: the correction
-// site (LC_correctoverflowdoc) skips elements whose inline overflow is
-// 'hidden' or 'clip'.
+// @proposal=P-CORRECT-OVERFLOW-SCOPE (Cycle C2) — LC_correctoverflowdoc
+// skips intentionally-clipping elements.
 //
 // @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — SU_detectviewportheight
-// added (symmetric with SU_detectviewportwidth). The PANELAYOUT handler
-// accepts an optional MSG.HEIGHT: 'viewport' measures the viewport and
-// applies a pixel height; a positive number applies that height; absence
-// leaves the element's height untouched. No literal stands in for the
-// measurement anywhere on the shell root's height path.
+// added; PANELAYOUT handler accepts optional MSG.HEIGHT.
+//
+// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — PALETTEGENERATE
+// handler added. Calls the palette function passed in MSG.RULESET and
+// returns { PALETTE }. No shape inspection; the ruleset function does
+// its own dispatch.
+//
+// @proposal=P-SETACCENT-HANDLER (Cycle C5) — SETACCENT handler added.
+// Composes one rule from { SELECTOR, PROP, HEX } and applies it via
+// SU_rewritestyleattrs. Returns { APPLIED, REF, HEX }.
 
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
@@ -56,6 +51,7 @@ var DOMQUERYCOMMANDREGISTRY = {
     'correctoverflow', 'correctspacing', 'correctoverlap',
     'correctscrollability', 'correctcontrolledoverlay',
     'rewritestyleattrs', 'consolidatestyles',
+    'panelayout',
     'optimizecontrast', 'optimizeharmony',
     'optimizetextvisibility', 'optimizebuttonvisibility'
   ],
@@ -68,6 +64,7 @@ var DOMQUERYCOMMANDREGISTRY = {
     'correctoverflow', 'correctspacing', 'correctoverlap',
     'correctscrollability', 'correctcontrolledoverlay',
     'rewritestyleattrs', 'consolidatestyles',
+    'panelayout',
     'optimizecontrast', 'optimizeharmony',
     'optimizetextvisibility', 'optimizebuttonvisibility',
     'verifycontrast', 'verifytextvisibility', 'verifybuttonvisibility',
@@ -224,12 +221,7 @@ function SU_detectfontsize(node) {
   return 16;
 }
 
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — viewport-height
-// detection. Symmetric with SU_detectviewportwidth. Returns a positive
-// integer when a browser can answer, null otherwise. The literal 1 in
-// the third branch is the devicePixelRatio fallback (a design constant
-// for the ratio itself, not a stand-in for the measured height); no
-// other literal appears on the height path.
+// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — viewport-height detection.
 function SU_detectviewportheight() {
   if (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientHeight > 0) {
     return document.documentElement.clientHeight;
@@ -244,10 +236,7 @@ function SU_detectviewportheight() {
   return null;
 }
 
-// @proposal=P-CORRECT-OVERFLOW-SCOPE (form 1) — an element that declares
-// its own clipping overflow is designed to clip; it is not an overflow
-// defect. The predicate reads inline style, which is where the pipeline
-// rules write when they mutate an element.
+// @proposal=P-CORRECT-OVERFLOW-SCOPE (form 1).
 function LC_isintentionalclip(el) {
   if (!el || !el.style) return false;
   var ov = el.style.overflow;
@@ -599,17 +588,8 @@ HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
   return { APPLIED: APPLIED };
 };
 
-// @proposal=P-FW-PANEGRAMMAR — pane-layout command. Applies the pane's
-// base geometry to the element addressed by MSG.ID.
-//
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — the command accepts
-// an optional MSG.HEIGHT:
-//   · 'viewport' → SU_detectviewportheight() is measured, the pixel
-//     value is applied; the applied value is returned as HEIGHT.
-//   · positive number → the number (in pixels) is applied; returned.
-//   · undefined → EL.style.height is not touched (backward-compatible).
-// If detection fails ('viewport' form only), EL.style.height is not
-// touched and HEIGHT is null. No literal stands in for the measurement.
+// @proposal=P-FW-PANEGRAMMAR — pane-layout command.
+// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT — optional MSG.HEIGHT.
 HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
@@ -636,7 +616,6 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   EL.style.flexDirection = SHAPE;
   EL.style.gap = SPACING.gap + 'px';
 
-  // @proposal=P-SHELLROOT-VIEWPORT-HEIGHT — optional vertical fill.
   var HEIGHTAPPLIED = null;
   if (MSG.HEIGHT === 'viewport') {
     var VH = SU_detectviewportheight();
@@ -650,6 +629,49 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   }
 
   return { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE, HEIGHT: HEIGHTAPPLIED };
+};
+
+// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — the palette
+// generate command. MSG.RULESET is a plain JS function that returns a
+// palette. MSG.OVERRIDES (optional) is merged by the ruleset itself.
+// The handler performs no shape inspection.
+HANDLERS[MESSAGETYPES.PALETTEGENERATE] = function(ENV, MSG) {
+  if (typeof MSG.RULESET !== 'function') {
+    return { ERROR: 'PALETTEGENERATE requires RULESET as a function' };
+  }
+  var palette = MSG.RULESET(MSG.OVERRIDES || {});
+  return { PALETTE: palette };
+};
+
+// @proposal=P-SETACCENT-HANDLER (Cycle C5) — the accent application
+// command. Composes one rule from { SELECTOR, PROP, HEX } and applies
+// it via SU_rewritestyleattrs. SELECTOR is the framework's existing
+// { id | tag | class } shape. PROP defaults to 'color'.
+HANDLERS[MESSAGETYPES.SETACCENT] = function(ENV, MSG) {
+  var SELECTOR = MSG.SELECTOR;
+  if (!SELECTOR || typeof SELECTOR !== 'object') {
+    return { ERROR: 'SETACCENT requires SELECTOR object' };
+  }
+  var HEX = MSG.HEX;
+  if (typeof HEX !== 'string' || HEX.charAt(0) !== '#') {
+    return { ERROR: 'SETACCENT requires HEX as a #RRGGBB string' };
+  }
+  var PROP = MSG.PROP || 'color';
+  var root = document.getElementById('approot') || document.body;
+  if (!root) return { ERROR: 'SETACCENT root not found' };
+
+  var rule = { style: {} };
+  if (SELECTOR.id) rule.id = SELECTOR.id;
+  if (SELECTOR.tag) rule.tag = SELECTOR.tag;
+  if (SELECTOR.class) rule.class = SELECTOR.class;
+  if (!rule.id && !rule.tag && !rule.class) {
+    return { ERROR: 'SETACCENT selector must declare id, tag, or class' };
+  }
+  rule.style[PROP] = HEX;
+
+  var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
+  var applied = SU_rewritestyleattrs(root, [rule], SC);
+  return { APPLIED: applied, REF: MSG.REF || null, HEX: HEX, PROP: PROP };
 };
 
 HANDLERS[MESSAGETYPES.OPTIMIZECONTRAST] = function(ENV, MSG) {

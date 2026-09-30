@@ -16,8 +16,19 @@
 // @proposal=P-FW-PANEGRAMMAR (Cycle C1) — PANELAYOUT message type
 // added. It is a RENDERACTOR command that applies a pane's base
 // geometry (derived maxWidth, margin auto, flex shape, gap) to the
-// element addressed by ID. The derived maxWidth is computed by
-// stylizercore.computepanemaxwidth from the payload's VIEWPORT.
+// element addressed by ID.
+//
+// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — PALETTEGENERATE
+// message type added. It is a RENDERACTOR command that invokes a
+// palette function (a plain JS function passed in the payload) and
+// returns the resulting palette. The handler performs no shape
+// inspection; the ruleset function does its own dispatch.
+//
+// @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — SETACCENT message type
+// added. It is a RENDERACTOR command dispatched by the framework's
+// top-level setaccent() function (declared in blockcompiler.js).
+// Payload: { SELECTOR, PROP, HEX, REF }. The handler composes one
+// rule and applies it via SU_rewritestyleattrs.
 
 var MESSAGETYPES = Object.freeze({
   RENDER: 'RENDER',
@@ -49,6 +60,8 @@ var MESSAGETYPES = Object.freeze({
   REWRITESTYLEATTRS: 'REWRITESTYLEATTRS',
   CONSOLIDATESTYLES: 'CONSOLIDATESTYLES',
   PANELAYOUT: 'PANELAYOUT',
+  PALETTEGENERATE: 'PALETTEGENERATE',
+  SETACCENT: 'SETACCENT',
   OPTIMIZECONTRAST: 'OPTIMIZECONTRAST',
   OPTIMIZEHARMONY: 'OPTIMIZEHARMONY',
   OPTIMIZETEXTVISIBILITY: 'OPTIMIZETEXTVISIBILITY',

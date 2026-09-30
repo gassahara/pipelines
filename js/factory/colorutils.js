@@ -3,6 +3,22 @@ function rangemap(count, fn) {
   return Array.apply(null, new Array(count)).map(function(unused, i) { return fn(i); });
 }
 
+// ============================================================
+// @proposal=P-OKLAB-PRIMITIVES (Cycle C5) — OKLab and OKLCh
+// primitives. These are peers of rgbtohsl / hsltorgb, added to
+// colorcore. The forward/inverse matrices are the standard OKLab
+// matrices (Björn Ottosson, 2020); the gamut-reduction loop reduces
+// chroma in 3% steps until the linear-RGB triple is in gamut,
+// bounded by the caller's chromasteps parameter.
+//
+// @proposal=P-PALETTE-MACHINERY (Cycle C5) — colorpalettes exposes
+// generic palette machinery: an anchor-parametric piecewise-linear
+// interpolator (lcurve), a contrast-targeted lightness solver
+// (solvel) using bracket-then-bisect, a numeric clamp, and a thin
+// `generate` wrapper. No palettes are defined here; the framework
+// ships zero rulesets. The palette functions live in the frontend.
+// ============================================================
+
 var colorcore = {
   createcolorconstants: function() {
     return Object.freeze({
@@ -86,6 +102,104 @@ var colorcore = {
 
     var dec = parseInt(s, 10);
     return isNaN(dec) || dec < 0 || dec > 255 ? null : dec;
+  },
+
+  // @proposal=P-OKLAB-PRIMITIVES (Cycle C5) — sRGB linearization.
+  // Matches the framework's existing threshold (0.04045) used inside
+  // relativeluminance. Internal to colorcore; not exported.
+  linearchannel: function(c) {
+    var v = c / 255;
+    if (v <= 0.04045) return v / 12.92;
+    return Math.pow((v + 0.055) / 1.055, 2.4);
+  },
+
+  // @proposal=P-OKLAB-PRIMITIVES (Cycle C5) — linear sRGB → OKLab.
+  // Input: linear channels (0–1). Output: [L, a, b].
+  linearrgbtooklab: function(r, g, b) {
+    var l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    var m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+    var s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+    var l_ = Math.cbrt(l);
+    var m_ = Math.cbrt(m);
+    var s_ = Math.cbrt(s);
+    return [
+      0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+      1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+      0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+    ];
+  },
+
+  // @proposal=P-OKLAB-PRIMITIVES (Cycle C5) — OKLab → linear sRGB.
+  // Input: (L, a, b). Output: [r, g, b] as linear channels (0–1).
+  oklabtolinearrgb: function(L, a, b) {
+    var l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    var m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    var s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+    var l = l_ * l_ * l_;
+    var m = m_ * m_ * m_;
+    var s = s_ * s_ * s_;
+    return [
+       4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    ];
+  },
+
+  // @proposal=P-OKLAB-PRIMITIVES (Cycle C5) — OKLCh → RGB (0–255).
+  // Chroma is reduced by 3% per step until the linear triple is in
+  // gamut; the loop is capped at `chromasteps` (default 60).
+  // Returns { rgb: [r, g, b], inGamut: bool }.
+  oklchtorgb: function(L, chroma, h, chromasteps) {
+    var cap = (typeof chromasteps === 'number' && chromasteps > 0) ? chromasteps : 60;
+    var radians = h * Math.PI / 180;
+    var c = chroma;
+    var lastrgb = [0, 0, 0];
+    var lastok = false;
+    for (var n = 0; n < cap; n++) {
+      var a = c * Math.cos(radians);
+      var b = c * Math.sin(radians);
+      var lin = colorcore.oklabtolinearrgb(L, a, b);
+      var ok = lin[0] >= -0.0001 && lin[0] <= 1.0001 &&
+               lin[1] >= -0.0001 && lin[1] <= 1.0001 &&
+               lin[2] >= -0.0001 && lin[2] <= 1.0001;
+      lastrgb = lin;
+      lastok = ok;
+      if (ok) {
+        return {
+          rgb: [
+            Math.round(Math.max(0, Math.min(1, lin[0])) * 255),
+            Math.round(Math.max(0, Math.min(1, lin[1])) * 255),
+            Math.round(Math.max(0, Math.min(1, lin[2])) * 255)
+          ],
+          inGamut: true
+        };
+      }
+      c *= 0.97;
+    }
+    return {
+      rgb: [
+        Math.round(Math.max(0, Math.min(1, lastrgb[0])) * 255),
+        Math.round(Math.max(0, Math.min(1, lastrgb[1])) * 255),
+        Math.round(Math.max(0, Math.min(1, lastrgb[2])) * 255)
+      ],
+      inGamut: lastok
+    };
+  },
+
+  // @proposal=P-OKLAB-PRIMITIVES (Cycle C5) — RGB (0–255) → OKLCh.
+  // Returns { L, chroma, h } with h in [0, 360).
+  rgbtooklch: function(r, g, b) {
+    var lr = colorcore.linearchannel(r);
+    var lg = colorcore.linearchannel(g);
+    var lb = colorcore.linearchannel(b);
+    var lab = colorcore.linearrgbtooklab(lr, lg, lb);
+    var L = lab[0];
+    var a = lab[1];
+    var bb = lab[2];
+    var chroma = Math.sqrt(a * a + bb * bb);
+    var h = Math.atan2(bb, a) * 180 / Math.PI;
+    if (h < 0) h += 360;
+    return { L: L, chroma: chroma, h: h };
   },
 
   pad2: function(n) {
@@ -173,7 +287,6 @@ var colorharmony = {
     return colorharmony.shifthues(hex, [180], colorcore);
   },
 
-  // ---- OP-095: rangemap in analogous ----
   analogous: function(hex, count, step, colorcore) {
     if (count === undefined) count = 3;
     if (step === undefined) step = 30;
@@ -198,7 +311,6 @@ var colorharmony = {
     return [hex].concat(colorharmony.shifthues(hex, [60, 180, 240], colorcore));
   },
 
-  // ---- OP-095: rangemap in monochromatic ----
   monochromatic: function(hex, count, lightnessrange, colorcore) {
     if (count === undefined) count = 5;
     if (lightnessrange === undefined) lightnessrange = 60;
@@ -217,7 +329,6 @@ var colorharmony = {
     });
   },
 
-  // ---- OP-095: rangemap in shades ----
   shades: function(hex, count, colorcore) {
     if (count === undefined) count = 5;
     var hsl = colorcore.rgbtohsl.apply(null, colorcore.hextorgb(hex, colorcore));
@@ -232,7 +343,6 @@ var colorharmony = {
     });
   },
 
-  // ---- OP-095: rangemap in tints ----
   tints: function(hex, count, colorcore) {
     if (count === undefined) count = 5;
     var hsl = colorcore.rgbtohsl.apply(null, colorcore.hextorgb(hex, colorcore));
@@ -435,4 +545,126 @@ var colorcontrast = {
 
     return candidates[0].hex;
   }
+};
+
+// ============================================================
+// @proposal=P-PALETTE-MACHINERY (Cycle C5) — palette machinery.
+// Generic algorithms. No palettes. No rulesets. No registry.
+// Palette functions and their assignment sequences live in the
+// frontend (pipelines/blocks.js).
+// ============================================================
+
+var colorpalettes = {
+  // Anchor-parametric piecewise-linear interpolation.
+  // anchors: array of [hue, value] pairs, sorted by hue, with
+  //          first.0 == 0 and last.0 == 360.
+  // h:       any real number; normalized via ((h % 360) + 360) % 360.
+  // Returns the interpolated value at h.
+  lcurve: function(anchors, h) {
+    if (!anchors || anchors.length < 2) {
+      throw new Error('[colorpalettes.lcurve] anchors must be at least two pairs');
+    }
+    var hn = ((h % 360) + 360) % 360;
+    for (var i = 0; i < anchors.length - 1; i++) {
+      var h0 = anchors[i][0];
+      var v0 = anchors[i][1];
+      var h1 = anchors[i + 1][0];
+      var v1 = anchors[i + 1][1];
+      if (hn >= h0 && hn <= h1) {
+        if (h1 === h0) return v1;
+        return v0 + (v1 - v0) * (hn - h0) / (h1 - h0);
+      }
+    }
+    return anchors[anchors.length - 1][1];
+  },
+
+  // Numeric clamp.
+  clamp: function(v, lo, hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+  },
+
+  // Contrast-targeted lightness solver.
+  //   h:         hue in OKLCh degrees
+  //   chroma:    OKLCh chroma
+  //   bg:        background as [r, g, b] (0–255) or as a hex string
+  //   target:    desired WCAG contrast ratio
+  //   options:   { samples, steps, chromasteps }
+  // Returns { L, approximate }.
+  // Bracket-then-bisect. If no bracket contains the target (the
+  // target is not achievable at this chroma/hue against this bg),
+  // returns the L with CR closest to target and approximate: true.
+  solvel: function(h, chroma, bg, target, options) {
+    var opts = options || {};
+    var samples = (typeof opts.samples === 'number' && opts.samples > 1) ? opts.samples : 5;
+    var steps = (typeof opts.steps === 'number' && opts.steps > 0) ? opts.steps : 50;
+    var chromasteps = (typeof opts.chromasteps === 'number' && opts.chromasteps > 0) ? opts.chromasteps : 60;
+
+    var bgrgb = bg;
+    if (typeof bg === 'string') bgrgb = colorcore.hextorgb(bg, colorcore);
+
+    var sampleL = [];
+    var sampleCR = [];
+    for (var k = 0; k < samples; k++) {
+      var Lk = k / (samples - 1);
+      var rgbr = colorcore.oklchtorgb(Lk, chroma, h, chromasteps).rgb;
+      var crk = colorcontrast.contrastratio(rgbr, bgrgb, colorcore);
+      sampleL.push(Lk);
+      sampleCR.push(crk);
+    }
+
+    var bracket = -1;
+    for (var j = 0; j < samples - 1; j++) {
+      var sj = sampleCR[j] - target;
+      var sj1 = sampleCR[j + 1] - target;
+      if (sj === 0) return { L: sampleL[j], approximate: false };
+      if (sj1 === 0) return { L: sampleL[j + 1], approximate: false };
+      if ((sj < 0 && sj1 > 0) || (sj > 0 && sj1 < 0)) { bracket = j; break; }
+    }
+
+    if (bracket === -1) {
+      var bestidx = 0;
+      var bestdiff = Math.abs(sampleCR[0] - target);
+      for (var m = 1; m < samples; m++) {
+        var d = Math.abs(sampleCR[m] - target);
+        if (d < bestdiff) { bestdiff = d; bestidx = m; }
+      }
+      return { L: sampleL[bestidx], approximate: true };
+    }
+
+    var lo = sampleL[bracket];
+    var hi = sampleL[bracket + 1];
+    var slo = sampleCR[bracket] - target;
+    var Lfinal = (lo + hi) / 2;
+    for (var n = 0; n < steps; n++) {
+      var mid = (lo + hi) / 2;
+      var midrgb = colorcore.oklchtorgb(mid, chroma, h, chromasteps).rgb;
+      var midcr = colorcontrast.contrastratio(midrgb, bgrgb, colorcore) - target;
+      if ((midcr < 0 && slo < 0) || (midcr > 0 && slo > 0)) {
+        lo = mid;
+        slo = midcr;
+      } else {
+        hi = mid;
+      }
+      Lfinal = (lo + hi) / 2;
+    }
+    return { L: Lfinal, approximate: false };
+  },
+
+  // Thin wrapper. Calls rulesetFn(overrides || {}).
+  // The ruleset is a plain function that returns a palette.
+  generate: function(rulesetFn, overrides) {
+    if (typeof rulesetFn !== 'function') {
+      throw new Error('[colorpalettes.generate] ruleset must be a function');
+    }
+    return rulesetFn(overrides || {});
+  }
+};
+
+// Attach color utilities to stylizercore
+stylizercore.color = {
+  core: colorcore,
+  harmony: colorharmony,
+  contrast: colorcontrast
 };

@@ -1,20 +1,16 @@
 // bootloader.js — framework bootstrap and load manifest.
 //
-// @proposal=P9 (Cycle P9-01) — manifest provides aligned with the
-// post-P5-corrected surface (validatepipelinebriefcase and
-// validaterevivableobject removed).
+// ... (prior proposals unchanged) ...
 //
-// @proposal=P10 (Cycle P10-01, batch 10.1) — `globalthis` →
-// `globalThis`.
+// @proposal=P-PALETTE-MACHINERY (Cycle C5) — colorutils.js provides
+// list extended with 'colorpalettes'.
 //
-// @proposal=P11 (Cycle P11-06, batch 11.2) — the fnblock.js manifest
-// entry is aligned with the reduced surface after Cycle P11-03's
-// serialization-pipeline removal. The nine removed names no longer
-// appear as provides.
+// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — RENDERACTOR types
+// list extended with 'PALETTEGENERATE'.
 //
-// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — 'PANELAYOUT' added to the
-// RENDERACTOR types list, immediately after 'CONSOLIDATESTYLES', to
-// mirror the registration order in registerconsumers.js.
+// @proposal=P-SETACCENT-PRIMITIVE, @proposal=P-SETACCENT-HANDLER
+// (Cycle C5) — blockcompiler.js provides list extended with
+// 'setaccent'; RENDERACTOR types list extended with 'SETACCENT'.
 
 var pipelinesmanifest = [
   { src: 'factory/tuning/limits.js', provides: [
@@ -47,7 +43,10 @@ var pipelinesmanifest = [
     'currentcontinuation', 'chaincontinuations', 'getcurrentcallerid'
   ] },
   { src: 'factory/callwithstack.js', provides: ['callwithstack'] },
-  { src: 'factory/colorutils.js', provides: ['colorcore', 'colorharmony', 'colorcontrast'] },
+
+  // @proposal=P-PALETTE-MACHINERY (Cycle C5) — 'colorpalettes' added.
+  { src: 'factory/colorutils.js', provides: ['colorcore', 'colorharmony', 'colorcontrast', 'colorpalettes'] },
+
   { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
   { src: 'actors/actorcore.js', provides: [
     'CREATEGARBAGECOLLECTOR', 'REGISTEROBJECT', 'UPDATESTATUS', 'INCREMENTSENT',
@@ -108,6 +107,10 @@ var pipelinesmanifest = [
     'AWAITTASK', 'GETTASKS', 'GETTASKSTATUS', 'CANCELTASK', 'STOPTASK', 'CCCABORT',
     'CCCCONTINUE', 'CCCRETRY', 'TASKSETTLED', 'RECOVER', 'REGISTERPIPELINE', 'PING'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
+
+  // @proposal=P-PALETTEGENERATE-COMMAND, @proposal=P-SETACCENT-HANDLER
+  // (Cycle C5) — RENDERACTOR types extended with 'PALETTEGENERATE'
+  // and 'SETACCENT'.
   { src: 'actors/renderactor.js', provides: [
     'RENDERBEHAVIOR',
     'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE',
@@ -132,12 +135,15 @@ var pipelinesmanifest = [
     'CHECKOVERFLOW', 'CHECKSPACING', 'CHECKOVERLAP', 'CHECKSCROLLABILITY',
     'CHECKCONTROLLEDOVERLAY', 'CORRECTOVERFLOW', 'CORRECTSPACING', 'CORRECTOVERLAP',
     'CORRECTSCROLLABILITY', 'CORRECTCONTROLLEDOVERLAY',
-    'REWRITESTYLEATTRS', 'CONSOLIDATESTYLES', 'PANELAYOUT', 'OPTIMIZECONTRAST', 'OPTIMIZEHARMONY',
+    'REWRITESTYLEATTRS', 'CONSOLIDATESTYLES', 'PANELAYOUT', 'PALETTEGENERATE', 'SETACCENT', 'OPTIMIZECONTRAST', 'OPTIMIZEHARMONY',
     'OPTIMIZETEXTVISIBILITY', 'OPTIMIZEBUTTONVISIBILITY',
     'VERIFYCONTRAST', 'VERIFYTEXTVISIBILITY', 'VERIFYBUTTONVISIBILITY',
     'VERIFYHARMONY', 'CHECKFOCUSVISIBILITY',
     'LOADSCRIPT'
   ] },
+
+  // @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — 'setaccent' added to
+  // the blockcompiler's provides.
   { src: 'factory/blockcompiler.js', provides: [
     'pipeline',
     'makelib', 'makeprogram', 'makestage', 'makeblock', 'makepipelineelement',
@@ -149,7 +155,7 @@ var pipelinesmanifest = [
     'createblockcompilerconstants', 'buildblockproperties',
     'processelement', 'processpipelineelement', 'registereventstage',
     'processnestedstage', 'createpersistentelementwrapper', 'wrapblockresult',
-    'BLOCKCOMPILERSTATE'
+    'BLOCKCOMPILERSTATE', 'setaccent'
   ] },
   { src: 'actors/hypervisoractor.js', provides: [
     'HYPERVISORBEHAVIOR',

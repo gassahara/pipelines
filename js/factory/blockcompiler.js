@@ -4,53 +4,32 @@
 // Construction API + finalizers (run / compile). No DNA envelope.
 //
 // @proposal=P9 (Cycle P9-04) — batches applied.
-//
 // @proposal=P10 (Cycle P10-02, batch 10.1) — `globalthis` → `globalThis`.
-//
-// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era serialization
-// hook is removed.
-//
+// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era serialization hook removed.
 // @proposal=P-J — path-addressed structural appends.
 // @proposal=P-L — nodeat / nodeatat added as the positional reader.
 // @proposal=P-M — deepreplace removed.
-// @proposal=P-Q — loadscriptwithwitness routes DOM side effects through
-// RENDERACTOR via LOADSCRIPT/SCRIPTLOADED.
-// @proposal=P-AO — the writer compiler's behaviour invocation is aligned
-// with the fn compiler convention.
-// @proposal=P-AR — the blockcompiler becomes the trigger point of the
-// existing execution flow. appendblock triggers the flow for the block
-// being appended. run() is reduced to resource loading plus a
-// structural pass. pipeline() carries env / compileonly / pending /
-// per-pipeline compiler setup.
-// @proposal=P-AT — orchestratepipeline dispatches top-level EVENT
-// stages to registereventstage; their blocks are deferred to the event.
+// @proposal=P-Q — loadscriptwithwitness routes DOM side effects through RENDERACTOR.
+// @proposal=P-AO — the writer compiler's behaviour invocation is aligned with fn.
+// @proposal=P-AR — the blockcompiler becomes the trigger point of the flow.
+// @proposal=P-AT — top-level EVENT stages are registered during the walk.
 // @proposal=P-AV — automatic env inheritance at child creation.
-// processpipelineelement seeds the child's env (childstate.env) from
-// the caller's env (parentenv), fill-only, at the moment the childstate
-// thunk resolves.
-// @proposal=P-BA — unified stage-kind dispatcher. A single function
-// `runstage` dispatches every stage by kind (NULL / EVENT / LOOP) at
-// every depth. `registereventstage` carries the compiled stage value
-// and the env reference in its payload, so HYPERVISOR can run the
-// stage on event firing without any identifier-based lookup. `runloop`
-// implements LOOP dispatch: control.inputs resolved against env per
-// iteration; control.fn invoked with (properties, state, loopcount);
-// terminate on falsy. `processnestedstage` becomes a thin wrapper
-// delegating to runstage. `orchestratepipeline` delegates to runstage.
+// @proposal=P-BA — unified stage-kind dispatcher (runstage/runloop).
+// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — domquery accepts 'panelayout'.
+// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — panelayout forwards HEIGHT.
 //
-// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — the domquery compiler accepts
-// a 'panelayout' command. The compiler's outbound payload is extended
-// conditionally so that SHAPE and VIEWPORT are carried only for the
-// panelayout command. Other commands see byte-identical payloads.
+// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — domquery accepts
+// 'palettegenerate'. The payload forwards RULESET (a plain JS function)
+// and OVERRIDES (an optional object). The handler invokes the ruleset
+// function and returns a palette. The compiler's post-process extracts
+// the palette from the handler's { PALETTE } envelope before
+// wrapblockresult so that a single-output block binds env[output]
+// directly to the palette.
 //
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — the panelayout
-// conditional outbound block also forwards HEIGHT when the block's
-// command.properties carries a `height` field. The handler (file 1/4 of
-// this cycle) interprets 'viewport' as "measure the viewport and apply
-// the pixel value" and a positive number as an explicit pixel override.
-// When `height` is absent, the field is not added to the payload and the
-// handler performs no height mutation. No other command's payload
-// changes.
+// @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — top-level setaccent()
+// function added. It resolves an accent from a palette and dispatches
+// one SETACCENT message to RENDERACTOR. Fire-and-forget; not carried
+// in mail. Called by the frontend's assignment sequences.
 
 // ============================================================
 // §1 — Construction API
@@ -109,8 +88,6 @@ function pipeline(type, name, options) {
   };
 }
 
-// ---- P-J — shared helpers for the path-addressed appends ----
-
 function pipelinewith(p, elements) {
   var next = {};
   Object.keys(p).forEach(function(k) { next[k] = p[k]; });
@@ -134,8 +111,6 @@ function appendat(elements, level, i, child) {
   });
 }
 
-// ---- P-L — positional reader ----
-
 function nodeat(p, path) {
   return nodeatat(p, path, 0);
 }
@@ -145,8 +120,6 @@ function nodeatat(node, path, index) {
   return nodeatat(node.elements[path[index]], path, index + 1);
 }
 
-// ---- P-J — path-addressed structural appends (Class A) ----
-
 function appendstage(p, level, child) {
   if (child.element !== 'STAGE') {
     throw new Error('[appendstage] child must be a stage value');
@@ -154,8 +127,6 @@ function appendstage(p, level, child) {
   return pipelinewith(p, appendat(p.elements, level, 0, child));
 }
 
-// @proposal=P-AR — appendblock triggers the flow for the block being
-// appended. Under compileonly the block is attached but not executed.
 function appendblock(p, level, child) {
   if (level.length === 0) {
     throw new Error('[appendblock] level must address a stage (not the pipeline root)');
@@ -183,8 +154,6 @@ function appendblock(p, level, child) {
   return attached;
 }
 
-// @proposal=P-AR — triggerblockflow is the append-time entry point of
-// the existing flow.
 function triggerblockflow(p, child, elementid, stagepath) {
   var env = p.env || {};
   var constants = p.compilerconstants;
@@ -206,8 +175,6 @@ function appendpipelineelement(p, level, child) {
   }
   return pipelinewith(p, appendat(p.elements, level, 0, child));
 }
-
-// ---- Class B — pre-execution recorders (top-level-only, R-1) ----
 
 function appendlib(p, parent, child) {
   if (parent !== null) {
@@ -628,10 +595,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (typeof props.options === 'string' && (containspathaccessorchars(props.options) || (sig.inputs || []).indexOf(props.options) !== -1)) {
         resolvedoptions = compilepathaccessor(props.options)(env);
       }
-      // @proposal=P-FW-PANEGRAMMAR — the panelayout command carries a
-      // viewport reference that is resolved against env when it names an
-      // input, mirroring the existing resolvedvalue / resolvedoptions
-      // pattern.
       var resolvedviewport = props.viewport;
       if (typeof props.viewport === 'string' && (containspathaccessorchars(props.viewport) || (sig.inputs || []).indexOf(props.viewport) !== -1)) {
         resolvedviewport = compilepathaccessor(props.viewport)(env);
@@ -668,6 +631,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         case 'rewritestyleattrs':        msgtype = MESSAGETYPES.REWRITESTYLEATTRS; break;
         case 'consolidatestyles':        msgtype = MESSAGETYPES.CONSOLIDATESTYLES; break;
         case 'panelayout':               msgtype = MESSAGETYPES.PANELAYOUT; break;
+        case 'palettegenerate':          msgtype = MESSAGETYPES.PALETTEGENERATE; break;
         case 'optimizecontrast':         msgtype = MESSAGETYPES.OPTIMIZECONTRAST; break;
         case 'optimizeharmony':          msgtype = MESSAGETYPES.OPTIMIZEHARMONY; break;
         case 'optimizetextvisibility':   msgtype = MESSAGETYPES.OPTIMIZETEXTVISIBILITY; break;
@@ -680,15 +644,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
 
-      // @proposal=P-FW-PANEGRAMMAR — the outbound payload is extended
-      // conditionally. Non-panelayout commands see byte-identical payloads
-      // to before; only panelayout carries SHAPE and VIEWPORT.
-      //
-      // @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — the panelayout
-      // conditional block also forwards HEIGHT when the block's
-      // command.properties declares `height` (either the string
-      // 'viewport' or a positive number). Absence means the field is not
-      // added and the handler performs no height mutation.
       var outbound = {
         ID: props.id,
         VALUE: resolvedvalue,
@@ -712,9 +667,27 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           outbound.HEIGHT = props.height;
         }
       }
+      // @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — the
+      // palettegenerate command carries the ruleset function and the
+      // optional overrides object. Both are plain JS values; the
+      // ruleset is a function (fire-and-forget is not used here; the
+      // response carries the palette).
+      if (cmd === 'palettegenerate') {
+        outbound.RULESET = props.ruleset;
+        outbound.OVERRIDES = props.overrides;
+      }
 
       return sendandawait('RENDERACTOR', msgtype, outbound, mailboxwaittimeout, 'domresult')
-        .then(function(r) { return wrapblockresult(r, sig); });
+        .then(function(r) {
+          // @proposal=P-PALETTEGENERATE-COMMAND — the handler returns
+          // { PALETTE: palette }; extract the palette before
+          // wrapblockresult so that a single-output block binds
+          // env[output] directly to the palette object.
+          if (cmd === 'palettegenerate' && r && typeof r === 'object' && r.PALETTE !== undefined) {
+            return wrapblockresult(r.PALETTE, sig);
+          }
+          return wrapblockresult(r, sig);
+        });
     };
     return wrapcompiledfn(innerfn, 'domquery', id);
   };
@@ -835,10 +808,6 @@ function loadpipelinedependencies(pipelineslice, options) {
     });
 }
 
-// @proposal=P-AV — automatic env inheritance at child creation.
-// processpipelineelement builds the child pipeline value (childstate),
-// then seeds the child's env (childstate.env) from the caller's env
-// (parentenv), fill-only, before invoking run on the child.
 function processpipelineelement(el, pipelinename, stagepath, inherited, options) {
   var elementid = el.id || 'pipelineunknown';
 
@@ -891,11 +860,6 @@ function processpipelineelement(el, pipelinename, stagepath, inherited, options)
   return wrapcompiledfn(innerfn, 'pipeline', elementid, 'pipeline');
 }
 
-// @proposal=P-BA — registereventstage carries the compiled stage value
-// (STAGE) and the env reference (ENV) in its payload, so HYPERVISOR
-// can run the stage on event firing without any identifier-based
-// lookup. ELEMENTS, CONTROL, and every other field are preserved for
-// backward compatibility.
 function registereventstage(stage, pipelinename, stagepath, env, options) {
   var sourceid = stage.control.sourceid;
   var event = stage.control.event;
@@ -926,25 +890,12 @@ function registereventstage(stage, pipelinename, stagepath, env, options) {
     });
 }
 
-// @proposal=P-BA — processnestedstage is a thin wrapper that delegates
-// to runstage. The caller (orchestratestage's runnext) passes a
-// stagepath already including the child stage's id; the previous
-// concatenation of childstage.id is removed.
 function processnestedstage(childstage, pipelinename, stagepath, constants, dnaconstants, options, runblocks) {
   return function(env) {
     return runstage(childstage, pipelinename, stagepath, env, options, runblocks);
   };
 }
 
-// @proposal=P-BA — unified stage-kind dispatcher.
-// Every walk (the initial walk via orchestratepipeline, the fired walk
-// via HYPERVISOR, and any nested walk reached during either) enters
-// through runstage. It dispatches by stage.control.command:
-//   EVENT  → register the listener; the stage's elements are deferred
-//            to the event.
-//   LOOP   → iterate per control.fn and control.inputs.
-//   NULL   → walk the elements; if `async` is set, dispatch via an
-//            async wrapper.
 function runstage(stage, pipelinename, stagepath, env, options, runblocks) {
   if (!stage) return Promise.resolve(env);
   var kind = (stage.control && stage.control.command) || null;
@@ -978,15 +929,6 @@ function runstage(stage, pipelinename, stagepath, env, options, runblocks) {
   return orchestratestage(stage, pipelinename, env, stagepath, options, runblocks);
 }
 
-// @proposal=P-BA — LOOP iteration. Each iteration:
-//   · resolves the values bound to the names in control.inputs against
-//     env into a `state` object;
-//   · invokes control.fn(properties, state, loopcount) — the control
-//     object serves as the properties bag;
-//   · if the fn returns a falsy value, the loop terminates, returning
-//     the current env;
-//   · otherwise the stage's elements are walked once, then the loop
-//     recurses with loopcount + 1.
 function runloop(stage, pipelinename, stagepath, env, options, loopcount, runblocks) {
   var inputs = (stage.control && stage.control.inputs) || [];
   var state = {};
@@ -1001,10 +943,6 @@ function runloop(stage, pipelinename, stagepath, env, options, loopcount, runblo
     });
 }
 
-// @proposal=P-BA — orchestratestage walks a stage's element list. It
-// does not itself dispatch on the stage's kind; that is runstage's
-// role. It dispatches on element kind (BLOCK / PIPELINE / STAGE) and,
-// for STAGE elements, delegates to runstage.
 function orchestratestage(stage, pipelinename, env, stagepath, options, runblocks) {
   var constants = createblockcompilerconstants();
   var blocktypes = constants.blocktypes;
@@ -1191,10 +1129,6 @@ function loadfrontendprograms(programs, basepath, timeout) {
 // §6 — Finalizers
 // ============================================================
 
-// @proposal=P-BA — orchestratepipeline delegates each top-level stage
-// to runstage, which dispatches by kind (NULL / EVENT / LOOP) at every
-// depth. The inline EVENT branch and the inline orchestratestage call
-// are replaced by a single runstage call.
 function orchestratepipeline(p, stageindex, env, options, runblocks) {
   if (stageindex >= p.elements.length) return Promise.resolve(env);
   var stage = p.elements[stageindex];
@@ -1212,18 +1146,6 @@ function loadpipelineresources(p, options) {
   return loadpipelinedependencies(p, options);
 }
 
-// @proposal=P-AR — run() is reduced to:
-//   1. resource loading;
-//   2. for non-compileonly pipelines, awaiting the append-time pending
-//      chain, then a structural walk (runblocks=false);
-//      for compileonly pipelines, a structural walk with runblocks=true.
-//
-// @proposal=P-AT — top-level EVENT stages are registered during the
-// structural walk; their blocks are not executed at walk time even
-// under runblocks=true.
-//
-// @proposal=P-BA — the structural walk enters through runstage, which
-// dispatches every stage by kind uniformly at every depth.
 function run(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
@@ -1254,6 +1176,88 @@ function compile(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compile pipeline:', p.name, 'type:', p.type);
   return loadpipelineresources(p, options).then(function() { return p; });
+}
+
+// ============================================================
+// @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — setaccent resolves an
+// accent from a palette and dispatches one SETACCENT message to
+// RENDERACTOR. Fire-and-forget (returns undefined), consistent with
+// SENDINSTRUCTION.
+//
+//   selector   — { id | tag | class } (framework's existing shape)
+//   accentref  — number (index into palette.accents, fallback to
+//                palette.warm) or string (name in palette.accents,
+//                then palette.neutrals, then palette root)
+//   palette    — the palette object returned by a ruleset function
+//   prop       — CSS property to set; defaults to 'color'
+//
+// Throws on unresolvable refs so that assignment loops fail loudly
+// rather than silently rendering without an accent.
+// ============================================================
+
+function setaccent(selector, accentref, palette, prop) {
+  if (!selector || typeof selector !== 'object') {
+    throw new Error('[setaccent] selector required');
+  }
+  if (!selector.id && !selector.tag && !selector.class) {
+    throw new Error('[setaccent] selector must declare id, tag, or class');
+  }
+  if (!palette || typeof palette !== 'object') {
+    throw new Error('[setaccent] palette required');
+  }
+
+  var entry = null;
+
+  if (typeof accentref === 'number') {
+    if (palette.accents && palette.accents[accentref]) {
+      entry = palette.accents[accentref];
+    } else if (palette.warm && palette.warm[accentref]) {
+      entry = palette.warm[accentref];
+    }
+  } else if (typeof accentref === 'string') {
+    if (palette.accents) {
+      for (var i = 0; i < palette.accents.length; i++) {
+        if (palette.accents[i] && palette.accents[i].name === accentref) {
+          entry = palette.accents[i];
+          break;
+        }
+      }
+    }
+    if (!entry && palette.neutrals && palette.neutrals[accentref]) {
+      entry = palette.neutrals[accentref];
+    }
+    if (!entry && palette[accentref] !== undefined) {
+      entry = palette[accentref];
+    }
+    if (!entry && palette.warm) {
+      for (var j = 0; j < palette.warm.length; j++) {
+        if (palette.warm[j] && palette.warm[j].name === accentref) {
+          entry = palette.warm[j];
+          break;
+        }
+      }
+    }
+  } else {
+    throw new Error('[setaccent] accentref must be a number or string');
+  }
+
+  if (!entry) {
+    throw new Error('[setaccent] cannot resolve accent ' + String(accentref));
+  }
+
+  var hex = (typeof entry === 'string') ? entry : entry.hex;
+  if (!hex || typeof hex !== 'string' || hex.charAt(0) !== '#') {
+    throw new Error('[setaccent] accent ' + String(accentref) + ' has no hex');
+  }
+
+  var cssprop = prop || 'color';
+
+  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.SETACCENT, {
+    SELECTOR: selector,
+    PROP: cssprop,
+    HEX: hex,
+    REF: accentref
+  }, GENERATETAG(), 'BLOCKCOMPILER');
 }
 
 // ============================================================
