@@ -30,6 +30,19 @@
 // function added. It resolves an accent from a palette and dispatches
 // one SETACCENT message to RENDERACTOR. Fire-and-forget; not carried
 // in mail. Called by the frontend's assignment sequences.
+//
+// @proposal=P-YJ-API-RETRY-ON-TIMEOUT (v2, Cycle AR-FC-10) —
+// createpersistentelementwrapper computes the outer wait duration from
+// the element's declared `timeout` when it is a positive number, and
+// from `mailboxwaittimeout` otherwise. When the element's declaration
+// carries `catchtimeout: true`, the wrapper attaches a `.catch` that
+// resolves with a timeout envelope `{ ERROR: 'timeout', TAG, KIND:
+// 'mailbox-wait-timeout' }` on a mailbox-wait rejection (matched by the
+// error message prefix `'Mailbox wait timeout'`), so the enclosing
+// LOOP stage can observe the timeout as a value and decide to retry.
+// When `catchtimeout` is absent, the rejection propagates unchanged.
+// The timeout envelope is bound to every declared output key of the
+// element so that the enclosing validator can read it.
 
 // ============================================================
 // §1 — Construction API
@@ -667,11 +680,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           outbound.HEIGHT = props.height;
         }
       }
-      // @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — the
-      // palettegenerate command carries the ruleset function and the
-      // optional overrides object. Both are plain JS values; the
-      // ruleset is a function (fire-and-forget is not used here; the
-      // response carries the palette).
       if (cmd === 'palettegenerate') {
         outbound.RULESET = props.ruleset;
         outbound.OVERRIDES = props.overrides;
@@ -679,10 +687,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
 
       return sendandawait('RENDERACTOR', msgtype, outbound, mailboxwaittimeout, 'domresult')
         .then(function(r) {
-          // @proposal=P-PALETTEGENERATE-COMMAND — the handler returns
-          // { PALETTE: palette }; extract the palette before
-          // wrapblockresult so that a single-output block binds
-          // env[output] directly to the palette object.
           if (cmd === 'palettegenerate' && r && typeof r === 'object' && r.PALETTE !== undefined) {
             return wrapblockresult(r.PALETTE, sig);
           }
@@ -1030,7 +1034,12 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 
     SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'taskresult' });
 
-    return WAITFORMAILBOX({ TAG: tag, SENDER: 'EXECUTIONACTOR', TYPE: MESSAGETYPES.TASKRESULT }, mailboxwaittimeout)
+    var waitduration = (elementdef && typeof elementdef.timeout === 'number' && elementdef.timeout > 0)
+      ? elementdef.timeout
+      : mailboxwaittimeout;
+    var catchtimeout = (elementdef && elementdef.catchtimeout === true);
+
+    return WAITFORMAILBOX({ TAG: tag, SENDER: 'EXECUTIONACTOR', TYPE: MESSAGETYPES.TASKRESULT }, waitduration)
       .then(function(mailboxmessage) {
         var payload = mailboxmessage && mailboxmessage.PAYLOAD ? mailboxmessage.PAYLOAD : {};
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
@@ -1053,6 +1062,18 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
         logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelinename);
         return result;
+      })
+      .catch(function(err) {
+        var istimeout = catchtimeout
+          && err
+          && typeof err.message === 'string'
+          && err.message.indexOf('Mailbox wait timeout') === 0;
+        if (!istimeout) throw err;
+        var timeoutenv = { ERROR: 'timeout', TAG: tag, KIND: 'mailbox-wait-timeout' };
+        var outputkeys2 = Object.keys(blockoutputs || {});
+        outputkeys2.forEach(function(k) { execenv[k] = timeoutenv; });
+        logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element timed out (caught):', elementid, 'pipeline:', pipelinename);
+        return timeoutenv;
       });
   }
   wrapper.id = elementid;
