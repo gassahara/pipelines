@@ -934,7 +934,7 @@ function runloop(stage, pipelinename, stagepath, env, options, loopcount, runblo
   var state = {};
   inputs.forEach(function(k) { state[k] = env[k]; });
 
-  var proceed = stage.control.fn(stage.control, state, loopcount);
+  var proceed = stage.control.fn(stage.control, state);
   if (!proceed) return Promise.resolve(env);
 
   return orchestratestage(stage, pipelinename, env, stagepath, options, runblocks)
