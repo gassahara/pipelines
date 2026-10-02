@@ -206,7 +206,25 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
     var CONSUMER = ACTORCONSUMERS[CONSUMERKEY1] || ACTORCONSUMERS[CONSUMERKEY2] || ACTORCONSUMERS[CONSUMERKEY3];
     if (CONSUMER) {
       logdebug(ENV, '[MAILACTOR]', 'DISPATCHING TO ACTOR:', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG);
-      DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE);
+      // @proposal=P7 (Part 2) — the expectation is created in the
+      // pre-dispatch stage, which DISPATCHTOACTOR invokes synchronously
+      // before the recipient's handler runs. For a synchronous
+      // responder, the response envelope is therefore observed by
+      // ADDENVELOPETOMAILBOX while EXPECTATIONS[TAG] is present; the
+      // resolver fires on arrival (P1-fix path).
+      DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, function(stagedmessage) {
+        var stagedspec = stagedmessage && stagedmessage.RESPONSESPEC;
+        if (stagedspec && stagedmessage.TAG) {
+          CREATEEXPECTATION(
+            stagedmessage.TAG,
+            RECIPIENT,
+            stagedmessage.SENDER || 'system',
+            stagedmessage.TYPE,
+            stagedmessage.CONTEXT || null,
+            stagedspec
+          );
+        }
+      });
       ENVELOPE.READ = 'READ';
     } else {
       if (RECIPIENT === 'BLOCKCOMPILER') {
@@ -214,18 +232,6 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
       } else {
         logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1);
       }
-    }
-
-    var RESPONSESPEC = FLATMESSAGE && FLATMESSAGE.RESPONSESPEC;
-    if (RESPONSESPEC && FLATTAG) {
-      CREATEEXPECTATION(
-        FLATTAG,
-        RECIPIENT,
-        FLATSENDER || 'system',
-        FLATTYPE,
-        (FLATMESSAGE && FLATMESSAGE.CONTEXT) || null,
-        RESPONSESPEC
-      );
     }
 
     return ENV;

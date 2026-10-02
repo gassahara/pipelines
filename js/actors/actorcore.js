@@ -80,10 +80,17 @@ function DISPATCHIMMUTABLE(ENV, ACTORNAME, BEHAVIOR, MESSAGE) {
   return BEHAVIOR(ENV, MESSAGE);
 }
 
-function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE) {
+// @proposal=P7 — optional fourth argument STAGE, invoked synchronously
+// after the world-map state is resolved and before DISPATCHIMMUTABLE
+// runs. The stage's return value is discarded. Stage exceptions
+// propagate (DISPATCHIMMUTABLE is not invoked in that case).
+function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE, STAGE) {
   var CURRENTENV = GETACTORSTATE('WORLDMAPACTOR');
   if (CURRENTENV === undefined) {
     throw new Error('[DISPATCHTOACTOR] WORLDMAPACTOR state (ENV) is not registered');
+  }
+  if (typeof STAGE === 'function') {
+    STAGE(MESSAGE);
   }
   var RESULT = DISPATCHIMMUTABLE(CURRENTENV, ACTORNAME, BEHAVIOR, MESSAGE);
   if (RESULT && typeof RESULT.then === 'function') {
@@ -350,7 +357,6 @@ function CREATEACTORHANDLE(ACTORNAME) {
     var IV = (typeof INTERVAL === 'number' && INTERVAL > 0) ? INTERVAL : 50;
     var TO = (typeof TIMEOUT === 'number' && TIMEOUT > 0) ? TIMEOUT : 20000;
 
-    // @proposal=P5 — push path when a live expectation exists (F35, F36).
     if (typeof EXPECTATIONS !== 'undefined' &&
         EXPECTATIONS[ID] &&
         EXPECTATIONS[ID].STATUS === 'PENDING' &&
@@ -386,7 +392,6 @@ function CREATEACTORHANDLE(ACTORNAME) {
       });
     }
 
-    // Fallback poll — preserved unchanged (F37).
     return new Promise(function(RESOLVE, REJECT) {
       var START = Date.now();
 
