@@ -188,12 +188,16 @@ function setblockcompilertools(tools) {
   if (typeof tools.parsesource === 'function') blockcompilertools.parsesource = tools.parsesource;
 }
 
+// @proposal=P3 (P-LOADING-INDICATOR-PRIMITIVE) — 'loader' is added to
+// blocktypes. The loader's expression is the async analog of a LOOP
+// stage's fn: function(properties, state) → Promise<truthy|falsy>.
 function createblockcompilerconstants() {
   return {
     blocktypes: {
       fn: 'fn', api: 'api', fetch: 'fetch', writer: 'writer',
       io: 'io', domquery: 'domquery', crypto: 'crypto',
-      wait: 'wait', executionquery: 'executionquery'
+      wait: 'wait', executionquery: 'executionquery',
+      loader: 'loader'
     },
     inheritedkeys: ['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents']
   };
@@ -362,10 +366,22 @@ function wrapblockresult(response, sig) {
   return response;
 }
 
-function sendandawait(recipient, type, payload, timeout, responsetype) {
-  var tag = GENERATETAG();
+// @proposal=P1 (P-MAILBOX-EXCHANGE-CONSOLIDATION) — the consolidated
+// awaited-send primitive. It sends the instruction and returns a
+// promise that resolves with the raw envelope. WAITFORMAILBOX's
+// TAG-keyed path arms the resolver on the live expectation (F4/i);
+// the request's RESPONSESPEC ensures MAILBEHAVIOR creates the
+// expectation before WAITFORMAILBOX is invoked. The optional `tag`
+// argument lets callers retain the correlation identifier for
+// diagnostics.
+function exchange(recipient, type, payload, timeout, responsetype, tag) {
+  if (tag === undefined) tag = GENERATETAG();
   SENDINSTRUCTION(recipient, type, payload, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
-  return WAITFORMAILBOX({ TAG: tag, SENDER: recipient, TYPE: responsetype }, timeout).then(unwrap);
+  return WAITFORMAILBOX({ TAG: tag, SENDER: recipient, TYPE: responsetype }, timeout);
+}
+
+function sendandawait(recipient, type, payload, timeout, responsetype) {
+  return exchange(recipient, type, payload, timeout, responsetype).then(unwrap);
 }
 
 function loadscripts(entries, basepath, timeout, label) {
@@ -453,6 +469,117 @@ function compilehttpblock(merged, id, sig, istextual, options) {
   };
 
   return wrapcompiledfn(innerfn, istextual ? 'fetch' : 'api', id);
+}
+
+// @proposal=P3 — the loader block compiler.
+// Contract (see Iterations 3 / 6):
+//   · merged.behaviour is the expression: function(properties, state) → Promise<truthy|falsy>
+//   · merged.inputs declares the state keys; allowundefinedinputs permits missing
+//   · merged.interval defaults to mailboxresolve('pollinterval')
+//   · merged.timeout  defaults to mailboxresolve('expectationtimeout')
+//   · merged.markup   optional; omitted → RENDERACTOR supplies default
+//   · state is refreshed from env on each iteration (LOOP-stage cadence)
+//   · SHOW is dispatched once; HIDE is dispatched on release, timeout, or error
+//   · interval and timeout are type-checked at compile time (F22)
+//   · the block's own id serves as the overlay id (F24)
+//   · JavaScript truthiness governs the expression's return (F25)
+function loaderexpressionsignature(merged, id) {
+  if (typeof merged.behaviour !== 'function') {
+    throw new Error('[LOADER] Block "' + id + '" must declare a behaviour function (the expression)');
+  }
+  if (merged.interval !== undefined) {
+    if (typeof merged.interval !== 'number' || merged.interval <= 0 || Math.floor(merged.interval) !== merged.interval) {
+      throw new Error('[LOADER] Block "' + id + '" interval must be a positive integer');
+    }
+  }
+  if (merged.timeout !== undefined) {
+    if (typeof merged.timeout !== 'number' || merged.timeout <= 0 || Math.floor(merged.timeout) !== merged.timeout) {
+      throw new Error('[LOADER] Block "' + id + '" timeout must be a positive integer');
+    }
+  }
+  if (merged.interval !== undefined && merged.timeout !== undefined && merged.timeout < merged.interval) {
+    throw new Error('[LOADER] Block "' + id + '" timeout must be >= interval');
+  }
+  return true;
+}
+
+function compileloaderblock(merged, id, sig) {
+  loaderexpressionsignature(merged, id);
+
+  var expression = merged.behaviour;
+  var interval = (merged.interval !== undefined) ? merged.interval : null;
+  var timeout = (merged.timeout !== undefined) ? merged.timeout : null;
+  var markup = (typeof merged.markup === 'string' && merged.markup !== '') ? merged.markup : null;
+  var overlayid = id;
+  var inputnames = Array.isArray(merged.inputs) ? merged.inputs : [];
+  var allowundefined = merged.allowundefinedinputs === true;
+  var properties = merged;
+
+  var innerfn = function(env) {
+    var effinterval = (interval !== null) ? interval : mailboxresolve('pollinterval');
+    var efftimeout = (timeout !== null) ? timeout : mailboxresolve('expectationtimeout');
+    var starttime = Date.now();
+
+    function resolvestate() {
+      var state = {};
+      inputnames.forEach(function(name) {
+        state[name] = compilepathaccessor(name)(env);
+      });
+      return state;
+    }
+
+    function assertinputs(state) {
+      if (allowundefined) return;
+      var missing = inputnames.filter(function(k) { return state[k] === undefined; });
+      if (missing.length > 0) {
+        throw new Error('[LOADER] Block "' + id + '" has undefined inputs: ' + missing.join(', '));
+      }
+    }
+
+    function sendloading(action) {
+      var tag = GENERATETAG();
+      var payload = { ACTION: action, ID: overlayid };
+      if (action === 'SHOW' && markup !== null) payload.MARKUP = markup;
+      SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, payload, tag, 'BLOCKCOMPILER');
+      return Promise.resolve();
+    }
+
+    function pollstep() {
+      var state = resolvestate();
+      assertinputs(state);
+      if (Date.now() - starttime >= efftimeout) {
+        return sendloading('HIDE').then(function() {
+          return { loaderstatus: 'timeout' };
+        });
+      }
+      var presult;
+      try {
+        presult = expression(properties, state);
+      } catch (sync) {
+        return sendloading('HIDE').then(function() { throw sync; });
+      }
+      return Promise.resolve(presult).then(function(value) {
+        if (value) {
+          return new Promise(function(resolve) {
+            setTimeout(function() {
+              resolve(pollstep());
+            }, effinterval);
+          });
+        }
+        return sendloading('HIDE').then(function() {
+          return {};
+        });
+      }).catch(function(err) {
+        return sendloading('HIDE').then(function() { throw err; });
+      });
+    }
+
+    return sendloading('SHOW').then(function() {
+      return pollstep();
+    });
+  };
+
+  return wrapcompiledfn(innerfn, 'loader', id);
 }
 
 function createblockcompilers(blocktypes, inheritedkeys, options) {
@@ -689,6 +816,12 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'executionquery', id);
+  };
+
+  // @proposal=P3 — loader block compiler registration.
+  compilers[blocktypes.loader] = function(merged, id, sig) {
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling LOADER block:', id);
+    return compileloaderblock(merged, id, sig);
   };
 
   return compilers;
@@ -983,14 +1116,14 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       ORIGIN: compiledelement.origin || null
     };
 
-    SENDINSTRUCTION('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, tag, 'BLOCKCOMPILER', { responsetype: 'taskresult' });
-
     var waitduration = (elementdef && typeof elementdef.timeout === 'number' && elementdef.timeout > 0)
       ? elementdef.timeout
       : mailboxresolve('mailboxwaittimeout');
     var catchtimeout = (elementdef && elementdef.catchtimeout === true);
 
-    return WAITFORMAILBOX({ TAG: tag, SENDER: 'EXECUTIONACTOR', TYPE: MESSAGETYPES.TASKRESULT }, waitduration)
+    // @proposal=P1 — routed through exchange; the tag is preserved for
+    // the diagnostic record used by the catch branch.
+    return exchange('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, waitduration, 'taskresult', tag)
       .then(function(mailboxmessage) {
         var payload = mailboxmessage && mailboxmessage.PAYLOAD ? mailboxmessage.PAYLOAD : {};
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);

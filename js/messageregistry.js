@@ -1,35 +1,3 @@
-// messageregistry.js — message type and interface registry.
-//
-// @proposal=P9 (Cycle P9-02) — the dead DNA-era message-type
-// vocabulary is removed:
-//   BOOTDNA, PIPELINEBOOTED, COMPILESTAGE, STAGECOMPLETED,
-//   STAGECOMPLETEDACK
-// Their producers were removed at Cycles 32R (blockcompiler.js) and
-// 37R (hypervisoractor.js). Their consumers were removed at the same
-// cycles. No caller references them.
-//
-// @proposal=P-Q — LOADSCRIPT and SCRIPTLOADED message types added to
-// support routing lib/program script loading through RENDERACTOR.
-// SCRIPTLOADED added to MAILBOXFILTERTYPES so sendandawait can
-// resolve its expectation when the response arrives.
-//
-// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — PANELAYOUT message type
-// added. It is a RENDERACTOR command that applies a pane's base
-// geometry (derived maxWidth, margin auto, flex shape, gap) to the
-// element addressed by ID.
-//
-// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — PALETTEGENERATE
-// message type added. It is a RENDERACTOR command that invokes a
-// palette function (a plain JS function passed in the payload) and
-// returns the resulting palette. The handler performs no shape
-// inspection; the ruleset function does its own dispatch.
-//
-// @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — SETACCENT message type
-// added. It is a RENDERACTOR command dispatched by the framework's
-// top-level setaccent() function (declared in blockcompiler.js).
-// Payload: { SELECTOR, PROP, HEX, REF }. The handler composes one
-// rule and applies it via SU_rewritestyleattrs.
-
 var MESSAGETYPES = Object.freeze({
   RENDER: 'RENDER',
   CLEAR: 'CLEAR',
@@ -145,6 +113,7 @@ var MESSAGETYPES = Object.freeze({
   EVENTLISTENERREGISTERED: 'EVENTLISTENERREGISTERED',
   LOADSCRIPT: 'LOADSCRIPT',
   SCRIPTLOADED: 'SCRIPTLOADED',
+  LOADINGINDICATOR: 'LOADINGINDICATOR',
   LOGLINE: 'LOGLINE'
 });
 

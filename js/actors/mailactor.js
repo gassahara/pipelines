@@ -1,26 +1,3 @@
-// mailactor.js — mail transport concern.
-//
-// @proposal=P5 (corrected, Cycle 39R) — the OP-011 (FB-14) payload-key
-// case aliasing is removed. UPPERCASE is the single authoritative key
-// form (Q12). Writers emit UPPERCASE; readers read UPPERCASE; filters
-// are expressed with UPPERCASE keys.
-//
-// The three removed sites:
-//   1. SENDINSTRUCTION's twin-key loop (STRUCTURALKEYS + per-key twin)
-//   2. MAILBEHAVIOR's ENVELOPE.payload = ENVELOPE.PAYLOAD alias
-//   3. QUERYMAILBOX's / WAITFORMAILBOX's filter-key aliasing loop
-//
-// The coupled writer (executionactor's ENQUEUEEXECUTION* helpers) and
-// reader (blockcompiler's WAITFORMAILBOX filter literals) are aligned
-// in Cycles 39R-bis and 39R-ter respectively.
-//
-// @proposal=P-YJ-MAILBOX-CONFIG (Cycle AR-FC-15) — the two module-level
-// constants EXPECTATIONTIMEOUT and POLLINTERVAL are removed. Their three
-// call sites now read the value at call time from mailboxresolve()
-// (defined in ./js/factory/mailboxconfig.js, loaded first in the
-// framework manifest). The precedence chain is
-// window.APPINIT<FIELD> || window.BOOTLOADER<FIELD> || MAILBOXCONFIG.<field>.
-
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
@@ -33,6 +10,20 @@ var INDEXBYSENDER = {};
 var INDEXBYTYPE = {};
 
 var MAILBOXRESPONSETYPE = 'MAILBOXRESPONSE';
+
+// @proposal=P1 — retention timer for settled envelopes (F6/F34).
+var RETENTIONTIMERS = {};
+
+function SCHEDULERETENTIONPRUNE(TAG) {
+  if (!TAG || RETENTIONTIMERS[TAG]) return;
+  RETENTIONTIMERS[TAG] = setTimeout(function() {
+    delete RETENTIONTIMERS[TAG];
+    var ENVELOPES = (INDEXBYTAG[TAG] || []).slice();
+    ENVELOPES.forEach(function(E) {
+      if (E && E.TAG === TAG) REMOVEENVELOPEFROMMAILBOX(E);
+    });
+  }, mailboxresolve('expectationtimeout'));
+}
 
 function ADDENVELOPETOMAILBOX(ENVELOPE) {
   MAILBOX.push(ENVELOPE);
@@ -51,6 +42,11 @@ function ADDENVELOPETOMAILBOX(ENVELOPE) {
   if (TYPE) {
     if (!INDEXBYTYPE[TYPE]) INDEXBYTYPE[TYPE] = [];
     INDEXBYTYPE[TYPE].push(ENVELOPE);
+  }
+
+  // @proposal=P1 — fire the live expectation's resolver on arrival (F4/i).
+  if (TAG && EXPECTATIONS[TAG] && EXPECTATIONS[TAG].STATUS === 'PENDING') {
+    RESOLVEEXPECTATION(TAG);
   }
 }
 
@@ -87,12 +83,14 @@ function CREATEEXPECTATION(TAG, RECIPIENT, SENDER, TYPE, CONTEXT, RESPONSESPEC) 
     CREATEDAT: Date.now(),
     RESOLVEDAT: null,
     ERROR: null,
-    READ: 'UNREAD'
+    READ: 'UNREAD',
+    RESOLVERS: [],
+    REJECTERS: [],
+    TIMEOUTID: null
   };
   EXPECTATIONS[TAG] = EXPECTATION;
-  MAILBOX.push(EXPECTATION);
 
-  setTimeout(function() {
+  EXPECTATION.TIMEOUTID = setTimeout(function() {
     if (EXPECTATIONS[TAG] && (EXPECTATIONS[TAG].STATUS === 'PENDING')) {
       REJECTEXPECTATION(TAG, { MESSAGE: 'Response timeout for tag ' + TAG });
     }
@@ -101,51 +99,62 @@ function CREATEEXPECTATION(TAG, RECIPIENT, SENDER, TYPE, CONTEXT, RESPONSESPEC) 
   return EXPECTATION;
 }
 
-function RESOLVEEXPECTATION(TAG) {
-  if (EXPECTATIONS[TAG]) {
-    var EXP = EXPECTATIONS[TAG];
-    EXP.STATUS = 'RESOLVED';
-    EXP.RESOLVEDAT = Date.now();
-    EXP.READ = 'READ';
-    delete EXPECTATIONS[TAG];
-
-    if (INDEXBYTAG[TAG]) {
-      INDEXBYTAG[TAG].slice().forEach(function(ENVLP) {
-        if (ENVLP.TAG === TAG) REMOVEENVELOPEFROMMAILBOX(ENVLP);
-      });
-    }
-
-    var EXPIDX = MAILBOX.findIndex(function(ITEM) {
-      return ITEM.TAG === TAG && (ITEM.READ === 'UNREAD') && (ITEM.STATUS === 'RESOLVED');
-    });
-    if (EXPIDX !== -1) MAILBOX.splice(EXPIDX, 1);
+// @proposal=P1 — register callbacks on a live expectation (F4/i).
+function ARMEXPECTATIONRESOLVER(TAG, ONRESOLVE, ONREJECT) {
+  var EXPECTATION = EXPECTATIONS[TAG];
+  if (EXPECTATION && EXPECTATION.STATUS === 'PENDING') {
+    if (typeof ONRESOLVE === 'function') EXPECTATION.RESOLVERS.push(ONRESOLVE);
+    if (typeof ONREJECT === 'function') EXPECTATION.REJECTERS.push(ONREJECT);
+    return true;
   }
+  return false;
+}
+
+function RESOLVEEXPECTATION(TAG) {
+  var EXP = EXPECTATIONS[TAG];
+  if (!EXP) return;
+  EXP.STATUS = 'RESOLVED';
+  EXP.RESOLVEDAT = Date.now();
+  EXP.READ = 'READ';
+  if (EXP.TIMEOUTID) {
+    clearTimeout(EXP.TIMEOUTID);
+    EXP.TIMEOUTID = null;
+  }
+  delete EXPECTATIONS[TAG];
+
+  var RESOLVERS = EXP.RESOLVERS.slice();
+  var RECORD = MAILGETACTIONSTATUS(TAG);
+  RESOLVERS.forEach(function(FN) {
+    try { FN(RECORD); } catch (E) { /* resolver error does not block others */ }
+  });
+
+  SCHEDULERETENTIONPRUNE(TAG);
 }
 
 function REJECTEXPECTATION(TAG, ERROR) {
-  if (EXPECTATIONS[TAG]) {
-    var EXP = EXPECTATIONS[TAG];
-    EXP.STATUS = 'TIMEOUT';
-    EXP.RESOLVEDAT = Date.now();
-    EXP.ERROR = ERROR;
-    EXP.READ = 'READ';
-    var SPEC = EXP.RESPONSESPEC;
-    if (SPEC && typeof SPEC.reject === 'function') {
-      SPEC.reject(new Error(ERROR && ERROR.MESSAGE ? ERROR.MESSAGE : 'Expectation rejected'));
-    }
-    delete EXPECTATIONS[TAG];
-
-    if (INDEXBYTAG[TAG]) {
-      INDEXBYTAG[TAG].slice().forEach(function(ENVLP) {
-        if (ENVLP.TAG === TAG) REMOVEENVELOPEFROMMAILBOX(ENVLP);
-      });
-    }
-
-    var EXPIDX = MAILBOX.findIndex(function(ITEM) {
-      return ITEM.TAG === TAG && (ITEM.READ === 'UNREAD') && (ITEM.STATUS === 'TIMEOUT');
-    });
-    if (EXPIDX !== -1) MAILBOX.splice(EXPIDX, 1);
+  var EXP = EXPECTATIONS[TAG];
+  if (!EXP) return;
+  EXP.STATUS = 'TIMEOUT';
+  EXP.RESOLVEDAT = Date.now();
+  EXP.ERROR = ERROR;
+  EXP.READ = 'READ';
+  if (EXP.TIMEOUTID) {
+    clearTimeout(EXP.TIMEOUTID);
+    EXP.TIMEOUTID = null;
   }
+  var SPEC = EXP.RESPONSESPEC;
+  var REJECTIONERROR = new Error(ERROR && ERROR.MESSAGE ? ERROR.MESSAGE : 'Expectation rejected');
+  if (SPEC && typeof SPEC.reject === 'function') {
+    SPEC.reject(REJECTIONERROR);
+  }
+  delete EXPECTATIONS[TAG];
+
+  var REJECTERS = EXP.REJECTERS.slice();
+  REJECTERS.forEach(function(FN) {
+    try { FN(REJECTIONERROR); } catch (E) { /* do not block */ }
+  });
+
+  SCHEDULERETENTIONPRUNE(TAG);
 }
 
 function MAILBEHAVIOR(ENV, MESSAGE) {
@@ -326,8 +335,10 @@ function QUERYMAILBOX(FILTER) {
     if (ITEM && TAGVAL && EXPECTATIONS[TAGVAL] && (ITEM.READ === 'READ')) {
       RESOLVEEXPECTATION(TAGVAL);
     }
-    if (ITEM && (ITEM.READ === 'READ') && (!TAGVAL || !EXPECTATIONS[TAGVAL])) {
-      setTimeout(function() { REMOVEENVELOPEFROMMAILBOX(ITEM); }, 0);
+    if (ITEM && (ITEM.READ === 'READ')) {
+      // @proposal=P1 — retain the envelope for the bounded interval (F6/F34).
+      if (TAGVAL) SCHEDULERETENTIONPRUNE(TAGVAL);
+      else setTimeout(function() { REMOVEENVELOPEFROMMAILBOX(ITEM); }, 0);
     }
   });
 
@@ -335,60 +346,91 @@ function QUERYMAILBOX(FILTER) {
   return RESULT;
 }
 
-function WAITFORMAILBOX(FILTER, TIMEOUT) {
-  if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
-  return new Promise(function(RESOLVE, REJECT) {
+// @proposal=P1 — pre-existing poll path, preserved as the fallback.
+function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
+  if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
+    REJECT(new Error('Cancelled'));
+    return;
+  }
+
+  var TAGVAL = FILTER && FILTER.TAG;
+  if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS !== 'PENDING') {
+    REJECT(new Error('Expectation already settled'));
+    return;
+  }
+
+  var FOUND = QUERYMAILBOX(FILTER);
+  if (FOUND.length > 0) {
+    FOUND[0].READ = 'READ';
+    RESOLVE(FOUND[0]);
+    return;
+  }
+
+  var CHECKINTERVAL = setInterval(function() {
+    if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
+      clearInterval(CHECKINTERVAL);
+      REJECT(new Error('Cancelled'));
+      return;
+    }
+    if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS !== 'PENDING') {
+      clearInterval(CHECKINTERVAL);
+      REJECT(new Error('Expectation already settled'));
+      return;
+    }
+    var RES = QUERYMAILBOX(FILTER);
+    if (RES.length > 0) {
+      clearInterval(CHECKINTERVAL);
+      RES[0].READ = 'READ';
+      RESOLVE(RES[0]);
+    }
+  }, mailboxresolve('pollinterval'));
+
+  setTimeout(function() {
+    clearInterval(CHECKINTERVAL);
     if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       REJECT(new Error('Cancelled'));
       return;
     }
-
-    var TAGVAL = FILTER && FILTER.TAG;
-    if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS !== 'PENDING') {
-      REJECT(new Error('Expectation already settled'));
-      return;
+    var LATE = QUERYMAILBOX(FILTER);
+    if (LATE.length > 0) {
+      LATE[0].READ = 'READ';
+      RESOLVE(LATE[0]);
+    } else {
+      REJECT(new Error('Mailbox wait timeout for filter: ' + JSON.stringify(FILTER)));
     }
+  }, TIMEOUT);
+}
 
-    var FOUND = QUERYMAILBOX(FILTER);
-    if (FOUND.length > 0) {
-      FOUND[0].READ = 'READ';
-      RESOLVE(FOUND[0]);
-      return;
-    }
+function WAITFORMAILBOX(FILTER, TIMEOUT) {
+  if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
+  var TAGVAL = FILTER && FILTER.TAG;
 
-    var CHECKINTERVAL = setInterval(function() {
-      if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
-        clearInterval(CHECKINTERVAL);
-        REJECT(new Error('Cancelled'));
-        return;
+  // @proposal=P1 — push path for live TAG-keyed expectations (F4/i).
+  if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS === 'PENDING') {
+    return new Promise(function(RESOLVE, REJECT) {
+      var SETTLED = false;
+      function ONSETTLE(FN, ARG) {
+        if (SETTLED) return;
+        SETTLED = true;
+        FN(ARG);
       }
-      if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS !== 'PENDING') {
-        clearInterval(CHECKINTERVAL);
-        REJECT(new Error('Expectation already settled'));
-        return;
-      }
-      var RES = QUERYMAILBOX(FILTER);
-      if (RES.length > 0) {
-        clearInterval(CHECKINTERVAL);
-        RES[0].READ = 'READ';
-        RESOLVE(RES[0]);
-      }
-    }, mailboxresolve('pollinterval'));
+      ARMEXPECTATIONRESOLVER(
+        TAGVAL,
+        function(RECORD) { ONSETTLE(RESOLVE, RECORD); },
+        function(ERR) { ONSETTLE(REJECT, ERR); }
+      );
+      setTimeout(function() {
+        if (SETTLED) return;
+        var LATE = MAILGETACTIONSTATUS(TAGVAL);
+        if (LATE !== null) { ONSETTLE(RESOLVE, LATE); return; }
+        ONSETTLE(REJECT, new Error('Mailbox wait timeout for filter: ' + JSON.stringify(FILTER)));
+      }, TIMEOUT);
+    });
+  }
 
-    setTimeout(function() {
-      clearInterval(CHECKINTERVAL);
-      if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
-        REJECT(new Error('Cancelled'));
-        return;
-      }
-      var LATE = QUERYMAILBOX(FILTER);
-      if (LATE.length > 0) {
-        LATE[0].READ = 'READ';
-        RESOLVE(LATE[0]);
-      } else {
-        REJECT(new Error('Mailbox wait timeout for filter: ' + JSON.stringify(FILTER)));
-      }
-    }, TIMEOUT);
+  // Non-live path: pre-existing poll (TAG-less filter, or settled-after-send).
+  return new Promise(function(RESOLVE, REJECT) {
+    POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT);
   });
 }
 

@@ -1,39 +1,3 @@
-// renderactor.js — render concern.
-//
-// @proposal=P4 (Cycle 27) — actor-handle surface established.
-//
-// @proposal=P9 (Cycle P9-08, batch 9.9) — the case-alias reads are
-// removed.
-//
-// @proposal=P-Q — a LOADSCRIPT handler is added.
-//
-// @proposal=P-BA — the REGISTEREVENTLISTENER payload carries STAGE
-// and OPTIONS alongside the existing fields.
-//
-// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — PANELAYOUT handler added.
-//
-// @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — SU_detectviewportwidth
-// and SU_detectfontsize replace the literals 1024 and 16 as primary
-// defaults.
-//
-// @proposal=P-CORRECTIONS-EQUILIBRIUM (Cycle C2) — LC_correct* fixed-
-// point loops.
-//
-// @proposal=P-CORRECT-OVERFLOW-SCOPE (Cycle C2) — LC_correctoverflowdoc
-// skips intentionally-clipping elements.
-//
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — SU_detectviewportheight
-// added; PANELAYOUT handler accepts optional MSG.HEIGHT.
-//
-// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — PALETTEGENERATE
-// handler added. Calls the palette function passed in MSG.RULESET and
-// returns { PALETTE }. No shape inspection; the ruleset function does
-// its own dispatch.
-//
-// @proposal=P-SETACCENT-HANDLER (Cycle C5) — SETACCENT handler added.
-// Composes one rule from { SELECTOR, PROP, HEX } and applies it via
-// SU_rewritestyleattrs. Returns { APPLIED, REF, HEX }.
-
 var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
 
 var DOMQUERYCOMMANDREGISTRY = {
@@ -860,6 +824,52 @@ HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
 };
 
 HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
+
+// @proposal=P3 — loading-indicator handler. Two actions: SHOW creates
+// (if absent) a fixed-position overlay with the caller's MARKUP (or a
+// default three-dot pulse) and appends it to document.body; HIDE
+// removes it. Both actions are idempotent (F23): SHOW on an existing
+// overlay refreshes its innerHTML and ensures it is visible; HIDE on
+// an absent overlay is a no-op. The overlay id defaults to the
+// caller-supplied MSG.ID; if absent, the handler uses a stable
+// fallback. The default markup mirrors the .recipeloader-hero
+// vocabulary already used by ./pipelines/yjblocks-recipe.js.
+HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
+  var action = MSG.ACTION;
+  var id = (typeof MSG.ID === 'string' && MSG.ID.length > 0) ? MSG.ID : 'loadingindicator';
+
+  if (action === 'SHOW') {
+    var defaultmarkup = '<div class="recipeloader-hero" role="status" aria-live="polite" aria-label="Loading">'
+      + '<div class="recipeloader-hero-dot"></div>'
+      + '<div class="recipeloader-hero-dot"></div>'
+      + '<div class="recipeloader-hero-dot"></div>'
+      + '</div>';
+    var markup = (typeof MSG.MARKUP === 'string' && MSG.MARKUP.length > 0) ? MSG.MARKUP : defaultmarkup;
+    var existing = document.getElementById(id);
+    if (!existing) {
+      var overlay = document.createElement('div');
+      overlay.id = id;
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      overlay.innerHTML = markup;
+      document.body.appendChild(overlay);
+      return { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: true };
+    }
+    existing.innerHTML = markup;
+    existing.style.display = 'flex';
+    return { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: false };
+  }
+
+  if (action === 'HIDE') {
+    var el = document.getElementById(id);
+    if (el && el.parentNode) {
+      el.parentNode.removeChild(el);
+      return { APPLIED: true, ID: id, ACTION: 'HIDE', REMOVED: true };
+    }
+    return { APPLIED: true, ID: id, ACTION: 'HIDE', REMOVED: false };
+  }
+
+  return { ERROR: 'LOADINGINDICATOR requires ACTION SHOW|HIDE' };
+};
 
 var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER;
 HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {

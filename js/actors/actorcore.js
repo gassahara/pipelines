@@ -290,6 +290,19 @@ function GETTRIGGERMAP(REGISTRY) {
 // ID; no parallel store is introduced (Q8). The query is delegated
 // to MAILGETACTIONSTATUS(ID), declared by mailactor.js at File Cycle
 // 20. The typeof guard avoids a ReferenceError in the interim.
+//
+// @proposal=P5 (P-ACTORHANDLE-EXPECT-CONSOLIDATION) — EXPECT consults
+// EXPECTATIONS[ID] first. When a live expectation exists (the
+// framework's mail actor created one at SUBMIT time and its resolver
+// channel is armed by P1), EXPECT registers a resolver via
+// ARMEXPECTATIONRESOLVER and resolves on arrival — no interval. When
+// no live expectation exists (either ID was never submitted, or the
+// response has already arrived), the pre-existing poll is preserved
+// as the fallback. The caller's TIMEOUT bounds both paths; on
+// timeout, the promise rejects with the pre-existing shape. Per F36,
+// a resolver left armed after a caller timeout is a no-op on the
+// already-settled caller promise. Per F35, the check-then-arm
+// sequence executes synchronously (single-threaded event loop).
 
 function CREATEACTORHANDLE(ACTORNAME) {
   if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
@@ -337,6 +350,43 @@ function CREATEACTORHANDLE(ACTORNAME) {
     var IV = (typeof INTERVAL === 'number' && INTERVAL > 0) ? INTERVAL : 50;
     var TO = (typeof TIMEOUT === 'number' && TIMEOUT > 0) ? TIMEOUT : 20000;
 
+    // @proposal=P5 — push path when a live expectation exists (F35, F36).
+    if (typeof EXPECTATIONS !== 'undefined' &&
+        EXPECTATIONS[ID] &&
+        EXPECTATIONS[ID].STATUS === 'PENDING' &&
+        typeof ARMEXPECTATIONRESOLVER === 'function') {
+      return new Promise(function(RESOLVE, REJECT) {
+        var SETTLED = false;
+        function ONSETTLE(FN, ARG) {
+          if (SETTLED) return;
+          SETTLED = true;
+          FN(ARG);
+        }
+        function ONSHAPE(RECORD) {
+          if (RECORD === null || RECORD === undefined) {
+            ONSETTLE(REJECT, new Error('[EXPECT] no record for ' + ID));
+            return;
+          }
+          if (RECORD.STATUS === 'RESOLVED') { ONSETTLE(RESOLVE, RECORD.RESULT); return; }
+          if (RECORD.STATUS === 'FAILED') { ONSETTLE(RESOLVE, RECORD.ERROR); return; }
+          if (RECORD.STATUS === 'EXPIRED') { ONSETTLE(REJECT, new Error('[EXPECT] action expired: ' + ID)); return; }
+          ONSETTLE(REJECT, new Error('[EXPECT] unknown record status: ' + String(RECORD.STATUS)));
+        }
+        ARMEXPECTATIONRESOLVER(
+          ID,
+          function(RECORD) { ONSHAPE(RECORD); },
+          function(ERR) { ONSETTLE(REJECT, ERR); }
+        );
+        setTimeout(function() {
+          if (SETTLED) return;
+          var LATE = GETACTIONRESULT(ID);
+          if (LATE !== null && LATE !== undefined) { ONSHAPE(LATE); return; }
+          ONSETTLE(REJECT, new Error('[EXPECT] timeout for ' + ID));
+        }, TO);
+      });
+    }
+
+    // Fallback poll — preserved unchanged (F37).
     return new Promise(function(RESOLVE, REJECT) {
       var START = Date.now();
 

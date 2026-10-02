@@ -1,36 +1,3 @@
-// registerconsumers.js — actor consumer registration.
-//
-// @proposal=P9 (Cycle P9-03) — the HYPERVISORACTOR registrations for
-// the DNA-era message types are removed:
-//   BOOTDNA, COMPILESTAGE, STAGECOMPLETED
-// The corresponding MESSAGETYPES entries were removed in Cycle P9-02
-// (messageregistry.js).
-//
-// @proposal=P-Q — RENDERACTOR registration for LOADSCRIPT added, so
-// the block compiler can route lib/program script loading through the
-// render actor instead of touching document.* directly.
-//
-// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — RENDERACTOR registration for
-// PANELAYOUT added. The registration declares the payload shape
-// { ID, SHAPE, VIEWPORT } and binds the message to RENDERBEHAVIOR.
-//
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — the PANELAYOUT
-// iface is amended to declare the optional HEIGHT field ('any?'),
-// which carries either the string 'viewport' or a positive number.
-//
-// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — RENDERACTOR
-// registration for PALETTEGENERATE added. Interface: RULESET (function),
-// OVERRIDES (object, optional).
-//
-// @proposal=P-SETACCENT-HANDLER (Cycle C5) — RENDERACTOR registration
-// for SETACCENT added. Interface: SELECTOR (object), PROP (string),
-// HEX (string), REF (any, optional).
-//
-// @proposal=P-BOOT-RECOVERY-REGISTERCONSUMERS (Cycle C6) — the file is
-// emitted complete. A prior emission omitted six of the seven actor
-// blocks, which caused checkregistration to fail for six owners. This
-// emission contains every block.
-
 var REGISTEREDCONSUMERS = true;
 
 // APIACTOR
@@ -323,6 +290,13 @@ MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, {
 
 MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.LOADSCRIPT, {
   SRC: 'string'
+}, RENDERBEHAVIOR);
+
+// @proposal=P3 (P-LOADING-INDICATOR-PRIMITIVE) — the LOADINGINDICATOR
+// registration. Declares the payload shape; the handler is
+// HANDLERS[MESSAGETYPES.LOADINGINDICATOR] in renderactor.js.
+MESSAGEREGISTRY.register('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, {
+  ACTION: 'string', MARKUP: 'string?', ID: 'string?'
 }, RENDERBEHAVIOR);
 
 // WORLDMAPACTOR
