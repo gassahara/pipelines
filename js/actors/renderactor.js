@@ -825,37 +825,35 @@ HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
 
 HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
 
-// @proposal=P3 — loading-indicator handler. Two actions: SHOW creates
-// (if absent) a fixed-position overlay with the caller's MARKUP (or a
-// default three-dot pulse) and appends it to document.body; HIDE
-// removes it. Both actions are idempotent (F23): SHOW on an existing
-// overlay refreshes its innerHTML and ensures it is visible; HIDE on
-// an absent overlay is a no-op. The overlay id defaults to the
-// caller-supplied MSG.ID; if absent, the handler uses a stable
-// fallback. The default markup mirrors the .recipeloader-hero
-// vocabulary already used by ./pipelines/yjblocks-recipe.js.
+// @proposal=P3 / @proposal=P9 — loading-indicator handler. SHOW creates
+// (if absent) a container with the caller's MARKUP (or a neutral
+// framework default) and appends it to document.body; HIDE removes it.
+// Both actions are idempotent.
+//
+// Style neutrality (P9): the container carries only an `id`. No
+// style attribute, no style property, no `cssText`. The framework's
+// default markup is a semantic element with no visual content. When
+// MSG.MARKUP is supplied, it is hosted verbatim — no wrapping, no
+// class injection, no style attribute — so the caller's visual intent
+// is preserved exactly. Visual decisions belong to the caller (via
+// MARKUP) or to the application (via its stylesheet targeting the
+// container id).
 HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
   var action = MSG.ACTION;
   var id = (typeof MSG.ID === 'string' && MSG.ID.length > 0) ? MSG.ID : 'loadingindicator';
 
   if (action === 'SHOW') {
-    var defaultmarkup = '<div class="recipeloader-hero" role="status" aria-live="polite" aria-label="Loading">'
-      + '<div class="recipeloader-hero-dot"></div>'
-      + '<div class="recipeloader-hero-dot"></div>'
-      + '<div class="recipeloader-hero-dot"></div>'
-      + '</div>';
+    var defaultmarkup = '<span role="status" aria-live="polite"></span>';
     var markup = (typeof MSG.MARKUP === 'string' && MSG.MARKUP.length > 0) ? MSG.MARKUP : defaultmarkup;
     var existing = document.getElementById(id);
     if (!existing) {
-      var overlay = document.createElement('div');
-      overlay.id = id;
-      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
-      overlay.innerHTML = markup;
-      document.body.appendChild(overlay);
+      var container = document.createElement('div');
+      container.id = id;
+      container.innerHTML = markup;
+      document.body.appendChild(container);
       return { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: true };
     }
     existing.innerHTML = markup;
-    existing.style.display = 'flex';
     return { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: false };
   }
 
