@@ -2,8 +2,8 @@ var DBVERBOSITYCONSTANTS = createverbosityconstants();
 var DBSTATE = { level: DBVERBOSITYCONSTANTS.DEBUG };
 
 var ROOTKEY = 'FRAMEWORKDBACTORMAP';
-var MAXKEYS = 100;
-var MAXENTRYBYTES = 2 * 1024 * 1024;
+var MAXKEYS = 200;
+var MAXENTRYBYTES = 6 * 1024 * 1024;
 
 // Dedicated store mailbox (independent from main MAILBOX)
 var STOREMAILBOX = [];
