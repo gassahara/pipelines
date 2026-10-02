@@ -167,9 +167,6 @@ var BLOCKCOMPILERSTATE = { level: createverbosityconstants().DEBUG };
 
 var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
 
-// mailboxwaittimeout and scriptwitnesstimeout were removed in Cycle
-// AR-FC-15; every read now goes through mailboxresolve().
-
 var blockcompilertools = {
   parsesource: (typeof parsesource === 'function') ? parsesource :
     (typeof detectfreeidentifiers === 'function') ? function(src) {
@@ -188,9 +185,6 @@ function setblockcompilertools(tools) {
   if (typeof tools.parsesource === 'function') blockcompilertools.parsesource = tools.parsesource;
 }
 
-// @proposal=P3 (P-LOADING-INDICATOR-PRIMITIVE) — 'loader' is added to
-// blocktypes. The loader's expression is the async analog of a LOOP
-// stage's fn: function(properties, state) → Promise<truthy|falsy>.
 function createblockcompilerconstants() {
   return {
     blocktypes: {
@@ -366,14 +360,6 @@ function wrapblockresult(response, sig) {
   return response;
 }
 
-// @proposal=P1 (P-MAILBOX-EXCHANGE-CONSOLIDATION) — the consolidated
-// awaited-send primitive. It sends the instruction and returns a
-// promise that resolves with the raw envelope. WAITFORMAILBOX's
-// TAG-keyed path arms the resolver on the live expectation (F4/i);
-// the request's RESPONSESPEC ensures MAILBEHAVIOR creates the
-// expectation before WAITFORMAILBOX is invoked. The optional `tag`
-// argument lets callers retain the correlation identifier for
-// diagnostics.
 function exchange(recipient, type, payload, timeout, responsetype, tag) {
   if (tag === undefined) tag = GENERATETAG();
   SENDINSTRUCTION(recipient, type, payload, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
@@ -431,9 +417,11 @@ function buildresponse(mappingobj, raw) {
   }, {});
 }
 
+// @proposal=P12 Part 1 — compilehttpblock is restored to its pre-P12
+// (post-P3) form. No loadingoverlay property is read. The api block's
+// compiled form is not coupled to any loading-indicator concern.
 function compilehttpblock(merged, id, sig, istextual, options) {
   var innerfn = function(env) {
-    var label = (istextual ? 'fetch' : 'api') + ':' + (merged.endpoint || id);
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing http block:', id, 'type:', istextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
     var inputaccessors = (sig.inputs || []).map(compilepathaccessor);
     var inputdata = {};
@@ -471,18 +459,25 @@ function compilehttpblock(merged, id, sig, istextual, options) {
   return wrapcompiledfn(innerfn, istextual ? 'fetch' : 'api', id);
 }
 
-// @proposal=P3 — the loader block compiler.
-// Contract (see Iterations 3 / 6):
-//   · merged.behaviour is the expression: function(properties, state) → Promise<truthy|falsy>
-//   · merged.inputs declares the state keys; allowundefinedinputs permits missing
-//   · merged.interval defaults to mailboxresolve('pollinterval')
-//   · merged.timeout  defaults to mailboxresolve('expectationtimeout')
-//   · merged.markup   optional; omitted → RENDERACTOR supplies default
-//   · state is refreshed from env on each iteration (LOOP-stage cadence)
-//   · SHOW is dispatched once; HIDE is dispatched on release, timeout, or error
-//   · interval and timeout are type-checked at compile time (F22)
-//   · the block's own id serves as the overlay id (F24)
-//   · JavaScript truthiness governs the expression's return (F25)
+// @proposal=P3 / @proposal=P15 — the loader block compiler.
+//
+// P3 defined the loader's contract: async predicate, interval, timeout,
+// inputs, markup. P15 selects Reading R2 for the executor Promise
+// semantics:
+//
+//   - dispatch SHOW;
+//   - resolve the executor Promise (with {});
+//   - launch the poll as an un-awaited background chain;
+//   - the background poll evaluates the predicate at interval-spaced
+//     ticks, dispatches HIDE when the predicate is falsy or the timeout
+//     elapses;
+//   - background errors are caught locally and logged; they do not
+//     reject the (already-resolved) executor Promise.
+//
+// Under R2 the loader composes as a normal sibling in a sequential stage:
+// the orchestrator sees the executor resolve quickly, proceeds to the
+// next child (the phase's api loop), and the loader's background poll
+// continues concurrently, releasing when the phase's output exists.
 function loaderexpressionsignature(merged, id) {
   if (typeof merged.behaviour !== 'function') {
     throw new Error('[LOADER] Block "' + id + '" must declare a behaviour function (the expression)');
@@ -540,42 +535,58 @@ function compileloaderblock(merged, id, sig) {
       var tag = GENERATETAG();
       var payload = { ACTION: action, ID: overlayid };
       if (action === 'SHOW' && markup !== null) payload.MARKUP = markup;
-      SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, payload, tag, 'BLOCKCOMPILER');
+      if (typeof SENDINSTRUCTION === 'function' && typeof MESSAGETYPES !== 'undefined') {
+        SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, payload, tag, 'BLOCKCOMPILER');
+      }
       return Promise.resolve();
     }
 
+    function release() {
+      return sendloading('HIDE');
+    }
+
+    // Background poll. Not awaited by the executor. Errors are caught
+    // by the enclosing launchbackgroundpoll wrapper.
     function pollstep() {
-      var state = resolvestate();
-      assertinputs(state);
       if (Date.now() - starttime >= efftimeout) {
-        return sendloading('HIDE').then(function() {
-          return { loaderstatus: 'timeout' };
-        });
+        return release();
+      }
+      var state;
+      try {
+        state = resolvestate();
+        assertinputs(state);
+      } catch (stateerr) {
+        return release().then(function() { throw stateerr; });
       }
       var presult;
       try {
         presult = expression(properties, state);
       } catch (sync) {
-        return sendloading('HIDE').then(function() { throw sync; });
+        return release().then(function() { throw sync; });
       }
       return Promise.resolve(presult).then(function(value) {
-        if (value) {
-          return new Promise(function(resolve) {
-            setTimeout(function() {
-              resolve(pollstep());
-            }, effinterval);
-          });
+        if (!value) {
+          return release();
         }
-        return sendloading('HIDE').then(function() {
-          return {};
+        return new Promise(function(resolve) {
+          setTimeout(function() {
+            resolve(pollstep());
+          }, effinterval);
         });
-      }).catch(function(err) {
-        return sendloading('HIDE').then(function() { throw err; });
       });
     }
 
+    function launchbackgroundpoll() {
+      Promise.resolve().then(pollstep).catch(function(err) {
+        logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'loader background poll error:', id, err);
+      });
+    }
+
+    // @proposal=P15 — R2 semantics. Dispatch SHOW; resolve the executor
+    // Promise; launch the background poll.
     return sendloading('SHOW').then(function() {
-      return pollstep();
+      launchbackgroundpoll();
+      return {};
     });
   };
 
@@ -818,7 +829,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
     return wrapcompiledfn(innerfn, 'executionquery', id);
   };
 
-  // @proposal=P3 — loader block compiler registration.
   compilers[blocktypes.loader] = function(merged, id, sig) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compiling LOADER block:', id);
     return compileloaderblock(merged, id, sig);
@@ -1121,8 +1131,6 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       : mailboxresolve('mailboxwaittimeout');
     var catchtimeout = (elementdef && elementdef.catchtimeout === true);
 
-    // @proposal=P1 — routed through exchange; the tag is preserved for
-    // the diagnostic record used by the catch branch.
     return exchange('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, waitduration, 'taskresult', tag)
       .then(function(mailboxmessage) {
         var payload = mailboxmessage && mailboxmessage.PAYLOAD ? mailboxmessage.PAYLOAD : {};
