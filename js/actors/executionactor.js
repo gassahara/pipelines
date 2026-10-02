@@ -1,21 +1,8 @@
-// executionactor.js — execution concern.
-//
-// @proposal=P4 (Cycle 25) — actor-handle surface (SUBMIT/EXPECT/
-// GETACTIONRESULT) retained verbatim.
-//
-// @proposal=P5 (corrected, Cycle 39R-bis) — writer-side payload keys
-// aligned with the UPPERCASE form (Q12).
-//
-// @proposal=P11 (Cycle P11-05, batch 11.2) — the dead
-// PROGREF/PROGSOURCE branch in RUNELEMENTTASK is removed. Under the
-// corrected P5 model the descriptor carries the compiled block's
-// function on the EXECUTOR field; nothing is transported as source.
-// The `new Function` path was entered only when both PROGRAMREF and
-// PROGSOURCE were non-null, which no live call site produces
-// (createpersistentelementwrapper at Cycle P11-04 no longer emits
-// either field).
-
 var EXECUTIONVERBOSITYCONSTANTS = createverbosityconstants();
+
+// @proposal=P21 — bounded task history. Tasks older than the cap are
+// pruned; their metadata remains in TASKINDEX.
+var TASKHISTORYMAX = 200;
 
 function SANITIZEFORSTATE(VALUE, SEEN) {
   if (VALUE === null || VALUE === undefined) return VALUE;
@@ -40,11 +27,16 @@ function SANITIZEFORSTATE(VALUE, SEEN) {
   return OUT;
 }
 
+// @proposal=P21 — extended slice shape. TASKORDER preserves insertion
+// order for pruning; TASKINDEX records metadata for tasks that have
+// been pruned from TASKS.
 function ENSUREEXECUTIONSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'execution', function() {
     return {
       PIPELINES: {},
       TASKS: {},
+      TASKORDER: [],
+      TASKINDEX: {},
       TASKCOUNTER: 0,
       HTMLSNAPSHOT: null
     };
@@ -56,6 +48,68 @@ function NEXTTASKID(EXECSLICE) {
   return 'TASK' + Date.now() + EXECSLICE.TASKCOUNTER + Math.random().toString(36).slice(2, 8);
 }
 
+// @proposal=P22 — the settled predicate. A task is settled when its
+// status is terminal AND its consumers have been notified (the notify
+// step clears CONSUMERS to []).
+function ISSETTLED(TASK) {
+  if (!TASK) return false;
+  var S = TASK.STATUS;
+  var TERMINAL = S === 'EXECUTED' || S === 'FAILED' || S === 'CANCELLED' || S === 'STOPPED';
+  if (!TERMINAL) return false;
+  var CONSUMERS = TASK.CONSUMERS || [];
+  return CONSUMERS.length === 0;
+}
+
+// @proposal=P21/P22 — sweep. Removes every settled task from TASKS,
+// recording its metadata in TASKINDEX for status queries. Called
+// before SENDEXECUTIONUPDATE so the slice that is persisted contains
+// only in-flight tasks.
+function SWEEPSETTLEDTASKS(EXECSLICE) {
+  if (!EXECSLICE || !EXECSLICE.TASKS) return;
+  var KEEP = {};
+  var KEEPTASKORDER = [];
+  Object.keys(EXECSLICE.TASKS).forEach(function(TID) {
+    var T = EXECSLICE.TASKS[TID];
+    if (ISSETTLED(T)) {
+      EXECSLICE.TASKINDEX[TID] = {
+        TASKID: T.TASKID,
+        KIND: T.KIND,
+        PIPELINEID: T.PIPELINEID,
+        ELEMENTID: T.ELEMENTID,
+        PARENTTASKID: T.PARENTTASKID,
+        STATUS: T.STATUS,
+        ORIGIN: T.ORIGIN,
+        PROGRAMREF: T.PROGRAMREF
+      };
+    } else {
+      KEEP[TID] = T;
+      KEEPTASKORDER.push(TID);
+    }
+  });
+  EXECSLICE.TASKS = KEEP;
+  EXECSLICE.TASKORDER = KEEPTASKORDER;
+}
+
+function REMOVETASKFROMHISTORY(EXECSLICE, TASKID) {
+  var T = EXECSLICE.TASKS[TASKID];
+  if (T) {
+    EXECSLICE.TASKINDEX[TASKID] = {
+      TASKID: T.TASKID,
+      KIND: T.KIND,
+      PIPELINEID: T.PIPELINEID,
+      ELEMENTID: T.ELEMENTID,
+      PARENTTASKID: T.PARENTTASKID,
+      STATUS: T.STATUS,
+      ORIGIN: T.ORIGIN,
+      PROGRAMREF: T.PROGRAMREF
+    };
+    delete EXECSLICE.TASKS[TASKID];
+  }
+  EXECSLICE.TASKORDER = (EXECSLICE.TASKORDER || []).filter(function(ID) { return ID !== TASKID; });
+}
+
+// @proposal=P21 — MAKETASK registers in TASKORDER and prunes the
+// oldest entries when the map exceeds TASKHISTORYMAX.
 function MAKETASK(EXECSLICE, DESCRIPTOR) {
   var TASKID = NEXTTASKID(EXECSLICE);
   var TASK = {
@@ -74,6 +128,14 @@ function MAKETASK(EXECSLICE, DESCRIPTOR) {
     ERROR: null
   };
   EXECSLICE.TASKS[TASKID] = TASK;
+  if (!EXECSLICE.TASKORDER) EXECSLICE.TASKORDER = [];
+  EXECSLICE.TASKORDER.push(TASKID);
+  while (EXECSLICE.TASKORDER.length > TASKHISTORYMAX) {
+    var OLDEST = EXECSLICE.TASKORDER.shift();
+    if (EXECSLICE.TASKS[OLDEST]) {
+      REMOVETASKFROMHISTORY(EXECSLICE, OLDEST);
+    }
+  }
   logdebug(EXECSLICE, '[EXECUTIONACTOR]', 'MAKETASK CREATED ELEMENT TASK:', TASKID, 'PIPELINEID:', TASK.PIPELINEID, 'ELEMENTID:', TASK.ELEMENTID);
   return TASK;
 }
@@ -89,6 +151,8 @@ function CANCELTASK(EXECSLICE, TASKID) {
     SENDRESPONSE(CONSUMER.SENDER, CONSUMER.TAG, ERR, 'EXECUTIONACTOR');
   });
   TASK.CONSUMERS = [];
+  TASK.RESULT = null;
+  TASK.ERROR = null;
 }
 
 function STOPTASK(EXECSLICE, TASKID) {
@@ -101,6 +165,8 @@ function STOPTASK(EXECSLICE, TASKID) {
     SENDRESPONSE(CONSUMER.SENDER, CONSUMER.TAG, ERR, 'EXECUTIONACTOR');
   });
   TASK.CONSUMERS = [];
+  TASK.RESULT = null;
+  TASK.ERROR = null;
 }
 
 function ENSUREPIPELINE(EXECSLICE, PIPELINEID) {
@@ -116,7 +182,10 @@ function ENSUREPIPELINE(EXECSLICE, PIPELINEID) {
   return EXECSLICE.PIPELINES[PIPELINEID];
 }
 
+// @proposal=P21 — before sending, sweep settled tasks so the persisted
+// slice contains only in-flight tasks.
 function SENDEXECUTIONUPDATE(EXECSLICE) {
+  SWEEPSETTLEDTASKS(EXECSLICE);
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
     UPDATES: [{ PATH: 'EXECUTION', VALUE: EXECSLICE }]
   }, GENERATETAG(), 'EXECUTIONACTOR');
@@ -176,6 +245,19 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION AWAITTASK TASK:', MESSAGE.TASKID);
       var AWAITTASK = EXECSLICE.TASKS[MESSAGE.TASKID];
       if (!AWAITTASK) {
+        // @proposal=P22 — a pruned task's metadata lives in TASKINDEX.
+        // For a released (settled-and-pruned) task we answer with its
+        // metadata and a null RESULT.
+        var INDEXED = EXECSLICE.TASKINDEX ? EXECSLICE.TASKINDEX[MESSAGE.TASKID] : null;
+        if (INDEXED) {
+          if (MESSAGE.SENDER && MESSAGE.TAG) {
+            var RECHECK = INDEXED.STATUS === 'FAILED' || INDEXED.STATUS === 'CANCELLED' || INDEXED.STATUS === 'STOPPED'
+              ? { TASKID: INDEXED.TASKID, PIPELINEID: INDEXED.PIPELINEID, ELEMENTID: INDEXED.ELEMENTID, ERROR: 'Task settled: ' + INDEXED.STATUS }
+              : { TASKID: INDEXED.TASKID, PIPELINEID: INDEXED.PIPELINEID, ELEMENTID: INDEXED.ELEMENTID, RESULT: null };
+            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RECHECK, 'EXECUTIONACTOR');
+          }
+          return ENV;
+        }
         if (MESSAGE.SENDER && MESSAGE.TAG) {
           SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { ERROR: '[EXECUTIONACTOR] UNKNOWN TASK: ' + MESSAGE.TASKID }, 'EXECUTIONACTOR');
         }
@@ -224,6 +306,27 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
           CONSUMERCOUNT: (T.CONSUMERS || []).length
         });
       });
+      // @proposal=P22 — also expose pruned-task metadata.
+      if (EXECSLICE.TASKINDEX) {
+        Object.keys(EXECSLICE.TASKINDEX).forEach(function(TID) {
+          var T = EXECSLICE.TASKINDEX[TID];
+          if (MESSAGE.PIPELINEID && T.PIPELINEID !== MESSAGE.PIPELINEID) return;
+          if (MESSAGE.ELEMENTID && T.ELEMENTID !== MESSAGE.ELEMENTID) return;
+          if (MESSAGE.KIND && T.KIND !== MESSAGE.KIND) return;
+          RESULT.push({
+            TASKID: T.TASKID,
+            KIND: T.KIND,
+            PIPELINEID: T.PIPELINEID,
+            ELEMENTID: T.ELEMENTID,
+            PARENTTASKID: T.PARENTTASKID,
+            STATUS: T.STATUS,
+            ORIGIN: T.ORIGIN,
+            PROGRAMREF: T.PROGRAMREF,
+            SERIALIZED: null,
+            CONSUMERCOUNT: 0
+          });
+        });
+      }
       if (MESSAGE.SENDER && MESSAGE.TAG) {
         SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESULT, 'EXECUTIONACTOR');
       }
@@ -231,6 +334,7 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
     }
     case MESSAGETYPES.GETTASKSTATUS: {
       var T2 = EXECSLICE.TASKS[MESSAGE.TASKID];
+      if (!T2 && EXECSLICE.TASKINDEX) T2 = EXECSLICE.TASKINDEX[MESSAGE.TASKID];
       var STATUSRESULT = T2 ? {
         TASKID: T2.TASKID,
         KIND: T2.KIND,
@@ -240,7 +344,7 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
         STATUS: T2.STATUS,
         ORIGIN: T2.ORIGIN,
         PROGRAMREF: T2.PROGRAMREF,
-        SERIALIZED: T2.SERIALIZED,
+        SERIALIZED: T2.SERIALIZED || null,
         CONSUMERCOUNT: (T2.CONSUMERS || []).length
       } : null;
       if (MESSAGE.SENDER && MESSAGE.TAG) {
@@ -282,7 +386,10 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
             SENDRESPONSE(CONSUMER.SENDER, CONSUMER.TAG, { ERROR: MESSAGE.ERROR ? MESSAGE.ERROR.message : 'TASK FAILED' }, 'EXECUTIONACTOR', TASKRESULTTYPE);
           });
         }
+        // @proposal=P21 — release the payload after consumer notification.
         TASK4.CONSUMERS = [];
+        TASK4.RESULT = null;
+        TASK4.ERROR = null;
         SENDEXECUTIONUPDATE(EXECSLICE);
       }
       return ENV;
@@ -295,6 +402,8 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
           ENV.EXECUTION = {
             PIPELINES: {},
             TASKS: {},
+            TASKORDER: [],
+            TASKINDEX: {},
             TASKCOUNTER: 0,
             HTMLSNAPSHOT: null
           };
@@ -327,6 +436,9 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
   }
 }
 
+// @proposal=P21 — SETTLETASK releases the payload after consumers are
+// notified. The task's metadata remains in TASKS until the next sweep
+// or the history cap.
 function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
   logdebug(ENV, '[EXECUTIONACTOR]', 'SETTLETASK TASK:', TASKID, 'STATUS:', STATUS);
   var EXECSLICE = ENV && ENV.execution;
@@ -363,16 +475,16 @@ function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
       SENDRESPONSE(CONSUMER.SENDER, CONSUMER.TAG, RESPONSEPAYLOAD, 'EXECUTIONACTOR', TASKRESULTTYPE);
     });
   }
+  // @proposal=P21 — release payload after notification.
   TASK.CONSUMERS = [];
+  TASK.RESULT = null;
+  TASK.ERROR = null;
   SENDEXECUTIONUPDATE(EXECSLICE);
   logdebug(ENV, '[EXECUTIONACTOR]', 'SETTLETASK COMPLETED:', TASKID, 'CONSUMERS NOTIFIED:', CONSUMERS.length);
 }
 
-// @proposal=P11 (Cycle P11-05, batch 11.2) — the dead
-// PROGREF/PROGSOURCE branch is removed. The descriptor's EXECUTOR
-// field is the sole carrier of the compiled block function; the
-// former source-revival path (`new Function`) had no live producer
-// after Cycle P11-04 stopped emitting PROGRAMREF/SERIALIZED.
+// @proposal=P11 — the descriptor's EXECUTOR field is the sole carrier
+// of the compiled block function.
 function RUNELEMENTTASK(TASKID, DESCRIPTOR, ENV) {
   var EXECUTIONCONTEXT = {
     ENV: DESCRIPTOR.ENV || {},

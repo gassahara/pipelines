@@ -1,17 +1,20 @@
-// hypervisoractor.js — hypervisor concern.
-//
-// @proposal=P5 (corrected) — the DNA-era boot cases are absent (Cycle 37R).
-//
-// @proposal=P9 (Cycle P9-05, batch 9.6) — the `NEXTSTAGEMESSAGES` slice
-// field is removed.
-//
-// @proposal=P-BA — the EVENTTRIGGERED case is no longer a stub. The
-// registration carries the compiled stage value (STAGE) and the env
-// reference (ENV); the fired walk runs the stage's elements against
-// the received env via `orchestratestage`. No identifier-based lookup
-// occurs; the value is present.
-
 var HYPERVISORVERBOSITYCONSTANTS = createverbosityconstants();
+
+// @proposal=P22 — the HYPERVISOR slice's persistent fields. Any field
+// not in this set is considered transient and is removed before persist.
+var HYPERVISORPERSISTENTFIELDS = {
+  PROGRAMS: true,
+  ROUTES: true
+};
+
+// @proposal=P22 — the HYPERVISOR slice's transient fields. Enumerated
+// for clarity and to guarantee removal even if new fields are added.
+var HYPERVISORTRANSIENTFIELDS = {
+  ENVBYPIPELINE: true,
+  RENDERHTML: true,
+  EXECUTIONSTACK: true,
+  ACTIVEPIPELINES: true
+};
 
 function ENSUREHYPERVISORSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'hypervisor', function() {
@@ -25,6 +28,20 @@ function ENSUREHYPERVISORSLICE(ENV) {
       PROGRAMS: {}
     };
   });
+}
+
+// @proposal=P21 — sweep the HYPERVISOR slice before it is persisted.
+// The live slice is not mutated; a shallow copy is produced with only
+// the persistent fields retained.
+function SWEEPHYPERVISORSLICE(SLICE) {
+  if (!SLICE || typeof SLICE !== 'object') return SLICE;
+  var OUT = {};
+  Object.keys(SLICE).forEach(function(K) {
+    if (HYPERVISORPERSISTENTFIELDS[K] === true) {
+      OUT[K] = SLICE[K];
+    }
+  });
+  return OUT;
 }
 
 function CREATEHYPERVISORERRORCONTEXT(LABEL) {
@@ -68,6 +85,9 @@ function HYPERVISORBEHAVIOR(ENV, MESSAGE) {
       if (MESSAGE.SENDER && MESSAGE.TAG) SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESULT, 'HYPERVISORACTOR', MESSAGETYPES.RESPONSE);
       return ENV;
     }
+    // @proposal=P21 — SETENV overwrites the pipeline's env slot. The
+    // value stored is the consolidated env from the sender. No merge,
+    // no field-by-field patch. The previous value is discarded.
     case MESSAGETYPES.SETENV: {
       if (!HYPERSLICE.ENVBYPIPELINE) HYPERSLICE.ENVBYPIPELINE = HYPERSLICE.ENVBYPIPELINE || {};
       if (!HYPERSLICE.ENVBYPIPELINE[PIPELINEID]) HYPERSLICE.ENVBYPIPELINE[PIPELINEID] = {};
@@ -148,21 +168,6 @@ function HYPERVISORBEHAVIOR(ENV, MESSAGE) {
       }, GENERATETAG(), 'HYPERVISORACTOR');
       return ENV;
     case MESSAGETYPES.EVENTTRIGGERED: {
-      // @proposal=P-BA — the registration carries the compiled stage
-      // value (MESSAGE.STAGE) and the env reference (MESSAGE.ENV). The
-      // event fired; the stage's element list must be walked against
-      // the received env.
-      //
-      // `orchestratestage` walks a stage's element list, dispatching
-      // every element by kind: BLOCKs execute, PIPELINE elements
-      // construct their child, and nested STAGE elements go through
-      // the unified `runstage` dispatcher (which handles EVENT, LOOP,
-      // and NULL at every depth). No STAGEID-based lookup occurs; the
-      // value is present.
-      //
-      // runblocks=true: the fired walk executes BLOCK elements. This
-      // is the deferred-execution half of the EVENT stage's compile
-      // contract.
       if (!MESSAGE.STAGE) {
         logwarn(ENV, '[HYPERVISOR]', 'EVENTTRIGGERED received without STAGE; no walk performed',
           'PIPELINEID:', PIPELINEID, 'STAGEID:', MESSAGE.STAGEID);

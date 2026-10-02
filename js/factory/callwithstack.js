@@ -89,12 +89,13 @@ function callwithstack(initialstate, label, type, fn, args, options) {
         if (context && context.callerid) meta.callerid = context.callerid;
         callstackstate = pushframe(callstackstate, wrappedfn, args, context && context.pipestate, k, meta);
 
+        // @proposal=P18 — the success path no longer attaches `captured`
+        // to the result. The captured object is constructed above for
+        // the failure path's diagnostic; it is not reachable from any
+        // successful block result.
         var onsuccess = function(result) {
             var popped = popframe(callstackstate);
             callstackstate = popped.state;
-            if (captured && attachcontinuation && result && typeof result === 'object' && !Array.isArray(result)) {
-                result.CONTINUATION = captured;
-            }
             if (thenfn) thenfn(result, context);
             k(result);
         };
@@ -137,3 +138,4 @@ function callwithstack(initialstate, label, type, fn, args, options) {
     promise.cont = k;
     return promise;
 }
+ 

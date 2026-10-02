@@ -91,18 +91,17 @@ function SERIALIZEFORPERSISTENCE(VALUE, SEEN, REFMAP) {
   return VALUE;
 }
 
-function PERSISTATTEMPT(STORE, ROOT, STORAGE, ATTEMPT) {
-  if (ATTEMPT > 2) return false;
+// @proposal=P21 — single attempt. On failure, log once and return false.
+// No key-removal, no retry recursion. The store's size is bounded by
+// the writer (worldmapactor.SELECTPERSISTENTSLICES); a quota failure
+// indicates a genuinely oversized payload.
+function PERSISTATTEMPT(STORE, ROOT, STORAGE) {
   try {
     STORAGE.setItem(ROOTKEY, JSON.stringify(SERIALIZEFORPERSISTENCE(ROOT)));
     return true;
   } catch (ERR) {
-    var KEYS = Object.keys(STORE);
-    if (!KEYS.length) return false;
-    var REMOVECOUNT = Math.max(1, Math.floor(KEYS.length * 0.25));
-    KEYS.slice(0, REMOVECOUNT).forEach(function(KEY) { delete STORE[KEY]; });
-    ROOT.KEYS = STORE;
-    return PERSISTATTEMPT(STORE, ROOT, STORAGE, ATTEMPT + 1);
+    logwarn(DBSTATE, '[DBACTOR]', 'PERSIST FAILED (quota or serialization):', ERR && ERR.message ? ERR.message : String(ERR));
+    return false;
   }
 }
 
@@ -110,7 +109,7 @@ function PERSIST(STORE) {
   var ROOT = { NAMESPACE: 'FRAMEWORKDBACTORV1', UPDATEDAT: Date.now(), KEYS: STORE };
   var STORAGE = GETSTORAGE();
   if (!STORAGE) return false;
-  return PERSISTATTEMPT(STORE, ROOT, STORAGE, 0);
+  return PERSISTATTEMPT(STORE, ROOT, STORAGE);
 }
 
 // ==================== DNA FUNCTION SERIALIZATION ====================

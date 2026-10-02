@@ -1,5 +1,54 @@
 var DEBUGVERBOSITYCONSTANTS = createverbosityconstants();
 
+// @proposal=P16 — bounded log storage.
+var DEBUGLOGSMAX = 200;
+var DEBUGLOGDATAMAX = 2048;
+var DEBUGSLICEUPDATEDEBOUNCE = 500;
+var DEBUGSLICEUPDATETIMER = null;
+var DEBUGSLICEUPDATEENV = null;
+
+// @proposal=P16 — truncate a log entry's DATA if it exceeds the bound.
+// The truncation preserves the DATA's shape (object) with a preview
+// and the original serialized length.
+function TRUNCATELOGDATA(DATA) {
+  if (DATA === null || DATA === undefined) return DATA;
+  if (typeof DATA !== 'object') {
+    if (typeof DATA === 'string' && DATA.length > DEBUGLOGDATAMAX) {
+      return DATA.slice(0, DEBUGLOGDATAMAX) + '…[truncated]';
+    }
+    return DATA;
+  }
+  var SERIALIZED;
+  try { SERIALIZED = JSON.stringify(DATA); } catch (e) { return '[UNSERIALIZABLE]'; }
+  if (SERIALIZED.length <= DEBUGLOGDATAMAX) return DATA;
+  return {
+    TRUNCATED: true,
+    ORIGINALLENGTH: SERIALIZED.length,
+    PREVIEW: SERIALIZED.slice(0, 512) + '…'
+  };
+}
+
+// @proposal=P16 — debounced DEBUG slice update. The first call in a
+// window arms the timer; subsequent calls within the window are
+// coalesced. When the timer fires, the slice is sent once. The slice
+// is looked up from ENV at fire time so the latest LOGS array is what
+// gets sent.
+function SCHEDULEDEBUGSLICEUPDATE(ENV) {
+  DEBUGSLICEUPDATEENV = ENV;
+  if (DEBUGSLICEUPDATETIMER) return;
+  DEBUGSLICEUPDATETIMER = setTimeout(function() {
+    DEBUGSLICEUPDATETIMER = null;
+    var TARGETENV = DEBUGSLICEUPDATEENV;
+    DEBUGSLICEUPDATEENV = null;
+    if (!TARGETENV) return;
+    var SLICE = TARGETENV.DEBUG;
+    if (!SLICE) return;
+    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+      UPDATES: [{ PATH: 'DEBUG', VALUE: SLICE }]
+    }, GENERATETAG(), 'DEBUGACTOR');
+  }, DEBUGSLICEUPDATEDEBOUNCE);
+}
+
 function GETCTX(ERROR, CONT) {
   var ENV = (CONT && CONT.ENVSNAPSHOT) ||
     (CONT && CONT.OPTIONS && CONT.OPTIONS.CONTEXT && CONT.OPTIONS.CONTEXT.ENV) || {};
@@ -38,6 +87,7 @@ function ENSUREOVERLAY(DEBUGSLICE) {
   return DEBUGSLICE.OVERLAY;
 }
 
+// @proposal=P16 — LOGSMAX is now the module constant DEBUGLOGSMAX (200).
 function ENSUREDEBUGSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'debug', function() {
     return {
@@ -46,17 +96,14 @@ function ENSUREDEBUGSLICE(ENV) {
       OVERLAYVISIBLE: false,
       CCCSTATE: { CURRENTCONTINUATION: null },
       GLOBALLISTENERSINSTALLED: false,
-      // ===== ADDED: log storage fields =====
       LOGS: [],
       LOGFILTER: 'all',
-      LOGSMAX: 1000,
+      LOGSMAX: DEBUGLOGSMAX,
       LOGVIEWERAUTO: true
-      // ===== END ADDED =====
     };
   });
 }
 
-// ===== ADDED: helper to build log viewer HTML with inline styles =====
 function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
   var FILTERED = LOGS;
   if (FILTER !== 'all') {
@@ -64,7 +111,6 @@ function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
   }
   var DISPLAY = FILTERED.slice(-200);
   var HTML = '';
-  // Controls bar with inline styles
   HTML += '<div style="display:flex;gap:10px;padding:8px 16px;background:#1a1a2e;border-bottom:1px solid #444;flex-wrap:wrap;align-items:center;flex-shrink:0;">';
   HTML += '<span style="color:#ccc;font-size:13px;">Logs</span>';
   HTML += '<select id="debuglogfilter" style="background:#2d2d44;color:#eee;border:1px solid #555;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;">';
@@ -80,7 +126,6 @@ function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
   HTML += '<button id="debuglogclear" style="background:#d32f2f;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px;">Clear</button>';
   HTML += '<span style="color:#888;font-size:11px;margin-left:auto;">' + LOGS.length + ' entries</span>';
   HTML += '</div>';
-  // Log list with inline styles
   HTML += '<div id="debugloglist" style="flex:1;overflow-y:auto;padding:8px 16px;font-family:\'Courier New\',monospace;font-size:12px;line-height:1.5;background:#0a0a12;">';
   if (DISPLAY.length === 0) {
     HTML += '<div style="color:#666;padding:20px;text-align:center;">No logs to display.</div>';
@@ -108,7 +153,6 @@ function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
   HTML += '</div>';
   return HTML;
 }
-// ===== END ADDED =====
 
 // Behavior function: (env, message) -> env | promise<env>
 function DEBUGBEHAVIOR(ENV, MESSAGE) {
@@ -199,14 +243,12 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
     );
 
-    // ===== ADDED: Append log viewer panel below error trace =====
     var LOGVIEWERHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
     var LOGPANEL = document.createElement('div');
     LOGPANEL.id = 'debuglogpanel';
     LOGPANEL.style.cssText = 'flex:1;display:flex;flex-direction:column;border-top:1px solid #444;margin-top:20px;max-height:40vh;background:rgba(0,0,0,0.8);font-family:\'Courier New\',monospace;font-size:12px;color:#eee;';
     LOGPANEL.innerHTML = LOGVIEWERHTML;
     OVERLAY.appendChild(LOGPANEL);
-    // ===== END ADDED =====
 
     var ACTIONS = document.createElement('div');
     ACTIONS.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
@@ -265,7 +307,6 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
       UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
 
-    // ===== ADDED: attach event listeners for log controls =====
     setTimeout(function() {
       var FILTERSELECT = document.getElementById('debuglogfilter');
       var CLEARBTN = document.getElementById('debuglogclear');
@@ -307,7 +348,6 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         });
       }
     }, 100);
-    // ===== END ADDED =====
 
     if (MESSAGE.SENDER && MESSAGE.TAG) {
       var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
@@ -317,22 +357,22 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     return ENV;
   }
 
-  // ===== ADDED: LOGLINE handler =====
+  // @proposal=P16 — LOGLINE truncates DATA and defers the slice update.
   if (MESSAGE.TYPE === MESSAGETYPES.LOGLINE) {
     logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.MESSAGE);
     var ENTRY = {
       LEVEL: MESSAGE.LEVEL || 'info',
       MESSAGE: MESSAGE.MESSAGE || '',
-      DATA: MESSAGE.DATA || null,
+      DATA: TRUNCATELOGDATA(MESSAGE.DATA || null),
       TIMESTAMP: MESSAGE.TIMESTAMP || Date.now(),
       PREFIX: MESSAGE.PREFIX || ''
     };
     if (!DEBUGSLICE.LOGS) DEBUGSLICE.LOGS = [];
     DEBUGSLICE.LOGS.push(ENTRY);
-    if (DEBUGSLICE.LOGS.length > DEBUGSLICE.LOGSMAX) {
-      DEBUGSLICE.LOGS = DEBUGSLICE.LOGS.slice(-DEBUGSLICE.LOGSMAX);
+    var CAP = DEBUGSLICE.LOGSMAX || DEBUGLOGSMAX;
+    if (DEBUGSLICE.LOGS.length > CAP) {
+      DEBUGSLICE.LOGS = DEBUGSLICE.LOGS.slice(-CAP);
     }
-    // Update viewer if visible
     if (DEBUGSLICE.OVERLAYVISIBLE && DEBUGSLICE.OVERLAY) {
       var LOGPANEL = document.getElementById('debuglogpanel');
       if (LOGPANEL) {
@@ -343,12 +383,10 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
           var LIST = document.getElementById('debugloglist');
           if (LIST) LIST.scrollTop = LIST.scrollHeight;
         }
-        // Re-bind controls (simplified: use event listeners that reference functions)
       }
     }
-    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
-    }, GENERATETAG(), 'DEBUGACTOR');
+    // @proposal=P16 — deferred slice update.
+    SCHEDULEDEBUGSLICEUPDATE(ENV);
     if (MESSAGE.SENDER && MESSAGE.TAG) {
       var RESPONSESPECLOG = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
       var RESPONSETYPELOG = (RESPONSESPECLOG && (RESPONSESPECLOG.responsetype || RESPONSESPECLOG.responseType)) || 'response';
@@ -356,7 +394,6 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
     }
     return ENV;
   }
-  // ===== END ADDED =====
 
   if (MESSAGE.TYPE === MESSAGETYPES.RECOVER) {
     logdebug(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
@@ -367,12 +404,10 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
         OVERLAYVISIBLE: false,
         CCCSTATE: { CURRENTCONTINUATION: null },
         GLOBALLISTENERSINSTALLED: false,
-        // ===== ADDED: default log state =====
         LOGS: [],
         LOGFILTER: 'all',
-        LOGSMAX: 1000,
+        LOGSMAX: DEBUGLOGSMAX,
         LOGVIEWERAUTO: true
-        // ===== END ADDED =====
       };
       SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
         UPDATES: [{ PATH: 'DEBUG', VALUE: NEWDEBUG }]
@@ -407,13 +442,6 @@ function ENQUEUEDEBUGRECOVER(RESPONSESPEC) {
 }
 
 // ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
-//
-// The three operations are sourced from CREATEACTORHANDLE (declared at
-// Cycle 18 in actorcore.js). DEBUGBEHAVIOR and the ENQUEUE helpers are
-// unchanged. SUBMIT routes through the mail system (Q6); EXPECT polls
-// GETACTIONRESULT until a response (including error) is obtained, and
-// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
-// read of the mail-system records (Q8).
 
 var DEBUGHANDLE = null;
 
