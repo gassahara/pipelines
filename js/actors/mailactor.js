@@ -13,6 +13,13 @@
 // The coupled writer (executionactor's ENQUEUEEXECUTION* helpers) and
 // reader (blockcompiler's WAITFORMAILBOX filter literals) are aligned
 // in Cycles 39R-bis and 39R-ter respectively.
+//
+// @proposal=P-YJ-MAILBOX-CONFIG (Cycle AR-FC-15) — the two module-level
+// constants EXPECTATIONTIMEOUT and POLLINTERVAL are removed. Their three
+// call sites now read the value at call time from mailboxresolve()
+// (defined in ./js/factory/mailboxconfig.js, loaded first in the
+// framework manifest). The precedence chain is
+// window.APPINIT<FIELD> || window.BOOTLOADER<FIELD> || MAILBOXCONFIG.<field>.
 
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
@@ -25,8 +32,6 @@ var INDEXBYTAG = {};
 var INDEXBYSENDER = {};
 var INDEXBYTYPE = {};
 
-var EXPECTATIONTIMEOUT = 20000;
-var POLLINTERVAL = 150;
 var MAILBOXRESPONSETYPE = 'MAILBOXRESPONSE';
 
 function ADDENVELOPETOMAILBOX(ENVELOPE) {
@@ -91,7 +96,7 @@ function CREATEEXPECTATION(TAG, RECIPIENT, SENDER, TYPE, CONTEXT, RESPONSESPEC) 
     if (EXPECTATIONS[TAG] && (EXPECTATIONS[TAG].STATUS === 'PENDING')) {
       REJECTEXPECTATION(TAG, { MESSAGE: 'Response timeout for tag ' + TAG });
     }
-  }, EXPECTATIONTIMEOUT);
+  }, mailboxresolve('expectationtimeout'));
 
   return EXPECTATION;
 }
@@ -331,7 +336,7 @@ function QUERYMAILBOX(FILTER) {
 }
 
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
-  if (TIMEOUT === undefined) TIMEOUT = EXPECTATIONTIMEOUT;
+  if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
   return new Promise(function(RESOLVE, REJECT) {
     if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       REJECT(new Error('Cancelled'));
@@ -368,7 +373,7 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
         RES[0].READ = 'READ';
         RESOLVE(RES[0]);
       }
-    }, POLLINTERVAL);
+    }, mailboxresolve('pollinterval'));
 
     setTimeout(function() {
       clearInterval(CHECKINTERVAL);

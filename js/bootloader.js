@@ -1,18 +1,7 @@
-// bootloader.js — framework bootstrap and load manifest.
-//
-// ... (prior proposals unchanged) ...
-//
-// @proposal=P-PALETTE-MACHINERY (Cycle C5) — colorutils.js provides
-// list extended with 'colorpalettes'.
-//
-// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — RENDERACTOR types
-// list extended with 'PALETTEGENERATE'.
-//
-// @proposal=P-SETACCENT-PRIMITIVE, @proposal=P-SETACCENT-HANDLER
-// (Cycle C5) — blockcompiler.js provides list extended with
-// 'setaccent'; RENDERACTOR types list extended with 'SETACCENT'.
-
 var pipelinesmanifest = [
+  { src: 'factory/mailboxconfig.js', provides: [
+    'MAILBOXCONFIG', 'mailboxresolve', 'bootloadermailboxconfig', 'appinitmailboxconfig'
+  ] },
   { src: 'factory/tuning/limits.js', provides: [
     'fnmaxsourcechars'
   ] },
@@ -44,7 +33,6 @@ var pipelinesmanifest = [
   ] },
   { src: 'factory/callwithstack.js', provides: ['callwithstack'] },
 
-  // @proposal=P-PALETTE-MACHINERY (Cycle C5) — 'colorpalettes' added.
   { src: 'factory/colorutils.js', provides: ['colorcore', 'colorharmony', 'colorcontrast', 'colorpalettes'] },
 
   { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
@@ -108,9 +96,6 @@ var pipelinesmanifest = [
     'CCCCONTINUE', 'CCCRETRY', 'TASKSETTLED', 'RECOVER', 'REGISTERPIPELINE', 'PING'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
 
-  // @proposal=P-PALETTEGENERATE-COMMAND, @proposal=P-SETACCENT-HANDLER
-  // (Cycle C5) — RENDERACTOR types extended with 'PALETTEGENERATE'
-  // and 'SETACCENT'.
   { src: 'actors/renderactor.js', provides: [
     'RENDERBEHAVIOR',
     'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE',
@@ -142,8 +127,6 @@ var pipelinesmanifest = [
     'LOADSCRIPT'
   ] },
 
-  // @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — 'setaccent' added to
-  // the blockcompiler's provides.
   { src: 'factory/blockcompiler.js', provides: [
     'pipeline',
     'makelib', 'makeprogram', 'makestage', 'makeblock', 'makepipelineelement',
@@ -259,7 +242,10 @@ function runpipelineboot(loadprogram, report, manifest) {
 }
 
 var pipelinesbase = 'https://gassahara.github.io/pipelines/js/';
-function bootpipeline(ondone) {
+function bootpipeline(ondone, options) {
+  if (typeof bootloadermailboxconfig === 'function' && options && options.mailboxconfig) {
+    bootloadermailboxconfig(options.mailboxconfig);
+  }
   function loadscript(entry, done) {
     var s = document.createElement('script');
     s.src = pipelinesbase + entry.src;

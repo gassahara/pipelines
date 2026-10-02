@@ -348,7 +348,7 @@ function STORESEND(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER) {
 }
 
 function STOREWAIT(FILTER, TIMEOUT) {
-  if (TIMEOUT === undefined) TIMEOUT = 20000;
+  if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('storewaittimeout');
   return new Promise(function(RESOLVE, REJECT) {
     var START = Date.now();
     function POLL() {
@@ -442,7 +442,7 @@ function DBSTORE(KEY, VALUE) {
   STORESEND('DBACTOR', MESSAGETYPES.STORE, { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.STORE, KEY: KEY, VALUE: VALUE, SENDER: 'WORLDMAPACTOR', TAG: TAG };
   DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
 function DBRESTORE(KEY) {
@@ -450,7 +450,7 @@ function DBRESTORE(KEY) {
   STORESEND('DBACTOR', MESSAGETYPES.RESTORE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.RESTORE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
   DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
 function DBLIST() {
@@ -458,7 +458,7 @@ function DBLIST() {
   STORESEND('DBACTOR', MESSAGETYPES.LIST, {}, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.LIST, SENDER: 'WORLDMAPACTOR', TAG: TAG };
   DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
 function DBDELETE(KEY) {
@@ -466,21 +466,10 @@ function DBDELETE(KEY) {
   STORESEND('DBACTOR', MESSAGETYPES.DELETE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.DELETE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
   DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, 20000);
+  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
 // ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
-//
-// The three operations are sourced from CREATEACTORHANDLE (declared at
-// Cycle 18 in actorcore.js). DBBEHAVIOR and the direct DB API are
-// unchanged. SUBMIT routes through the mail system (Q6); EXPECT polls
-// GETACTIONRESULT until a response (including error) is obtained, and
-// rejects on timeout or EXPIRED (Q7); GETACTIONRESULT is a non-blocking
-// read of the mail-system records (Q8).
-//
-// The handle is exposed via DBACTORHANDLEINSTANCE (lazy module-level
-// accessor) and also as three members on the object returned by
-// STARTDBACTOR.
 
 var DBACTORHANDLE = null;
 

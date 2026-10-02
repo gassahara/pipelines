@@ -1,53 +1,3 @@
-// blockcompiler.js — pipeline compiler concern.
-//
-// @proposal=P5 (corrected) — the blockcompiler is a DECLARATIVE SEMAPHORE.
-// Construction API + finalizers (run / compile). No DNA envelope.
-//
-// @proposal=P9 (Cycle P9-04) — batches applied.
-// @proposal=P10 (Cycle P10-02, batch 10.1) — `globalthis` → `globalThis`.
-// @proposal=P11 (Cycle P11-04, batch 11.2) — the DNA-era serialization hook removed.
-// @proposal=P-J — path-addressed structural appends.
-// @proposal=P-L — nodeat / nodeatat added as the positional reader.
-// @proposal=P-M — deepreplace removed.
-// @proposal=P-Q — loadscriptwithwitness routes DOM side effects through RENDERACTOR.
-// @proposal=P-AO — the writer compiler's behaviour invocation is aligned with fn.
-// @proposal=P-AR — the blockcompiler becomes the trigger point of the flow.
-// @proposal=P-AT — top-level EVENT stages are registered during the walk.
-// @proposal=P-AV — automatic env inheritance at child creation.
-// @proposal=P-BA — unified stage-kind dispatcher (runstage/runloop).
-// @proposal=P-FW-PANEGRAMMAR (Cycle C1) — domquery accepts 'panelayout'.
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — panelayout forwards HEIGHT.
-//
-// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — domquery accepts
-// 'palettegenerate'. The payload forwards RULESET (a plain JS function)
-// and OVERRIDES (an optional object). The handler invokes the ruleset
-// function and returns a palette. The compiler's post-process extracts
-// the palette from the handler's { PALETTE } envelope before
-// wrapblockresult so that a single-output block binds env[output]
-// directly to the palette.
-//
-// @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — top-level setaccent()
-// function added. It resolves an accent from a palette and dispatches
-// one SETACCENT message to RENDERACTOR. Fire-and-forget; not carried
-// in mail. Called by the frontend's assignment sequences.
-//
-// @proposal=P-YJ-API-RETRY-ON-TIMEOUT (v2, Cycle AR-FC-10) —
-// createpersistentelementwrapper computes the outer wait duration from
-// the element's declared `timeout` when it is a positive number, and
-// from `mailboxwaittimeout` otherwise. When the element's declaration
-// carries `catchtimeout: true`, the wrapper attaches a `.catch` that
-// resolves with a timeout envelope `{ ERROR: 'timeout', TAG, KIND:
-// 'mailbox-wait-timeout' }` on a mailbox-wait rejection (matched by the
-// error message prefix `'Mailbox wait timeout'`), so the enclosing
-// LOOP stage can observe the timeout as a value and decide to retry.
-// When `catchtimeout` is absent, the rejection propagates unchanged.
-// The timeout envelope is bound to every declared output key of the
-// element so that the enclosing validator can read it.
-
-// ============================================================
-// §1 — Construction API
-// ============================================================
-
 function makelib(src, provides) {
   return { src: src, provides: provides };
 }
@@ -216,8 +166,9 @@ function appendprogram(p, parent, child) {
 var BLOCKCOMPILERSTATE = { level: createverbosityconstants().DEBUG };
 
 var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
-var scriptwitnesstimeout = 5000;
-var mailboxwaittimeout = 25000;
+
+// mailboxwaittimeout and scriptwitnesstimeout were removed in Cycle
+// AR-FC-15; every read now goes through mailboxresolve().
 
 var blockcompilertools = {
   parsesource: (typeof parsesource === 'function') ? parsesource :
@@ -418,7 +369,7 @@ function sendandawait(recipient, type, payload, timeout, responsetype) {
 }
 
 function loadscripts(entries, basepath, timeout, label) {
-  if (typeof timeout === 'undefined') timeout = scriptwitnesstimeout;
+  if (typeof timeout === 'undefined') timeout = mailboxresolve('scriptwitnesstimeout');
   var normalized = normalizeentries(entries);
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', label, normalized.length);
   return loadscriptssequentially(normalized, basepath, timeout);
@@ -483,7 +434,7 @@ function compilehttpblock(merged, id, sig, istextual, options) {
       if (payload[field] === undefined && inputdata[field] !== undefined) payload[field] = inputdata[field];
     });
 
-    var timeout = merged.timeout || mailboxwaittimeout;
+    var timeout = merged.timeout || mailboxresolve('mailboxwaittimeout');
 
     return sendandawait('APIACTOR', istextual ? MESSAGETYPES.FETCH : MESSAGETYPES.API, {
       ENDPOINT: endpoint,
@@ -544,7 +495,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           ID: target,
           MARKUP: result.html,
           APPEND: !merged.replace
-        }, mailboxwaittimeout, 'domresult')
+        }, mailboxresolve('mailboxwaittimeout'), 'domresult')
           .then(function() {
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
               return EXPECTELEMENT(result.id, result.timeout || 5000).then(function(domref) {
@@ -685,7 +636,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         outbound.OVERRIDES = props.overrides;
       }
 
-      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxwaittimeout, 'domresult')
+      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), 'domresult')
         .then(function(r) {
           if (cmd === 'palettegenerate' && r && typeof r === 'object' && r.PALETTE !== undefined) {
             return wrapblockresult(r.PALETTE, sig);
@@ -702,7 +653,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
-      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxwaittimeout, 'domresult')
+      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), 'domresult')
         .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'crypto', id);
@@ -734,7 +685,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         case 'stoptask': msgtype = MESSAGETYPES.STOPTASK; break;
         default: throw new Error('[executionquery] unknown command: ' + cmd);
       }
-      return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxwaittimeout, responsetype)
+      return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxresolve('mailboxwaittimeout'), responsetype)
         .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'executionquery', id);
@@ -804,7 +755,7 @@ function loadpipelinedependencies(pipelineslice, options) {
   var deps = (pipelineslice && pipelineslice.programs) || [];
   var frameworkbase = (typeof pipelinesbase !== 'undefined') ? pipelinesbase : '';
   var frontbase = options && options.frontendbase ? options.frontendbase : (typeof frontendbase !== 'undefined' ? frontendbase : '');
-  var witnesstimeout = options && options.witnesstimeout ? options.witnesstimeout : scriptwitnesstimeout;
+  var witnesstimeout = options && options.witnesstimeout ? options.witnesstimeout : mailboxresolve('scriptwitnesstimeout');
 
   return loadframeworklibs(libs, frameworkbase, witnesstimeout)
     .then(function() {
@@ -883,7 +834,7 @@ function registereventstage(stage, pipelinename, stagepath, env, options) {
     BRIEFCASE: stage.briefcase || {},
     OPTIONS: options || {}
   };
-  return sendandawait('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, payload, mailboxwaittimeout, MESSAGETYPES.EVENTLISTENERREGISTERED)
+  return sendandawait('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, payload, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.EVENTLISTENERREGISTERED)
     .then(function(response) {
       if (response && response.error) {
         throw new Error('[registereventstage] Registration failed for ' + stage.id + ': ' + response.error);
@@ -1036,7 +987,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 
     var waitduration = (elementdef && typeof elementdef.timeout === 'number' && elementdef.timeout > 0)
       ? elementdef.timeout
-      : mailboxwaittimeout;
+      : mailboxresolve('mailboxwaittimeout');
     var catchtimeout = (elementdef && elementdef.catchtimeout === true);
 
     return WAITFORMAILBOX({ TAG: tag, SENDER: 'EXECUTIONACTOR', TYPE: MESSAGETYPES.TASKRESULT }, waitduration)
@@ -1105,7 +1056,7 @@ function waitforwitness(entry, timeout) {
 function loadscriptwithwitness(entry, basepath, timeout) {
   return sendandawait('RENDERACTOR', MESSAGETYPES.LOADSCRIPT,
                       { SRC: basepath + entry.src },
-                      mailboxwaittimeout,
+                      mailboxresolve('mailboxwaittimeout'),
                       MESSAGETYPES.SCRIPTLOADED)
     .then(function(response) {
       if (response && response.ERROR) throw new Error(response.ERROR);
@@ -1200,20 +1151,7 @@ function compile(p, options) {
 }
 
 // ============================================================
-// @proposal=P-SETACCENT-PRIMITIVE (Cycle C5) — setaccent resolves an
-// accent from a palette and dispatches one SETACCENT message to
-// RENDERACTOR. Fire-and-forget (returns undefined), consistent with
-// SENDINSTRUCTION.
-//
-//   selector   — { id | tag | class } (framework's existing shape)
-//   accentref  — number (index into palette.accents, fallback to
-//                palette.warm) or string (name in palette.accents,
-//                then palette.neutrals, then palette root)
-//   palette    — the palette object returned by a ruleset function
-//   prop       — CSS property to set; defaults to 'color'
-//
-// Throws on unresolvable refs so that assignment loops fail loudly
-// rather than silently rendering without an accent.
+// setaccent (unchanged from RUN 36 §2.4)
 // ============================================================
 
 function setaccent(selector, accentref, palette, prop) {
@@ -1280,7 +1218,3 @@ function setaccent(selector, accentref, palette, prop) {
     REF: accentref
   }, GENERATETAG(), 'BLOCKCOMPILER');
 }
-
-// ============================================================
-// §7 — Exports
-// ============================================================
