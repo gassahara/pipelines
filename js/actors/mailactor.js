@@ -44,9 +44,10 @@ function ADDENVELOPETOMAILBOX(ENVELOPE) {
     INDEXBYTYPE[TYPE].push(ENVELOPE);
   }
 
-  // @proposal=P1 — fire the live expectation's resolver on arrival (F4/i).
+  // @proposal=P1 / @proposal=P1-fix — fire the live expectation's
+  // resolver with the arriving envelope (F4/i, F41).
   if (TAG && EXPECTATIONS[TAG] && EXPECTATIONS[TAG].STATUS === 'PENDING') {
-    RESOLVEEXPECTATION(TAG);
+    RESOLVEEXPECTATION(TAG, ENVELOPE);
   }
 }
 
@@ -110,7 +111,11 @@ function ARMEXPECTATIONRESOLVER(TAG, ONRESOLVE, ONREJECT) {
   return false;
 }
 
-function RESOLVEEXPECTATION(TAG) {
+// @proposal=P1 / @proposal=P1-fix — the resolver fires with the raw
+// envelope, matching the poll path's payload shape. The optional
+// lowercase `envelope` parameter carries the caller-supplied envelope;
+// when omitted, the lookup falls back to INDEXBYTAG[TAG][0] (F39).
+function RESOLVEEXPECTATION(TAG, envelope) {
   var EXP = EXPECTATIONS[TAG];
   if (!EXP) return;
   EXP.STATUS = 'RESOLVED';
@@ -122,10 +127,15 @@ function RESOLVEEXPECTATION(TAG) {
   }
   delete EXPECTATIONS[TAG];
 
+  var firepayload = envelope;
+  if (firepayload === undefined || firepayload === null) {
+    var CANDIDATES = INDEXBYTAG[TAG] || [];
+    firepayload = CANDIDATES.length > 0 ? CANDIDATES[0] : null;
+  }
+
   var RESOLVERS = EXP.RESOLVERS.slice();
-  var RECORD = MAILGETACTIONSTATUS(TAG);
   RESOLVERS.forEach(function(FN) {
-    try { FN(RECORD); } catch (E) { /* resolver error does not block others */ }
+    try { FN(firepayload); } catch (E) { /* resolver error does not block others */ }
   });
 
   SCHEDULERETENTIONPRUNE(TAG);
@@ -332,11 +342,12 @@ function QUERYMAILBOX(FILTER) {
 
   RESULT.forEach(function(ITEM) {
     var TAGVAL = ITEM && ITEM.TAG;
+    // @proposal=P1 / @proposal=P1-fix — poll-side fire passes the read
+    // envelope, matching the arrival-side fire (I009′).
     if (ITEM && TAGVAL && EXPECTATIONS[TAGVAL] && (ITEM.READ === 'READ')) {
-      RESOLVEEXPECTATION(TAGVAL);
+      RESOLVEEXPECTATION(TAGVAL, ITEM);
     }
     if (ITEM && (ITEM.READ === 'READ')) {
-      // @proposal=P1 — retain the envelope for the bounded interval (F6/F34).
       if (TAGVAL) SCHEDULERETENTIONPRUNE(TAGVAL);
       else setTimeout(function() { REMOVEENVELOPEFROMMAILBOX(ITEM); }, 0);
     }
@@ -416,7 +427,7 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
       }
       ARMEXPECTATIONRESOLVER(
         TAGVAL,
-        function(RECORD) { ONSETTLE(RESOLVE, RECORD); },
+        function(PAYLOADVAL) { ONSETTLE(RESOLVE, PAYLOADVAL); },
         function(ERR) { ONSETTLE(REJECT, ERR); }
       );
       setTimeout(function() {
