@@ -145,10 +145,6 @@ function WAITFORDOMREADY() {
   return Promise.resolve();
 }
 
-// ============================================================
-// @proposal=P-MEASURABLE-DEFAULTS (Cycle C2) — detection helpers.
-// ============================================================
-
 function SU_detectviewportwidth() {
   if (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientWidth > 0) {
     return document.documentElement.clientWidth;
@@ -185,7 +181,6 @@ function SU_detectfontsize(node) {
   return 16;
 }
 
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT (Cycle C3) — viewport-height detection.
 function SU_detectviewportheight() {
   if (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientHeight > 0) {
     return document.documentElement.clientHeight;
@@ -200,7 +195,6 @@ function SU_detectviewportheight() {
   return null;
 }
 
-// @proposal=P-CORRECT-OVERFLOW-SCOPE (form 1).
 function LC_isintentionalclip(el) {
   if (!el || !el.style) return false;
   var ov = el.style.overflow;
@@ -208,7 +202,6 @@ function LC_isintentionalclip(el) {
   return false;
 }
 
-// @proposal=P-CORRECTIONS-EQUILIBRIUM — iteration cap.
 var LC_CORRECTION_MAXITER = 32;
 
 function CREATEEVENTPRODUCERCONSUMER(MSG) {
@@ -302,6 +295,28 @@ function ENSUREEVENTOBSERVER(RENDERSLICE) {
   loginfo(RENDERSLICE, '[RENDERACTOR]', 'GLOBAL EVENT OBSERVER INSTALLED FOR CLICK/INPUT/CHANGE');
 }
 
+// @proposal=P64 — preserve the pre-adoption RESPONDIFNEEDED discipline.
+// The pre-adoption RENDERBEHAVIOR always invoked a handler that existed
+// for the message's type, and called RESPONDIFNEEDED iff the handler's
+// return value was not undefined. The surface's semantics differ: a
+// handler returning undefined means "not handled; try the next". The
+// wrapper adapts by returning a marker whenever the type matches,
+// carrying the handler's actual return value in RESULT.
+function MAKERENDERHANDLER(TYPE, HANDLER) {
+  var TYPECAP = TYPE;
+  var HANDLERCAP = HANDLER;
+  return function (ENV, MESSAGE) {
+    if (!MESSAGE || MESSAGE.TYPE !== TYPECAP) return undefined;
+    var RESULT = HANDLERCAP(ENV, MESSAGE);
+    return { HANDLED: true, RESULT: RESULT };
+  };
+}
+
+// @proposal=P64 — HANDLERS is retained as the boot-time source of
+// handler function values. The surface (RENDERBEHAVIORDISPATCH) captures
+// each HANDLERS[TYPE] at construction time. Adding entries after
+// construction has no effect on the surface; runtime registration goes
+// through REGISTERACTORHANDLER('RENDERACTOR', TYPE, FN).
 var HANDLERS = {};
 HANDLERS[MESSAGETYPES.RENDER] = function(ENV, MSG) {
   var TARGET = MSG.ID ? document.getElementById(MSG.ID) : null;
@@ -552,8 +567,6 @@ HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
   return { APPLIED: APPLIED };
 };
 
-// @proposal=P-FW-PANEGRAMMAR — pane-layout command.
-// @proposal=P-SHELLROOT-VIEWPORT-HEIGHT — optional MSG.HEIGHT.
 HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
   if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
@@ -595,10 +608,6 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   return { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE, HEIGHT: HEIGHTAPPLIED };
 };
 
-// @proposal=P-PALETTEGENERATE-COMMAND (Cycle C5) — the palette
-// generate command. MSG.RULESET is a plain JS function that returns a
-// palette. MSG.OVERRIDES (optional) is merged by the ruleset itself.
-// The handler performs no shape inspection.
 HANDLERS[MESSAGETYPES.PALETTEGENERATE] = function(ENV, MSG) {
   if (typeof MSG.RULESET !== 'function') {
     return { ERROR: 'PALETTEGENERATE requires RULESET as a function' };
@@ -607,10 +616,6 @@ HANDLERS[MESSAGETYPES.PALETTEGENERATE] = function(ENV, MSG) {
   return { PALETTE: palette };
 };
 
-// @proposal=P-SETACCENT-HANDLER (Cycle C5) — the accent application
-// command. Composes one rule from { SELECTOR, PROP, HEX } and applies
-// it via SU_rewritestyleattrs. SELECTOR is the framework's existing
-// { id | tag | class } shape. PROP defaults to 'color'.
 HANDLERS[MESSAGETYPES.SETACCENT] = function(ENV, MSG) {
   var SELECTOR = MSG.SELECTOR;
   if (!SELECTOR || typeof SELECTOR !== 'object') {
@@ -825,19 +830,6 @@ HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
 
 HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
 
-// @proposal=P3 / @proposal=P9 — loading-indicator handler. SHOW creates
-// (if absent) a container with the caller's MARKUP (or a neutral
-// framework default) and appends it to document.body; HIDE removes it.
-// Both actions are idempotent.
-//
-// Style neutrality (P9): the container carries only an `id`. No
-// style attribute, no style property, no `cssText`. The framework's
-// default markup is a semantic element with no visual content. When
-// MSG.MARKUP is supplied, it is hosted verbatim — no wrapping, no
-// class injection, no style attribute — so the caller's visual intent
-// is preserved exactly. Visual decisions belong to the caller (via
-// MARKUP) or to the application (via its stylesheet targeting the
-// container id).
 HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
   var action = MSG.ACTION;
   var id = (typeof MSG.ID === 'string' && MSG.ID.length > 0) ? MSG.ID : 'loadingindicator';
@@ -1799,18 +1791,39 @@ function REINJECTSCRIPTTAGS(SCRIPTTAGS) {
   });
 }
 
+// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
+// surface returns the input ENV when no dispatcher matched; otherwise it
+// returns the marker { HANDLED: true, RESULT: <r> } from
+// MAKERENDERHANDLER. RENDERBEHAVIOR unpacks the marker and applies
+// RESPONDIFNEEDED iff RESULT is not undefined — preserving the pre-
+// adoption discipline exactly.
 function RENDERBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[RENDERACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE, MESSAGE.ID || '');
   var RENDERSLICE = ENSURERENDERSLICE(ENV);
-  var HANDLER = HANDLERS[MESSAGE.TYPE];
-  if (HANDLER) {
-    var RESULT = HANDLER(ENV, MESSAGE);
-    if (RESULT !== undefined) {
-      RESPONDIFNEEDED(ENV, MESSAGE, RESULT);
+  var OUT = RENDERBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+  if (OUT && OUT.HANDLED === true) {
+    if (OUT.RESULT !== undefined) {
+      RESPONDIFNEEDED(ENV, MESSAGE, OUT.RESULT);
     }
+    return ENV;
   }
   return ENV;
 }
+
+// @proposal=P64 — dispatcher surface, constructed from the HANDLERS map
+// and a per-entry MAKERENDERHANDLER wrapper. The map is captured at
+// construction; adding entries to it afterwards has no effect on the
+// surface. Runtime registration goes through REGISTERACTORHANDLER.
+var RENDERBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('RENDERACTOR',
+  Object.keys(HANDLERS).map(function (TYPE) {
+    return MAKERENDERHANDLER(TYPE, HANDLERS[TYPE]);
+  })
+);
+
+// @proposal=P64 — publish the surface and the aggregate; self-register.
+REGISTERACTORSURFACE('RENDERACTOR', RENDERBEHAVIORDISPATCH);
+REGISTERAGGREGATEBEHAVIOR('RENDERACTOR', RENDERBEHAVIOR);
+ACTORCONSUMERS['RENDERACTOR'] = RENDERBEHAVIOR;
 
 function CREATEENQUEUER(TYPE, IDREQUIRED, EXTRAPAYLOADFN) {
   return function() {
@@ -1858,8 +1871,6 @@ var ENQUEUESETLAYOUT = CREATEENQUEUER(MESSAGETYPES.SETLAYOUT, true, function(RES
 var ENQUEUEGETVIEWPORT = CREATEENQUEUER(MESSAGETYPES.GETVIEWPORT, false);
 var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
 var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(REST) { return { QUERY: REST[0] }; });
-
-// ---------- ACTOR HANDLE SURFACE — @proposal=P4 (Cycle 27) ----------
 
 var RENDERACTORHANDLE = null;
 

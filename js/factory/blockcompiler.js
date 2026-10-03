@@ -10,9 +10,7 @@ function makestage(id, control) {
   return { element: 'STAGE', id: id, control: control, elements: [], token: GENERATETAG() };
 }
 
-// @proposal=P53 — reserved keys are authoritative. attrs may not
-// overwrite element, id, type, or token. attrs is applied first; the
-// reserved fields are written after and cannot be shadowed.
+// @proposal=P53 — reserved keys are authoritative.
 function makeblock(id, type, behaviour, attrs) {
   var a = attrs || {};
   var b = {};
@@ -25,12 +23,7 @@ function makeblock(id, type, behaviour, attrs) {
   return b;
 }
 
-// @proposal=P55 — regenerator-block constructor. Generalises the
-// pattern introduced by makecaptureerror: any block that wraps another
-// block is built by this function. The wrapped value must be a BLOCK;
-// the behaviour must be a function; the reserved-key discipline of
-// makeblock applies. The regenerated value carries a fresh token and
-// its own id derived from the wrapped value's id and the type.
+// @proposal=P55 — regenerator-block constructor.
 function makegenerator(type, wrapped, behaviour, attrs) {
   if (!wrapped || wrapped.element !== 'BLOCK') {
     throw new Error('[makegenerator] wrapped must be a block value');
@@ -51,12 +44,9 @@ function makegenerator(type, wrapped, behaviour, attrs) {
 }
 
 // @proposal=P38-refined-rev5 — the composite-block error capture.
-// @proposal=P41 — attemptsubmit guards against synchronous throws and
-// observes the returned promise's rejection.
-// @proposal=P43 — the wrapped block's env carries a suppressshow
-// sentinel so its callwithstack skips the intermediate DEBUGACTOR.SHOW.
-// @proposal=P55 — the composite is built by makegenerator; the ad-hoc
-// object literal is retired. The public shape is preserved.
+// @proposal=P41 — attemptsubmit guards synchronous throws.
+// @proposal=P43 — suppressshow sentinel.
+// @proposal=P55 — built via makegenerator.
 function makecaptureerror(wrapped, policy) {
   if (!wrapped || wrapped.element !== 'BLOCK') {
     var _e = new Error('[makecaptureerror] wrapped must be a block value');
@@ -161,16 +151,7 @@ function makecaptureerror(wrapped, policy) {
   });
 }
 
-// @proposal=P38-refined-rev5 — internal helper. Submits a block value
-// through the standard element pipeline. Used by makecaptureerror's
-// composite protocol for the initial submission and for retries.
-// @proposal=P43 — the submitted env is a shallow copy carrying a
-// suppressshow sentinel; wrapcompiledfn passes it to callwithstack so
-// the wrapped block does not dispatch DEBUGACTOR.SHOW on transient
-// failures.
-// @proposal=P52 — compileblock requires the four-field compiler-constants
-// object; makecompilerconstants provides it. The prior two-field shape
-// is retired.
+// @proposal=P38-refined-rev5 / @proposal=P43 / @proposal=P52 — submitwrapped.
 function submitwrapped(block, env) {
   var submissionenv = {};
   Object.keys(env || {}).forEach(function (k) { submissionenv[k] = env[k]; });
@@ -190,12 +171,12 @@ function makepipelineelement(id, childstate, attrs) {
   return b;
 }
 
+// @proposal=P54 / @proposal=P56r2 — pipeline() now uses
+// makecompilerconstants, which consults the extension registry.
 function pipeline(type, name, options) {
   var opts = options || {};
-  var constants = createblockcompilerconstants();
   var dnaconstants = creatednaserializerconstants();
-  var analyzers = createblockanalyzers(constants.blocktypes, dnaconstants);
-  var compilers = createblockcompilers(constants.blocktypes, constants.inheritedkeys, opts);
+  var compilerconstants = makecompilerconstants(opts);
   return {
     type: type,
     name: name,
@@ -205,12 +186,7 @@ function pipeline(type, name, options) {
     env: opts.baseenv || {},
     compileonly: opts.compileonly === true,
     pending: null,
-    compilerconstants: {
-      blocktypes: constants.blocktypes,
-      inheritedkeys: constants.inheritedkeys,
-      analyzers: analyzers,
-      compilers: compilers
-    },
+    compilerconstants: compilerconstants,
     dnaconstants: dnaconstants,
     compileroptions: opts
   };
@@ -248,7 +224,6 @@ function nodeatat(node, path, index) {
   return nodeatat(node.elements[path[index]], path, index + 1);
 }
 
-// @proposal=P37-refined-rev1 — pure structural append for stages.
 function appendstage() {
   if (arguments.length === 2) {
     var stage = arguments[0];
@@ -403,6 +378,75 @@ function createblockcompilerconstants() {
     },
     inheritedkeys: ['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents']
   };
+}
+
+// ============================================================
+// §2b — Dynamic block-compiler extensions (P56r2)
+// ============================================================
+//
+// BLOCKCOMPILEREXTENSIONS holds a supplementary set of block-type names
+// and their compilers/analyzers, registered at runtime. The value is
+// Object.freeze'd; the reference is replaced on registration, following
+// the framework's REGISTERTRIGGER precedent (the value never mutates;
+// the reference is swapped atomically within the single-threaded JS
+// model).
+//
+// Consumers call GETBLOCKCOMPILEREXTENSIONS() and merge the returned
+// frozen object into the boot-time constants. makecompilerconstants is
+// the sole such consumer in this file.
+
+var BLOCKCOMPILEREXTENSIONSREF = {
+  current: Object.freeze({
+    blocktypes: Object.freeze({}),
+    compilers: Object.freeze({}),
+    analyzers: Object.freeze({})
+  })
+};
+
+function GETBLOCKCOMPILEREXTENSIONS() {
+  return BLOCKCOMPILEREXTENSIONSREF.current;
+}
+
+// @proposal=P56r2 — register an extension. KIND is one of
+// 'blocktypes' | 'compilers' | 'analyzers'. KEY is a non-empty string.
+// VALUE is the compiler or analyzer function for the corresponding KIND
+// (or the type string for blocktypes). Returns the registered VALUE.
+function REGISTERBLOCKCOMPILEREXTENSION(KIND, KEY, VALUE) {
+  if (KIND !== 'blocktypes' && KIND !== 'compilers' && KIND !== 'analyzers') {
+    throw new Error('[REGISTERBLOCKCOMPILEREXTENSION] KIND must be blocktypes, compilers, or analyzers');
+  }
+  if (typeof KEY !== 'string' || KEY.length === 0) {
+    throw new Error('[REGISTERBLOCKCOMPILEREXTENSION] KEY must be a non-empty string');
+  }
+  var CURRENT = BLOCKCOMPILEREXTENSIONSREF.current;
+  var NEXTKIND = {};
+  Object.keys(CURRENT[KIND]).forEach(function (K) { NEXTKIND[K] = CURRENT[KIND][K]; });
+  NEXTKIND[KEY] = VALUE;
+  var NEXT = {
+    blocktypes: KIND === 'blocktypes' ? Object.freeze(NEXTKIND) : CURRENT.blocktypes,
+    compilers:  KIND === 'compilers'  ? Object.freeze(NEXTKIND) : CURRENT.compilers,
+    analyzers:  KIND === 'analyzers'  ? Object.freeze(NEXTKIND) : CURRENT.analyzers
+  };
+  BLOCKCOMPILEREXTENSIONSREF.current = Object.freeze(NEXT);
+  return VALUE;
+}
+
+function UNREGISTERBLOCKCOMPILEREXTENSION(KIND, KEY) {
+  if (KIND !== 'blocktypes' && KIND !== 'compilers' && KIND !== 'analyzers') return false;
+  if (typeof KEY !== 'string' || KEY.length === 0) return false;
+  var CURRENT = BLOCKCOMPILEREXTENSIONSREF.current;
+  if (CURRENT[KIND][KEY] === undefined) return false;
+  var NEXTKIND = {};
+  Object.keys(CURRENT[KIND]).forEach(function (K) {
+    if (K !== KEY) NEXTKIND[K] = CURRENT[KIND][K];
+  });
+  var NEXT = {
+    blocktypes: KIND === 'blocktypes' ? Object.freeze(NEXTKIND) : CURRENT.blocktypes,
+    compilers:  KIND === 'compilers'  ? Object.freeze(NEXTKIND) : CURRENT.compilers,
+    analyzers:  KIND === 'analyzers'  ? Object.freeze(NEXTKIND) : CURRENT.analyzers
+  };
+  BLOCKCOMPILEREXTENSIONSREF.current = Object.freeze(NEXT);
+  return true;
 }
 
 function walkentries(source, acc, step) {
@@ -585,9 +629,7 @@ function loadscripts(entries, basepath, timeout, label) {
   return loadscriptssequentially(normalized, basepath, timeout);
 }
 
-// @proposal=P43 — read suppressshow from env at call time; pass through
-// to callwithstack so the DEBUGACTOR.SHOW dispatch is skipped for
-// transient failures of the wrapped block inside a composite.
+// @proposal=P43 — suppressshow pass-through.
 function wrapcompiledfn(innerfn, kind, id, blockkind) {
   var blockfn = function(env) {
     return callwithstack(null, kind + ':' + id, 'async-await',
@@ -1032,16 +1074,28 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
   return compilers;
 }
 
-// @proposal=P54 — one builder for the four-field compiler-constants
-// object. Every caller of compileblock uses this function so the shape
-// cannot drift.
+// @proposal=P54 / @proposal=P56r2 — one builder for the four-field
+// compiler-constants object. The boot constants come from
+// createblockcompilerconstants / createblockcompilers / createblockanalyzers;
+// the runtime extensions come from GETBLOCKCOMPILEREXTENSIONS() and are
+// merged over the boot maps.
 function makecompilerconstants(options) {
   var constants = createblockcompilerconstants();
   var dnaconstants = creatednaserializerconstants();
-  var analyzers = createblockanalyzers(constants.blocktypes, dnaconstants);
-  var compilers = createblockcompilers(constants.blocktypes, constants.inheritedkeys, options || {});
+  var extensions = GETBLOCKCOMPILEREXTENSIONS();
+
+  var blocktypes = {};
+  Object.keys(constants.blocktypes).forEach(function (K) { blocktypes[K] = constants.blocktypes[K]; });
+  Object.keys(extensions.blocktypes).forEach(function (K) { blocktypes[K] = extensions.blocktypes[K]; });
+
+  var analyzers = createblockanalyzers(blocktypes, dnaconstants);
+  Object.keys(extensions.analyzers).forEach(function (K) { analyzers[K] = extensions.analyzers[K]; });
+
+  var compilers = createblockcompilers(blocktypes, constants.inheritedkeys, options || {});
+  Object.keys(extensions.compilers).forEach(function (K) { compilers[K] = extensions.compilers[K]; });
+
   return {
-    blocktypes: constants.blocktypes,
+    blocktypes: blocktypes,
     inheritedkeys: constants.inheritedkeys,
     analyzers: analyzers,
     compilers: compilers
@@ -1631,7 +1685,7 @@ function compile(p, options) {
 }
 
 // ============================================================
-// setaccent (unchanged from RUN 36 §2.4)
+// setaccent
 // ============================================================
 
 function setaccent(selector, accentref, palette, prop) {
