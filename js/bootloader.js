@@ -173,7 +173,11 @@ var pipelinesmanifest = [
     'createblockcompilerconstants', 'buildblockproperties',
     'processelement', 'processpipelineelement', 'registereventstage',
     'processnestedstage', 'createpersistentelementwrapper', 'wrapblockresult',
-    'BLOCKCOMPILERSTATE', 'setaccent'
+    'BLOCKCOMPILERSTATE', 'setaccent',
+    // @proposal=P-FRONTEND-BOUNDARY-001v2 — boot diagnostics are exported
+    // from the blockcompiler so that the frontend does not interact with
+    // actors directly.
+    'showbootloader', 'hidebootloader'
   ] },
   { src: 'actors/hypervisoractor.js', provides: [
     'HYPERVISORBEHAVIOR',

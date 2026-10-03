@@ -629,6 +629,11 @@ function wrapblockresult(response, sig) {
 // SENDINSTRUCTION's resolved value and reads RESPONSE. A non-response
 // request travels via the mailbox: the caller awaits WAITFORMAILBOX.
 // The channel is declared via the WAITMODE argument to SENDINSTRUCTION.
+//
+// @proposal=P-BLOCKCOMPILER-RESPONSETYPE-001 — every responsetype
+// argument at every call site is a MESSAGETYPES.* constant. The
+// ISRESPONSE test in exchange therefore selects the promise path on
+// every call whose response type is registered in MAILBOXFILTERTYPES.
 function exchange(recipient, type, payload, timeout, responsetype, tag) {
   if (tag === undefined) tag = GENERATETAG();
   var ISRESPONSE = (typeof GETRESPONSETYPES === 'function')
@@ -748,7 +753,7 @@ function compilehttpblock(merged, id, sig, istextual, options) {
       METHOD: merged.method,
       PAYLOAD: payload,
       TOKEN: env.authsessionaccesstoken || ''
-    }, timeout, istextual ? 'fetchresult' : 'apiresult')
+    }, timeout, istextual ? MESSAGETYPES.FETCHRESULT : MESSAGETYPES.APIRESULT)
       .then(function(result) {
         if (result && result.error) throw new Error(result.error);
         var finalresult = result && result.data !== undefined ? result.data : result;
@@ -918,7 +923,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           ID: target,
           MARKUP: result.html,
           APPEND: !merged.replace
-        }, mailboxresolve('mailboxwaittimeout'), 'domresult')
+        }, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
           .then(function() {
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
               return EXPECTELEMENT(result.id, result.timeout || 5000).then(function(domref) {
@@ -1059,7 +1064,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         outbound.OVERRIDES = props.overrides;
       }
 
-      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), 'domresult')
+      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
         .then(function(r) {
           if (cmd === 'palettegenerate' && r && typeof r === 'object' && r.PALETTE !== undefined) {
             return wrapblockresult(r.PALETTE, sig);
@@ -1076,7 +1081,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
-      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), 'domresult')
+      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
         .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'crypto', id);
@@ -1097,7 +1102,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       var command = merged.command || {};
       var cmd = command.COMMAND;
       var args = command.args || {};
-      var responsetype = 'taskresult';
+      var responsetype = MESSAGETYPES.TASKRESULT;
       var msgtype;
       switch (cmd) {
         case 'get': msgtype = MESSAGETYPES.GETSTATUS; break;
@@ -1567,7 +1572,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       : mailboxresolve('mailboxwaittimeout');
     var catchtimeout = (elementdef && elementdef.catchtimeout === true);
 
-    return exchange('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, waitduration, 'taskresult', tag)
+    return exchange('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, waitduration, MESSAGETYPES.TASKRESULT, tag)
       .then(function(mailboxmessage) {
         var payload = mailboxmessage && mailboxmessage.PAYLOAD ? mailboxmessage.PAYLOAD : {};
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
@@ -1700,11 +1705,15 @@ function loadpipelineresources(p, options) {
 }
 
 // @proposal=P51 — single traversal after the load gate.
+// @proposal=P-FRONTEND-BOUNDARY-002v2 (option a) — options.roster gates an
+// internal initialization-roster emission. The frontend supplies the boolean;
+// the walk and the LOGLINE dispatch live here, in the blockcompiler layer.
 function run(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
 
   return loadpipelineresources(p, options).then(function() {
+    if (options && options.roster === true) emitinitializationroster(p);
     var cenv = p.env || options.baseenv || {};
     return orchestratepipeline(p, 0, cenv, options, true).then(function(finalenv) {
       p.env = finalenv;
@@ -1714,10 +1723,17 @@ function run(p, options) {
   });
 }
 
+// @proposal=P-FRONTEND-BOUNDARY-002v2 (option a) — compile() honours
+// options.roster under the same rule as run(). Compile-only callers
+// (e.g. shellspawnyjdna → yjrecipeprogram({compileonly: true})) can be
+// audited under the same emission.
 function compile(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compile pipeline:', p.name, 'type:', p.type);
-  return loadpipelineresources(p, options).then(function() { return p; });
+  return loadpipelineresources(p, options).then(function() {
+    if (options && options.roster === true) emitinitializationroster(p);
+    return p;
+  });
 }
 
 // ============================================================
@@ -1787,4 +1803,86 @@ function setaccent(selector, accentref, palette, prop) {
     HEX: hex,
     REF: accentref
   }, GENERATETAG(), 'BLOCKCOMPILER');
+}
+
+// ============================================================
+// §7 — Boot diagnostics (P-FRONTEND-BOUNDARY-001v2 /
+//      P-FRONTEND-BOUNDARY-002v2)
+// ============================================================
+//
+// @proposal=P-FRONTEND-BOUNDARY-001v2 — the two boot-time visual
+// diagnostics are blockcompiler-owned. They are the sole legal
+// producers of the loading indicator for the frontend's boot path.
+// The frontend calls these by name; it does not reference the actor
+// or the message type.
+//
+// @proposal=P-FRONTEND-BOUNDARY-002v2 (option a) — the initialization
+// roster is emitted internally, from run() and compile(), under the
+// gate `options.roster === true`. It is NOT exported. The frontend
+// supplies the boolean and does not walk the pipeline.
+
+function showbootloader() {
+  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+  var bootloadermarkup =
+      '<style>'
+      + '@keyframes bootloaderpulse{0%,100%{opacity:0.4;transform:scale(0.9);}50%{opacity:1.0;transform:scale(1.0);}}'
+      + '</style>'
+      + '<div role="status" aria-live="polite" aria-label="Initialising application"'
+      + ' style="position:fixed;top:0;left:0;width:100vw;height:100vh;'
+      + 'background:rgba(0,0,0,0.85);z-index:9999;'
+      + 'display:flex;align-items:center;justify-content:center;gap:10px">'
+      + '<span style="display:inline-block;width:12px;height:12px;border-radius:50%;'
+      + 'background:#f59e0b;animation:bootloaderpulse 1.2s ease-in-out infinite"></span>'
+      + '<span style="display:inline-block;width:12px;height:12px;border-radius:50%;'
+      + 'background:#f59e0b;animation:bootloaderpulse 1.2s ease-in-out 0.2s infinite"></span>'
+      + '<span style="display:inline-block;width:12px;height:12px;border-radius:50%;'
+      + 'background:#f59e0b;animation:bootloaderpulse 1.2s ease-in-out 0.4s infinite"></span>'
+      + '</div>';
+  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, {
+    ACTION: 'SHOW',
+    ID: 'bootloadingindicator',
+    MARKUP: bootloadermarkup
+  }, null, 'BLOCKCOMPILER');
+}
+
+function hidebootloader() {
+  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, {
+    ACTION: 'HIDE',
+    ID: 'bootloadingindicator'
+  }, null, 'BLOCKCOMPILER');
+}
+
+// Internal. Not exported. Invoked by run() and compile() when
+// options.roster === true.
+function emitinitializationroster(p) {
+  if (!p || !Array.isArray(p.elements)) return;
+  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+
+  function emitline(kind, id, blocktype) {
+    SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.LOGLINE, {
+      LEVEL: 'info',
+      MESSAGE: 'set',
+      DATA: { kind: kind, blockid: id, blocktype: blocktype || null },
+      TIMESTAMP: Date.now(),
+      PREFIX: 'init'
+    }, null, 'BLOCKCOMPILER');
+  }
+
+  function walk(elements) {
+    if (!Array.isArray(elements)) return;
+    elements.forEach(function(el, i) {
+      if (!el || !el.element) return;
+      if (el.element === 'BLOCK') {
+        emitline('block', el.id || ('block' + i), el.type);
+      } else if (el.element === 'STAGE') {
+        emitline('stage', el.id || ('stage' + i), 'STAGE');
+        walk(el.elements);
+      } else if (el.element === 'PIPELINE') {
+        emitline('pipeline', el.id || ('pipeline' + i), 'PIPELINE');
+      }
+    });
+  }
+
+  walk(p.elements);
 }
