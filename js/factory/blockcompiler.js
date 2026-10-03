@@ -245,10 +245,10 @@ function appendstage() {
   throw new Error('[appendstage] expects 2 or 3 arguments, received ' + arguments.length);
 }
 
-// @proposal=P37-refined-rev1 — attach a stage to a pipeline and trigger
-// its execution. parentref is either null (attach at pipeline root) or
-// a stage value (attach as a nested child). The pipeline value is
-// rebuilt fresh; the input is unchanged. Returns the new pipeline.
+// @proposal=P37-refined-rev1 — attach a stage to a pipeline. The pipeline
+// value is rebuilt fresh; the input is unchanged. Returns the new pipeline.
+// @proposal=P51 — the attach is structural. Execution is triggered by run
+// after loadpipelineresources resolves. scheduleexecution is a no-op here.
 function execappend(p, parentref, stage) {
   if (!p || typeof p !== 'object' || !Array.isArray(p.elements)) {
     throw new Error('[execappend] first argument must be a pipeline value');
@@ -299,30 +299,17 @@ function insertchildbytoken(node, parenttoken, child) {
   return nextnode;
 }
 
-// @proposal=P37-refined-rev1 — trigger the stage's runtime semantics.
-// @proposal=P37-refined-rev2 / @proposal=P40 — the invocation MUST be
-// runstage (command-dispatching), not orchestratestage (command-blind).
-// EVENT stages register listeners; LOOP stages iterate; RECOVERY stages
-// evaluate the predicate; default stages execute sequentially.
+// @proposal=P51 — structural only. The stage has already been placed in
+// p.elements by execappend. Execution is triggered by run after
+// loadpipelineresources has resolved. No microtask is armed here, so
+// no stage body can fire before the pipeline's declared programs are
+// loaded and their provides symbols bound.
 function scheduleexecution(p, stage) {
-  if (p.compileonly === true) return p;
-  var next = {};
-  Object.keys(p).forEach(function(k) { next[k] = p[k]; });
-  var prev = p.pending || Promise.resolve();
-  var stageid = stage.id || 'stageunknown';
-  next.pending = prev.then(function() {
-    return runstage(stage, p.name, [stageid], p.env || {}, p.compileroptions || {}, true);
-  }).then(function(updatedenv) {
-    next.env = updatedenv;
-    return next;
-  });
-  return next;
+  return p;
 }
 
 // @proposal=P37-refined-rev1 — pure structural append for a stage's
-// children. Returns a new stage; the input is unchanged. No execution
-// is triggered here; execution is triggered by appendstage's 3-arg
-// form.
+// children. Returns a new stage; the input is unchanged.
 function appendblock(stage, block) {
   if (!stage || stage.element !== 'STAGE') {
     throw new Error('[appendblock] first argument must be a stage value');
@@ -1605,28 +1592,21 @@ function loadpipelineresources(p, options) {
   return loadpipelinedependencies(p, options);
 }
 
+// @proposal=P51 — single traversal after the load gate. Both compileonly
+// and non-compileonly pipelines take the same path: await the loader,
+// then traverse the pipeline's elements with runblocks = true so that
+// every stage's runtime semantics (EVENT / LOOP / RECOVERY / default)
+// is dispatched through runstage.
 function run(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
 
   return loadpipelineresources(p, options).then(function() {
-    if (p.compileonly === true) {
-      var cenv = p.env || options.baseenv || {};
-      return orchestratepipeline(p, 0, cenv, options, true).then(function(finalenv) {
-        p.env = finalenv;
-        loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete (compileonly):', p.name);
-        return finalenv;
-      });
-    }
-
-    var pending = p.pending || Promise.resolve(p);
-    return Promise.resolve(pending).then(function() {
-      var renv = p.env || options.baseenv || {};
-      return orchestratepipeline(p, 0, renv, options, false).then(function(finalenv) {
-        p.env = finalenv;
-        loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
-        return finalenv;
-      });
+    var cenv = p.env || options.baseenv || {};
+    return orchestratepipeline(p, 0, cenv, options, true).then(function(finalenv) {
+      p.env = finalenv;
+      loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
+      return finalenv;
     });
   });
 }
