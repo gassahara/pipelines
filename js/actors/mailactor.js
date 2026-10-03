@@ -1,23 +1,3 @@
-// mailactor.js — mail transport concern.
-//
-// @proposal=P5 (corrected, Cycle 39R) — the OP-011 (FB-14) payload-key
-// case aliasing is removed.
-//
-// @proposal=P1 (P-MAILBOX-EXCHANGE-CONSOLIDATION) — resolver channel.
-//
-// @proposal=P1-fix (P-MAILBOX-RESOLVER-PAYLOAD-ENVELOPE) — resolver
-// fires with the raw envelope.
-//
-// @proposal=P7 (P-ACTORCORE-PREDISPATCH-STAGE) — MAILBEHAVIOR's SEND
-// branch creates the expectation in a pre-dispatch stage.
-//
-// @proposal=P30 (P-CATCHTIMEOUT-STRUCTURAL-KIND) — the timeout errors
-// produced by WAITFORMAILBOX's push path, POLLFALLBACK's terminal
-// timer, and REJECTEXPECTATION's rejection all carry
-// diagnostic.KIND = 'mailbox-wait-timeout'. The catchtimeout check in
-// blockcompiler.js reads this classifier instead of the error's
-// message prefix. The human-readable messages are unchanged.
-
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
@@ -220,7 +200,14 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
       PAYLOAD: FLATMESSAGE
     };
 
-    ADDENVELOPETOMAILBOX(ENVELOPE);
+    // @proposal=P42 — the BROADCAST pseudo-recipient has no consumer
+    // and no expectation. The envelope would never be resolved or read;
+    // accumulating one per broadcast produces unbounded MAILBOX growth.
+    // Skip envelope admission; the broadcast fan-out in SENDINSTRUCTION's
+    // tail remains the delivery mechanism.
+    if (RECIPIENT !== 'BROADCAST') {
+      ADDENVELOPETOMAILBOX(ENVELOPE);
+    }
 
     var CONSUMERKEY1 = RECIPIENT + ':' + FLATTYPE;
     var CONSUMERKEY2 = RECIPIENT + ':' + String(FLATTYPE).toLowerCase();
@@ -472,6 +459,50 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
   });
 }
 
+// @proposal=P38-refined-rev5 — broadcast subscription registry and API.
+
+var BROADCASTSUBSCRIPTIONS = {};
+var BROADCASTSUBCOUNTER = 0;
+
+function SUBSCRIBEBROADCAST(PATTERN, HANDLER) {
+  if (!PATTERN || typeof PATTERN !== 'object') {
+    throw new Error('[SUBSCRIBEBROADCAST] PATTERN must be a non-null object');
+  }
+  if (typeof HANDLER !== 'function') {
+    throw new Error('[SUBSCRIBEBROADCAST] HANDLER must be a function');
+  }
+  BROADCASTSUBCOUNTER += 1;
+  var SUBID = 'BSUB' + BROADCASTSUBCOUNTER;
+  BROADCASTSUBSCRIPTIONS[SUBID] = { PATTERN: PATTERN, HANDLER: HANDLER };
+  return SUBID;
+}
+
+function UNSUBSCRIBEBROADCAST(SUBID) {
+  if (typeof SUBID !== 'string' || SUBID.length === 0) return false;
+  if (!BROADCASTSUBSCRIPTIONS[SUBID]) return false;
+  delete BROADCASTSUBSCRIPTIONS[SUBID];
+  return true;
+}
+
+function PATTERNMATCHES(PATTERN, MESSAGE) {
+  var KEYS = Object.keys(PATTERN);
+  return KEYS.every(function(KEY) {
+    if (MESSAGE[KEY] === undefined) return false;
+    return MESSAGE[KEY] === PATTERN[KEY];
+  });
+}
+
+function DISPATCHBROADCAST(MESSAGE) {
+  var SUBIDS = Object.keys(BROADCASTSUBSCRIPTIONS);
+  SUBIDS.forEach(function(SUBID) {
+    var SUB = BROADCASTSUBSCRIPTIONS[SUBID];
+    if (!SUB) return;
+    if (PATTERNMATCHES(SUB.PATTERN, MESSAGE)) {
+      try { SUB.HANDLER(MESSAGE); } catch (E) { /* handler error does not block others */ }
+    }
+  });
+}
+
 function GENERATETAG() {
   return 'TAG' + Date.now() + Math.random().toString(36).slice(2, 10);
 }
@@ -513,6 +544,13 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     RECIPIENT: RECIPIENT,
     MESSAGE: FLATMESSAGE
   });
+
+  // @proposal=P38-refined-rev5 — broadcast fan-out. Broadcast-class messages
+  // (BLOCKEXECUTED, BLOCKFAILED) additionally fire the local broadcast
+  // registry. The mailbox delivery above is unchanged.
+  if (TYPE === MESSAGETYPES.BLOCKEXECUTED || TYPE === MESSAGETYPES.BLOCKFAILED) {
+    DISPATCHBROADCAST(FLATMESSAGE);
+  }
 }
 
 function SENDRESPONSE(RECIPIENT, TAG, RESULT, SENDER, RESPONSETYPE) {

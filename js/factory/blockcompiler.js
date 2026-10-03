@@ -7,15 +7,153 @@ function makeprogram(src, provides) {
 }
 
 function makestage(id, control) {
-  return { element: 'STAGE', id: id, control: control, elements: [] };
+  return { element: 'STAGE', id: id, control: control, elements: [], token: GENERATETAG() };
 }
 
 function makeblock(id, type, behaviour, attrs) {
   var a = attrs || {};
-  var b = { element: 'BLOCK', id: id, type: type };
+  var b = { element: 'BLOCK', id: id, type: type, token: GENERATETAG() };
   if (behaviour !== null && behaviour !== undefined) b.behaviour = behaviour;
   Object.keys(a).forEach(function(k) { b[k] = a[k]; });
   return b;
+}
+
+// @proposal=P38-refined-rev5 — the composite-block error capture.
+// @proposal=P41 — attemptsubmit guards against synchronous throws and
+// observes the returned promise's rejection.
+// @proposal=P43 — the wrapped block's env carries a suppressshow
+// sentinel so its callwithstack skips the intermediate DEBUGACTOR.SHOW.
+function makecaptureerror(wrapped, policy) {
+  if (!wrapped || wrapped.element !== 'BLOCK') {
+    var _e = new Error('[makecaptureerror] wrapped must be a block value');
+    _e.diagnostic = { KIND: 'invalid-argument', ARG: 'wrapped', RECEIVED: typeof wrapped };
+    throw _e;
+  }
+  var innertoken = wrapped.token;
+  var resolvedpolicy = (typeof policy === 'function') ? policy : defaultpolicy;
+
+  function defaultpolicy(context) { return 'default'; }
+
+  function contextfor(msg, env, attempt) {
+    return {
+      ERROR: msg.ERROR,
+      DIAGNOSTIC: msg.DIAGNOSTIC,
+      ENV: env,
+      ATTEMPT: attempt,
+      TARGETID: wrapped.id
+    };
+  }
+
+  function errorfromcontext(msg) {
+    var failureerror = new Error((msg && msg.ERROR) ? msg.ERROR : 'captureerror abort');
+    failureerror.diagnostic = (msg && msg.DIAGNOSTIC) ? msg.DIAGNOSTIC : {};
+    return failureerror;
+  }
+
+  function onfailed(msg, env, attempt) {
+    return resolvedpolicy(contextfor(msg, env, attempt));
+  }
+
+  function onexecuted(msg) {
+    return msg.RESULT || {};
+  }
+
+  function behaviour(env) {
+    var attempt = 0;
+    var subfailed = null;
+    var subexecuted = null;
+    var settled = false;
+    var resolvepromise = null;
+    var rejectpromise = null;
+
+    function cleanup() {
+      if (subfailed !== null) UNSUBSCRIBEBROADCAST(subfailed);
+      if (subexecuted !== null) UNSUBSCRIBEBROADCAST(subexecuted);
+      subfailed = null;
+      subexecuted = null;
+    }
+
+    function settle(fn, value) {
+      if (settled === true) return;
+      settled = true;
+      cleanup();
+      fn(value);
+    }
+
+    // @proposal=P41 — wrap every submission in try/catch, observe the
+    // promise's rejection, and route a synchronous throw to the
+    // composite's rejecter. Prevents silent hangs and unhandled
+    // rejections.
+    function attemptsubmit(submissionenv) {
+      try {
+        var p = submitwrapped(wrapped, submissionenv);
+        if (p && typeof p.catch === 'function') {
+          p.catch(function (ignored) { /* outcome arrives via the broadcast */ });
+        }
+      } catch (sync) {
+        settle(rejectpromise, sync);
+      }
+    }
+
+    function handlefailure(msg) {
+      attempt = attempt + 1;
+      var decision = onfailed(msg, env, attempt);
+      if (decision === 'retry') { attemptsubmit(env); return; }
+      if (decision === 'continue') { settle(resolvepromise, {}); return; }
+      settle(rejectpromise, errorfromcontext(msg));
+    }
+
+    function handlesuccess(msg) {
+      settle(resolvepromise, onexecuted(msg));
+    }
+
+    return new Promise(function (resolve, reject) {
+      resolvepromise = resolve;
+      rejectpromise = reject;
+
+      subfailed = SUBSCRIBEBROADCAST(
+        { TYPE: 'BLOCKFAILED', TOKEN: innertoken },
+        handlefailure
+      );
+      subexecuted = SUBSCRIBEBROADCAST(
+        { TYPE: 'BLOCKEXECUTED', TOKEN: innertoken },
+        handlesuccess
+      );
+
+      attemptsubmit(env);
+    });
+  }
+
+  return {
+    element: 'BLOCK',
+    type: 'captureerror',
+    id: (wrapped.id || 'unknown') + 'capture',
+    token: GENERATETAG(),
+    wrapped: wrapped,
+    policy: resolvedpolicy,
+    onfailed: onfailed,
+    onexecuted: onexecuted,
+    behaviour: behaviour
+  };
+}
+
+// @proposal=P38-refined-rev5 — internal helper. Submits a block value
+// through the standard element pipeline. Used by makecaptureerror's
+// composite protocol for the initial submission and for retries.
+// @proposal=P43 — the submitted env is a shallow copy carrying a
+// suppressshow sentinel; wrapcompiledfn passes it to callwithstack so
+// the wrapped block does not dispatch DEBUGACTOR.SHOW on transient
+// failures.
+function submitwrapped(block, env) {
+  var submissionenv = {};
+  Object.keys(env || {}).forEach(function (k) { submissionenv[k] = env[k]; });
+  submissionenv.suppressshow = true;
+  var constants = createblockcompilerconstants();
+  var compiled = compileblock(block, {}, constants, {});
+  var wrapper = createpersistentelementwrapper(
+    compiled, block, [], (env && env.pipelinename) || 'unknownpipeline', {}
+  );
+  return wrapper(submissionenv);
 }
 
 function makepipelineelement(id, childstate, attrs) {
@@ -83,50 +221,119 @@ function nodeatat(node, path, index) {
   return nodeatat(node.elements[path[index]], path, index + 1);
 }
 
-function appendstage(p, level, child) {
-  if (child.element !== 'STAGE') {
-    throw new Error('[appendstage] child must be a stage value');
+// @proposal=P37-refined-rev1 — pure structural append for stages.
+// Two arguments: appendstage(stage, childstage) → new stage.
+// Three arguments: appendstage(pipeline, parentref, stage) → attach + execute.
+function appendstage() {
+  if (arguments.length === 2) {
+    var stage = arguments[0];
+    var child = arguments[1];
+    if (!stage || stage.element !== 'STAGE') {
+      throw new Error('[appendstage] first argument must be a stage value');
+    }
+    if (!child || child.element !== 'STAGE') {
+      throw new Error('[appendstage] second argument must be a stage value');
+    }
+    var next = {};
+    Object.keys(stage).forEach(function(k) { next[k] = stage[k]; });
+    next.elements = (stage.elements || []).concat([child]);
+    return next;
   }
-  return pipelinewith(p, appendat(p.elements, level, 0, child));
+  if (arguments.length === 3) {
+    return execappend(arguments[0], arguments[1], arguments[2]);
+  }
+  throw new Error('[appendstage] expects 2 or 3 arguments, received ' + arguments.length);
 }
 
-function appendblock(p, level, child) {
-  if (level.length === 0) {
-    throw new Error('[appendblock] level must address a stage (not the pipeline root)');
+// @proposal=P37-refined-rev1 — attach a stage to a pipeline and trigger
+// its execution. parentref is either null (attach at pipeline root) or
+// a stage value (attach as a nested child). The pipeline value is
+// rebuilt fresh; the input is unchanged. Returns the new pipeline.
+function execappend(p, parentref, stage) {
+  if (!p || typeof p !== 'object' || !Array.isArray(p.elements)) {
+    throw new Error('[execappend] first argument must be a pipeline value');
   }
-  if (child.element !== 'BLOCK') {
-    throw new Error('[appendblock] child must be a block value');
+  if (!stage || stage.element !== 'STAGE') {
+    throw new Error('[execappend] third argument must be a stage value');
   }
-  var attached = pipelinewith(p, appendat(p.elements, level, 0, child));
 
-  if (p.compileonly === true) {
-    return attached;
+  var attached;
+  if (parentref === null || parentref === undefined) {
+    var nextelements = (p.elements || []).concat([stage]);
+    var nextp = {};
+    Object.keys(p).forEach(function(k) { nextp[k] = p[k]; });
+    nextp.elements = nextelements;
+    attached = nextp;
+  } else {
+    if (!parentref.token) {
+      throw new Error('[execappend] parentref must be a stage value carrying a token');
+    }
+    var rebuilt = insertchildbytoken(p, parentref.token, stage);
+    if (rebuilt === p) {
+      throw new Error('[execappend] parentref token not found in pipeline: ' + parentref.token);
+    }
+    attached = rebuilt;
   }
 
+  return scheduleexecution(attached, stage);
+}
+
+// @proposal=P37-refined-rev1 — structural rebuild: find the stage whose
+// token matches parenttoken; append child to its elements. Pure.
+function insertchildbytoken(node, parenttoken, child) {
+  if (!node || typeof node !== 'object') return node;
+  if (node.element === 'STAGE' && node.token === parenttoken) {
+    var next = {};
+    Object.keys(node).forEach(function(k) { next[k] = node[k]; });
+    next.elements = (node.elements || []).concat([child]);
+    return next;
+  }
+  var children = node.elements;
+  if (!Array.isArray(children)) return node;
+  var nextchildren = children.map(function(c) { return insertchildbytoken(c, parenttoken, child); });
+  var haschange = nextchildren.some(function (c, idx) { return c !== children[idx]; });
+  if (!haschange) return node;
+  var nextnode = {};
+  Object.keys(node).forEach(function(k) { nextnode[k] = node[k]; });
+  nextnode.elements = nextchildren;
+  return nextnode;
+}
+
+// @proposal=P37-refined-rev1 — trigger the stage's runtime semantics.
+// @proposal=P37-refined-rev2 / @proposal=P40 — the invocation MUST be
+// runstage (command-dispatching), not orchestratestage (command-blind).
+// EVENT stages register listeners; LOOP stages iterate; RECOVERY stages
+// evaluate the predicate; default stages execute sequentially.
+function scheduleexecution(p, stage) {
+  if (p.compileonly === true) return p;
+  var next = {};
+  Object.keys(p).forEach(function(k) { next[k] = p[k]; });
   var prev = p.pending || Promise.resolve();
-  var elementid = child.id || 'elementunknown';
-  var stagepath = level;
-
-  attached.pending = prev.then(function() {
-    return triggerblockflow(attached, child, elementid, stagepath);
+  var stageid = stage.id || 'stageunknown';
+  next.pending = prev.then(function() {
+    return runstage(stage, p.name, [stageid], p.env || {}, p.compileroptions || {}, true);
   }).then(function(updatedenv) {
-    attached.env = updatedenv;
-    return attached;
+    next.env = updatedenv;
+    return next;
   });
-
-  return attached;
+  return next;
 }
 
-function triggerblockflow(p, child, elementid, stagepath) {
-  var env = p.env || {};
-  var constants = p.compilerconstants;
-  var dnaconstants = p.dnaconstants;
-  var options = p.compileroptions;
-  var compiled = compileblock(child, {}, constants, options);
-  var elementfn = createpersistentelementwrapper(compiled, child, stagepath, p.name, options);
-  return Promise.resolve(elementfn(env)).then(function() {
-    return env;
-  });
+// @proposal=P37-refined-rev1 — pure structural append for a stage's
+// children. Returns a new stage; the input is unchanged. No execution
+// is triggered here; execution is triggered by appendstage's 3-arg
+// form.
+function appendblock(stage, block) {
+  if (!stage || stage.element !== 'STAGE') {
+    throw new Error('[appendblock] first argument must be a stage value');
+  }
+  if (!block || block.element !== 'BLOCK') {
+    throw new Error('[appendblock] second argument must be a block value');
+  }
+  var next = {};
+  Object.keys(stage).forEach(function(k) { next[k] = stage[k]; });
+  next.elements = (stage.elements || []).concat([block]);
+  return next;
 }
 
 function appendpipelineelement(p, level, child) {
@@ -191,7 +398,8 @@ function createblockcompilerconstants() {
       fn: 'fn', api: 'api', fetch: 'fetch', writer: 'writer',
       io: 'io', domquery: 'domquery', crypto: 'crypto',
       wait: 'wait', executionquery: 'executionquery',
-      loader: 'loader'
+      loader: 'loader',
+      captureerror: 'captureerror'
     },
     inheritedkeys: ['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents']
   };
@@ -377,12 +585,17 @@ function loadscripts(entries, basepath, timeout, label) {
   return loadscriptssequentially(normalized, basepath, timeout);
 }
 
+// @proposal=P43 — the suppressshow sentinel is read from env at call
+// time and passed to callwithstack so the DEBUGACTOR.SHOW dispatch is
+// skipped for transient failures of the wrapped block inside a
+// composite.
 function wrapcompiledfn(innerfn, kind, id, blockkind) {
   var blockfn = function(env) {
     return callwithstack(null, kind + ':' + id, 'async-await',
       function() { return innerfn(env); }, [env], {
         context: { env: env, pipestate: env.pipestate },
         capturecontinuation: true,
+        suppressshow: env.suppressshow === true,
         errk: createerrorcontext(id, kind)
       });
   };
@@ -448,6 +661,12 @@ function compilehttpblock(merged, id, sig, istextual, options) {
         var finalresult = result && result.data !== undefined ? result.data : result;
         if (merged.mapping && merged.mapping.response && result && typeof result === 'object') {
           finalresult = buildresponse(merged.mapping.response, result);
+        }
+        // @proposal=P39-refined-rev3 — envelope validation fold-in.
+        if (typeof merged.validate === 'function' && merged.validate(finalresult) === false) {
+          var envelopeerror = new Error('[ENVELOPE_INVALID]');
+          envelopeerror.diagnostic = { KIND: 'envelope-invalid' };
+          throw envelopeerror;
         }
         return wrapblockresult(finalresult, sig);
       });
@@ -808,6 +1027,10 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
     return compileloaderblock(merged, id, sig);
   };
 
+  compilers[blocktypes.captureerror] = function(merged, id, sig) {
+    return wrapcompiledfn(merged.behaviour, 'captureerror', id);
+  };
+
   return compilers;
 }
 
@@ -968,16 +1191,6 @@ function processnestedstage(childstage, pipelinename, stagepath, constants, dnac
   };
 }
 
-// @proposal=P29 — the RECOVERY stage. Its children execute sequentially.
-// On the first child failure, the stage increments the failing element's
-// retrycount key, builds a state.error summary, evaluates the predicate,
-// and branches on the outcome: 'retry' re-runs the sequence from index 0;
-// 'continue' resolves with the current env; 'abort' rejects. On the
-// completion path (all children succeeded), the predicate is also
-// evaluated (without state.error) so the pipeline can express its
-// envelope-validity policy. The capture path also dispatches the
-// corresponding CCC message to the execution actor, so manual and
-// programmatic recovery share the same transport.
 function buildrecoveryerrorstate(err, elementid, pipelinename, stagepath) {
   var diag = (err && err.diagnostic) || {};
   return {
@@ -1094,10 +1307,8 @@ function runrecovery(stage, pipelinename, stagepath, env, options, runblocks) {
 
   return new Promise(function(resolve, reject) {
     runchilddef(resolvenextelement(stage, 0), 0, function() {
-      // completion path — all children succeeded
       evaluate(env, null, false, null, null).then(resolve).catch(reject);
     }, function(err, childdef) {
-      // capture path
       var failingid = (childdef && childdef.id) ? childdef.id : 'elementunknown';
       env[failingid + 'retrycount'] = (env[failingid + 'retrycount'] || 0) + 1;
       var errorstate = buildrecoveryerrorstate(err, failingid, pipelinename, stagepath);
@@ -1219,10 +1430,6 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
   return runnext();
 }
 
-// @proposal=P27 — enrich err.diagnostic with PIPELINEID, STAGEPATH, and
-// ELEMENTID (if-absent) before propagating the failure.
-// @proposal=P30 — switch the catchtimeout check to the classifier
-// 'mailbox-wait-timeout'.
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
@@ -1244,7 +1451,8 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       SIGNATURE: { INPUTS: blockinputs, OUTPUTS: blockoutputs },
       EXECUTOR: executor,
       PROPERTIES: elementdef || {},
-      ORIGIN: compiledelement.origin || null
+      ORIGIN: compiledelement.origin || null,
+      TOKEN: elementdef.token || null
     };
 
     var waitduration = (elementdef && typeof elementdef.timeout === 'number' && elementdef.timeout > 0)
@@ -1258,16 +1466,24 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
         var result = outerresult.RESULT !== undefined ? outerresult.RESULT : (outerresult.result !== undefined ? outerresult.result : outerresult);
         if (result && typeof result === 'object' && result.ERROR !== undefined) {
-          var failuremessage = typeof result.ERROR === 'string'
-            ? result.ERROR
-            : (result.ERROR && typeof result.ERROR.message === 'string'
-                ? result.ERROR.message
-                : String(result.ERROR));
+          var failurediagnostic = (result.ERROR && typeof result.ERROR === 'object' && result.ERROR.DIAGNOSTIC)
+            ? result.ERROR.DIAGNOSTIC
+            : {};
+          var failuremessage = (result.ERROR && typeof result.ERROR === 'object' && typeof result.ERROR.MESSAGE === 'string')
+            ? result.ERROR.MESSAGE
+            : (typeof result.ERROR === 'string'
+                ? result.ERROR
+                : (result.ERROR && typeof result.ERROR.message === 'string'
+                    ? result.ERROR.message
+                    : String(result.ERROR)));
           var failureError = new Error(failuremessage);
           failureError.diagnostic = failureError.diagnostic || {};
           failureError.diagnostic.BLOCKID = elementid;
           failureError.diagnostic.PIPELINEID = pipelinename;
           failureError.diagnostic.TASKID = result.TASKID || null;
+          if (failurediagnostic.RETRYTOKEN !== undefined) failureError.diagnostic.RETRYTOKEN = failurediagnostic.RETRYTOKEN;
+          if (failurediagnostic.CONTINUATION !== undefined) failureError.diagnostic.CONTINUATION = failurediagnostic.CONTINUATION;
+          if (failurediagnostic.KIND !== undefined) failureError.diagnostic.KIND = failurediagnostic.KIND;
           throw failureError;
         }
         var outputkeys = Object.keys(blockoutputs || {});
@@ -1277,7 +1493,6 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         return result;
       })
       .catch(function(err) {
-        // @proposal=P27 — enrich the diagnostic before any rethrow.
         if (err && typeof err === 'object') {
           if (!err.diagnostic || typeof err.diagnostic !== 'object') {
             err.diagnostic = {};
@@ -1287,7 +1502,6 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
           if (err.diagnostic.ELEMENTID === undefined) err.diagnostic.ELEMENTID = elementid;
         }
 
-        // @proposal=P30 — classifier-based timeout check.
         var istimeout = catchtimeout
           && err
           && err.diagnostic

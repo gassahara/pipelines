@@ -314,3 +314,28 @@ MESSAGEREGISTRY.register('WORLDMAPACTOR', MESSAGETYPES.GETWORLDMAP, {}, WORLDMAP
 MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.SEND, { RECIPIENT: 'string', MESSAGE: 'object' }, MAILBEHAVIOR);
 
 MESSAGEREGISTRY.register('MAILACTOR', MESSAGETYPES.ACK, { RECIPIENT: 'string', IDS: 'array' }, MAILBEHAVIOR);
+
+// BROADCAST — pseudo-recipient for the composite-block error-capture
+// protocol. Messages are dispatched to the local broadcast fan-out in
+// SENDINSTRUCTION's tail; no actor handles them. The registrations
+// below enable validation and are the sole source of the interface
+// shapes. The null handler keeps ACTORCONSUMERS['BROADCAST:...']
+// falsy so MAILBEHAVIOR skips actor dispatch.
+//
+// @proposal=P38-refined-rev5
+MESSAGEREGISTRY.register('BROADCAST', MESSAGETYPES.BLOCKEXECUTED, {
+  PIPELINEID: 'string?',
+  STAGEPATH: 'array?',
+  ELEMENTID: 'string?',
+  TOKEN: 'string?',
+  RESULT: 'object'
+}, null);
+
+MESSAGEREGISTRY.register('BROADCAST', MESSAGETYPES.BLOCKFAILED, {
+  PIPELINEID: 'string?',
+  STAGEPATH: 'array?',
+  ELEMENTID: 'string?',
+  TOKEN: 'string?',
+  ERROR: 'string',
+  DIAGNOSTIC: 'object'
+}, null);

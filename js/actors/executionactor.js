@@ -110,6 +110,8 @@ function REMOVETASKFROMHISTORY(EXECSLICE, TASKID) {
 
 // @proposal=P21 — MAKETASK registers in TASKORDER and prunes the
 // oldest entries when the map exceeds TASKHISTORYMAX.
+// @proposal=P38-refined-rev5 — MAKETASK accepts DESCRIPTOR.TOKEN and
+// DESCRIPTOR.STAGEPATH, storing them on the task for broadcast emission.
 function MAKETASK(EXECSLICE, DESCRIPTOR) {
   var TASKID = NEXTTASKID(EXECSLICE);
   var TASK = {
@@ -123,6 +125,8 @@ function MAKETASK(EXECSLICE, DESCRIPTOR) {
     SERIALIZED: DESCRIPTOR.SERIALIZED || null,
     PROGRAMREF: DESCRIPTOR.PROGRAMREF || null,
     ORIGIN: DESCRIPTOR.ORIGIN || null,
+    TOKEN: DESCRIPTOR.TOKEN || null,
+    STAGEPATH: DESCRIPTOR.STAGEPATH || null,
     CONSUMERS: [],
     RESULT: null,
     ERROR: null
@@ -230,7 +234,9 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
         ELEMENTID: ELEMENTID,
         SERIALIZED: MESSAGE.SERIALIZED || null,
         PROGRAMREF: MESSAGE.PROGRAMREF || null,
-        ORIGIN: MESSAGE.ORIGIN || null
+        ORIGIN: MESSAGE.ORIGIN || null,
+        TOKEN: MESSAGE.TOKEN || null,
+        STAGEPATH: MESSAGE.PATH || null
       });
       if (MESSAGE.SENDER && MESSAGE.TAG) {
         TASK.CONSUMERS = TASK.CONSUMERS || [];
@@ -362,9 +368,57 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
       SENDEXECUTIONUPDATE(EXECSLICE);
       return ENV;
     }
-    case MESSAGETYPES.CCCABORT:
-    case MESSAGETYPES.CCCCONTINUE:
     case MESSAGETYPES.CCCRETRY: {
+      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION CCCRETRY PIPELINE:', MESSAGE.PIPELINEID, 'ELEMENT:', MESSAGE.ELEMENTID);
+      var RETRYCONTINUATION = MESSAGE.CONTINUATION;
+      if (!RETRYCONTINUATION || typeof RETRYCONTINUATION.FN !== 'function') {
+        if (MESSAGE.SENDER && MESSAGE.TAG) {
+          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG,
+            { ERROR: 'cccretry: no continuation' }, 'EXECUTIONACTOR');
+        }
+        return ENV;
+      }
+      try {
+        var RETRYRESULT = RETRYCONTINUATION.FN.apply(null, RETRYCONTINUATION.ARGS || []);
+        Promise.resolve(RETRYRESULT).then(function(SETTLED) {
+          if (MESSAGE.SENDER && MESSAGE.TAG) {
+            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG,
+              { RESULT: SETTLED || {} }, 'EXECUTIONACTOR');
+          }
+        }).catch(function(RETRYERR) {
+          if (MESSAGE.SENDER && MESSAGE.TAG) {
+            SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG,
+              { ERROR: RETRYERR && RETRYERR.message ? RETRYERR.message : String(RETRYERR) },
+              'EXECUTIONACTOR');
+          }
+        });
+      } catch (SYNCERR) {
+        if (MESSAGE.SENDER && MESSAGE.TAG) {
+          SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG,
+            { ERROR: SYNCERR && SYNCERR.message ? SYNCERR.message : String(SYNCERR) },
+            'EXECUTIONACTOR');
+        }
+      }
+      return ENV;
+    }
+    case MESSAGETYPES.CCCCONTINUE: {
+      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION CCCCONTINUE PIPELINE:', MESSAGE.PIPELINEID, 'ELEMENT:', MESSAGE.ELEMENTID);
+      if (MESSAGE.SENDER && MESSAGE.TAG) {
+        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG,
+          { RESULT: {} }, 'EXECUTIONACTOR');
+      }
+      return ENV;
+    }
+    case MESSAGETYPES.CCCABORT: {
+      logdebug(ENV, '[EXECUTIONACTOR]', 'ACTION CCCABORT PIPELINE:', MESSAGE.PIPELINEID, 'ELEMENT:', MESSAGE.ELEMENTID);
+      if (MESSAGE.PIPELINEID && EXECSLICE.PIPELINES && EXECSLICE.PIPELINES[MESSAGE.PIPELINEID]) {
+        EXECSLICE.PIPELINES[MESSAGE.PIPELINEID].STATUS = 'aborted';
+        SENDEXECUTIONUPDATE(EXECSLICE);
+      }
+      if (MESSAGE.SENDER && MESSAGE.TAG) {
+        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG,
+          { ERROR: 'pipeline aborted' }, 'EXECUTIONACTOR');
+      }
       return ENV;
     }
     case MESSAGETYPES.TASKSETTLED: {
@@ -439,6 +493,9 @@ function EXECUTIONBEHAVIOR(ENV, MESSAGE) {
 // @proposal=P21 — SETTLETASK releases the payload after consumers are
 // notified. The task's metadata remains in TASKS until the next sweep
 // or the history cap.
+// @proposal=P33 — the FAILED payload carries { MESSAGE, DIAGNOSTIC }.
+// @proposal=P38-refined-rev5 — SETTLETASK emits BLOCKEXECUTED /
+// BLOCKFAILED broadcasts on the same transition.
 function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
   logdebug(ENV, '[EXECUTIONACTOR]', 'SETTLETASK TASK:', TASKID, 'STATUS:', STATUS);
   var EXECSLICE = ENV && ENV.execution;
@@ -464,16 +521,37 @@ function SETTLETASK(TASKID, STATUS, RESULT, ERROR, ENV) {
     CONSUMERS.forEach(function(CONSUMER) {
       SENDRESPONSE(CONSUMER.SENDER, CONSUMER.TAG, RESPONSEPAYLOAD, 'EXECUTIONACTOR', TASKRESULTTYPE);
     });
+    // @proposal=P38-refined-rev5 — broadcast on successful completion.
+    SENDINSTRUCTION('BROADCAST', MESSAGETYPES.BLOCKEXECUTED, {
+      PIPELINEID: TASK.PIPELINEID || null,
+      STAGEPATH: TASK.STAGEPATH || null,
+      ELEMENTID: TASK.ELEMENTID || null,
+      TOKEN: TASK.TOKEN || null,
+      RESULT: RESULT || {}
+    }, GENERATETAG(), 'EXECUTIONACTOR');
   } else if (STATUS === 'FAILED') {
+    // @proposal=P33 — preserve the full diagnostic across the boundary.
     RESPONSEPAYLOAD = {
       TASKID: TASKID,
       PIPELINEID: TASK.PIPELINEID,
       ELEMENTID: TASK.ELEMENTID,
-      ERROR: ERROR ? ERROR.message : 'TASK FAILED'
+      ERROR: {
+        MESSAGE: ERROR ? ERROR.message : 'TASK FAILED',
+        DIAGNOSTIC: (ERROR && ERROR.diagnostic) ? ERROR.diagnostic : {}
+      }
     };
     CONSUMERS.forEach(function(CONSUMER) {
       SENDRESPONSE(CONSUMER.SENDER, CONSUMER.TAG, RESPONSEPAYLOAD, 'EXECUTIONACTOR', TASKRESULTTYPE);
     });
+    // @proposal=P38-refined-rev5 — broadcast on failure.
+    SENDINSTRUCTION('BROADCAST', MESSAGETYPES.BLOCKFAILED, {
+      PIPELINEID: TASK.PIPELINEID || null,
+      STAGEPATH: TASK.STAGEPATH || null,
+      ELEMENTID: TASK.ELEMENTID || null,
+      TOKEN: TASK.TOKEN || null,
+      ERROR: ERROR ? ERROR.message : 'TASK FAILED',
+      DIAGNOSTIC: (ERROR && ERROR.diagnostic) ? ERROR.diagnostic : {}
+    }, GENERATETAG(), 'EXECUTIONACTOR');
   }
   // @proposal=P21 — release payload after notification.
   TASK.CONSUMERS = [];

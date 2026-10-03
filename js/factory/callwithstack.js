@@ -106,15 +106,22 @@ function callwithstack(initialstate, label, type, fn, args, options) {
             var popped = popframe(callstackstate);
             callstackstate = popped.state;
 
-            var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : null;
-            var gentagfn = (typeof GENERATETAG === 'function') ? GENERATETAG : function() { return 'tag'; };
-            if (sendinstfn && typeof MESSAGETYPES !== 'undefined') {
-                try {
-                    sendinstfn('DEBUGACTOR', MESSAGETYPES.SHOW, {
-                        ERROR: err,
-                        CONTINUATION: (err.diagnostic && err.diagnostic.CONTINUATION) || null
-                    }, gentagfn(), 'callwithstack');
-                } catch (notifyerr) {}
+            // @proposal=P43 — when suppressshow is set on the call
+            // options (by submitwrapped, for a wrapped block inside a
+            // composite), the DEBUGACTOR.SHOW dispatch is skipped. The
+            // composite's policy owns the fall-through decision; a transient
+            // failure must not render the overlay.
+            if (!options.suppressshow) {
+                var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : null;
+                var gentagfn = (typeof GENERATETAG === 'function') ? GENERATETAG : function() { return 'tag'; };
+                if (sendinstfn && typeof MESSAGETYPES !== 'undefined') {
+                    try {
+                        sendinstfn('DEBUGACTOR', MESSAGETYPES.SHOW, {
+                            ERROR: err,
+                            CONTINUATION: (err.diagnostic && err.diagnostic.CONTINUATION) || null
+                        }, gentagfn(), 'callwithstack');
+                    } catch (notifyerr) {}
+                }
             }
 
             if (catchfn) catchfn(err, context);
@@ -138,4 +145,4 @@ function callwithstack(initialstate, label, type, fn, args, options) {
     promise.cont = k;
     return promise;
 }
- 
+
