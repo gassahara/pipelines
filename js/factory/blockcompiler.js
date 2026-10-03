@@ -47,6 +47,11 @@ function makegenerator(type, wrapped, behaviour, attrs) {
 // @proposal=P41 — attemptsubmit guards synchronous throws.
 // @proposal=P43 — suppressshow sentinel.
 // @proposal=P55 — built via makegenerator.
+// @proposal=P-CCC-FLOW-009 — the CCC registers its settlement handler
+// under the wrapped block's innertoken. The CCCNOTIFY connector on
+// DISPATCHRESPOND fires this handler when a response carrying
+// CCC_TOKEN=innertoken is delivered. The broadcast subscriptions are
+// retained as the secondary settlement channel.
 function makecaptureerror(wrapped, policy) {
   if (!wrapped || wrapped.element !== 'BLOCK') {
     var _e = new Error('[makecaptureerror] wrapped must be a block value');
@@ -90,9 +95,14 @@ function makecaptureerror(wrapped, policy) {
     var resolvepromise = null;
     var rejectpromise = null;
 
+    // @proposal=P-CCC-FLOW-009 — cleanup also unregisters the CCC
+    // handler (the primary flow-side settlement channel).
     function cleanup() {
       if (subfailed !== null) UNSUBSCRIBEBROADCAST(subfailed);
       if (subexecuted !== null) UNSUBSCRIBEBROADCAST(subexecuted);
+      if (typeof UNREGISTERCCCHANDLER === 'function') {
+        UNREGISTERCCCHANDLER(innertoken);
+      }
       subfailed = null;
       subexecuted = null;
     }
@@ -108,7 +118,7 @@ function makecaptureerror(wrapped, policy) {
       try {
         var p = submitwrapped(wrapped, submissionenv);
         if (p && typeof p.catch === 'function') {
-          p.catch(function (ignored) { /* outcome arrives via the broadcast */ });
+          p.catch(function (ignored) { /* outcome arrives via the settlement channels */ });
         }
       } catch (sync) {
         settle(rejectpromise, sync);
@@ -131,6 +141,7 @@ function makecaptureerror(wrapped, policy) {
       resolvepromise = resolve;
       rejectpromise = reject;
 
+      // Secondary channel — the broadcast fan-out.
       subfailed = SUBSCRIBEBROADCAST(
         { TYPE: 'BLOCKFAILED', TOKEN: innertoken },
         handlefailure
@@ -139,6 +150,17 @@ function makecaptureerror(wrapped, policy) {
         { TYPE: 'BLOCKEXECUTED', TOKEN: innertoken },
         handlesuccess
       );
+
+      // Primary channel — the CCC registry. Fired by DISPATCHRESPOND's
+      // connector when a response carries CCC_TOKEN=innertoken. The
+      // signal has shape { TYPE, TAG, SENDER, RESPONSE }.
+      if (typeof REGISTERCCCHANDLER === 'function') {
+        REGISTERCCCHANDLER(innertoken, function (signal) {
+          if (!signal) return;
+          if (signal.TYPE === 'BLOCKEXECUTED') { handlesuccess(signal); return; }
+          if (signal.TYPE === 'BLOCKFAILED') { handlefailure(signal); return; }
+        });
+      }
 
       attemptsubmit(env);
     });
@@ -171,8 +193,7 @@ function makepipelineelement(id, childstate, attrs) {
   return b;
 }
 
-// @proposal=P54 / @proposal=P56r2 — pipeline() now uses
-// makecompilerconstants, which consults the extension registry.
+// @proposal=P54 / @proposal=P56r2 — pipeline() uses makecompilerconstants.
 function pipeline(type, name, options) {
   var opts = options || {};
   var dnaconstants = creatednaserializerconstants();
@@ -383,17 +404,6 @@ function createblockcompilerconstants() {
 // ============================================================
 // §2b — Dynamic block-compiler extensions (P56r2)
 // ============================================================
-//
-// BLOCKCOMPILEREXTENSIONS holds a supplementary set of block-type names
-// and their compilers/analyzers, registered at runtime. The value is
-// Object.freeze'd; the reference is replaced on registration, following
-// the framework's REGISTERTRIGGER precedent (the value never mutates;
-// the reference is swapped atomically within the single-threaded JS
-// model).
-//
-// Consumers call GETBLOCKCOMPILEREXTENSIONS() and merge the returned
-// frozen object into the boot-time constants. makecompilerconstants is
-// the sole such consumer in this file.
 
 var BLOCKCOMPILEREXTENSIONSREF = {
   current: Object.freeze({
@@ -407,10 +417,6 @@ function GETBLOCKCOMPILEREXTENSIONS() {
   return BLOCKCOMPILEREXTENSIONSREF.current;
 }
 
-// @proposal=P56r2 — register an extension. KIND is one of
-// 'blocktypes' | 'compilers' | 'analyzers'. KEY is a non-empty string.
-// VALUE is the compiler or analyzer function for the corresponding KIND
-// (or the type string for blocktypes). Returns the registered VALUE.
 function REGISTERBLOCKCOMPILEREXTENSION(KIND, KEY, VALUE) {
   if (KIND !== 'blocktypes' && KIND !== 'compilers' && KIND !== 'analyzers') {
     throw new Error('[REGISTERBLOCKCOMPILEREXTENSION] KIND must be blocktypes, compilers, or analyzers');
@@ -612,15 +618,37 @@ function wrapblockresult(response, sig) {
   return response;
 }
 
+// @proposal=P-ACTOR-FLOW-002 / @proposal=P-FLOW-BOUND-001 — the
+// renderactor's LOADSCRIPT handler resolves on every exit path, so the
+// response is guaranteed. The blockcompiler consumes it via one of two
+// channels (see exchange below).
+//
+// @proposal=P-BLOCKCOMPILER-ADOPT-007 — dual-channel exchange. A
+// response type (a type in RESPONSETYPES, e.g. SCRIPTLOADED, DOMRESULT,
+// TASKRESULT) travels on the returned Promise: the caller awaits
+// SENDINSTRUCTION's resolved value and reads RESPONSE. A non-response
+// request travels via the mailbox: the caller awaits WAITFORMAILBOX.
+// The channel is declared via the WAITMODE argument to SENDINSTRUCTION.
 function exchange(recipient, type, payload, timeout, responsetype, tag) {
   if (tag === undefined) tag = GENERATETAG();
-  // @proposal=P-ACTOR-FLOW-002 — SENDINSTRUCTION returns a Promise under
-  // the flow contract. The blockcompiler consumes the response via
-  // WAITFORMAILBOX, not via that Promise: the mailbox is the designated
-  // response channel for poller recipients (the infer facility routes
-  // BLOCKCOMPILER via mailbox). The returned Promise is deliberately
-  // ignored; awaiting it would duplicate the wait.
-  SENDINSTRUCTION(recipient, type, payload, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
+  var ISRESPONSE = (typeof GETRESPONSETYPES === 'function')
+    && GETRESPONSETYPES()[responsetype] === true;
+  if (ISRESPONSE) {
+    var P = SENDINSTRUCTION(
+      recipient, type, payload, tag, 'BLOCKCOMPILER',
+      { responsetype: responsetype }, null, 'promise'
+    );
+    return P.then(function (RESOLVED) {
+      if (RESOLVED && typeof RESOLVED === 'object' && RESOLVED.RESPONSE !== undefined) {
+        return RESOLVED.RESPONSE;
+      }
+      return RESOLVED;
+    });
+  }
+  SENDINSTRUCTION(
+    recipient, type, payload, tag, 'BLOCKCOMPILER',
+    { responsetype: responsetype }, null, 'mailbox'
+  );
   return WAITFORMAILBOX({ TAG: tag, SENDER: recipient, TYPE: responsetype }, timeout);
 }
 
@@ -636,16 +664,15 @@ function loadscriptwithwitness(entry, basepath, timeout) {
     .then(function(response) {
       // @proposal=P-ACTOR-FLOW-002 — the renderactor's LOADSCRIPT handler
       // resolves to { LOADED: bool, ERROR?: string } on every exit path:
-      // empty-SRC rejection, browser error event, browser load event.
-      // The ERROR branch is the failure signal.
+      // empty-SRC rejection, browser error event, browser load event,
+      // and the internal-timeout bound. The ERROR branch is the failure
+      // signal.
       if (response && response.ERROR) throw new Error(response.ERROR);
       if (entry.provides && entry.provides.length > 0) {
         return waitforwitness(entry, timeout);
       }
     });
 }
-
-
 
 function loadscripts(entries, basepath, timeout, label) {
   if (typeof timeout === 'undefined') timeout = mailboxresolve('scriptwitnesstimeout');
@@ -1100,10 +1127,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
 }
 
 // @proposal=P54 / @proposal=P56r2 — one builder for the four-field
-// compiler-constants object. The boot constants come from
-// createblockcompilerconstants / createblockcompilers / createblockanalyzers;
-// the runtime extensions come from GETBLOCKCOMPILEREXTENSIONS() and are
-// merged over the boot maps.
+// compiler-constants object.
 function makecompilerconstants(options) {
   var constants = createblockcompilerconstants();
   var dnaconstants = creatednaserializerconstants();

@@ -75,7 +75,10 @@ var pipelinesmanifest = [
     'SCRIPTLOADTIMEOUTREF', 'GETSCRIPTLOADTIMEOUT', 'SETSCRIPTLOADTIMEOUT',
     // CYCLE-06 — response-type registry (P-FLOW-RESPONSE-ROUTING-003)
     'RESPONSETYPESREF', 'GETRESPONSETYPES',
-    'REGISTERRESPONSETYPE', 'UNREGISTERRESPONSETYPE'
+    'REGISTERRESPONSETYPE', 'UNREGISTERRESPONSETYPE',
+    // CYCLE-07 — CCC registry + connector (P-CCC-FLOW-009)
+    'CCCREGISTRYREF', 'GETCCCREGISTRY',
+    'REGISTERCCCHANDLER', 'UNREGISTERCCCHANDLER', 'CCCNOTIFY'
   ] },
   { src: 'factory/layoutdirectives.js', provides: ['createlayoutdirectives'] },
   { src: 'fundamental/domref.js', provides: ['getrawelement', 'createdomref', 'removeref', 'isvaliddomref'] },

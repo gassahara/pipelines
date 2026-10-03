@@ -260,9 +260,27 @@ function ENSUREENVSLICE(ENV, SLICENAME, INITFN) {
 // path is a valid exit path and MUST resolve the handler's Promise via a
 // handler-owned internal timeout. The bound is a registry value, not a
 // literal, and MUST be strictly smaller than the mailbox expectation
-// window that the caller is waiting on. "Every exit path resolves" is a
-// consequence of "the handler owns a bound"; the former does not imply
-// the latter in a Promise-plus-listener form.
+// window that the caller is waiting on.
+//
+// @proposal=P-FLOW-INSTALL-FIRST-004 — the dispatcher's side-effect
+// order MUST be publish → install → respond. The installer creates the
+// expectation the caller is waiting on; the response is the emission
+// that must resolve it. Reversing the order makes the mailbox's sole
+// resolution hook a no-op (the expectation does not yet exist at
+// envelope-admission time), and the wait runs to timeout.
+//
+// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — single-channel response. A
+// message's WAITMODE field declares the caller's channel: 'mailbox'
+// (traditional; envelope delivery) or 'promise' (the resolved
+// SENDINSTRUCTION return). The dispatcher MUST emit exactly one channel
+// per message. In 'promise' mode, no expectation is created and no
+// envelope is emitted.
+//
+// @proposal=P-CCC-FLOW-009 — CCC connector. A response message whose
+// payload carries CCC_TOKEN also fires the CCC registry's handler for
+// that token, in addition to its declared channel. The CCC connector
+// runs after install (PH2) so that any expectation the response
+// resolves already exists.
 
 function DISPATCHPROJECT(VALUE, MESSAGE, ACTORNAME) {
   var OUT = { ENV: undefined, RESPONSE: undefined };
@@ -285,20 +303,46 @@ function DISPATCHPUBLISH(ACTORNAME, ENV) {
   }
 }
 
+// @proposal=P-FLOW-RESPONSE-CHANNEL-006 / @proposal=P-CCC-FLOW-009 —
+// response emission is gated by WAITMODE and also fires the CCC
+// connector for messages carrying CCC_TOKEN.
 function DISPATCHRESPOND(MESSAGE, RESPONSE, ACTORNAME) {
-  if (RESPONSE === undefined) return;
-  if (!MESSAGE.SENDER || !MESSAGE.TAG) return;
-  var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-  var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || 'response';
-  SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESPONSE, ACTORNAME, RESPONSETYPE);
+  // promise-mode: the response travels via the returned Promise; no
+  // mailbox envelope is emitted.
+  if (MESSAGE && MESSAGE.WAITMODE === 'promise') return;
+  if (RESPONSE !== undefined && MESSAGE.SENDER && MESSAGE.TAG) {
+    var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+    var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || 'response';
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESPONSE, ACTORNAME, RESPONSETYPE);
+  }
+  // @proposal=P-CCC-FLOW-009 — the CCC connector fires for any message
+  // carrying a CCC_TOKEN, regardless of response presence. The connector
+  // runs after install (ordering guaranteed by DISPATCHTOACTOR).
+  if (MESSAGE && MESSAGE.CCC_TOKEN !== undefined && typeof CCCNOTIFY === 'function') {
+    CCCNOTIFY(MESSAGE.CCC_TOKEN, {
+      TYPE: MESSAGE.TYPE,
+      TAG: MESSAGE.TAG,
+      SENDER: MESSAGE.SENDER,
+      RESPONSE: RESPONSE
+    });
+  }
 }
 
+// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — installation is gated by
+// WAITMODE. In 'promise' mode, no expectation is created (the caller
+// receives the response through the returned Promise, and creating an
+// expectation would orphan it).
 function DISPATCHINSTALL(INSTALLER, MESSAGE) {
+  if (MESSAGE && MESSAGE.WAITMODE === 'promise') return;
   if (typeof INSTALLER === 'function') {
     INSTALLER(MESSAGE);
   }
 }
 
+// @proposal=P-FLOW-INSTALL-FIRST-004 — publish → install → respond.
+// The install step precedes the respond step so that the response
+// envelope, when routed via the mailbox, resolves an expectation that
+// already exists.
 function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE, INSTALLER) {
   if (typeof BEHAVIOR !== 'function') {
     throw new Error('[DISPATCHTOACTOR] BEHAVIOR must be a function');
@@ -310,15 +354,15 @@ function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE, INSTALLER) {
     return RESULT.then(function (RESOLVED) {
       var OUT = DISPATCHPROJECT(RESOLVED, MESSAGE, ACTORNAME);
       DISPATCHPUBLISH(ACTORNAME, OUT.ENV);
-      DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
       DISPATCHINSTALL(INSTALLER, MESSAGE);
+      DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
       return RESOLVED;
     });
   }
   var OUT = DISPATCHPROJECT(RESULT, MESSAGE, ACTORNAME);
   DISPATCHPUBLISH(ACTORNAME, OUT.ENV);
-  DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
   DISPATCHINSTALL(INSTALLER, MESSAGE);
+  DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
   return RESULT;
 }
 
@@ -801,29 +845,22 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
   var RESPONSETYPES = (typeof GETRESPONSETYPES === 'function') ? GETRESPONSETYPES() : {};
 
   // @proposal=P-FLOW-RESPONSE-ROUTING-003 — rule 0: response types are
-  // always routed via mailbox. A response exists solely to close a
-  // mailbox expectation; a response that does not reach the mailbox
-  // does not do its job. This rule fires before every other rule.
+  // always routed via mailbox.
   if (RESPONSETYPES[TYPE] === true) {
     return { route: 'mailbox', batch: false, suppress: false, reason: 'response-type' };
   }
-
-  // rule 1
   if (POLLERS[RECIPIENT] === true) {
     return { route: 'mailbox', batch: false, suppress: false, reason: 'poller-recipient' };
   }
-  // rule 2
   if (BROADCASTERS[RECIPIENT] === true) {
     return { route: 'broadcast', batch: false, suppress: false, reason: 'broadcast-recipient' };
   }
-  // rule 3
   if (Object.prototype.hasOwnProperty.call(ACTORCONSUMERS, RECIPIENT)) {
     if (BATCHABLE[TYPE] === true) {
       return { route: 'direct', batch: true, suppress: false, reason: 'batchable-to-actor' };
     }
     return { route: 'direct', batch: false, suppress: false, reason: 'known-actor' };
   }
-  // rule 4
   if (SUPPRESSIBLE[TYPE] === true) {
     var level = THRESHOLD[TYPE];
     var current = (typeof getverbosity === 'function') ? getverbosity(BLOCKCOMPILERSTATE) : null;
@@ -832,21 +869,13 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
       return { route: 'mailbox', batch: false, suppress: true, reason: 'suppressed-below-threshold' };
     }
   }
-  // rule 5
   if (BATCHABLE[TYPE] === true) {
     return { route: 'mailbox', batch: true, suppress: false, reason: 'batchable-to-mailbox' };
   }
-  // rule 6
   return { route: 'mailbox', batch: false, suppress: false, reason: 'fallback' };
 }
 
 // ---------- §18.8 — Response-type registry (P-FLOW-RESPONSE-ROUTING-003) ----------
-//
-// The response types are the framework's reply-channel vocabulary.
-// They are registered at load time from MAILBOXFILTERTYPES (the frozen
-// table in messageregistry.js, manifest position #6), which is the
-// authoritative source of the deployed response-type set. The registry
-// follows the ref-swap idiom; the boot population is idempotent.
 
 var RESPONSETYPESREF = { current: Object.freeze({}) };
 
@@ -875,8 +904,6 @@ function UNREGISTERRESPONSETYPE(TYPE) {
   return true;
 }
 
-// Boot population: register every value in MAILBOXFILTERTYPES. The
-// table is loaded at manifest position #6; actorcore.js loads at #13.
 if (typeof MAILBOXFILTERTYPES !== 'undefined' && MAILBOXFILTERTYPES) {
   Object.keys(MAILBOXFILTERTYPES).forEach(function (K) {
     var TYPE = MAILBOXFILTERTYPES[K];
@@ -886,14 +913,60 @@ if (typeof MAILBOXFILTERTYPES !== 'undefined' && MAILBOXFILTERTYPES) {
   });
 }
 
+// ---------- §18.9 — CCC registry + CCCNOTIFY (P-CCC-FLOW-009) ----------
+//
+// The CCC (composite-block error-capture) settlement currently reads
+// from the broadcast fan-out (SUBSCRIBEBROADCAST on BLOCKEXECUTED /
+// BLOCKFAILED). Under the flow, responses travel via mailbox or
+// Promise; neither channel is a broadcast. This registry gives the
+// CCC a first-class hook into the flow: a response whose payload
+// carries CCC_TOKEN causes DISPATCHRESPOND to invoke CCCNOTIFY, which
+// dispatches to the subscribed handler. The connector is additive to
+// the broadcast channel; existing CCC subscribers are unaffected.
+//
+// The registry follows the ref-swap idiom (I-2). The CCC token
+// namespace is disjoint from the message TAG namespace.
+
+var CCCREGISTRYREF = { current: Object.freeze({}) };
+
+function GETCCCREGISTRY() { return CCCREGISTRYREF.current; }
+
+function REGISTERCCCHANDLER(TOKEN, HANDLER) {
+  if (typeof TOKEN !== 'string' || TOKEN.length === 0) {
+    throw new Error('[REGISTERCCCHANDLER] TOKEN must be a non-empty string');
+  }
+  if (typeof HANDLER !== 'function') {
+    throw new Error('[REGISTERCCCHANDLER] HANDLER must be a function');
+  }
+  var CURRENT = CCCREGISTRYREF.current;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TOKEN] = HANDLER;
+  CCCREGISTRYREF.current = Object.freeze(NEXT);
+  return HANDLER;
+}
+
+function UNREGISTERCCCHANDLER(TOKEN) {
+  if (typeof TOKEN !== 'string' || TOKEN.length === 0) return false;
+  var CURRENT = CCCREGISTRYREF.current;
+  if (!Object.prototype.hasOwnProperty.call(CURRENT, TOKEN)) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { if (K !== TOKEN) NEXT[K] = CURRENT[K]; });
+  CCCREGISTRYREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+function CCCNOTIFY(TOKEN, SIGNAL) {
+  if (typeof TOKEN !== 'string' || TOKEN.length === 0) return;
+  var CURRENT = CCCREGISTRYREF.current;
+  var HANDLER = CURRENT[TOKEN];
+  if (typeof HANDLER !== 'function') return;
+  try { HANDLER(SIGNAL); } catch (E) { /* handler error does not block others */ }
+}
+
 // ============================================================
 // §18b — Batch scheduler (P-INFER-001)
 // ============================================================
-//
-// Batches by (RECIPIENT, TYPE). Each batch has a timer of the type's
-// batch-window duration. On flush, the batch is delivered as a single
-// message whose payload carries an ITEMS array; the original MESSAGE
-// fields are carried on each item.
 
 var BATCHBUFFERS = {};
 

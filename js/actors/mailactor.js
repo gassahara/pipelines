@@ -22,12 +22,6 @@ var RETENTIONTIMERS = {};
 // ============================================================
 // Dynamic broadcast-type registry (P66r2)
 // ============================================================
-//
-// BROADCASTTYPES holds the set of message types that, in addition to
-// mailbox delivery, fan out to subscribers registered via
-// SUBSCRIBEBROADCAST. The value is frozen; the reference is replaced
-// on registration, following the framework's REGISTERTRIGGER precedent.
-// Readers call GETBROADCASTTYPES() and consult the returned frozen map.
 
 var BROADCASTTYPESREF = { current: Object.freeze({}) };
 
@@ -257,14 +251,7 @@ function REJECTEXPECTATION(TAG, ERROR) {
 // ============================================================
 // §2 — Mail handlers (P64)
 // ============================================================
-//
-// SEND and ACK are typed handlers registered with the surface at load
-// time. Under CYCLE-05, MAILSENDHANDLER handles ONLY the mailbox path.
-// The direct-to-actor path is decided by INFERDISPATCHSTRATEGY and
-// executed by SENDINSTRUCTION, not by the handler.
 
-// @proposal=P-INFER-001 / @proposal=P-ACTOR-FLOW-002 — mailbox-only.
-// Envelope storage only; no target dispatch; no callback-side response.
 function MAILSENDHANDLER(ENV, MESSAGE) {
   logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
@@ -295,7 +282,6 @@ function MAILSENDHANDLER(ENV, MESSAGE) {
     PAYLOAD: FLATMESSAGE
   };
 
-  // @proposal=P67r2 — the exempt set is a runtime registry.
   if (GETMAILBOXEXEMPT()[RECIPIENT] !== true) {
     ADDENVELOPETOMAILBOX(ENVELOPE);
   }
@@ -327,18 +313,16 @@ var MAILBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('MAILACTOR', [
   MAKETYPEDDISPATCH(MESSAGETYPES.ACK, MAILACKHANDLER)
 ]);
 
-// @proposal=P64 — the actor's behaviour is the surface's dispatch.
 function MAILBEHAVIOR(ENV, MESSAGE) {
   return MAILBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
 }
 
-// @proposal=P64 — publish the surface and the aggregate; self-register.
 REGISTERACTORSURFACE('MAILACTOR', MAILBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('MAILACTOR', MAILBEHAVIOR);
 ACTORCONSUMERS['MAILACTOR'] = MAILBEHAVIOR;
 
 // ============================================================
-// §3 — Mailbox query, polling, subscriptions (unchanged)
+// §3 — Mailbox query, polling, subscriptions
 // ============================================================
 
 function GETMAILBOX() {
@@ -502,11 +486,22 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
   }, TIMEOUT);
 }
 
+// @proposal=P-FLOW-MAILBOX-DRAIN-005 — the "expectation exists and is
+// PENDING" branch performs a QUERYMAILBOX on entry. This closes the
+// ordering race in which an envelope admitted before the expectation
+// was created would otherwise be invisible to the wait (the mailbox's
+// sole resolution hook — RESOLVEEXPECTATION from ADDENVELOPETOMAILBOX —
+// fires only at admission time).
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
   var TAGVAL = FILTER && FILTER.TAG;
 
   if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS === 'PENDING') {
+    var EARLY = QUERYMAILBOX(FILTER);
+    if (EARLY.length > 0) {
+      EARLY[0].READ = 'READ';
+      return Promise.resolve(EARLY[0]);
+    }
     return new Promise(function(RESOLVE, REJECT) {
       var SETTLED = false;
       function ONSETTLE(FN, ARG) {
@@ -590,19 +585,27 @@ function GENERATETAG() {
   return 'TAG' + Date.now() + Math.random().toString(36).slice(2, 10);
 }
 
-// @proposal=P-INFER-001 — routing is decided by INFERDISPATCHSTRATEGY.
-// @proposal=P-ACTOR-FLOW-002 — the mailactor's dispatch is only taken on
-// the mailbox route. The direct route dispatches straight into the
-// recipient's actor; the broadcast route fans out locally.
-function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CONTEXT) {
+// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — single-channel response. The
+// message's WAITMODE declares the caller's channel:
+//   'mailbox' — the response is emitted as a mailbox envelope; an
+//               expectation is created by the dispatcher's installer;
+//               the caller awaits WAITFORMAILBOX.
+//   'promise' — the response is the resolved SENDINSTRUCTION return
+//               value; no expectation is created; no envelope is
+//               emitted.
+// The default is 'mailbox' when RESPONSESPEC is present (traditional
+// callers), 'promise' otherwise (callers that do not expect a response
+// need no mailbox bookkeeping).
+function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CONTEXT, WAITMODE) {
   if (TAG === undefined) TAG = GENERATETAG();
   if (SENDER === undefined) SENDER = 'system';
+  if (WAITMODE === undefined) WAITMODE = RESPONSESPEC ? 'mailbox' : 'promise';
 
-  var FLATMESSAGE = { TYPE: TYPE, SENDER: SENDER, TAG: TAG };
+  var FLATMESSAGE = { TYPE: TYPE, SENDER: SENDER, TAG: TAG, WAITMODE: WAITMODE };
   if (PAYLOAD && typeof PAYLOAD === 'object') {
     Object.keys(PAYLOAD).forEach(function(KEY) {
       if (KEY !== 'TYPE' && KEY !== 'SENDER' && KEY !== 'TAG' &&
-          KEY !== 'RESPONSESPEC' && KEY !== 'CONTEXT') {
+          KEY !== 'RESPONSESPEC' && KEY !== 'CONTEXT' && KEY !== 'WAITMODE') {
         FLATMESSAGE[KEY] = PAYLOAD[KEY];
       }
     });
@@ -674,13 +677,18 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
   }));
 }
 
+// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — SENDRESPONSE is the framework's
+// internal channel for emitting a response envelope. Its routing MUST be
+// via the mailbox regardless of the message's default wait mode (which
+// would otherwise be 'promise' because SENDRESPONSE does not carry a
+// RESPONSESPEC). The explicit 'mailbox' argument is required.
 function SENDRESPONSE(RECIPIENT, TAG, RESULT, SENDER, RESPONSETYPE) {
   if (RESPONSETYPE === undefined) {
     throw new Error('[SENDRESPONSE] responseType is required');
   }
   var TYPE = RESPONSETYPE;
   var PAYLOAD = { RESULT: RESULT };
-  SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, undefined, null);
+  SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, undefined, null, 'mailbox');
 }
 
 function MAILGETACTIONSTATUS(ID) {

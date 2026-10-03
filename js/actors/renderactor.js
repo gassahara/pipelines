@@ -278,8 +278,9 @@ function ENSUREEVENTOBSERVER(RENDERSLICE) {
   loginfo(RENDERSLICE, '[RENDERACTOR]', 'GLOBAL EVENT OBSERVER INSTALLED FOR CLICK/INPUT/CHANGE');
 }
 
-// @proposal=P64 / @proposal=P-ACTOR-FLOW-002 — the wrapper still marks
-// "handled" for the surface's fall-through; it does not emit responses.
+// @proposal=P64 / @proposal=P-RENDERACTOR-FLOW-008 (R-a) — the wrapper
+// marks "handled" for the surface's fall-through. The handler's return
+// value is the RESPONSE-bearing shape; the wrapper does not modify it.
 function MAKERENDERHANDLER(TYPE, HANDLER) {
   var TYPECAP = TYPE;
   var HANDLERCAP = HANDLER;
@@ -311,25 +312,25 @@ HANDLERS[MESSAGETYPES.REMOVE] = function(ENV, MSG) {
 };
 HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
 
-// ---------- Synchronous responses (return value becomes RESPONSE) ----------
+// ---------- Synchronous responses — R-a: return {RESPONSE: value} ----------
 
 HANDLERS[MESSAGETYPES.CRYPTO] = function(ENV, MSG) {
   var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
   var ARRAY = new Uint8Array(MSG.BYTES);
   WIN.crypto.getRandomValues(ARRAY);
-  return Array.prototype.slice.call(ARRAY);
+  return { RESPONSE: Array.prototype.slice.call(ARRAY) };
 };
 HANDLERS[MESSAGETYPES.PERSISTENCE] = function(ENV, MSG) {
   var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
   var STORAGE = WIN.localStorage;
-  if (!STORAGE) return { ERROR: 'localStorage unavailable' };
+  if (!STORAGE) return { RESPONSE: { ERROR: 'localStorage unavailable' } };
   try {
-    if (MSG.ACTION === 'getItem') return { VALUE: STORAGE.getItem(MSG.KEY) };
-    else if (MSG.ACTION === 'setItem') { STORAGE.setItem(MSG.KEY, MSG.VALUE); return { SUCCESS: true }; }
-    else if (MSG.ACTION === 'removeItem') { STORAGE.removeItem(MSG.KEY); return { SUCCESS: true }; }
-    else if (MSG.ACTION === 'clear') { STORAGE.clear(); return { SUCCESS: true }; }
-    else return { ERROR: 'unknown persistence action: ' + MSG.ACTION };
-  } catch (ERR) { return { ERROR: ERR.message }; }
+    if (MSG.ACTION === 'getItem') return { RESPONSE: { VALUE: STORAGE.getItem(MSG.KEY) } };
+    else if (MSG.ACTION === 'setItem') { STORAGE.setItem(MSG.KEY, MSG.VALUE); return { RESPONSE: { SUCCESS: true } }; }
+    else if (MSG.ACTION === 'removeItem') { STORAGE.removeItem(MSG.KEY); return { RESPONSE: { SUCCESS: true } }; }
+    else if (MSG.ACTION === 'clear') { STORAGE.clear(); return { RESPONSE: { SUCCESS: true } }; }
+    else return { RESPONSE: { ERROR: 'unknown persistence action: ' + MSG.ACTION } };
+  } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
 };
 HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
   try {
@@ -337,15 +338,15 @@ HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
     if (MSG.PROPS) Object.keys(MSG.PROPS).forEach(function(PROP) { EL[PROP] = MSG.PROPS[PROP]; });
     var REG = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
-    return DOMREFFN(EL, REG);
-  } catch (ERR) { return { ERROR: ERR.message }; }
+    return { RESPONSE: DOMREFFN(EL, REG) };
+  } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
 };
 HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(ENV, MSG) {
   try {
     var REG2 = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN2 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
-    return DOMREFFN2(document.createElement('div'), REG2);
-  } catch (ERR) { return { ERROR: ERR.message }; }
+    return { RESPONSE: DOMREFFN2(document.createElement('div'), REG2) };
+  } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
 };
 HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(ENV, MSG) {
   try {
@@ -354,69 +355,69 @@ HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(ENV, MSG) {
     var CHILD = WRAPPER.firstElementChild || WRAPPER;
     var REG3 = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN3 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
-    return DOMREFFN3(CHILD, REG3);
-  } catch (ERR) { return { ERROR: ERR.message }; }
+    return { RESPONSE: DOMREFFN3(CHILD, REG3) };
+  } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
 };
 HANDLERS[MESSAGETYPES.PROPERTY] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
-  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var FN = EL[MSG.NAME];
-  if (typeof FN !== 'function') return { ERROR: 'property "' + MSG.NAME + '" is not a function' };
-  try { return FN.apply(EL, MSG.ARGUMENTS || []); } catch (E) { return { ERROR: E.message }; }
+  if (typeof FN !== 'function') return { RESPONSE: { ERROR: 'property "' + MSG.NAME + '" is not a function' } };
+  try { return { RESPONSE: FN.apply(EL, MSG.ARGUMENTS || []) }; } catch (E) { return { RESPONSE: { ERROR: E.message } }; }
 };
 HANDLERS[MESSAGETYPES.GETHTML] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
-  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
-  return { TAG: EL.tagName.toLowerCase(), INNERHTML: EL.innerHTML };
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+  return { RESPONSE: { TAG: EL.tagName.toLowerCase(), INNERHTML: EL.innerHTML } };
 };
 HANDLERS[MESSAGETYPES.GETVALUE] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
-  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
-  return EL.value;
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+  return { RESPONSE: EL.value };
 };
 HANDLERS[MESSAGETYPES.GETSTYLE] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
-  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var COMPUTED = window.getComputedStyle(EL);
   var STYLEOBJ = Array.prototype.slice.call(COMPUTED).reduce(function(ACC, PROP) {
     ACC[PROP] = COMPUTED.getPropertyValue(PROP);
     return ACC;
   }, {});
-  return STYLEOBJ;
+  return { RESPONSE: STYLEOBJ };
 };
 HANDLERS[MESSAGETYPES.GETPOSITION] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
-  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var RECT = EL.getBoundingClientRect();
-  return { X: RECT.x, Y: RECT.y, WIDTH: RECT.width, HEIGHT: RECT.height, TOP: RECT.top, RIGHT: RECT.right, BOTTOM: RECT.bottom, LEFT: RECT.left };
+  return { RESPONSE: { X: RECT.x, Y: RECT.y, WIDTH: RECT.width, HEIGHT: RECT.height, TOP: RECT.top, RIGHT: RECT.right, BOTTOM: RECT.bottom, LEFT: RECT.left } };
 };
 HANDLERS[MESSAGETYPES.GETLAYOUT] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
-  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
-  return {
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+  return { RESPONSE: {
     OFFSETWIDTH: EL.offsetWidth, OFFSETHEIGHT: EL.offsetHeight,
     OFFSETLEFT: EL.offsetLeft, OFFSETTOP: EL.offsetTop,
     SCROLLWIDTH: EL.scrollWidth, SCROLLHEIGHT: EL.scrollHeight,
     CLIENTWIDTH: EL.clientWidth, CLIENTHEIGHT: EL.clientHeight
-  };
+  } };
 };
 HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(ENV, MSG) {
   var DOC = document.documentElement;
-  return { VIEWPORTWIDTH: DOC.clientWidth, VIEWPORTHEIGHT: DOC.clientHeight };
+  return { RESPONSE: { VIEWPORTWIDTH: DOC.clientWidth, VIEWPORTHEIGHT: DOC.clientHeight } };
 };
 HANDLERS[MESSAGETYPES.GETSCREEN] = function(ENV, MSG) {
   var SCR = window.screen;
-  return { SCREENWIDTH: SCR.width, SCREENHEIGHT: SCR.height, AVAILWIDTH: SCR.availWidth, AVAILHEIGHT: SCR.availHeight };
+  return { RESPONSE: { SCREENWIDTH: SCR.width, SCREENHEIGHT: SCR.height, AVAILWIDTH: SCR.availWidth, AVAILHEIGHT: SCR.availHeight } };
 };
 HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(ENV, MSG) {
-  return { MATCHES: window.matchMedia(MSG.QUERY).matches };
+  return { RESPONSE: { MATCHES: window.matchMedia(MSG.QUERY).matches } };
 };
 HANDLERS[MESSAGETYPES.GETBODYHTML] = function(ENV, MSG) {
-  return document.body ? document.body.innerHTML : '';
+  return { RESPONSE: document.body ? document.body.innerHTML : '' };
 };
 HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var TAGFILTER = MSG.TAGNAME ? String(MSG.TAGNAME).toLowerCase() : null;
   var LIMIT = (typeof MSG.LIMIT === 'number' && MSG.LIMIT > 0) ? MSG.LIMIT : Infinity;
   var DESCRIPTORS = [];
@@ -431,105 +432,105 @@ HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
     for (var i = 0; i < CHILDREN.length; i++) { if (DESCRIPTORS.length >= LIMIT) return; walk(CHILDREN[i]); }
   }
   walk(ROOT);
-  return { DESCRIPTORS: DESCRIPTORS };
+  return { RESPONSE: { DESCRIPTORS: DESCRIPTORS } };
 };
 HANDLERS[MESSAGETYPES.CHECKOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var OPTS = MSG.OPTIONS || {};
   var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SU_detectviewportwidth();
-  if (VW === null) return { SKIPPED: 'viewport-undetectable' };
+  if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var CW = OPTS.containerwidths || {};
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  if (!SC) return { ERROR: 'stylizercore unavailable' };
-  return { VIOLATIONS: LC_checkoverflowdoc(ROOT, VW, CW, SC) };
+  if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
+  return { RESPONSE: { VIOLATIONS: LC_checkoverflowdoc(ROOT, VW, CW, SC) } };
 };
 HANDLERS[MESSAGETYPES.CORRECTOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var OPTS = MSG.OPTIONS || {};
   var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SU_detectviewportwidth();
-  if (VW === null) return { SKIPPED: 'viewport-undetectable' };
+  if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var CW = OPTS.containerwidths || {};
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  if (!SC) return { ERROR: 'stylizercore unavailable' };
+  if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
   var RESULT = LC_correctoverflowdoc(ROOT, VW, CW, SC);
-  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
+  return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 HANDLERS[MESSAGETYPES.CHECKSPACING] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var OPTS = MSG.OPTIONS || {};
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  if (!SC) return { ERROR: 'stylizercore unavailable' };
+  if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
   var V = LC_checkspacingdoc(ROOT, MINGAP, SC);
-  return { VIOLATIONS: V.map(function(x) { return { ELEMENTA: x.elementa.tagName + (x.elementa.id ? '#' + x.elementa.id : ''), ELEMENTB: x.elementb.tagName + (x.elementb.id ? '#' + x.elementb.id : ''), GAP: x.gap }; }) };
+  return { RESPONSE: { VIOLATIONS: V.map(function(x) { return { ELEMENTA: x.elementa.tagName + (x.elementa.id ? '#' + x.elementa.id : ''), ELEMENTB: x.elementb.tagName + (x.elementb.id ? '#' + x.elementb.id : ''), GAP: x.gap }; }) } };
 };
 HANDLERS[MESSAGETYPES.CORRECTSPACING] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var OPTS = MSG.OPTIONS || {};
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  if (!SC) return { ERROR: 'stylizercore unavailable' };
+  if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
   var RESULT = LC_correctspacingdoc(ROOT, MINGAP, SC);
-  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
+  return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 HANDLERS[MESSAGETYPES.CHECKOVERLAP] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
-  return { VIOLATIONS: LC_checkoverlapdoc(ROOT) };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+  return { RESPONSE: { VIOLATIONS: LC_checkoverlapdoc(ROOT) } };
 };
 HANDLERS[MESSAGETYPES.CORRECTOVERLAP] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var RESULT = LC_correctoverlapdoc(ROOT);
-  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
+  return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 HANDLERS[MESSAGETYPES.CHECKSCROLLABILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
-  return { VIOLATIONS: LC_checkscrollabilitydoc(ROOT) };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+  return { RESPONSE: { VIOLATIONS: LC_checkscrollabilitydoc(ROOT) } };
 };
 HANDLERS[MESSAGETYPES.CORRECTSCROLLABILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var RESULT = LC_correctscrollabilitydoc(ROOT);
-  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
+  return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 HANDLERS[MESSAGETYPES.CHECKCONTROLLEDOVERLAY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
-  return { VIOLATIONS: LC_checkcontrolledoverlaydoc(ROOT) };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+  return { RESPONSE: { VIOLATIONS: LC_checkcontrolledoverlaydoc(ROOT) } };
 };
 HANDLERS[MESSAGETYPES.CORRECTCONTROLLEDOVERLAY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var RESULT = LC_correctcontrolledoverlaydoc(ROOT);
-  return { APPLIED: RESULT.applied, CONVERGED: RESULT.converged };
+  return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 HANDLERS[MESSAGETYPES.REWRITESTYLEATTRS] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { APPLIED: SU_rewritestyleattrs(ROOT, MSG.RULES || [], SC) };
+  return { RESPONSE: { APPLIED: SU_rewritestyleattrs(ROOT, MSG.RULES || [], SC) } };
 };
 HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   var SAFEPROPS = MSG.SAFEPROPS || (SC && SC.createstylizerconstants ? SC.createstylizerconstants().safeprops : null);
-  return { APPLIED: SU_consolidatestyles(ROOT, SAFEPROPS, SC) };
+  return { RESPONSE: { APPLIED: SU_consolidatestyles(ROOT, SAFEPROPS, SC) } };
 };
 HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   var EL = document.getElementById(MSG.ID);
-  if (!EL) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  if (!SC || typeof SC.computepanemaxwidth !== 'function') return { ERROR: 'stylizercore.computepanemaxwidth unavailable' };
+  if (!SC || typeof SC.computepanemaxwidth !== 'function') return { RESPONSE: { ERROR: 'stylizercore.computepanemaxwidth unavailable' } };
   var VIEWPORT = MSG.VIEWPORT || {};
   var VW = (typeof VIEWPORT.VIEWPORTWIDTH === 'number' && VIEWPORT.VIEWPORTWIDTH > 0) ? VIEWPORT.VIEWPORTWIDTH : SU_detectviewportwidth();
-  if (VW === null) return { SKIPPED: 'viewport-undetectable' };
+  if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var SHAPE = MSG.SHAPE === 'row' ? 'row' : 'column';
   var ROLE = SHAPE === 'row' ? 'app-shell' : 'reading-column';
   var SPACING = SC.computebasespacing(VW);
@@ -547,89 +548,89 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
     EL.style.height = MSG.HEIGHT + 'px';
     HEIGHTAPPLIED = MSG.HEIGHT;
   }
-  return { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE, HEIGHT: HEIGHTAPPLIED };
+  return { RESPONSE: { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE, HEIGHT: HEIGHTAPPLIED } };
 };
 HANDLERS[MESSAGETYPES.PALETTEGENERATE] = function(ENV, MSG) {
-  if (typeof MSG.RULESET !== 'function') return { ERROR: 'PALETTEGENERATE requires RULESET as a function' };
-  return { PALETTE: MSG.RULESET(MSG.OVERRIDES || {}) };
+  if (typeof MSG.RULESET !== 'function') return { RESPONSE: { ERROR: 'PALETTEGENERATE requires RULESET as a function' } };
+  return { RESPONSE: { PALETTE: MSG.RULESET(MSG.OVERRIDES || {}) } };
 };
 HANDLERS[MESSAGETYPES.SETACCENT] = function(ENV, MSG) {
   var SELECTOR = MSG.SELECTOR;
-  if (!SELECTOR || typeof SELECTOR !== 'object') return { ERROR: 'SETACCENT requires SELECTOR object' };
+  if (!SELECTOR || typeof SELECTOR !== 'object') return { RESPONSE: { ERROR: 'SETACCENT requires SELECTOR object' } };
   var HEX = MSG.HEX;
-  if (typeof HEX !== 'string' || HEX.charAt(0) !== '#') return { ERROR: 'SETACCENT requires HEX as a #RRGGBB string' };
+  if (typeof HEX !== 'string' || HEX.charAt(0) !== '#') return { RESPONSE: { ERROR: 'SETACCENT requires HEX as a #RRGGBB string' } };
   var PROP = MSG.PROP || 'color';
   var root = document.getElementById('approot') || document.body;
-  if (!root) return { ERROR: 'SETACCENT root not found' };
+  if (!root) return { RESPONSE: { ERROR: 'SETACCENT root not found' } };
   var rule = { style: {} };
   if (SELECTOR.id) rule.id = SELECTOR.id;
   if (SELECTOR.tag) rule.tag = SELECTOR.tag;
   if (SELECTOR.class) rule.class = SELECTOR.class;
-  if (!rule.id && !rule.tag && !rule.class) return { ERROR: 'SETACCENT selector must declare id, tag, or class' };
+  if (!rule.id && !rule.tag && !rule.class) return { RESPONSE: { ERROR: 'SETACCENT selector must declare id, tag, or class' } };
   rule.style[PROP] = HEX;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   var applied = SU_rewritestyleattrs(root, [rule], SC);
-  return { APPLIED: applied, REF: MSG.REF || null, HEX: HEX, PROP: PROP };
+  return { RESPONSE: { APPLIED: applied, REF: MSG.REF || null, HEX: HEX, PROP: PROP } };
 };
 HANDLERS[MESSAGETYPES.OPTIMIZECONTRAST] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { APPLIED: SU_optimizecontrast(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) };
+  return { RESPONSE: { APPLIED: SU_optimizecontrast(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
 };
 HANDLERS[MESSAGETYPES.OPTIMIZEHARMONY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { APPLIED: SU_optimizeharmony(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) };
+  return { RESPONSE: { APPLIED: SU_optimizeharmony(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
 };
 HANDLERS[MESSAGETYPES.OPTIMIZETEXTVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { APPLIED: SU_optimizetextvisibility(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) };
+  return { RESPONSE: { APPLIED: SU_optimizetextvisibility(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
 };
 HANDLERS[MESSAGETYPES.OPTIMIZEBUTTONVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { APPLIED: SU_optimizebuttonvisibility(ROOT, SC) };
+  return { RESPONSE: { APPLIED: SU_optimizebuttonvisibility(ROOT, SC) } };
 };
 HANDLERS[MESSAGETYPES.VERIFYCONTRAST] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   var MINRATIO = MSG.MINRATIO !== undefined ? MSG.MINRATIO : 4.5;
-  return { VIOLATIONS: SU_verifycontrast(ROOT, MINRATIO, SC) };
+  return { RESPONSE: { VIOLATIONS: SU_verifycontrast(ROOT, MINRATIO, SC) } };
 };
 HANDLERS[MESSAGETYPES.VERIFYTEXTVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { VIOLATIONS: SU_verifytextvisibility(ROOT, SC) };
+  return { RESPONSE: { VIOLATIONS: SU_verifytextvisibility(ROOT, SC) } };
 };
 HANDLERS[MESSAGETYPES.VERIFYBUTTONVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { VIOLATIONS: SU_verifybuttonvisibility(ROOT, SC) };
+  return { RESPONSE: { VIOLATIONS: SU_verifybuttonvisibility(ROOT, SC) } };
 };
 HANDLERS[MESSAGETYPES.VERIFYHARMONY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { VIOLATIONS: SU_verifyharmony(ROOT, MSG.OPTIONS || {}, SC) };
+  return { RESPONSE: { VIOLATIONS: SU_verifyharmony(ROOT, MSG.OPTIONS || {}, SC) } };
 };
 HANDLERS[MESSAGETYPES.CHECKFOCUSVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { ERROR: 'element not found: ' + MSG.ID };
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { VIOLATIONS: SU_checkfocusvisibility(ROOT, SC) };
+  return { RESPONSE: { VIOLATIONS: SU_checkfocusvisibility(ROOT, SC) } };
 };
 
-// ---------- Async responses (return Promise<RESPONSE>) ----------
-// @proposal=P-ACTOR-FLOW-002 — no callback-side response emission.
-// Every exit path resolves.
+// ---------- Async responses — R-a: return Promise<{RESPONSE: value}> ----------
+// @proposal=P-RENDERACTOR-FLOW-008 — every async exit path resolves to
+// { RESPONSE: value }. No handler captures the received ENV.
 
 HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
   return WAITFORDOMREADY()
@@ -639,37 +640,37 @@ HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
         else EL.innerHTML = MSG.MARKUP;
       });
     })
-    .then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+    .then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.SETSTYLES] = function(ENV, MSG) {
   return WITHELEMENTRETRY(MSG.ID, null, function(EL) {
     Object.keys(MSG.STYLES || {}).forEach(function(PROP) { EL.style[PROP] = MSG.STYLES[PROP]; });
-  }).then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+  }).then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.SETATTR] = function(ENV, MSG) {
   return WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.setAttribute(MSG.NAME, MSG.VALUE); })
-    .then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+    .then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.TOGGLECLASS] = function(ENV, MSG) {
   return WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.classList.toggle(MSG.CLASSNAME, MSG.FORCE); })
-    .then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+    .then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.GEOLOCATION] = function(ENV, MSG) {
   return new Promise(function(RESOLVE) {
     var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
     var GEO = WIN.navigator && WIN.navigator.geolocation;
-    if (!GEO) { RESOLVE({ ERROR: 'geolocation API unavailable' }); return; }
+    if (!GEO) { RESOLVE({ RESPONSE: { ERROR: 'geolocation API unavailable' } }); return; }
     GEO.getCurrentPosition(
-      function(POS) { RESOLVE({ LATITUDE: POS.coords.latitude, LONGITUDE: POS.coords.longitude, ACCURACY: POS.coords.accuracy }); },
-      function(ERR) { RESOLVE({ ERROR: 'geolocation failed: ' + ERR.message }); },
+      function(POS) { RESOLVE({ RESPONSE: { LATITUDE: POS.coords.latitude, LONGITUDE: POS.coords.longitude, ACCURACY: POS.coords.accuracy } }); },
+      function(ERR) { RESOLVE({ RESPONSE: { ERROR: 'geolocation failed: ' + ERR.message } }); },
       { enableHighAccuracy: MSG.ENABLEHIGHACCURACY || false, timeout: MSG.TIMEOUT || 5000 }
     );
   });
@@ -678,53 +679,49 @@ HANDLERS[MESSAGETYPES.GEOLOCATION] = function(ENV, MSG) {
 HANDLERS[MESSAGETYPES.SETHTML] = function(ENV, MSG) {
   return WAITFORDOMREADY()
     .then(function() { return WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.innerHTML = MSG.VALUE; }); })
-    .then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+    .then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.SETPOSITION] = function(ENV, MSG) {
   return WITHELEMENTRETRY(MSG.ID, null, function(EL) {
     Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.style[PROP] = MSG.VALUE[PROP]; });
-  }).then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+  }).then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.SETSTYLE] = function(ENV, MSG) {
   return WITHELEMENTRETRY(MSG.ID, null, function(EL) {
     Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL.style[PROP] = MSG.VALUE[PROP]; });
-  }).then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+  }).then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.SETVALUE] = function(ENV, MSG) {
   return WITHELEMENTRETRY(MSG.ID, null, function(EL) { EL.value = MSG.VALUE; })
-    .then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+    .then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
 HANDLERS[MESSAGETYPES.SETLAYOUT] = function(ENV, MSG) {
   return WITHELEMENTRETRY(MSG.ID, null, function(EL) {
     Object.keys(MSG.VALUE || {}).forEach(function(PROP) { EL[PROP] = MSG.VALUE[PROP]; });
-  }).then(function() { return true; })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+  }).then(function() { return { RESPONSE: true }; })
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
-// @proposal=P-ACTOR-FLOW-002 — LOADSCRIPT: every exit path resolves.
-// Event listeners (not onload/onerror properties) guarantee the spec's
-// error event fires even for a script the browser refuses to load.
-// @proposal=P-ACTOR-FLOW-002 / @proposal=P-FLOW-BOUND-001 — LOADSCRIPT:
-// every exit path resolves via a settle-guarded resolver. The
-// "external event never fires" path is bounded by an internal timer
-// whose duration is GETSCRIPTLOADTIMEOUT() (default 5000, strictly
-// smaller than expectationtimeout).
+// @proposal=P-ACTOR-FLOW-002 / @proposal=P-FLOW-BOUND-001 — LOADSCRIPT
+// resolves on every exit path via the settle-guarded resolver.
+// @proposal=P-RENDERACTOR-FLOW-008 — the resolved payload is
+// { RESPONSE: { LOADED: bool, ERROR?: string } }.
 HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
   return new Promise(function(RESOLVE) {
     if (!MSG.SRC || typeof MSG.SRC !== 'string') {
-      RESOLVE({ LOADED: false, ERROR: 'LOADSCRIPT requires SRC as a non-empty string' });
+      RESOLVE({ RESPONSE: { LOADED: false, ERROR: 'LOADSCRIPT requires SRC as a non-empty string' } });
       return;
     }
     if (typeof document === 'undefined' || !document.head) {
-      RESOLVE({ LOADED: false, ERROR: 'document.head unavailable' });
+      RESOLVE({ RESPONSE: { LOADED: false, ERROR: 'document.head unavailable' } });
       return;
     }
     var SETTLED = false;
@@ -733,7 +730,7 @@ HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
       if (SETTLED) return;
       SETTLED = true;
       if (TIMER !== null) clearTimeout(TIMER);
-      RESOLVE(payload);
+      RESOLVE({ RESPONSE: payload });
     }
     var S = document.createElement('script');
     S.src = MSG.SRC;
@@ -750,13 +747,13 @@ HANDLERS[MESSAGETYPES.RESTOREBODYHTML] = function(ENV, MSG) {
   return WAITFORDOMREADY()
     .then(function() {
       if (document.body) document.body.innerHTML = MSG.HTML;
-      return true;
+      return { RESPONSE: true };
     })
-    .catch(function(ERR) { return { ERROR: ERR.message || String(ERR) }; });
+    .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
-// @proposal=P-ACTOR-FLOW-002 — RECOVER returns Promise<ENV> with a fresh
-// render slice. No callback-side ENV mutation.
+// @proposal=P-ACTOR-FLOW-002 — RECOVER is state-only. It returns
+// Promise<ENV> with a fresh render slice. No callback-side ENV mutation.
 HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
   return WAITFORDOMREADY().then(function() {
     return DBRESTORE('actor:state:render').then(function(SAVED) {
@@ -781,8 +778,8 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
   });
 };
 
-// ---------- LOADINGINDICATOR (async response on SHOW/HIDE) ----------
-
+// @proposal=P-RENDERACTOR-FLOW-008 — LOADINGINDICATOR returns
+// { RESPONSE: { APPLIED, ID, ACTION, ... } } synchronously.
 HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
   var action = MSG.ACTION;
   var id = (typeof MSG.ID === 'string' && MSG.ID.length > 0) ? MSG.ID : 'loadingindicator';
@@ -795,21 +792,21 @@ HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
       container.id = id;
       container.innerHTML = markup;
       document.body.appendChild(container);
-      return { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: true };
+      return { RESPONSE: { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: true } };
     }
     existing.innerHTML = markup;
-    return { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: false };
+    return { RESPONSE: { APPLIED: true, ID: id, ACTION: 'SHOW', CREATED: false } };
   }
   if (action === 'HIDE') {
     var el = document.getElementById(id);
-    if (el && el.parentNode) { el.parentNode.removeChild(el); return { APPLIED: true, ID: id, ACTION: 'HIDE', REMOVED: true }; }
-    return { APPLIED: true, ID: id, ACTION: 'HIDE', REMOVED: false };
+    if (el && el.parentNode) { el.parentNode.removeChild(el); return { RESPONSE: { APPLIED: true, ID: id, ACTION: 'HIDE', REMOVED: true } }; }
+    return { RESPONSE: { APPLIED: true, ID: id, ACTION: 'HIDE', REMOVED: false } };
   }
-  return { ERROR: 'LOADINGINDICATOR requires ACTION SHOW|HIDE' };
+  return { RESPONSE: { ERROR: 'LOADINGINDICATOR requires ACTION SHOW|HIDE' } };
 };
 
-// ---------- REGISTEREVENTLISTENER (mixed) ----------
-
+// @proposal=P-RENDERACTOR-FLOW-008 — REGISTEREVENTLISTENER returns
+// { RESPONSE: { REGISTERED, SOURCEID, EVENT } } synchronously.
 var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER;
 HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
   var NEXTENV = ENSURERENDERSLICE(ENV);
@@ -849,10 +846,10 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
   SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
     UPDATES: [{ PATH: 'RENDER', VALUE: RENDERSLICE }]
   }, GENERATETAG(), 'RENDERACTOR');
-  return { REGISTERED: true, SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT };
+  return { RESPONSE: { REGISTERED: true, SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT } };
 };
 
-// ---------- SU_* helpers (unchanged) ----------
+// ---------- SU_* helpers ----------
 
 function SU_getancestors(el) {
   function climb(p, acc) {
@@ -1292,6 +1289,8 @@ function SU_checkfocusvisibility(root, sc) {
   });
 }
 
+// ---------- LC_* helpers ----------
+
 function LC_getcandidateelements(root, stylizercore) {
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
   var applyfn = (sc && sc.applystep) ? sc.applystep : SU_applystep;
@@ -1478,18 +1477,6 @@ function LC_correctoverflowdoc(root, viewportwidth, containerwidths, stylizercor
   return { applied: applied, converged: converged };
 }
 
-// @proposal=P-ACTOR-FLOW-002 — RESPONDIFNEEDED retained for direct
-// callers (REGISTEREVENTLISTENER's outer flow uses it, but that path
-// only fires when a callback wants to respond outside the handler).
-function RESPONDIFNEEDED(ENV, MESSAGE, RESULT) {
-  if (MESSAGE.SENDER && MESSAGE.TAG) {
-    var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-    var DOMRESULTTYPE = MESSAGETYPES.DOMRESULT;
-    var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || DOMRESULTTYPE;
-    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESULT, 'RENDERACTOR', RESPONSETYPE);
-  }
-}
-
 function REINJECTSCRIPTTAGS(SCRIPTTAGS) {
   if (!SCRIPTTAGS || !SCRIPTTAGS.length || typeof document === 'undefined') return;
   var EXISTINGSRCS = {};
@@ -1504,25 +1491,32 @@ function REINJECTSCRIPTTAGS(SCRIPTTAGS) {
   });
 }
 
-// @proposal=P-ACTOR-FLOW-002 — RENDERBEHAVIOR marshals the surface's
-// return. Sync values are wrapped as { ENV: NEXTENV, RESPONSE: value };
-// async values are wrapped on resolution. No callback-side response.
+// @proposal=P-RENDERACTOR-FLOW-008 (R-a) — RENDERBEHAVIOR is the ENV-
+// adding wrapper. Every handler returns {RESPONSE: value} or a Promise
+// thereof (or, for state-only handlers like RECOVER, an ENV directly).
+// RENDERBEHAVIOR adds ENV: NEXTENV to every {RESPONSE} return; ENV-only
+// returns pass through.
 function RENDERBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[RENDERACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE, MESSAGE.ID || '');
   var NEXTENV = ENSURERENDERSLICE(ENV);
   var OUT = RENDERBEHAVIORDISPATCH.DISPATCH(NEXTENV, MESSAGE);
-  if (!OUT || OUT.HANDLED !== true) {
-    return NEXTENV;
-  }
+  if (!OUT || OUT.HANDLED !== true) return NEXTENV;
   var R = OUT.RESULT;
-  if (R && typeof R.then === 'function') {
-    return R.then(function(RESOLVED) {
-      if (RESOLVED === undefined) return NEXTENV;
-      return { ENV: NEXTENV, RESPONSE: RESOLVED };
+  if (R === true || R === undefined || R === null || R === false) return NEXTENV;
+  if (typeof R === 'object' && typeof R.then === 'function') {
+    return R.then(function (RESOLVED) {
+      if (RESOLVED === true || RESOLVED === undefined || RESOLVED === null || RESOLVED === false) return NEXTENV;
+      if (typeof RESOLVED === 'object' && RESOLVED.RESPONSE !== undefined) {
+        return { ENV: NEXTENV, RESPONSE: RESOLVED.RESPONSE };
+      }
+      // State-only async handler (RECOVER): RESOLVED is ENV.
+      return RESOLVED;
     });
   }
-  if (R === undefined) return NEXTENV;
-  return { ENV: NEXTENV, RESPONSE: R };
+  if (typeof R === 'object' && R.RESPONSE !== undefined) {
+    return { ENV: NEXTENV, RESPONSE: R.RESPONSE };
+  }
+  return NEXTENV;
 }
 
 var RENDERBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('RENDERACTOR',
@@ -1531,12 +1525,11 @@ var RENDERBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('RENDERACTOR',
   })
 );
 
-// @proposal=P64 — publish the surface and the aggregate; self-register.
 REGISTERACTORSURFACE('RENDERACTOR', RENDERBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('RENDERACTOR', RENDERBEHAVIOR);
 ACTORCONSUMERS['RENDERACTOR'] = RENDERBEHAVIOR;
 
-// ---------- Enqueue helpers (unchanged) ----------
+// ---------- Enqueue helpers ----------
 
 function CREATEENQUEUER(TYPE, IDREQUIRED, EXTRAPAYLOADFN) {
   return function() {
@@ -1583,7 +1576,7 @@ var ENQUEUEGETVIEWPORT = CREATEENQUEUER(MESSAGETYPES.GETVIEWPORT, false);
 var ENQUEUEGETSCREEN = CREATEENQUEUER(MESSAGETYPES.GETSCREEN, false);
 var ENQUEUEMATCHMEDIA = CREATEENQUEUER(MESSAGETYPES.MATCHMEDIA, false, function(REST) { return { QUERY: REST[0] }; });
 
-// ---------- Actor handle surface (unchanged) ----------
+// ---------- Actor handle surface ----------
 
 var RENDERACTORHANDLE = null;
 
