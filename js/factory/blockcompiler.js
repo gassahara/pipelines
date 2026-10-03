@@ -10,11 +10,43 @@ function makestage(id, control) {
   return { element: 'STAGE', id: id, control: control, elements: [], token: GENERATETAG() };
 }
 
+// @proposal=P53 — reserved keys are authoritative. attrs may not
+// overwrite element, id, type, or token. attrs is applied first; the
+// reserved fields are written after and cannot be shadowed.
 function makeblock(id, type, behaviour, attrs) {
   var a = attrs || {};
-  var b = { element: 'BLOCK', id: id, type: type, token: GENERATETAG() };
-  if (behaviour !== null && behaviour !== undefined) b.behaviour = behaviour;
+  var b = {};
   Object.keys(a).forEach(function(k) { b[k] = a[k]; });
+  b.element = 'BLOCK';
+  b.id = id;
+  b.type = type;
+  b.token = GENERATETAG();
+  if (behaviour !== null && behaviour !== undefined) b.behaviour = behaviour;
+  return b;
+}
+
+// @proposal=P55 — regenerator-block constructor. Generalises the
+// pattern introduced by makecaptureerror: any block that wraps another
+// block is built by this function. The wrapped value must be a BLOCK;
+// the behaviour must be a function; the reserved-key discipline of
+// makeblock applies. The regenerated value carries a fresh token and
+// its own id derived from the wrapped value's id and the type.
+function makegenerator(type, wrapped, behaviour, attrs) {
+  if (!wrapped || wrapped.element !== 'BLOCK') {
+    throw new Error('[makegenerator] wrapped must be a block value');
+  }
+  if (typeof behaviour !== 'function') {
+    throw new Error('[makegenerator] behaviour must be a function');
+  }
+  var a = attrs || {};
+  var b = {};
+  Object.keys(a).forEach(function(k) { b[k] = a[k]; });
+  b.element = 'BLOCK';
+  b.id = (wrapped.id || 'unknown') + type;
+  b.type = type;
+  b.token = GENERATETAG();
+  b.behaviour = behaviour;
+  b.wrapped = wrapped;
   return b;
 }
 
@@ -23,6 +55,8 @@ function makeblock(id, type, behaviour, attrs) {
 // observes the returned promise's rejection.
 // @proposal=P43 — the wrapped block's env carries a suppressshow
 // sentinel so its callwithstack skips the intermediate DEBUGACTOR.SHOW.
+// @proposal=P55 — the composite is built by makegenerator; the ad-hoc
+// object literal is retired. The public shape is preserved.
 function makecaptureerror(wrapped, policy) {
   if (!wrapped || wrapped.element !== 'BLOCK') {
     var _e = new Error('[makecaptureerror] wrapped must be a block value');
@@ -80,10 +114,6 @@ function makecaptureerror(wrapped, policy) {
       fn(value);
     }
 
-    // @proposal=P41 — wrap every submission in try/catch, observe the
-    // promise's rejection, and route a synchronous throw to the
-    // composite's rejecter. Prevents silent hangs and unhandled
-    // rejections.
     function attemptsubmit(submissionenv) {
       try {
         var p = submitwrapped(wrapped, submissionenv);
@@ -124,17 +154,11 @@ function makecaptureerror(wrapped, policy) {
     });
   }
 
-  return {
-    element: 'BLOCK',
-    type: 'captureerror',
-    id: (wrapped.id || 'unknown') + 'capture',
-    token: GENERATETAG(),
-    wrapped: wrapped,
+  return makegenerator('captureerror', wrapped, behaviour, {
     policy: resolvedpolicy,
     onfailed: onfailed,
-    onexecuted: onexecuted,
-    behaviour: behaviour
-  };
+    onexecuted: onexecuted
+  });
 }
 
 // @proposal=P38-refined-rev5 — internal helper. Submits a block value
@@ -144,12 +168,15 @@ function makecaptureerror(wrapped, policy) {
 // suppressshow sentinel; wrapcompiledfn passes it to callwithstack so
 // the wrapped block does not dispatch DEBUGACTOR.SHOW on transient
 // failures.
+// @proposal=P52 — compileblock requires the four-field compiler-constants
+// object; makecompilerconstants provides it. The prior two-field shape
+// is retired.
 function submitwrapped(block, env) {
   var submissionenv = {};
   Object.keys(env || {}).forEach(function (k) { submissionenv[k] = env[k]; });
   submissionenv.suppressshow = true;
-  var constants = createblockcompilerconstants();
-  var compiled = compileblock(block, {}, constants, {});
+  var compilerconstants = makecompilerconstants({});
+  var compiled = compileblock(block, {}, compilerconstants, {});
   var wrapper = createpersistentelementwrapper(
     compiled, block, [], (env && env.pipelinename) || 'unknownpipeline', {}
   );
@@ -222,8 +249,6 @@ function nodeatat(node, path, index) {
 }
 
 // @proposal=P37-refined-rev1 — pure structural append for stages.
-// Two arguments: appendstage(stage, childstage) → new stage.
-// Three arguments: appendstage(pipeline, parentref, stage) → attach + execute.
 function appendstage() {
   if (arguments.length === 2) {
     var stage = arguments[0];
@@ -245,10 +270,6 @@ function appendstage() {
   throw new Error('[appendstage] expects 2 or 3 arguments, received ' + arguments.length);
 }
 
-// @proposal=P37-refined-rev1 — attach a stage to a pipeline. The pipeline
-// value is rebuilt fresh; the input is unchanged. Returns the new pipeline.
-// @proposal=P51 — the attach is structural. Execution is triggered by run
-// after loadpipelineresources resolves. scheduleexecution is a no-op here.
 function execappend(p, parentref, stage) {
   if (!p || typeof p !== 'object' || !Array.isArray(p.elements)) {
     throw new Error('[execappend] first argument must be a pipeline value');
@@ -278,8 +299,6 @@ function execappend(p, parentref, stage) {
   return scheduleexecution(attached, stage);
 }
 
-// @proposal=P37-refined-rev1 — structural rebuild: find the stage whose
-// token matches parenttoken; append child to its elements. Pure.
 function insertchildbytoken(node, parenttoken, child) {
   if (!node || typeof node !== 'object') return node;
   if (node.element === 'STAGE' && node.token === parenttoken) {
@@ -299,17 +318,11 @@ function insertchildbytoken(node, parenttoken, child) {
   return nextnode;
 }
 
-// @proposal=P51 — structural only. The stage has already been placed in
-// p.elements by execappend. Execution is triggered by run after
-// loadpipelineresources has resolved. No microtask is armed here, so
-// no stage body can fire before the pipeline's declared programs are
-// loaded and their provides symbols bound.
+// @proposal=P51 — structural only.
 function scheduleexecution(p, stage) {
   return p;
 }
 
-// @proposal=P37-refined-rev1 — pure structural append for a stage's
-// children. Returns a new stage; the input is unchanged.
 function appendblock(stage, block) {
   if (!stage || stage.element !== 'STAGE') {
     throw new Error('[appendblock] first argument must be a stage value');
@@ -572,10 +585,9 @@ function loadscripts(entries, basepath, timeout, label) {
   return loadscriptssequentially(normalized, basepath, timeout);
 }
 
-// @proposal=P43 — the suppressshow sentinel is read from env at call
-// time and passed to callwithstack so the DEBUGACTOR.SHOW dispatch is
-// skipped for transient failures of the wrapped block inside a
-// composite.
+// @proposal=P43 — read suppressshow from env at call time; pass through
+// to callwithstack so the DEBUGACTOR.SHOW dispatch is skipped for
+// transient failures of the wrapped block inside a composite.
 function wrapcompiledfn(innerfn, kind, id, blockkind) {
   var blockfn = function(env) {
     return callwithstack(null, kind + ':' + id, 'async-await',
@@ -649,7 +661,6 @@ function compilehttpblock(merged, id, sig, istextual, options) {
         if (merged.mapping && merged.mapping.response && result && typeof result === 'object') {
           finalresult = buildresponse(merged.mapping.response, result);
         }
-        // @proposal=P39-refined-rev3 — envelope validation fold-in.
         if (typeof merged.validate === 'function' && merged.validate(finalresult) === false) {
           var envelopeerror = new Error('[ENVELOPE_INVALID]');
           envelopeerror.diagnostic = { KIND: 'envelope-invalid' };
@@ -1021,6 +1032,22 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
   return compilers;
 }
 
+// @proposal=P54 — one builder for the four-field compiler-constants
+// object. Every caller of compileblock uses this function so the shape
+// cannot drift.
+function makecompilerconstants(options) {
+  var constants = createblockcompilerconstants();
+  var dnaconstants = creatednaserializerconstants();
+  var analyzers = createblockanalyzers(constants.blocktypes, dnaconstants);
+  var compilers = createblockcompilers(constants.blocktypes, constants.inheritedkeys, options || {});
+  return {
+    blocktypes: constants.blocktypes,
+    inheritedkeys: constants.inheritedkeys,
+    analyzers: analyzers,
+    compilers: compilers
+  };
+}
+
 function compileblock(block, inherited, constants, options) {
   if (inherited === undefined) inherited = {};
   if (options && options.tools) setblockcompilertools(options.tools);
@@ -1205,11 +1232,7 @@ function runrecovery(stage, pipelinename, stagepath, env, options, runblocks) {
   var inputnames = control.inputs || [];
   var predicate = control.fn;
 
-  var constants = createblockcompilerconstants();
-  var dnaconstants = creatednaserializerconstants();
-  var analyzers = createblockanalyzers(constants.blocktypes, dnaconstants);
-  var compilers = createblockcompilers(constants.blocktypes, constants.inheritedkeys, options);
-  var compilerconstants = { blocktypes: constants.blocktypes, inheritedkeys: constants.inheritedkeys, analyzers: analyzers, compilers: compilers };
+  var compilerconstants = makecompilerconstants(options);
 
   function buildstate(errorState) {
     var state = {};
@@ -1241,11 +1264,11 @@ function runrecovery(stage, pipelinename, stagepath, env, options, runblocks) {
     var elementfn;
     try {
       if (childdef.element === 'BLOCK') {
-        elementfn = processelement(childdef, pipelinename, stagepath.concat([childdef.id]), {}, compilerconstants, dnaconstants, options);
+        elementfn = processelement(childdef, pipelinename, stagepath.concat([childdef.id]), {}, compilerconstants, {}, options);
       } else if (childdef.element === 'PIPELINE') {
         elementfn = processpipelineelement(childdef, pipelinename, stagepath.concat([childdef.id]), {}, options);
       } else if (childdef.element === 'STAGE') {
-        elementfn = processnestedstage(childdef, pipelinename, stagepath.concat([childdef.id]), compilerconstants, dnaconstants, options, runblocks);
+        elementfn = processnestedstage(childdef, pipelinename, stagepath.concat([childdef.id]), compilerconstants, {}, options, runblocks);
       } else {
         throw new Error('[runrecovery] unexpected element type: ' + childdef.element);
       }
@@ -1357,17 +1380,11 @@ function runloop(stage, pipelinename, stagepath, env, options, loopcount, runblo
 }
 
 function orchestratestage(stage, pipelinename, env, stagepath, options, runblocks) {
-  var constants = createblockcompilerconstants();
-  var blocktypes = constants.blocktypes;
-  var inheritedkeys = constants.inheritedkeys;
-  var dnaconstants = creatednaserializerconstants();
-  var analyzers = createblockanalyzers(blocktypes, dnaconstants);
-  var compilers = createblockcompilers(blocktypes, inheritedkeys, options);
-  var compilerconstants = { blocktypes: blocktypes, inheritedkeys: inheritedkeys, analyzers: analyzers, compilers: compilers };
+  var compilerconstants = makecompilerconstants(options);
+  var execute = runblocks === true;
 
   var index = 0;
   var stagetoken = { CANCELLED: false };
-  var execute = runblocks === true;
 
   function runnext() {
     if (index >= (stage.elements || []).length) {
@@ -1387,11 +1404,11 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
 
     var elementfn;
     if (elementdef.element === 'BLOCK') {
-      elementfn = processelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, dnaconstants, options);
+      elementfn = processelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, compilerconstants, {}, options);
     } else if (elementdef.element === 'PIPELINE') {
       elementfn = processpipelineelement(elementdef, pipelinename, stagepath.concat([elementdef.id]), {}, options);
     } else if (elementdef.element === 'STAGE') {
-      elementfn = processnestedstage(elementdef, pipelinename, stagepath.concat([elementdef.id]), compilerconstants, dnaconstants, options, execute);
+      elementfn = processnestedstage(elementdef, pipelinename, stagepath.concat([elementdef.id]), compilerconstants, {}, options, execute);
     } else {
       throw new Error('[orchestratestage] unexpected element type: ' + elementdef.element);
     }
@@ -1592,11 +1609,7 @@ function loadpipelineresources(p, options) {
   return loadpipelinedependencies(p, options);
 }
 
-// @proposal=P51 — single traversal after the load gate. Both compileonly
-// and non-compileonly pipelines take the same path: await the loader,
-// then traverse the pipeline's elements with runblocks = true so that
-// every stage's runtime semantics (EVENT / LOOP / RECOVERY / default)
-// is dispatched through runstage.
+// @proposal=P51 — single traversal after the load gate.
 function run(p, options) {
   if (options === undefined) options = {};
   loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);

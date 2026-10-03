@@ -119,6 +119,9 @@ var MESSAGETYPES = Object.freeze({
   BLOCKFAILED: 'BLOCKFAILED'
 });
 
+// @proposal=P65r2 — MAILBOXFILTERTYPES remains a boot-time frozen table.
+// Mailbox-response filter types are the framework's reply-channel
+// vocabulary and are declared once at load. Not extended at runtime.
 var MAILBOXFILTERTYPES = Object.freeze({
   RESPONSE: MESSAGETYPES.RESPONSE,
   APIRESULT: MESSAGETYPES.APIRESULT,
@@ -129,6 +132,62 @@ var MAILBOXFILTERTYPES = Object.freeze({
   EVENTLISTENERREGISTERED: MESSAGETYPES.EVENTLISTENERREGISTERED,
   SCRIPTLOADED: MESSAGETYPES.SCRIPTLOADED
 });
+
+// ============================================================
+// Dynamic message-type namespace (P65r2)
+// ============================================================
+//
+// MESSAGETYPES is the frozen boot-time contract. DYNAMICMESSAGETYPES is a
+// supplementary namespace whose value is Object.freeze'd and whose
+// reference is replaced on registration. The pattern is the framework's
+// own REGISTERTRIGGER precedent applied to the message-type namespace:
+// the value never mutates; the reference is swapped atomically within
+// the single-threaded JavaScript model.
+//
+// Readers (SENDINSTRUCTION's validation in mailactor.js, QUERYMAILBOX's
+// filter validation) consult MESSAGETYPEEXISTS or GETDYNAMICMESSAGETYPES
+// alongside MESSAGETYPES.
+
+var DYNAMICMESSAGETYPESREF = { current: Object.freeze({}) };
+
+function GETDYNAMICMESSAGETYPES() {
+  return DYNAMICMESSAGETYPESREF.current;
+}
+
+function MESSAGETYPEEXISTS(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) return false;
+  if (MESSAGETYPES[TYPE] !== undefined) return true;
+  var DYNAMIC = DYNAMICMESSAGETYPESREF.current;
+  if (DYNAMIC && DYNAMIC[TYPE] !== undefined) return true;
+  return false;
+}
+
+function REGISTERMESSAGETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[REGISTERMESSAGETYPE] TYPE must be a non-empty string');
+  }
+  if (MESSAGETYPES[TYPE] !== undefined) return TYPE;
+  var CURRENT = DYNAMICMESSAGETYPESREF.current;
+  if (CURRENT[TYPE] !== undefined) return TYPE;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TYPE] = TYPE;
+  DYNAMICMESSAGETYPESREF.current = Object.freeze(NEXT);
+  return TYPE;
+}
+
+function UNREGISTERMESSAGETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) return false;
+  if (MESSAGETYPES[TYPE] !== undefined) return false;
+  var CURRENT = DYNAMICMESSAGETYPESREF.current;
+  if (CURRENT[TYPE] === undefined) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) {
+    if (K !== TYPE) NEXT[K] = CURRENT[K];
+  });
+  DYNAMICMESSAGETYPESREF.current = Object.freeze(NEXT);
+  return true;
+}
 
 var MESSAGEREGISTRYSTORE = {};
 
@@ -168,8 +227,16 @@ var MESSAGEREGISTRY = {
     }
     var entry = MESSAGEREGISTRYSTORE[owner];
     var iface = (entry && entry[type]) ? entry[type].iface : null;
+    // @proposal=P65r2 — if the store has no iface for this type but the
+    // type is a dynamically registered message type, proceed with an
+    // empty iface: the type is routable, but no field-shape checks apply.
+    // Boot types retain their iface-based validation.
     if (!iface) {
-      return { valid: false, error: 'unknown message type: ' + type, type: type };
+      if (MESSAGETYPEEXISTS(type)) {
+        iface = {};
+      } else {
+        return { valid: false, error: 'unknown message type: ' + type, type: type };
+      }
     }
     var keys = Object.keys(iface);
     var invalid = null;

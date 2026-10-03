@@ -92,9 +92,6 @@ function SERIALIZEFORPERSISTENCE(VALUE, SEEN, REFMAP) {
 }
 
 // @proposal=P21 — single attempt. On failure, log once and return false.
-// No key-removal, no retry recursion. The store's size is bounded by
-// the writer (worldmapactor.SELECTPERSISTENTSLICES); a quota failure
-// indicates a genuinely oversized payload.
 function PERSISTATTEMPT(STORE, ROOT, STORAGE) {
   try {
     STORAGE.setItem(ROOTKEY, JSON.stringify(SERIALIZEFORPERSISTENCE(ROOT)));
@@ -376,65 +373,99 @@ function STOREWAIT(FILTER, TIMEOUT) {
   });
 }
 
-// ==================== DBACTOR BEHAVIOR ====================
+// ============================================================
+// §2 — Message handlers (P64)
+// ============================================================
 
-var DBBEHAVIOR = function(ENV, MESSAGE) {
-  logdebug(ENV, '[DBACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
+function DBBEHAVIORSTORE(ENV, MESSAGE) {
+  logdebug(ENV, '[DBACTOR]', 'ACTION STORE KEY:', MESSAGE.KEY);
   var DBSLICE = ENSUREDBSLICE(ENV);
   var STORE = DBSLICE.STORE;
 
-  switch (MESSAGE.TYPE) {
-    case MESSAGETYPES.STORE:
-      logdebug(ENV, '[DBACTOR]', 'ACTION STORE KEY:', MESSAGE.KEY);
-      try {
-        var SERIALIZED = JSON.stringify(SERIALIZEFORPERSISTENCE(MESSAGE.VALUE));
-        if (SERIALIZED.length > MAXENTRYBYTES) {
-          logwarn(ENV, '[DBACTOR]', 'VALUE TOO LARGE FOR KEY:', MESSAGE.KEY, 'BYTES:', SERIALIZED.length);
-          STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'value too large' }, MESSAGE.TAG, 'DBACTOR');
-          return ENV;
-        }
-      } catch (E) {
-        STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: E.message || String(E) }, MESSAGE.TAG, 'DBACTOR');
-        return ENV;
-      }
-      var KEYS = Object.keys(STORE);
-      if (KEYS.length >= MAXKEYS && !STORE[MESSAGE.KEY]) {
-        var OLDEST = KEYS[0];
-        if (OLDEST) delete STORE[OLDEST];
-      }
-      STORE[MESSAGE.KEY] = MESSAGE.VALUE;
-      var PERSISTED = PERSIST(STORE);
-      if (PERSISTED) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
-      else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
+  try {
+    var SERIALIZED = JSON.stringify(SERIALIZEFORPERSISTENCE(MESSAGE.VALUE));
+    if (SERIALIZED.length > MAXENTRYBYTES) {
+      logwarn(ENV, '[DBACTOR]', 'VALUE TOO LARGE FOR KEY:', MESSAGE.KEY, 'BYTES:', SERIALIZED.length);
+      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'value too large' }, MESSAGE.TAG, 'DBACTOR');
       return ENV;
-
-    case MESSAGETYPES.RESTORE:
-      logdebug(ENV, '[DBACTOR]', 'ACTION RESTORE KEY:', MESSAGE.KEY, 'EXISTS:', STORE[MESSAGE.KEY] !== undefined);
-      var RESTOREDVALUE = STORE[MESSAGE.KEY] !== undefined ? STORE[MESSAGE.KEY] : null;
-      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: RESTOREDVALUE }, MESSAGE.TAG, 'DBACTOR');
-      return ENV;
-
-    case MESSAGETYPES.LIST:
-      logdebug(ENV, '[DBACTOR]', 'ACTION LIST COUNT:', Object.keys(STORE).length);
-      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: Object.keys(STORE) }, MESSAGE.TAG, 'DBACTOR');
-      return ENV;
-
-    case MESSAGETYPES.DELETE:
-      logdebug(ENV, '[DBACTOR]', 'ACTION DELETE KEY:', MESSAGE.KEY);
-      delete STORE[MESSAGE.KEY];
-      var PERSISTEDDEL = PERSIST(STORE);
-      if (PERSISTEDDEL) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
-      else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
-      return ENV;
-
-    default:
-      logwarn(ENV, '[DBACTOR]', 'UNKNOWN ACTION:', MESSAGE.TYPE);
-      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: '[DBACTOR] unknown message type' }, MESSAGE.TAG, 'DBACTOR');
-      return ENV;
+    }
+  } catch (E) {
+    STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: E.message || String(E) }, MESSAGE.TAG, 'DBACTOR');
+    return ENV;
   }
-};
+  var KEYS = Object.keys(STORE);
+  if (KEYS.length >= MAXKEYS && !STORE[MESSAGE.KEY]) {
+    var OLDEST = KEYS[0];
+    if (OLDEST) delete STORE[OLDEST];
+  }
+  STORE[MESSAGE.KEY] = MESSAGE.VALUE;
+  var PERSISTED = PERSIST(STORE);
+  if (PERSISTED) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
+  else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
+  return ENV;
+}
 
-// ==================== DIRECT DB API (actors only) ====================
+function DBBEHAVIORRESTORE(ENV, MESSAGE) {
+  logdebug(ENV, '[DBACTOR]', 'ACTION RESTORE KEY:', MESSAGE.KEY, 'EXISTS:', ENSUREDBSLICE(ENV).STORE[MESSAGE.KEY] !== undefined);
+  var DBSLICE = ENSUREDBSLICE(ENV);
+  var STORE = DBSLICE.STORE;
+  var RESTOREDVALUE = STORE[MESSAGE.KEY] !== undefined ? STORE[MESSAGE.KEY] : null;
+  STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: RESTOREDVALUE }, MESSAGE.TAG, 'DBACTOR');
+  return ENV;
+}
+
+function DBBEHAVIORLIST(ENV, MESSAGE) {
+  var DBSLICE = ENSUREDBSLICE(ENV);
+  var STORE = DBSLICE.STORE;
+  logdebug(ENV, '[DBACTOR]', 'ACTION LIST COUNT:', Object.keys(STORE).length);
+  STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: Object.keys(STORE) }, MESSAGE.TAG, 'DBACTOR');
+  return ENV;
+}
+
+function DBBEHAVIORDELETE(ENV, MESSAGE) {
+  logdebug(ENV, '[DBACTOR]', 'ACTION DELETE KEY:', MESSAGE.KEY);
+  var DBSLICE = ENSUREDBSLICE(ENV);
+  var STORE = DBSLICE.STORE;
+  delete STORE[MESSAGE.KEY];
+  var PERSISTEDDEL = PERSIST(STORE);
+  if (PERSISTEDDEL) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
+  else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
+  return ENV;
+}
+
+function DBBEHAVIORDEFAULT(ENV, MESSAGE) {
+  logwarn(ENV, '[DBACTOR]', 'UNKNOWN ACTION:', MESSAGE.TYPE);
+  STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: '[DBACTOR] unknown message type' }, MESSAGE.TAG, 'DBACTOR');
+  return ENV;
+}
+
+// ============================================================
+// §3 — Dispatcher surface (P64)
+// ============================================================
+
+var DBBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('DBACTOR', [
+  MAKETYPEDDISPATCH(MESSAGETYPES.STORE, DBBEHAVIORSTORE),
+  MAKETYPEDDISPATCH(MESSAGETYPES.RESTORE, DBBEHAVIORRESTORE),
+  MAKETYPEDDISPATCH(MESSAGETYPES.LIST, DBBEHAVIORLIST),
+  MAKETYPEDDISPATCH(MESSAGETYPES.DELETE, DBBEHAVIORDELETE),
+  DBBEHAVIORDEFAULT
+]);
+
+// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
+// pre-adoption per-message log line is preserved at the behaviour level.
+function DBBEHAVIOR(ENV, MESSAGE) {
+  logdebug(ENV, '[DBACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
+  return DBBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+}
+
+// @proposal=P64 — publish the surface and the aggregate; self-register.
+REGISTERACTORSURFACE('DBACTOR', DBBEHAVIORDISPATCH);
+REGISTERAGGREGATEBEHAVIOR('DBACTOR', DBBEHAVIOR);
+ACTORCONSUMERS['DBACTOR'] = DBBEHAVIOR;
+
+// ============================================================
+// §4 — Direct DB API (unchanged)
+// ============================================================
 
 function DBSTORE(KEY, VALUE) {
   var TAG = GENERATETAG();
@@ -468,7 +499,9 @@ function DBDELETE(KEY) {
   return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
-// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+// ============================================================
+// §5 — Actor handle surface (P4, unchanged)
+// ============================================================
 
 var DBACTORHANDLE = null;
 
@@ -483,7 +516,9 @@ function SUBMIT(ACTION) { return DBACTORHANDLEINSTANCE().SUBMIT(ACTION); }
 function EXPECT(ID, INTERVAL, TIMEOUT) { return DBACTORHANDLEINSTANCE().EXPECT(ID, INTERVAL, TIMEOUT); }
 function GETACTIONRESULT(ID) { return DBACTORHANDLEINSTANCE().GETACTIONRESULT(ID); }
 
-// ==================== START FUNCTION ====================
+// ============================================================
+// §6 — Start function (unchanged)
+// ============================================================
 
 function STARTDBACTOR(OPTIONS) {
   if (OPTIONS !== undefined) {

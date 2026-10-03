@@ -14,6 +14,98 @@ var MAILBOXRESPONSETYPE = 'MAILBOXRESPONSE';
 // @proposal=P1 — retention timer for settled envelopes (F6/F34).
 var RETENTIONTIMERS = {};
 
+// ============================================================
+// Dynamic broadcast-type registry (P66r2)
+// ============================================================
+//
+// BROADCASTTYPES holds the set of message types that, in addition to
+// mailbox delivery, fan out to subscribers registered via
+// SUBSCRIBEBROADCAST. The value is frozen; the reference is replaced
+// on registration, following the framework's REGISTERTRIGGER precedent.
+// Readers call GETBROADCASTTYPES() and consult the returned frozen map.
+
+var BROADCASTTYPESREF = { current: Object.freeze({}) };
+
+function GETBROADCASTTYPES() {
+  return BROADCASTTYPESREF.current;
+}
+
+function REGISTERBROADCASTTYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[REGISTERBROADCASTTYPE] TYPE must be a non-empty string');
+  }
+  var CURRENT = BROADCASTTYPESREF.current;
+  if (CURRENT[TYPE] !== undefined) return TYPE;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TYPE] = true;
+  BROADCASTTYPESREF.current = Object.freeze(NEXT);
+  return TYPE;
+}
+
+function UNREGISTERBROADCASTTYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) return false;
+  var CURRENT = BROADCASTTYPESREF.current;
+  if (CURRENT[TYPE] === undefined) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) {
+    if (K !== TYPE) NEXT[K] = CURRENT[K];
+  });
+  BROADCASTTYPESREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+// Boot registrations — preserve the RUN 42 behaviour.
+REGISTERBROADCASTTYPE(MESSAGETYPES.BLOCKEXECUTED);
+REGISTERBROADCASTTYPE(MESSAGETYPES.BLOCKFAILED);
+
+// ============================================================
+// Dynamic mailbox-exempt registry (P67r2)
+// ============================================================
+//
+// MAILBOXEXEMPT holds the set of recipient names whose incoming SEND
+// messages are not admitted to MAILBOX. The value is frozen; the
+// reference is replaced on registration. Readers call
+// GETMAILBOXEXEMPT() and consult the returned frozen map.
+
+var MAILBOXEXEMPTREF = { current: Object.freeze({}) };
+
+function GETMAILBOXEXEMPT() {
+  return MAILBOXEXEMPTREF.current;
+}
+
+function REGISTERMAILBOXEXEMPT(RECIPIENT) {
+  if (typeof RECIPIENT !== 'string' || RECIPIENT.length === 0) {
+    throw new Error('[REGISTERMAILBOXEXEMPT] RECIPIENT must be a non-empty string');
+  }
+  var CURRENT = MAILBOXEXEMPTREF.current;
+  if (CURRENT[RECIPIENT] !== undefined) return RECIPIENT;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[RECIPIENT] = true;
+  MAILBOXEXEMPTREF.current = Object.freeze(NEXT);
+  return RECIPIENT;
+}
+
+function UNREGISTERMAILBOXEXEMPT(RECIPIENT) {
+  if (typeof RECIPIENT !== 'string' || RECIPIENT.length === 0) return false;
+  var CURRENT = MAILBOXEXEMPTREF.current;
+  if (CURRENT[RECIPIENT] === undefined) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) {
+    if (K !== RECIPIENT) NEXT[K] = CURRENT[K];
+  });
+  MAILBOXEXEMPTREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+// Boot registration — preserve the RUN 42 behaviour.
+REGISTERMAILBOXEXEMPT('BROADCAST');
+
+// ============================================================
+// Mail transport primitives (unchanged)
+// ============================================================
+
 function SCHEDULERETENTIONPRUNE(TAG) {
   if (!TAG || RETENTIONTIMERS[TAG]) return;
   RETENTIONTIMERS[TAG] = setTimeout(function() {
@@ -44,8 +136,6 @@ function ADDENVELOPETOMAILBOX(ENVELOPE) {
     INDEXBYTYPE[TYPE].push(ENVELOPE);
   }
 
-  // @proposal=P1 / @proposal=P1-fix — fire the live expectation's
-  // resolver with the arriving envelope.
   if (TAG && EXPECTATIONS[TAG] && EXPECTATIONS[TAG].STATUS === 'PENDING') {
     RESOLVEEXPECTATION(TAG, ENVELOPE);
   }
@@ -100,7 +190,6 @@ function CREATEEXPECTATION(TAG, RECIPIENT, SENDER, TYPE, CONTEXT, RESPONSESPEC) 
   return EXPECTATION;
 }
 
-// @proposal=P1 — register callbacks on a live expectation (F4/i).
 function ARMEXPECTATIONRESOLVER(TAG, ONRESOLVE, ONREJECT) {
   var EXPECTATION = EXPECTATIONS[TAG];
   if (EXPECTATION && EXPECTATION.STATUS === 'PENDING') {
@@ -111,8 +200,6 @@ function ARMEXPECTATIONRESOLVER(TAG, ONRESOLVE, ONREJECT) {
   return false;
 }
 
-// @proposal=P1 / @proposal=P1-fix — the resolver fires with the raw
-// envelope.
 function RESOLVEEXPECTATION(TAG, envelope) {
   var EXP = EXPECTATIONS[TAG];
   if (!EXP) return;
@@ -139,8 +226,6 @@ function RESOLVEEXPECTATION(TAG, envelope) {
   SCHEDULERETENTIONPRUNE(TAG);
 }
 
-// @proposal=P30 — the rejection error carries the classifier
-// 'mailbox-wait-timeout'. The message remains human-readable.
 function REJECTEXPECTATION(TAG, ERROR) {
   var EXP = EXPECTATIONS[TAG];
   if (!EXP) return;
@@ -169,91 +254,125 @@ function REJECTEXPECTATION(TAG, ERROR) {
   SCHEDULERETENTIONPRUNE(TAG);
 }
 
-function MAILBEHAVIOR(ENV, MESSAGE) {
+// ============================================================
+// §2 — Mail handlers (P64)
+// ============================================================
+//
+// SEND and ACK become typed handlers registered with the surface at
+// load time. The routing logic they carry is unchanged from the
+// pre-adoption switch; only their packaging changes.
+
+function MAILSENDHANDLER(ENV, MESSAGE) {
   logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
   var MAILSLICE = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
 
-  var MSGTYPE = MESSAGE.TYPE;
-  if (MSGTYPE === MESSAGETYPES.SEND) {
-    var RECIPIENT = MESSAGE.RECIPIENT;
-    if (!RECIPIENT || typeof RECIPIENT !== 'string') {
-      return ENV;
-    }
-    if (!MAILSLICE.QUEUES[RECIPIENT]) MAILSLICE.QUEUES[RECIPIENT] = [];
-    var FLATMESSAGE = MESSAGE.MESSAGE;
-
-    var FLATTYPE = FLATMESSAGE && FLATMESSAGE.TYPE;
-    var FLATTAG = FLATMESSAGE && FLATMESSAGE.TAG;
-    var FLATSENDER = FLATMESSAGE && FLATMESSAGE.SENDER;
-
-    logdebug(ENV, '[MAILACTOR]', 'SEND START:', 'RECIPIENT=', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG, 'SENDER=', FLATSENDER);
-
-    var ENVELOPE = {
-      ID: 'MAIL' + (MAILSLICE.NEXTID++),
-      RECIPIENT: RECIPIENT,
-      SENDER: FLATSENDER || 'system',
-      TAG: FLATTAG || null,
-      UNREAD: true,
-      READ: 'UNREAD',
-      TIMESTAMP: Date.now(),
-      PAYLOAD: FLATMESSAGE
-    };
-
-    // @proposal=P42 — the BROADCAST pseudo-recipient has no consumer
-    // and no expectation. The envelope would never be resolved or read;
-    // accumulating one per broadcast produces unbounded MAILBOX growth.
-    // Skip envelope admission; the broadcast fan-out in SENDINSTRUCTION's
-    // tail remains the delivery mechanism.
-    if (RECIPIENT !== 'BROADCAST') {
-      ADDENVELOPETOMAILBOX(ENVELOPE);
-    }
-
-    var CONSUMERKEY1 = RECIPIENT + ':' + FLATTYPE;
-    var CONSUMERKEY2 = RECIPIENT + ':' + String(FLATTYPE).toLowerCase();
-    var CONSUMERKEY3 = RECIPIENT + ':' + String(FLATTYPE).toUpperCase();
-    var CONSUMER = ACTORCONSUMERS[CONSUMERKEY1] || ACTORCONSUMERS[CONSUMERKEY2] || ACTORCONSUMERS[CONSUMERKEY3];
-    if (CONSUMER) {
-      logdebug(ENV, '[MAILACTOR]', 'DISPATCHING TO ACTOR:', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG);
-      DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, function(stagedmessage) {
-        var stagedspec = stagedmessage && stagedmessage.RESPONSESPEC;
-        if (stagedspec && stagedmessage.TAG) {
-          CREATEEXPECTATION(
-            stagedmessage.TAG,
-            RECIPIENT,
-            stagedmessage.SENDER || 'system',
-            stagedmessage.TYPE,
-            stagedmessage.CONTEXT || null,
-            stagedspec
-          );
-        }
-      });
-      ENVELOPE.READ = 'READ';
-    } else {
-      if (RECIPIENT === 'BLOCKCOMPILER') {
-        logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1, '(BLOCKCOMPILER polls mailbox directly)');
-      } else {
-        logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1);
-      }
-    }
-
+  var RECIPIENT = MESSAGE.RECIPIENT;
+  if (!RECIPIENT || typeof RECIPIENT !== 'string') {
     return ENV;
   }
+  if (!MAILSLICE.QUEUES[RECIPIENT]) MAILSLICE.QUEUES[RECIPIENT] = [];
+  var FLATMESSAGE = MESSAGE.MESSAGE;
 
-  if (MSGTYPE === MESSAGETYPES.ACK) {
-    var ACKRECIPIENT = MESSAGE.RECIPIENT;
-    var ACKIDS = MESSAGE.IDS || [];
-    var ACKQUEUE = MAILSLICE.QUEUES[ACKRECIPIENT] || [];
-    ACKQUEUE.forEach(function(M) {
-      if (ACKIDS.indexOf(M.ID || M.id) !== -1) {
-        M.UNREAD = false;
+  var FLATTYPE = FLATMESSAGE && FLATMESSAGE.TYPE;
+  var FLATTAG = FLATMESSAGE && FLATMESSAGE.TAG;
+  var FLATSENDER = FLATMESSAGE && FLATMESSAGE.SENDER;
+
+  logdebug(ENV, '[MAILACTOR]', 'SEND START:', 'RECIPIENT=', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG, 'SENDER=', FLATSENDER);
+
+  var ENVELOPE = {
+    ID: 'MAIL' + (MAILSLICE.NEXTID++),
+    RECIPIENT: RECIPIENT,
+    SENDER: FLATSENDER || 'system',
+    TAG: FLATTAG || null,
+    UNREAD: true,
+    READ: 'UNREAD',
+    TIMESTAMP: Date.now(),
+    PAYLOAD: FLATMESSAGE
+  };
+
+  // @proposal=P67r2 — the exempt set is a runtime registry. Boot
+  // registration includes 'BROADCAST'; runtime registration extends it.
+  if (GETMAILBOXEXEMPT()[RECIPIENT] !== true) {
+    ADDENVELOPETOMAILBOX(ENVELOPE);
+  }
+
+  var CONSUMERKEY1 = RECIPIENT + ':' + FLATTYPE;
+  var CONSUMERKEY2 = RECIPIENT + ':' + String(FLATTYPE).toLowerCase();
+  var CONSUMERKEY3 = RECIPIENT + ':' + String(FLATTYPE).toUpperCase();
+  // @proposal=P64 — the actor-level fallback routes any type addressed
+  // to a known actor to that actor's aggregate behaviour. Boot-time
+  // per-type registrations (via registerconsumers.js) take precedence;
+  // the fallback is the extension point.
+  var CONSUMER =
+    ACTORCONSUMERS[CONSUMERKEY1] ||
+    ACTORCONSUMERS[CONSUMERKEY2] ||
+    ACTORCONSUMERS[CONSUMERKEY3] ||
+    ACTORCONSUMERS[RECIPIENT];
+  if (CONSUMER) {
+    logdebug(ENV, '[MAILACTOR]', 'DISPATCHING TO ACTOR:', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG);
+    DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, function(stagedmessage) {
+      var stagedspec = stagedmessage && stagedmessage.RESPONSESPEC;
+      if (stagedspec && stagedmessage.TAG) {
+        CREATEEXPECTATION(
+          stagedmessage.TAG,
+          RECIPIENT,
+          stagedmessage.SENDER || 'system',
+          stagedmessage.TYPE,
+          stagedmessage.CONTEXT || null,
+          stagedspec
+        );
       }
     });
-    return ENV;
+    ENVELOPE.READ = 'READ';
+  } else {
+    if (RECIPIENT === 'BLOCKCOMPILER') {
+      logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1, '(BLOCKCOMPILER polls mailbox directly)');
+    } else {
+      logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1);
+    }
   }
 
   return ENV;
 }
+
+function MAILACKHANDLER(ENV, MESSAGE) {
+  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
+
+  var MAILSLICE = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
+
+  var ACKRECIPIENT = MESSAGE.RECIPIENT;
+  var ACKIDS = MESSAGE.IDS || [];
+  var ACKQUEUE = MAILSLICE.QUEUES[ACKRECIPIENT] || [];
+  ACKQUEUE.forEach(function(M) {
+    if (ACKIDS.indexOf(M.ID || M.id) !== -1) {
+      M.UNREAD = false;
+    }
+  });
+  return ENV;
+}
+
+var MAILBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('MAILACTOR', [
+  MAKETYPEDDISPATCH(MESSAGETYPES.SEND, MAILSENDHANDLER),
+  MAKETYPEDDISPATCH(MESSAGETYPES.ACK, MAILACKHANDLER)
+]);
+
+// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
+// switch is gone; the surface is the case list. Runtime registration
+// via REGISTERACTORHANDLER extends the list.
+function MAILBEHAVIOR(ENV, MESSAGE) {
+  return MAILBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+}
+
+// @proposal=P64 — publish the surface and the aggregate, and self-register
+// at the actor level so the mail routing fallback finds this actor.
+REGISTERACTORSURFACE('MAILACTOR', MAILBEHAVIORDISPATCH);
+REGISTERAGGREGATEBEHAVIOR('MAILACTOR', MAILBEHAVIOR);
+ACTORCONSUMERS['MAILACTOR'] = MAILBEHAVIOR;
+
+// ============================================================
+// §3 — Mailbox query, polling, subscriptions (unchanged)
+// ============================================================
 
 function GETMAILBOX() {
   return MAILBOX.slice();
@@ -264,12 +383,7 @@ function QUERYMAILBOX(FILTER) {
 
   var FILTERTYPE = FILTER.TYPE;
   if (FILTERTYPE !== undefined) {
-    var ALLOWEDTYPES = Object.keys(MESSAGETYPES).map(function(K) { return MESSAGETYPES[K]; });
-    var FILTERUPPER = String(FILTERTYPE).toUpperCase();
-    var FOUNDTYPE = ALLOWEDTYPES.filter(function(T) {
-      return T === FILTERTYPE || T === FILTERUPPER || String(T).toLowerCase() === String(FILTERTYPE).toLowerCase();
-    });
-    if (FOUNDTYPE.length === 0) {
+    if (!MESSAGETYPEEXISTS(FILTERTYPE)) {
       throw new Error('[QUERYMAILBOX] Invalid filter type: ' + FILTERTYPE);
     }
   }
@@ -364,8 +478,6 @@ function QUERYMAILBOX(FILTER) {
   return RESULT;
 }
 
-// @proposal=P1 — pre-existing poll path, preserved as the fallback.
-// @proposal=P30 — the timeout rejection carries the classifier.
 function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
   if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
     REJECT(new Error('Cancelled'));
@@ -423,8 +535,6 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
   }, TIMEOUT);
 }
 
-// @proposal=P30 — the push-path timeout rejection carries the
-// classifier.
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
   var TAGVAL = FILTER && FILTER.TAG;
@@ -459,7 +569,9 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
   });
 }
 
-// @proposal=P38-refined-rev5 — broadcast subscription registry and API.
+// ============================================================
+// §4 — Broadcast subscription (P38r5)
+// ============================================================
 
 var BROADCASTSUBSCRIPTIONS = {};
 var BROADCASTSUBCOUNTER = 0;
@@ -503,6 +615,10 @@ function DISPATCHBROADCAST(MESSAGE) {
   });
 }
 
+// ============================================================
+// §5 — Tag generation and send primitives
+// ============================================================
+
 function GENERATETAG() {
   return 'TAG' + Date.now() + Math.random().toString(36).slice(2, 10);
 }
@@ -545,10 +661,10 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     MESSAGE: FLATMESSAGE
   });
 
-  // @proposal=P38-refined-rev5 — broadcast fan-out. Broadcast-class messages
-  // (BLOCKEXECUTED, BLOCKFAILED) additionally fire the local broadcast
-  // registry. The mailbox delivery above is unchanged.
-  if (TYPE === MESSAGETYPES.BLOCKEXECUTED || TYPE === MESSAGETYPES.BLOCKFAILED) {
+  // @proposal=P66r2 — the broadcast fan-out consults the runtime
+  // registry. Boot registration covers BLOCKEXECUTED and BLOCKFAILED;
+  // runtime registration extends the set.
+  if (GETBROADCASTTYPES()[TYPE] === true) {
     DISPATCHBROADCAST(FLATMESSAGE);
   }
 }

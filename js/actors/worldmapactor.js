@@ -2,6 +2,8 @@ var WORLDMAPVERBOSITYCONSTANTS = createverbosityconstants();
 var WORLDMAPSTATE = { level: WORLDMAPVERBOSITYCONSTANTS.DEBUG };
 
 // @proposal=P22 — framework keys are never pruned by unused-removal.
+// @proposal=P64-amendment-1 — DISPATCHERS is a framework key: it holds
+// the per-actor dispatcher lists installed by the surface on first use.
 var FRAMEWORKKEYS = {
   DEBUG: true,
   EXECUTION: true,
@@ -12,11 +14,11 @@ var FRAMEWORKKEYS = {
   VERBOSITY: true,
   OBSERVERS: true,
   pipestate: true,
-  PIPELINEUSEDKEYS: true
+  PIPELINEUSEDKEYS: true,
+  DISPATCHERS: true
 };
 
-// @proposal=P16 — persistent slices are included in the persisted
-// payload. Transient slices (all others) are excluded.
+// @proposal=P16 — persistent slices are included in the persisted payload.
 var PERSISTENTSLICES = {
   HYPERVISOR: true,
   db: true
@@ -29,8 +31,7 @@ var PERSISTTIMER = null;
 var PERSISTMAXTIMER = null;
 var PERSISTPENDING = false;
 
-// @proposal=P22 — settled task predicate. Terminal status and released
-// consumers.
+// @proposal=P22 — settled task predicate.
 function ISSETTLEDTASK(TASK) {
   if (!TASK) return false;
   var S = TASK.STATUS;
@@ -40,9 +41,7 @@ function ISSETTLEDTASK(TASK) {
   return C.length === 0;
 }
 
-// @proposal=P22 — unused key predicate. A key is unused iff it is not
-// a framework key, not in any active pipeline's used-set, and not a
-// baseenv key.
+// @proposal=P22 — unused key predicate.
 function ISUNUSEDKEY(KEY, ENV) {
   if (FRAMEWORKKEYS[KEY] === true) return false;
   var USEDMAP = ENV && ENV.PIPELINEUSEDKEYS;
@@ -57,7 +56,6 @@ function ISUNUSEDKEY(KEY, ENV) {
   return true;
 }
 
-// @proposal=P21/P22 — sweep settled tasks from env.EXECUTION.TASKS.
 function SWEEPSETTLEDTASKS(ENV) {
   if (!ENV || !ENV.EXECUTION || !ENV.EXECUTION.TASKS) return;
   var TASKS = ENV.EXECUTION.TASKS;
@@ -75,9 +73,6 @@ function SWEEPSETTLEDTASKS(ENV) {
   ENV.EXECUTION.TASKORDER = KEEPORDER.length === ORDER.length ? ORDER : KEEPORDER;
 }
 
-// @proposal=P21 — the consolidation invariant. Returns a new env:
-// the merge of the incoming delta with the current env, with settled
-// tasks removed and unused keys removed. Does not mutate the input.
 function CONSOLIDATEENV(ENV) {
   if (!ENV || typeof ENV !== 'object') return ENV;
   var OUT = {};
@@ -88,8 +83,6 @@ function CONSOLIDATEENV(ENV) {
   return OUT;
 }
 
-// @proposal=P16 — select persistent slices for the persisted payload.
-// The payload is a new object; the input env is not mutated.
 function SELECTPERSISTENTSLICES(ENV) {
   if (!ENV || typeof ENV !== 'object') return {};
   var OUT = {};
@@ -120,9 +113,6 @@ function APPLYVALUESET(ENV, UPDATES) {
   }, ENV);
 }
 
-// @proposal=P16 — the persist is scheduled, not synchronous. Every
-// call resets the debounce timer; a maxdefer timer forces a persist
-// during a continuous burst.
 function PERSISTENV(ENV) {
   PERSISTPENDING = true;
   if (PERSISTTIMER) {
@@ -151,9 +141,6 @@ function PERSISTENV(ENV) {
   }
 }
 
-// @proposal=P16 — the actual persist. Selects persistent slices,
-// serializes, stores. Uses requestIdleCallback when available; falls
-// back to setTimeout(..., 0).
 function DOPERSIST(ENV) {
   if (!PERSISTPENDING) return;
   PERSISTPENDING = false;
@@ -187,58 +174,86 @@ function RECOVERENV() {
   });
 }
 
-// Behavior function: (env, message) -> env | promise<env>
+// ============================================================
+// §2 — Message handlers (P64)
+// ============================================================
+
+function WORLDMAPBEHAVIORUPDATE(ENV, MESSAGE) {
+  if (!MESSAGE.UPDATES || !Array.isArray(MESSAGE.UPDATES)) {
+    logwarn(ENV, '[WORLDMAPACTOR]', 'UPDATE MISSING UPDATES ARRAY');
+    return ENV;
+  }
+  var MERGED = APPLYVALUESET(ENV, MESSAGE.UPDATES);
+  var NEWENV = CONSOLIDATEENV(MERGED);
+  (NEWENV.OBSERVERS || []).forEach(function(OBSERVER) {
+    try { OBSERVER(NEWENV); } catch (ERR) { logwarn(NEWENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
+  });
+  PERSISTENV(NEWENV);
+  return NEWENV;
+}
+
+function WORLDMAPBEHAVIORUPDATEFN(ENV, MESSAGE) {
+  var RESULT = MESSAGE.FN(ENV);
+  if (RESULT === undefined) RESULT = ENV;
+  var NEXTENV = CONSOLIDATEENV(RESULT);
+  (NEXTENV.OBSERVERS || []).forEach(function(OBSERVER) {
+    try { OBSERVER(NEXTENV); } catch (ERR) { logwarn(NEXTENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
+  });
+  PERSISTENV(NEXTENV);
+  return NEXTENV;
+}
+
+function WORLDMAPBEHAVIOROBSERVE(ENV, MESSAGE) {
+  var NEWOBSERVERS = (ENV.OBSERVERS || []).concat([MESSAGE.OBSERVER]);
+  return SETINPATH(ENV, 'OBSERVERS', NEWOBSERVERS);
+}
+
+function WORLDMAPBEHAVIORUNOBSERVE(ENV, MESSAGE) {
+  var FILTERED = (ENV.OBSERVERS || []).filter(function(OBS) { return OBS !== MESSAGE.OBSERVER; });
+  return SETINPATH(ENV, 'OBSERVERS', FILTERED);
+}
+
+function WORLDMAPBEHAVIORGETENV(ENV, MESSAGE) {
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'WORLDMAPACTOR');
+  }
+  return ENV;
+}
+
+function WORLDMAPBEHAVIORDEFAULT(ENV, MESSAGE) {
+  logwarn(ENV, '[WORLDMAPACTOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
+  return ENV;
+}
+
+// ============================================================
+// §3 — Dispatcher surface (P64)
+// ============================================================
+
+var WORLDMAPBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('WORLDMAPACTOR', [
+  MAKETYPEDDISPATCH(MESSAGETYPES.UPDATE, WORLDMAPBEHAVIORUPDATE),
+  MAKETYPEDDISPATCH(MESSAGETYPES.UPDATEFN, WORLDMAPBEHAVIORUPDATEFN),
+  MAKETYPEDDISPATCH(MESSAGETYPES.OBSERVE, WORLDMAPBEHAVIOROBSERVE),
+  MAKETYPEDDISPATCH(MESSAGETYPES.UNOBSERVE, WORLDMAPBEHAVIORUNOBSERVE),
+  MAKETYPEDDISPATCH(MESSAGETYPES.GETWORLDMAP, WORLDMAPBEHAVIORGETENV),
+  MAKETYPEDDISPATCH(MESSAGETYPES.GETENV, WORLDMAPBEHAVIORGETENV),
+  WORLDMAPBEHAVIORDEFAULT
+]);
+
+// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
+// pre-adoption per-message log line is preserved at the behaviour level.
 function WORLDMAPBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[WORLDMAPACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
-
-  switch (MESSAGE.TYPE) {
-    // @proposal=P21 — UPDATE merges the delta, then consolidates,
-    // then notifies observers, then schedules the debounced persist.
-    case MESSAGETYPES.UPDATE: {
-      if (!MESSAGE.UPDATES || !Array.isArray(MESSAGE.UPDATES)) {
-        logwarn(ENV, '[WORLDMAPACTOR]', 'UPDATE MISSING UPDATES ARRAY');
-        return ENV;
-      }
-      var MERGED = APPLYVALUESET(ENV, MESSAGE.UPDATES);
-      var NEWENV = CONSOLIDATEENV(MERGED);
-      (NEWENV.OBSERVERS || []).forEach(function(OBSERVER) {
-        try { OBSERVER(NEWENV); } catch (ERR) { logwarn(NEWENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
-      });
-      PERSISTENV(NEWENV);
-      return NEWENV;
-    }
-    // @proposal=P21 — UPDATEFN is symmetric: run the FN, consolidate,
-    // notify, schedule persist.
-    case MESSAGETYPES.UPDATEFN: {
-      var RESULT = MESSAGE.FN(ENV);
-      if (RESULT === undefined) RESULT = ENV;
-      var NEXTENV = CONSOLIDATEENV(RESULT);
-      (NEXTENV.OBSERVERS || []).forEach(function(OBSERVER) {
-        try { OBSERVER(NEXTENV); } catch (ERR) { logwarn(NEXTENV, '[WORLDMAPACTOR]', 'OBSERVER NOTIFICATION FAILED:', ERR); }
-      });
-      PERSISTENV(NEXTENV);
-      return NEXTENV;
-    }
-    case MESSAGETYPES.OBSERVE: {
-      var NEWOBSERVERS = (ENV.OBSERVERS || []).concat([MESSAGE.OBSERVER]);
-      return SETINPATH(ENV, 'OBSERVERS', NEWOBSERVERS);
-    }
-    case MESSAGETYPES.UNOBSERVE: {
-      var FILTERED = (ENV.OBSERVERS || []).filter(function(OBS) { return OBS !== MESSAGE.OBSERVER; });
-      return SETINPATH(ENV, 'OBSERVERS', FILTERED);
-    }
-    case MESSAGETYPES.GETWORLDMAP:
-    case MESSAGETYPES.GETENV: {
-      if (MESSAGE.SENDER && MESSAGE.TAG) {
-        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'WORLDMAPACTOR');
-      }
-      return ENV;
-    }
-    default:
-      logwarn(ENV, '[WORLDMAPACTOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
-      return ENV;
-  }
+  return WORLDMAPBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
 }
+
+// @proposal=P64 — publish the surface and the aggregate; self-register.
+REGISTERACTORSURFACE('WORLDMAPACTOR', WORLDMAPBEHAVIORDISPATCH);
+REGISTERAGGREGATEBEHAVIOR('WORLDMAPACTOR', WORLDMAPBEHAVIOR);
+ACTORCONSUMERS['WORLDMAPACTOR'] = WORLDMAPBEHAVIOR;
+
+// ============================================================
+// §4 — World-map state registration and start
+// ============================================================
 
 // Initial state is empty object; actors own their slices.
 REGISTERACTORSTATE('WORLDMAPACTOR', {});
@@ -264,7 +279,9 @@ function STARTWORLDMAPACTOR(OPTIONS) {
   });
 }
 
-// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+// ============================================================
+// §5 — Actor handle surface (P4, unchanged)
+// ============================================================
 
 var WORLDMAPHANDLE = null;
 
@@ -278,6 +295,10 @@ function WORLDMAPHANDLEINSTANCE() {
 function SUBMIT(ACTION) { return WORLDMAPHANDLEINSTANCE().SUBMIT(ACTION); }
 function EXPECT(ID, INTERVAL, TIMEOUT) { return WORLDMAPHANDLEINSTANCE().EXPECT(ID, INTERVAL, TIMEOUT); }
 function GETACTIONRESULT(ID) { return WORLDMAPHANDLEINSTANCE().GETACTIONRESULT(ID); }
+
+// ============================================================
+// §6 — Producers (unchanged)
+// ============================================================
 
 function SENDWORLDMAPPATCH(PATCH, RESPONSESPEC) {
   if (PATCH && PATCH.UPDATES) {

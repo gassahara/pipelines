@@ -8,8 +8,6 @@ var DEBUGSLICEUPDATETIMER = null;
 var DEBUGSLICEUPDATEENV = null;
 
 // @proposal=P16 — truncate a log entry's DATA if it exceeds the bound.
-// The truncation preserves the DATA's shape (object) with a preview
-// and the original serialized length.
 function TRUNCATELOGDATA(DATA) {
   if (DATA === null || DATA === undefined) return DATA;
   if (typeof DATA !== 'object') {
@@ -28,11 +26,7 @@ function TRUNCATELOGDATA(DATA) {
   };
 }
 
-// @proposal=P16 — debounced DEBUG slice update. The first call in a
-// window arms the timer; subsequent calls within the window are
-// coalesced. When the timer fires, the slice is sent once. The slice
-// is looked up from ENV at fire time so the latest LOGS array is what
-// gets sent.
+// @proposal=P16 — debounced DEBUG slice update.
 function SCHEDULEDEBUGSLICEUPDATE(ENV) {
   DEBUGSLICEUPDATEENV = ENV;
   if (DEBUGSLICEUPDATETIMER) return;
@@ -87,7 +81,6 @@ function ENSUREOVERLAY(DEBUGSLICE) {
   return DEBUGSLICE.OVERLAY;
 }
 
-// @proposal=P16 — LOGSMAX is now the module constant DEBUGLOGSMAX (200).
 function ENSUREDEBUGSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'debug', function() {
     return {
@@ -154,282 +147,315 @@ function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
   return HTML;
 }
 
-// Behavior function: (env, message) -> env | promise<env>
-function DEBUGBEHAVIOR(ENV, MESSAGE) {
-  logdebug(ENV, '[DEBUGACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
+// ============================================================
+// §1 — Message handlers
+// ============================================================
 
+function DEBUGBEHAVIORPING(ENV, MESSAGE) {
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION PING');
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    var RESPONSESPECPING = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+    var RESPONSETYPEPING = (RESPONSESPECPING && (RESPONSESPECPING.responsetype || RESPONSESPECPING.responseType)) || 'response';
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEPING);
+  }
+  return ENV;
+}
+
+function DEBUGBEHAVIORINITOVERLAY(ENV, MESSAGE) {
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION INITOVERLAY');
   var DEBUGSLICE = ENSUREDEBUGSLICE(ENV);
+  ENSUREOVERLAY(DEBUGSLICE);
 
-  if (MESSAGE.TYPE === MESSAGETYPES.PING) {
-    logdebug(ENV, '[DEBUGACTOR]', 'ACTION PING');
-    if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECPING = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-      var RESPONSETYPEPING = (RESPONSESPECPING && (RESPONSESPECPING.responsetype || RESPONSESPECPING.responseType)) || 'response';
-      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEPING);
-    }
-    return ENV;
-  }
+  if (!DEBUGSLICE.GLOBALLISTENERSINSTALLED) {
+    DEBUGSLICE.GLOBALLISTENERSINSTALLED = true;
 
-  if (MESSAGE.TYPE === MESSAGETYPES.INITOVERLAY) {
-    logdebug(ENV, '[DEBUGACTOR]', 'ACTION INITOVERLAY');
-    ENSUREOVERLAY(DEBUGSLICE);
+    window.addEventListener('error', function(E) {
+      E.preventDefault();
+      logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL WINDOW ERROR CAPTURED:', E.error || E);
+      SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
+        ERROR: E.error || E,
+        CONTINUATION: null
+      }, null, 'window');
+    });
 
-    if (!DEBUGSLICE.GLOBALLISTENERSINSTALLED) {
-      DEBUGSLICE.GLOBALLISTENERSINSTALLED = true;
-
-      window.addEventListener('error', function(E) {
+    window.addEventListener('unhandledrejection', function(E) {
+      if (E.reason && E.reason.diagnostic) {
         E.preventDefault();
-        logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL WINDOW ERROR CAPTURED:', E.error || E);
+        logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL UNHANDLED REJECTION CAPTURED:', E.reason);
         SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
-          ERROR: E.error || E,
-          CONTINUATION: null
+          ERROR: E.reason,
+          CONTINUATION: E.reason.diagnostic.CONTINUATION || null
         }, null, 'window');
-      });
-
-      window.addEventListener('unhandledrejection', function(E) {
-        if (E.reason && E.reason.diagnostic) {
-          E.preventDefault();
-          logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL UNHANDLED REJECTION CAPTURED:', E.reason);
-          SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, {
-            ERROR: E.reason,
-            CONTINUATION: E.reason.diagnostic.CONTINUATION || null
-          }, null, 'window');
-        }
-      });
-    }
-
-    DEBUGSLICE.OVERLAYVISIBLE = false;
-    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
-    }, GENERATETAG(), 'DEBUGACTOR');
-
-    if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECINIT = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-      var RESPONSETYPEINIT = (RESPONSESPECINIT && (RESPONSESPECINIT.responsetype || RESPONSESPECINIT.responseType)) || 'response';
-      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEINIT);
-    }
-    return ENV;
+      }
+    });
   }
 
-  if (MESSAGE.TYPE === MESSAGETYPES.HIDE) {
-    logdebug(ENV, '[DEBUGACTOR]', 'ACTION HIDE');
-    if (DEBUGSLICE.OVERLAY) {
-      DEBUGSLICE.OVERLAY.style.display = 'none';
-      DEBUGSLICE.OVERLAY.innerHTML = '';
-    }
-    DEBUGSLICE.OVERLAYVISIBLE = false;
-    DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = null;
-    DEBUGSLICE.CURRENTCONTINUATION = null;
+  DEBUGSLICE.OVERLAYVISIBLE = false;
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+    UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
+  }, GENERATETAG(), 'DEBUGACTOR');
 
-    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
-    }, GENERATETAG(), 'DEBUGACTOR');
-
-    if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECHIDE = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-      var RESPONSETYPEHIDE = (RESPONSESPECHIDE && (RESPONSESPECHIDE.responsetype || RESPONSESPECHIDE.responseType)) || 'response';
-      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEHIDE);
-    }
-    return ENV;
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    var RESPONSESPECINIT = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+    var RESPONSETYPEINIT = (RESPONSESPECINIT && (RESPONSESPECINIT.responsetype || RESPONSESPECINIT.responseType)) || 'response';
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, true, 'DEBUGACTOR', RESPONSETYPEINIT);
   }
+  return ENV;
+}
 
-  if (MESSAGE.TYPE === MESSAGETYPES.SHOW) {
-    loginfo(ENV, '[DEBUGACTOR]', 'ACTION SHOW DEBUG OVERLAY');
-    logdebug(ENV, '[DEBUGACTOR]', 'ACTION SHOW ERROR:', MESSAGE.ERROR, 'CONTINUATION:', MESSAGE.CONTINUATION);
-    var OVERLAY = ENSUREOVERLAY(DEBUGSLICE);
+function DEBUGBEHAVIORHIDE(ENV, MESSAGE) {
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION HIDE');
+  var DEBUGSLICE = ENSUREDEBUGSLICE(ENV);
+  if (DEBUGSLICE.OVERLAY) {
+    DEBUGSLICE.OVERLAY.style.display = 'none';
+    DEBUGSLICE.OVERLAY.innerHTML = '';
+  }
+  DEBUGSLICE.OVERLAYVISIBLE = false;
+  DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = null;
+  DEBUGSLICE.CURRENTCONTINUATION = null;
 
-    OVERLAY.innerHTML = formatdebugtrace(
-      MESSAGE.ERROR,
-      (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
-    );
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+    UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
+  }, GENERATETAG(), 'DEBUGACTOR');
 
-    var LOGVIEWERHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
-    var LOGPANEL = document.createElement('div');
-    LOGPANEL.id = 'debuglogpanel';
-    LOGPANEL.style.cssText = 'flex:1;display:flex;flex-direction:column;border-top:1px solid #444;margin-top:20px;max-height:40vh;background:rgba(0,0,0,0.8);font-family:\'Courier New\',monospace;font-size:12px;color:#eee;';
-    LOGPANEL.innerHTML = LOGVIEWERHTML;
-    OVERLAY.appendChild(LOGPANEL);
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    var RESPONSESPECHIDE = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+    var RESPONSETYPEHIDE = (RESPONSESPECHIDE && (RESPONSESPECHIDE.responsetype || RESPONSESPECHIDE.responseType)) || 'response';
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEHIDE);
+  }
+  return ENV;
+}
 
-    var ACTIONS = document.createElement('div');
-    ACTIONS.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
+function DEBUGBEHAVIORSHOW(ENV, MESSAGE) {
+  loginfo(ENV, '[DEBUGACTOR]', 'ACTION SHOW DEBUG OVERLAY');
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION SHOW ERROR:', MESSAGE.ERROR, 'CONTINUATION:', MESSAGE.CONTINUATION);
+  var DEBUGSLICE = ENSUREDEBUGSLICE(ENV);
+  var OVERLAY = ENSUREOVERLAY(DEBUGSLICE);
 
-    if (MESSAGE.CONTINUATION) {
-      var CTX = GETCTX(MESSAGE.ERROR, MESSAGE.CONTINUATION);
+  OVERLAY.innerHTML = formatdebugtrace(
+    MESSAGE.ERROR,
+    (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
+  );
 
-      ACTIONS.appendChild(BTN('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
-        logdebug(ENV, '[DEBUGACTOR]', 'RETRYING STAGE:', CTX);
-        OVERLAY.style.display = 'none';
-        OVERLAY.innerHTML = '';
-        SENDINSTRUCTION('EXECUTIONACTOR', 'CCCRETRY', {
-          PIPELINEID: CTX.PIPELINEID,
-          PATH: CTX.PATH,
-          ELEMENTID: CTX.ELEMENTID,
-          CONTINUATION: MESSAGE.CONTINUATION
-        }, null, 'DEBUGACTOR');
-      }));
+  var LOGVIEWERHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
+  var LOGPANEL = document.createElement('div');
+  LOGPANEL.id = 'debuglogpanel';
+  LOGPANEL.style.cssText = 'flex:1;display:flex;flex-direction:column;border-top:1px solid #444;margin-top:20px;max-height:40vh;background:rgba(0,0,0,0.8);font-family:\'Courier New\',monospace;font-size:12px;color:#eee;';
+  LOGPANEL.innerHTML = LOGVIEWERHTML;
+  OVERLAY.appendChild(LOGPANEL);
 
-      ACTIONS.appendChild(BTN('CONTINUE', 'background:#4488ff;color:#fff;', function() {
-        logdebug(ENV, '[DEBUGACTOR]', 'CONTINUING STAGE:', CTX);
-        OVERLAY.style.display = 'none';
-        OVERLAY.innerHTML = '';
-        SENDINSTRUCTION('EXECUTIONACTOR', 'CCCCONTINUE', {
-          PIPELINEID: CTX.PIPELINEID,
-          PATH: CTX.PATH,
-          ELEMENTID: CTX.ELEMENTID,
-          CONTINUATION: MESSAGE.CONTINUATION
-        }, null, 'DEBUGACTOR');
-      }));
-    }
+  var ACTIONS = document.createElement('div');
+  ACTIONS.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
 
-    ACTIONS.appendChild(BTN('ABORT', 'background:#ff5555;color:#fff;', function() {
-      var ABORTCTX = MESSAGE.CONTINUATION
-        ? GETCTX(null, MESSAGE.CONTINUATION)
-        : { PIPELINEID: 'unknownpipeline', PATH: ['unknownstage', 'unknownelement'], ELEMENTID: 'unknownelement' };
-      logdebug(ENV, '[DEBUGACTOR]', 'ABORTING STAGE:', ABORTCTX);
+  if (MESSAGE.CONTINUATION) {
+    var CTX = GETCTX(MESSAGE.ERROR, MESSAGE.CONTINUATION);
+
+    ACTIONS.appendChild(BTN('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
+      logdebug(ENV, '[DEBUGACTOR]', 'RETRYING STAGE:', CTX);
       OVERLAY.style.display = 'none';
       OVERLAY.innerHTML = '';
-      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCABORT', {
-        PIPELINEID: ABORTCTX.PIPELINEID,
-        PATH: ABORTCTX.PATH,
-        ELEMENTID: ABORTCTX.ELEMENTID,
+      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCRETRY', {
+        PIPELINEID: CTX.PIPELINEID,
+        PATH: CTX.PATH,
+        ELEMENTID: CTX.ELEMENTID,
         CONTINUATION: MESSAGE.CONTINUATION
       }, null, 'DEBUGACTOR');
     }));
 
-    OVERLAY.appendChild(ACTIONS);
-    OVERLAY.style.display = 'flex';
-
-    DEBUGSLICE.OVERLAYVISIBLE = true;
-    DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
-    DEBUGSLICE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
-
-    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-      UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
-    }, GENERATETAG(), 'DEBUGACTOR');
-
-    setTimeout(function() {
-      var FILTERSELECT = document.getElementById('debuglogfilter');
-      var CLEARBTN = document.getElementById('debuglogclear');
-      var AUTOCHECK = document.getElementById('debuglogautoscroll');
-      if (FILTERSELECT) {
-        FILTERSELECT.addEventListener('change', function() {
-          DEBUGSLICE.LOGFILTER = FILTERSELECT.value;
-          var PANEL = document.getElementById('debuglogpanel');
-          if (PANEL) {
-            PANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
-          }
-          SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-            UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
-          }, GENERATETAG(), 'DEBUGACTOR');
-        });
-      }
-      if (CLEARBTN) {
-        CLEARBTN.addEventListener('click', function() {
-          DEBUGSLICE.LOGS = [];
-          var PANEL = document.getElementById('debuglogpanel');
-          if (PANEL) {
-            PANEL.innerHTML = BUILDLOGVIEWERHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
-          }
-          SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-            UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
-          }, GENERATETAG(), 'DEBUGACTOR');
-        });
-      }
-      if (AUTOCHECK) {
-        AUTOCHECK.addEventListener('change', function() {
-          DEBUGSLICE.LOGVIEWERAUTO = AUTOCHECK.checked;
-          if (DEBUGSLICE.LOGVIEWERAUTO) {
-            var LIST = document.getElementById('debugloglist');
-            if (LIST) LIST.scrollTop = LIST.scrollHeight;
-          }
-          SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-            UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
-          }, GENERATETAG(), 'DEBUGACTOR');
-        });
-      }
-    }, 100);
-
-    if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-      var RESPONSETYPESHOW = (RESPONSESPECSHOW && (RESPONSESPECSHOW.responsetype || RESPONSESPECSHOW.responseType)) || 'response';
-      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPESHOW);
-    }
-    return ENV;
+    ACTIONS.appendChild(BTN('CONTINUE', 'background:#4488ff;color:#fff;', function() {
+      logdebug(ENV, '[DEBUGACTOR]', 'CONTINUING STAGE:', CTX);
+      OVERLAY.style.display = 'none';
+      OVERLAY.innerHTML = '';
+      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCCONTINUE', {
+        PIPELINEID: CTX.PIPELINEID,
+        PATH: CTX.PATH,
+        ELEMENTID: CTX.ELEMENTID,
+        CONTINUATION: MESSAGE.CONTINUATION
+      }, null, 'DEBUGACTOR');
+    }));
   }
 
-  // @proposal=P16 — LOGLINE truncates DATA and defers the slice update.
-  if (MESSAGE.TYPE === MESSAGETYPES.LOGLINE) {
-    logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.MESSAGE);
-    var ENTRY = {
-      LEVEL: MESSAGE.LEVEL || 'info',
-      MESSAGE: MESSAGE.MESSAGE || '',
-      DATA: TRUNCATELOGDATA(MESSAGE.DATA || null),
-      TIMESTAMP: MESSAGE.TIMESTAMP || Date.now(),
-      PREFIX: MESSAGE.PREFIX || ''
-    };
-    if (!DEBUGSLICE.LOGS) DEBUGSLICE.LOGS = [];
-    DEBUGSLICE.LOGS.push(ENTRY);
-    var CAP = DEBUGSLICE.LOGSMAX || DEBUGLOGSMAX;
-    if (DEBUGSLICE.LOGS.length > CAP) {
-      DEBUGSLICE.LOGS = DEBUGSLICE.LOGS.slice(-CAP);
+  ACTIONS.appendChild(BTN('ABORT', 'background:#ff5555;color:#fff;', function() {
+    var ABORTCTX = MESSAGE.CONTINUATION
+      ? GETCTX(null, MESSAGE.CONTINUATION)
+      : { PIPELINEID: 'unknownpipeline', PATH: ['unknownstage', 'unknownelement'], ELEMENTID: 'unknownelement' };
+    logdebug(ENV, '[DEBUGACTOR]', 'ABORTING STAGE:', ABORTCTX);
+    OVERLAY.style.display = 'none';
+    OVERLAY.innerHTML = '';
+    SENDINSTRUCTION('EXECUTIONACTOR', 'CCCABORT', {
+      PIPELINEID: ABORTCTX.PIPELINEID,
+      PATH: ABORTCTX.PATH,
+      ELEMENTID: ABORTCTX.ELEMENTID,
+      CONTINUATION: MESSAGE.CONTINUATION
+    }, null, 'DEBUGACTOR');
+  }));
+
+  OVERLAY.appendChild(ACTIONS);
+  OVERLAY.style.display = 'flex';
+
+  DEBUGSLICE.OVERLAYVISIBLE = true;
+  DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
+  DEBUGSLICE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
+
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+    UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
+  }, GENERATETAG(), 'DEBUGACTOR');
+
+  setTimeout(function() {
+    var FILTERSELECT = document.getElementById('debuglogfilter');
+    var CLEARBTN = document.getElementById('debuglogclear');
+    var AUTOCHECK = document.getElementById('debuglogautoscroll');
+    if (FILTERSELECT) {
+      FILTERSELECT.addEventListener('change', function() {
+        DEBUGSLICE.LOGFILTER = FILTERSELECT.value;
+        var PANEL = document.getElementById('debuglogpanel');
+        if (PANEL) {
+          PANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
+        }
+        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+          UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
+        }, GENERATETAG(), 'DEBUGACTOR');
+      });
     }
-    if (DEBUGSLICE.OVERLAYVISIBLE && DEBUGSLICE.OVERLAY) {
-      var LOGPANEL = document.getElementById('debuglogpanel');
-      if (LOGPANEL) {
-        var CURRENTFILTER = DEBUGSLICE.LOGFILTER || 'all';
-        var AUTO = DEBUGSLICE.LOGVIEWERAUTO !== false;
-        LOGPANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS, CURRENTFILTER, AUTO);
-        if (AUTO) {
+    if (CLEARBTN) {
+      CLEARBTN.addEventListener('click', function() {
+        DEBUGSLICE.LOGS = [];
+        var PANEL = document.getElementById('debuglogpanel');
+        if (PANEL) {
+          PANEL.innerHTML = BUILDLOGVIEWERHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
+        }
+        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+          UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
+        }, GENERATETAG(), 'DEBUGACTOR');
+      });
+    }
+    if (AUTOCHECK) {
+      AUTOCHECK.addEventListener('change', function() {
+        DEBUGSLICE.LOGVIEWERAUTO = AUTOCHECK.checked;
+        if (DEBUGSLICE.LOGVIEWERAUTO) {
           var LIST = document.getElementById('debugloglist');
           if (LIST) LIST.scrollTop = LIST.scrollHeight;
         }
-      }
+        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+          UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
+        }, GENERATETAG(), 'DEBUGACTOR');
+      });
     }
-    // @proposal=P16 — deferred slice update.
-    SCHEDULEDEBUGSLICEUPDATE(ENV);
-    if (MESSAGE.SENDER && MESSAGE.TAG) {
-      var RESPONSESPECLOG = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-      var RESPONSETYPELOG = (RESPONSESPECLOG && (RESPONSESPECLOG.responsetype || RESPONSESPECLOG.responseType)) || 'response';
-      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { stored: true }, 'DEBUGACTOR', RESPONSETYPELOG);
-    }
-    return ENV;
-  }
+  }, 100);
 
-  if (MESSAGE.TYPE === MESSAGETYPES.RECOVER) {
-    logdebug(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
-    DBRESTORE('actor:state:debug').then(function(SAVED) {
-      var NEWDEBUG = (SAVED !== null && SAVED !== undefined) ? SAVED : {
-        OVERLAY: null,
-        CURRENTCONTINUATION: null,
-        OVERLAYVISIBLE: false,
-        CCCSTATE: { CURRENTCONTINUATION: null },
-        GLOBALLISTENERSINSTALLED: false,
-        LOGS: [],
-        LOGFILTER: 'all',
-        LOGSMAX: DEBUGLOGSMAX,
-        LOGVIEWERAUTO: true
-      };
-      SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
-        UPDATES: [{ PATH: 'DEBUG', VALUE: NEWDEBUG }]
-      }, GENERATETAG(), 'DEBUGACTOR');
-      if (MESSAGE.SENDER && MESSAGE.TAG) {
-        var RESPONSESPECRECOVER = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-        var RESPONSETYPERECOVER = (RESPONSESPECRECOVER && (RESPONSESPECRECOVER.responsetype || RESPONSESPECRECOVER.responseType)) || 'response';
-        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPERECOVER);
-      }
-    }).catch(function(E) {
-      logwarn(ENV, '[DEBUGACTOR]', 'STATE RESTORE FAILED:', E);
-      if (MESSAGE.SENDER && MESSAGE.TAG) {
-        var RESPONSESPECERR = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
-        var RESPONSETYPEERR = (RESPONSESPECERR && (RESPONSESPECERR.responsetype || RESPONSESPECERR.responseType)) || 'response';
-        SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEERR);
-      }
-    });
-    return ENV;
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    var RESPONSESPECSHOW = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+    var RESPONSETYPESHOW = (RESPONSESPECSHOW && (RESPONSESPECSHOW.responsetype || RESPONSESPECSHOW.responseType)) || 'response';
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPESHOW);
   }
-
   return ENV;
 }
+
+function DEBUGBEHAVIORLOGLINE(ENV, MESSAGE) {
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.MESSAGE);
+  var DEBUGSLICE = ENSUREDEBUGSLICE(ENV);
+  var ENTRY = {
+    LEVEL: MESSAGE.LEVEL || 'info',
+    MESSAGE: MESSAGE.MESSAGE || '',
+    DATA: TRUNCATELOGDATA(MESSAGE.DATA || null),
+    TIMESTAMP: MESSAGE.TIMESTAMP || Date.now(),
+    PREFIX: MESSAGE.PREFIX || ''
+  };
+  if (!DEBUGSLICE.LOGS) DEBUGSLICE.LOGS = [];
+  DEBUGSLICE.LOGS.push(ENTRY);
+  var CAP = DEBUGSLICE.LOGSMAX || DEBUGLOGSMAX;
+  if (DEBUGSLICE.LOGS.length > CAP) {
+    DEBUGSLICE.LOGS = DEBUGSLICE.LOGS.slice(-CAP);
+  }
+  if (DEBUGSLICE.OVERLAYVISIBLE && DEBUGSLICE.OVERLAY) {
+    var LOGPANEL = document.getElementById('debuglogpanel');
+    if (LOGPANEL) {
+      var CURRENTFILTER = DEBUGSLICE.LOGFILTER || 'all';
+      var AUTO = DEBUGSLICE.LOGVIEWERAUTO !== false;
+      LOGPANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS, CURRENTFILTER, AUTO);
+      if (AUTO) {
+        var LIST = document.getElementById('debugloglist');
+        if (LIST) LIST.scrollTop = LIST.scrollHeight;
+      }
+    }
+  }
+  SCHEDULEDEBUGSLICEUPDATE(ENV);
+  if (MESSAGE.SENDER && MESSAGE.TAG) {
+    var RESPONSESPECLOG = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+    var RESPONSETYPELOG = (RESPONSESPECLOG && (RESPONSESPECLOG.responsetype || RESPONSESPECLOG.responseType)) || 'response';
+    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, { stored: true }, 'DEBUGACTOR', RESPONSETYPELOG);
+  }
+  return ENV;
+}
+
+function DEBUGBEHAVIORRECOVER(ENV, MESSAGE) {
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
+  DBRESTORE('actor:state:debug').then(function(SAVED) {
+    var NEWDEBUG = (SAVED !== null && SAVED !== undefined) ? SAVED : {
+      OVERLAY: null,
+      CURRENTCONTINUATION: null,
+      OVERLAYVISIBLE: false,
+      CCCSTATE: { CURRENTCONTINUATION: null },
+      GLOBALLISTENERSINSTALLED: false,
+      LOGS: [],
+      LOGFILTER: 'all',
+      LOGSMAX: DEBUGLOGSMAX,
+      LOGVIEWERAUTO: true
+    };
+    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+      UPDATES: [{ PATH: 'DEBUG', VALUE: NEWDEBUG }]
+    }, GENERATETAG(), 'DEBUGACTOR');
+    if (MESSAGE.SENDER && MESSAGE.TAG) {
+      var RESPONSESPECRECOVER = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSETYPERECOVER = (RESPONSESPECRECOVER && (RESPONSESPECRECOVER.responsetype || RESPONSESPECRECOVER.responseType)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPERECOVER);
+    }
+  }).catch(function(E) {
+    logwarn(ENV, '[DEBUGACTOR]', 'STATE RESTORE FAILED:', E);
+    if (MESSAGE.SENDER && MESSAGE.TAG) {
+      var RESPONSESPECERR = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+      var RESPONSETYPEERR = (RESPONSESPECERR && (RESPONSESPECERR.responsetype || RESPONSESPECERR.responseType)) || 'response';
+      SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'DEBUGACTOR', RESPONSETYPEERR);
+    }
+  });
+  return ENV;
+}
+
+// @proposal=P64 — catch-all default. Reproduces the pre-adoption default
+// branch: log the unknown type and return ENV unchanged. Registered last
+// so it terminates the scan for types that no typed handler matched.
+function DEBUGBEHAVIORDEFAULT(ENV, MESSAGE) {
+  logwarn(ENV, '[DEBUGACTOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
+  return ENV;
+}
+
+// ============================================================
+// §2 — Dispatcher surface
+// ============================================================
+
+var DEBUGBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('DEBUGACTOR', [
+  MAKETYPEDDISPATCH(MESSAGETYPES.PING, DEBUGBEHAVIORPING),
+  MAKETYPEDDISPATCH(MESSAGETYPES.INITOVERLAY, DEBUGBEHAVIORINITOVERLAY),
+  MAKETYPEDDISPATCH(MESSAGETYPES.HIDE, DEBUGBEHAVIORHIDE),
+  MAKETYPEDDISPATCH(MESSAGETYPES.SHOW, DEBUGBEHAVIORSHOW),
+  MAKETYPEDDISPATCH(MESSAGETYPES.LOGLINE, DEBUGBEHAVIORLOGLINE),
+  MAKETYPEDDISPATCH(MESSAGETYPES.RECOVER, DEBUGBEHAVIORRECOVER),
+  DEBUGBEHAVIORDEFAULT
+]);
+
+// @proposal=P64 — the actor's behaviour is the surface's dispatch.
+function DEBUGBEHAVIOR(ENV, MESSAGE) {
+  return DEBUGBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+}
+
+// @proposal=P64 — publish the surface and the aggregate; self-register.
+REGISTERACTORSURFACE('DEBUGACTOR', DEBUGBEHAVIORDISPATCH);
+REGISTERAGGREGATEBEHAVIOR('DEBUGACTOR', DEBUGBEHAVIOR);
+ACTORCONSUMERS['DEBUGACTOR'] = DEBUGBEHAVIOR;
+
+// ============================================================
+// §3 — Enqueue helpers (unchanged)
+// ============================================================
 
 function ENQUEUEDEBUGPING(RESPONSESPEC) {
   var TAG = GENERATETAG();
@@ -441,7 +467,9 @@ function ENQUEUEDEBUGRECOVER(RESPONSESPEC) {
   SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.RECOVER, {}, TAG, 'system', RESPONSESPEC);
 }
 
-// ---------- ACTOR HANDLE SURFACE — @proposal=P4 ----------
+// ============================================================
+// §4 — Actor handle surface (unchanged)
+// ============================================================
 
 var DEBUGHANDLE = null;
 
