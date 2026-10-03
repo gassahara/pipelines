@@ -199,10 +199,11 @@ var MESSAGEREGISTRY = {
       MESSAGEREGISTRYSTORE[owner] = entry;
     }
     entry[type] = { iface: iface, handler: handler };
-    if (typeof ACTORCONSUMERS !== 'undefined') {
-      ACTORCONSUMERS[owner + ':' + type] = handler;
-      ACTORCONSUMERS[owner + ':' + String(type).toLowerCase()] = handler;
-    }
+    // @proposal=P-AC-001g — unconditional write. ACTORCONSUMERS is
+    // declared in actorcore.js (manifest position #13); register() runs
+    // from registerconsumers.js (position #30), after every provider.
+    ACTORCONSUMERS[owner + ':' + type] = handler;
+    ACTORCONSUMERS[owner + ':' + String(type).toLowerCase()] = handler;
   },
   getinterfaces: function(owner) {
     var entry = MESSAGEREGISTRYSTORE[owner] || {};

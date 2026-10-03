@@ -1,5 +1,3 @@
-var DEBUGVERBOSITYCONSTANTS = createverbosityconstants();
-
 // @proposal=P16 — bounded log storage.
 var DEBUGLOGSMAX = 200;
 var DEBUGLOGDATAMAX = 2048;

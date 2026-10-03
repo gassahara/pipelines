@@ -1,18 +1,11 @@
-var HYPERVISORVERBOSITYCONSTANTS = createverbosityconstants();
-
 // @proposal=P22 — the HYPERVISOR slice's persistent fields.
 var HYPERVISORPERSISTENTFIELDS = {
   PROGRAMS: true,
   ROUTES: true
 };
 
-// @proposal=P22 — the HYPERVISOR slice's transient fields.
-var HYPERVISORTRANSIENTFIELDS = {
-  ENVBYPIPELINE: true,
-  RENDERHTML: true,
-  EXECUTIONSTACK: true,
-  ACTIVEPIPELINES: true
-};
+// @proposal=P-AC-001f — HYPERVISORTRANSIENTFIELDS removed: dead top-level
+// declaration (declared once, no reference anywhere in the bundle).
 
 // @proposal=P-AC-001c — under the fresh-env contract (I-3),
 // ENSUREENVSLICE returns the ENV (fresh when the slice is absent).

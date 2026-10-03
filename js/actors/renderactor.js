@@ -1,5 +1,3 @@
-var RENDERVERBOSITYCONSTANTS = createverbosityconstants();
-
 var DOMQUERYCOMMANDREGISTRY = {
   getters: [
     'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout',
@@ -95,14 +93,8 @@ function ENSURERENDERSLICE(ENV) {
   });
 }
 
-function CREATERENDERERRORCONTEXT(LABEL) {
-  return function(ERR) {
-    if (!ERR) ERR = new Error('unknown render error');
-    if (!ERR.DIAGNOSTIC) ERR.DIAGNOSTIC = {};
-    ERR.DIAGNOSTIC.RENDERSTAGE = LABEL;
-    throw ERR;
-  };
-}
+// @proposal=P-AC-001f — CREATERENDERERRORCONTEXT removed: dead top-level
+// declaration (declared once, no reference anywhere in the bundle).
 
 function WITHELEMENT(ID, REJECT, FN) {
   if (!ID || typeof ID !== 'string') {
@@ -462,11 +454,8 @@ HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
   return { DESCRIPTORS: DESCRIPTORS };
 };
 
-function LAYOUTEXTRACTID(descriptor) {
-  var hash = descriptor.indexOf('#');
-  if (hash === -1) return null;
-  return descriptor.slice(hash + 1);
-}
+// @proposal=P-AC-001f — LAYOUTEXTRACTID removed: dead top-level
+// declaration (declared once, no reference anywhere in the bundle).
 
 HANDLERS[MESSAGETYPES.CHECKOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
@@ -1937,14 +1926,5 @@ var EXPECTELEMENT = function(ID, TIMEOUT) {
       }
     });
     OBSERVER.observe(document.body, { childList: true, subtree: true });
-  });
-};
-
-var HANDLEFILEREADERREQUEST = function(PAYLOAD) {
-  return new Promise(function(RESOLVE, REJECT) {
-    var READER = new FileReader();
-    READER.onload = function(E) { RESOLVE({ TEXT: E.target.result }); };
-    READER.onerror = function() { REJECT(new Error('[RENDERACTOR] FileReader error')); };
-    READER.readAsText(PAYLOAD.FILE);
   });
 };

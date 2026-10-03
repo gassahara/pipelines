@@ -1,3 +1,5 @@
+var ACTORCONSUMERS = {};
+
 function ENSUREDISPATCHERSLICE(ENV) {
   if (ENV && ENV.DISPATCHERS) return ENV;
   var NEXT = {};
@@ -509,7 +511,8 @@ function CREATEACTORHANDLE(ACTORNAME) {
   function SUBMIT(ACTION) {
     COUNTER += 1;
     var ID = NAME + '-ACTION-' + COUNTER + '-' + Date.now();
-    var HANDLER = (typeof ACTORCONSUMERS !== 'undefined') ? ACTORCONSUMERS[NAME] : null;
+    // @proposal=P-AC-001g — unconditional read; ACTORCONSUMERS is declared at file top.
+    var HANDLER = ACTORCONSUMERS[NAME];
     if (typeof HANDLER === 'function') {
       try {
         var RESULT = DISPATCHTOACTOR(NAME, HANDLER, ACTION);

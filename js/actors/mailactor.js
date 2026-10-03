@@ -1,7 +1,11 @@
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
-var ACTORCONSUMERS = {};
+// @proposal=P-AC-001d — ACTORCONSUMERS is declared in actorcore.js
+// (manifest position #13), the earliest-loading actor module. This file
+// continues to write its aggregate behaviour to that registry at load
+// time and to read it at call time in SENDINSTRUCTION.
+
 var EXPECTATIONS = {};
 var MAILBOX = [];
 
@@ -9,7 +13,8 @@ var INDEXBYTAG = {};
 var INDEXBYSENDER = {};
 var INDEXBYTYPE = {};
 
-var MAILBOXRESPONSETYPE = 'MAILBOXRESPONSE';
+// @proposal=P-AC-001f — MAILBOXRESPONSETYPE removed: dead top-level
+// declaration (declared once, no reference anywhere in the bundle).
 
 // @proposal=P1 — retention timer for settled envelopes (F6/F34).
 var RETENTIONTIMERS = {};

@@ -1,5 +1,3 @@
-var EXECUTIONVERBOSITYCONSTANTS = createverbosityconstants();
-
 // @proposal=P21 — bounded task history.
 var TASKHISTORYMAX = 200;
 

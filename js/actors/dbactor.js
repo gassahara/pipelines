@@ -8,9 +8,6 @@ var MAXENTRYBYTES = 6 * 1024 * 1024;
 // Dedicated store mailbox (independent from main MAILBOX)
 var STOREMAILBOX = [];
 
-// DBACTOR's own consumer registry
-var DBACTORCONSUMERS = {};
-
 // ------------------------------------------------------------------
 // Storage helpers
 // ------------------------------------------------------------------
@@ -114,8 +111,6 @@ function PERSIST(STORE) {
 }
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
-
-var FNTAG = 'serializedfunction';
 
 function DNAREPLACER(KEY, VALUE) {
   if (typeof VALUE === 'function') {
