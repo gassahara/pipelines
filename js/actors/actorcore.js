@@ -85,11 +85,7 @@ function REGISTERCONSUMER(ENV, ACTORNAME, TYPE, HANDLER) {
   return ADDDISPATCH(ENV, ACTORNAME, DISPATCHFN);
 }
 
-// @proposal=P63r2 — per-actor dispatcher surface. Boot-time handlers may
-// be supplied at construction; additional handlers may be registered at
-// runtime via REGISTERHANDLER, which threads the state through the world
-// map (read, transform, publish). DISPATCH reads the ENV it is given; it
-// does not consult any module-level mutable registry.
+// @proposal=P63r2 — per-actor dispatcher surface.
 function MAKEACTORDISPATCHSURFACE(ACTORNAME, INITIALDISPATCHERS) {
   if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
     throw new Error('[MAKEACTORDISPATCHSURFACE] ACTORNAME must be a non-empty string');
@@ -101,9 +97,7 @@ function MAKEACTORDISPATCHSURFACE(ACTORNAME, INITIALDISPATCHERS) {
   function INSTALLSTAGED(ENV) {
     if (STAGEDINSTALLED) return ENV;
     var NEXT = ENV;
-    STAGED.forEach(function (D) {
-      NEXT = ADDDISPATCH(NEXT, ACTORNAME, D);
-    });
+    STAGED.forEach(function (D) { NEXT = ADDDISPATCH(NEXT, ACTORNAME, D); });
     STAGEDINSTALLED = true;
     return NEXT;
   }
@@ -196,8 +190,6 @@ function MAKEPRODUCER(ACTORNAME, TYPE) {
 // ============================================================
 // §17 — Base primitives (P64-idiomatic)
 // ============================================================
-// (P-AC-001a; behavioural verification of the 10 NAMED-ONLY primitives
-//  deferred under P-AC-001b)
 
 // ---------- §17.1 — Actor state registry ----------
 
@@ -262,9 +254,17 @@ function ENSUREENVSLICE(ENV, SLICENAME, INITFN) {
 // The dispatcher is the sole site of response emission and the sole site
 // of state publication for handler-owned returns. It never publishes a
 // Promise as state.
+//
+// @proposal=P-FLOW-BOUND-001 — bounded-resolution invariant. An async
+// handler MUST bound its own resolution. An "external event never fires"
+// path is a valid exit path and MUST resolve the handler's Promise via a
+// handler-owned internal timeout. The bound is a registry value, not a
+// literal, and MUST be strictly smaller than the mailbox expectation
+// window that the caller is waiting on. "Every exit path resolves" is a
+// consequence of "the handler owns a bound"; the former does not imply
+// the latter in a Promise-plus-listener form.
 
 function DISPATCHPROJECT(VALUE, MESSAGE, ACTORNAME) {
-  // Unwrap the handler's return into { ENV, RESPONSE }.
   var OUT = { ENV: undefined, RESPONSE: undefined };
   if (VALUE === undefined || VALUE === true || VALUE === false) return OUT;
   if (VALUE === null) return OUT;
@@ -275,7 +275,6 @@ function DISPATCHPROJECT(VALUE, MESSAGE, ACTORNAME) {
     if (Object.prototype.hasOwnProperty.call(VALUE, 'RESPONSE')) OUT.RESPONSE = VALUE.RESPONSE;
     return OUT;
   }
-  // A plain ENV-shaped value is a state update.
   OUT.ENV = VALUE;
   return OUT;
 }
@@ -618,14 +617,33 @@ function CREATEACTORHANDLE(ACTORNAME) {
 // returns { route, batch, suppress, reason }.
 //
 // Heuristic rules (evaluated in order):
-//   1. RECIPIENT ∈ POLLERRECIPIENTS       → mailbox
-//   2. RECIPIENT ∈ BROADCASTRECIPIENTS    → broadcast
-//   3. RECIPIENT ∈ ACTORCONSUMERS         → direct
+//   0. TYPE ∈ RESPONSETYPES                → mailbox  (P-FLOW-RESPONSE-ROUTING-003)
+//   1. RECIPIENT ∈ POLLERRECIPIENTS        → mailbox
+//   2. RECIPIENT ∈ BROADCASTRECIPIENTS     → broadcast
+//   3. RECIPIENT ∈ ACTORCONSUMERS          → direct
 //   4. TYPE ∈ SUPPRESSIBLETYPES ∧ below threshold → suppress
-//   5. TYPE ∈ BATCHABLETYPES              → batch (direct if consumer, else mailbox)
-//   6. fallback                           → mailbox
+//   5. TYPE ∈ BATCHABLETYPES               → batch
+//   6. fallback                            → mailbox
 //
 // Every registry uses the frozen-value/ref-swap idiom (I-2).
+
+// ---------- §18.0 — Script-load timeout (P-FLOW-BOUND-001) ----------
+
+var SCRIPTLOADTIMEOUTREF = { current: 5000 };
+
+function GETSCRIPTLOADTIMEOUT() { return SCRIPTLOADTIMEOUTREF.current; }
+
+function SETSCRIPTLOADTIMEOUT(MS) {
+  if (typeof MS !== 'number' || MS <= 0 || Math.floor(MS) !== MS) {
+    throw new Error('[SETSCRIPTLOADTIMEOUT] MS must be a positive integer');
+  }
+  var MAILBOX = (typeof mailboxresolve === 'function') ? mailboxresolve('expectationtimeout') : null;
+  if (MAILBOX !== null && MS >= MAILBOX) {
+    throw new Error('[SETSCRIPTLOADTIMEOUT] MS must be strictly smaller than expectationtimeout');
+  }
+  SCRIPTLOADTIMEOUTREF.current = MS;
+  return MS;
+}
 
 // ---------- §18.1 — Poller recipients ----------
 
@@ -780,6 +798,15 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
   var SUPPRESSIBLE = GETSUPPRESSIBLETYPES();
   var BATCHABLE = GETBATCHABLETYPES();
   var THRESHOLD = GETVERBOSITYTHRESHOLD();
+  var RESPONSETYPES = (typeof GETRESPONSETYPES === 'function') ? GETRESPONSETYPES() : {};
+
+  // @proposal=P-FLOW-RESPONSE-ROUTING-003 — rule 0: response types are
+  // always routed via mailbox. A response exists solely to close a
+  // mailbox expectation; a response that does not reach the mailbox
+  // does not do its job. This rule fires before every other rule.
+  if (RESPONSETYPES[TYPE] === true) {
+    return { route: 'mailbox', batch: false, suppress: false, reason: 'response-type' };
+  }
 
   // rule 1
   if (POLLERS[RECIPIENT] === true) {
@@ -791,7 +818,6 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
   }
   // rule 3
   if (Object.prototype.hasOwnProperty.call(ACTORCONSUMERS, RECIPIENT)) {
-    // rules 4 and 5 may still apply for actor recipients of batchable types
     if (BATCHABLE[TYPE] === true) {
       return { route: 'direct', batch: true, suppress: false, reason: 'batchable-to-actor' };
     }
@@ -812,6 +838,52 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
   }
   // rule 6
   return { route: 'mailbox', batch: false, suppress: false, reason: 'fallback' };
+}
+
+// ---------- §18.8 — Response-type registry (P-FLOW-RESPONSE-ROUTING-003) ----------
+//
+// The response types are the framework's reply-channel vocabulary.
+// They are registered at load time from MAILBOXFILTERTYPES (the frozen
+// table in messageregistry.js, manifest position #6), which is the
+// authoritative source of the deployed response-type set. The registry
+// follows the ref-swap idiom; the boot population is idempotent.
+
+var RESPONSETYPESREF = { current: Object.freeze({}) };
+
+function GETRESPONSETYPES() { return RESPONSETYPESREF.current; }
+
+function REGISTERRESPONSETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[REGISTERRESPONSETYPE] TYPE must be a non-empty string');
+  }
+  var CURRENT = RESPONSETYPESREF.current;
+  if (CURRENT[TYPE] === true) return TYPE;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TYPE] = true;
+  RESPONSETYPESREF.current = Object.freeze(NEXT);
+  return TYPE;
+}
+
+function UNREGISTERRESPONSETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) return false;
+  var CURRENT = RESPONSETYPESREF.current;
+  if (CURRENT[TYPE] !== true) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { if (K !== TYPE) NEXT[K] = CURRENT[K]; });
+  RESPONSETYPESREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+// Boot population: register every value in MAILBOXFILTERTYPES. The
+// table is loaded at manifest position #6; actorcore.js loads at #13.
+if (typeof MAILBOXFILTERTYPES !== 'undefined' && MAILBOXFILTERTYPES) {
+  Object.keys(MAILBOXFILTERTYPES).forEach(function (K) {
+    var TYPE = MAILBOXFILTERTYPES[K];
+    if (typeof TYPE === 'string' && TYPE.length > 0) {
+      REGISTERRESPONSETYPE(TYPE);
+    }
+  });
 }
 
 // ============================================================
@@ -858,13 +930,10 @@ function FLUSHBATCH(KEY) {
     ITEMS: ITEMS.map(function (it) { return it.MESSAGE; })
   };
   if (FIRST.RESPONSESPEC) FLAT.RESPONSESPEC = FIRST.RESPONSESPEC;
-  // Dispatch as a direct or mailbox delivery, bypassing batching to avoid
-  // re-enqueue. The infer has already decided the route.
   var CONSUMER = ACTORCONSUMERS[BUF.RECIPIENT];
   if (typeof CONSUMER === 'function') {
     DISPATCHTOACTOR(BUF.RECIPIENT, CONSUMER, FLAT);
   } else if (typeof SENDINSTRUCTION === 'function') {
-    // fallback to mailbox
     SENDINSTRUCTION(BUF.RECIPIENT, BUF.TYPE, FLAT, FLAT.TAG, FLAT.SENDER);
   }
 }

@@ -70,7 +70,12 @@ var pipelinesmanifest = [
     'BATCHWINDOWSREF', 'GETBATCHWINDOWS', 'SETBATCHWINDOW',
     'VERBOSITYTHRESHOLDREF', 'GETVERBOSITYTHRESHOLD', 'SETVERBOSITYTHRESHOLD',
     // batch scheduler
-    'BATCHBUFFERS', 'BATCHKEY', 'ENQUEUEBATCH', 'FLUSHBATCH', 'FLUSHALLBATCHES'
+    'BATCHBUFFERS', 'BATCHKEY', 'ENQUEUEBATCH', 'FLUSHBATCH', 'FLUSHALLBATCHES',
+    // CYCLE-06 — script-load timeout (P-FLOW-BOUND-001)
+    'SCRIPTLOADTIMEOUTREF', 'GETSCRIPTLOADTIMEOUT', 'SETSCRIPTLOADTIMEOUT',
+    // CYCLE-06 — response-type registry (P-FLOW-RESPONSE-ROUTING-003)
+    'RESPONSETYPESREF', 'GETRESPONSETYPES',
+    'REGISTERRESPONSETYPE', 'UNREGISTERRESPONSETYPE'
   ] },
   { src: 'factory/layoutdirectives.js', provides: ['createlayoutdirectives'] },
   { src: 'fundamental/domref.js', provides: ['getrawelement', 'createdomref', 'removeref', 'isvaliddomref'] },

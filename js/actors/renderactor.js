@@ -712,6 +712,11 @@ HANDLERS[MESSAGETYPES.SETLAYOUT] = function(ENV, MSG) {
 // @proposal=P-ACTOR-FLOW-002 — LOADSCRIPT: every exit path resolves.
 // Event listeners (not onload/onerror properties) guarantee the spec's
 // error event fires even for a script the browser refuses to load.
+// @proposal=P-ACTOR-FLOW-002 / @proposal=P-FLOW-BOUND-001 — LOADSCRIPT:
+// every exit path resolves via a settle-guarded resolver. The
+// "external event never fires" path is bounded by an internal timer
+// whose duration is GETSCRIPTLOADTIMEOUT() (default 5000, strictly
+// smaller than expectationtimeout).
 HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
   return new Promise(function(RESOLVE) {
     if (!MSG.SRC || typeof MSG.SRC !== 'string') {
@@ -722,10 +727,21 @@ HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
       RESOLVE({ LOADED: false, ERROR: 'document.head unavailable' });
       return;
     }
+    var SETTLED = false;
+    var TIMER = null;
+    function settle(payload) {
+      if (SETTLED) return;
+      SETTLED = true;
+      if (TIMER !== null) clearTimeout(TIMER);
+      RESOLVE(payload);
+    }
     var S = document.createElement('script');
     S.src = MSG.SRC;
-    S.addEventListener('load', function() { RESOLVE({ LOADED: true }); }, { once: true });
-    S.addEventListener('error', function() { RESOLVE({ LOADED: false, ERROR: 'failed to load ' + MSG.SRC }); }, { once: true });
+    S.addEventListener('load', function() { settle({ LOADED: true }); }, { once: true });
+    S.addEventListener('error', function() { settle({ LOADED: false, ERROR: 'failed to load ' + MSG.SRC }); }, { once: true });
+    TIMER = setTimeout(function() {
+      settle({ LOADED: false, ERROR: 'load-timeout: ' + MSG.SRC });
+    }, GETSCRIPTLOADTIMEOUT());
     document.head.appendChild(S);
   });
 };
