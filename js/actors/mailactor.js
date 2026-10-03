@@ -261,15 +261,21 @@ function REJECTEXPECTATION(TAG, ERROR) {
 // SEND and ACK become typed handlers registered with the surface at
 // load time. The routing logic they carry is unchanged from the
 // pre-adoption switch; only their packaging changes.
+//
+// @proposal=P-AC-001c — under the fresh-env contract (I-3),
+// ENSUREENVSLICE returns the ENV (fresh when the slice is absent).
+// Each handler rebinds to NEXTENV, reads the `mail` slice via
+// NEXTENV.mail, and returns NEXTENV so the dispatcher publishes it.
 
 function MAILSENDHANDLER(ENV, MESSAGE) {
   logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
-  var MAILSLICE = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
+  var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
+  var MAILSLICE = NEXTENV.mail;
 
   var RECIPIENT = MESSAGE.RECIPIENT;
   if (!RECIPIENT || typeof RECIPIENT !== 'string') {
-    return ENV;
+    return NEXTENV;
   }
   if (!MAILSLICE.QUEUES[RECIPIENT]) MAILSLICE.QUEUES[RECIPIENT] = [];
   var FLATMESSAGE = MESSAGE.MESSAGE;
@@ -333,13 +339,14 @@ function MAILSENDHANDLER(ENV, MESSAGE) {
     }
   }
 
-  return ENV;
+  return NEXTENV;
 }
 
 function MAILACKHANDLER(ENV, MESSAGE) {
   logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
-  var MAILSLICE = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
+  var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
+  var MAILSLICE = NEXTENV.mail;
 
   var ACKRECIPIENT = MESSAGE.RECIPIENT;
   var ACKIDS = MESSAGE.IDS || [];
@@ -349,7 +356,7 @@ function MAILACKHANDLER(ENV, MESSAGE) {
       M.UNREAD = false;
     }
   });
-  return ENV;
+  return NEXTENV;
 }
 
 var MAILBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('MAILACTOR', [

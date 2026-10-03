@@ -26,6 +26,10 @@ function GETSTORAGE() {
   return null;
 }
 
+// @proposal=P-AC-001c — ENSUREDBSLICE returns the ENV that carries the
+// `db` slice. Under the P64 fresh-env contract (witness I-3),
+// ENSUREENVSLICE returns the ENV, not the slice. Callers must read the
+// slice via the returned ENV and publish the returned ENV.
 function ENSUREDBSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'db', function() { return { STORE: {} }; });
 }
@@ -377,9 +381,14 @@ function STOREWAIT(FILTER, TIMEOUT) {
 // §2 — Message handlers (P64)
 // ============================================================
 
+// @proposal=P-AC-001c — under the fresh-env contract, ENSUREENVSLICE
+// returns the ENV (fresh when the slice is absent); the handler reads
+// the slice via the returned ENV and returns the returned ENV so the
+// dispatcher publishes it.
 function DBBEHAVIORSTORE(ENV, MESSAGE) {
   logdebug(ENV, '[DBACTOR]', 'ACTION STORE KEY:', MESSAGE.KEY);
-  var DBSLICE = ENSUREDBSLICE(ENV);
+  var NEXTENV = ENSUREDBSLICE(ENV);
+  var DBSLICE = NEXTENV.db;
   var STORE = DBSLICE.STORE;
 
   try {
@@ -387,11 +396,11 @@ function DBBEHAVIORSTORE(ENV, MESSAGE) {
     if (SERIALIZED.length > MAXENTRYBYTES) {
       logwarn(ENV, '[DBACTOR]', 'VALUE TOO LARGE FOR KEY:', MESSAGE.KEY, 'BYTES:', SERIALIZED.length);
       STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'value too large' }, MESSAGE.TAG, 'DBACTOR');
-      return ENV;
+      return NEXTENV;
     }
   } catch (E) {
     STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: E.message || String(E) }, MESSAGE.TAG, 'DBACTOR');
-    return ENV;
+    return NEXTENV;
   }
   var KEYS = Object.keys(STORE);
   if (KEYS.length >= MAXKEYS && !STORE[MESSAGE.KEY]) {
@@ -402,35 +411,41 @@ function DBBEHAVIORSTORE(ENV, MESSAGE) {
   var PERSISTED = PERSIST(STORE);
   if (PERSISTED) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
   else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
-  return ENV;
+  return NEXTENV;
 }
 
+// @proposal=P-AC-001c — see note on DBBEHAVIORSTORE.
 function DBBEHAVIORRESTORE(ENV, MESSAGE) {
-  logdebug(ENV, '[DBACTOR]', 'ACTION RESTORE KEY:', MESSAGE.KEY, 'EXISTS:', ENSUREDBSLICE(ENV).STORE[MESSAGE.KEY] !== undefined);
-  var DBSLICE = ENSUREDBSLICE(ENV);
+  var NEXTENV = ENSUREDBSLICE(ENV);
+  var DBSLICE = NEXTENV.db;
   var STORE = DBSLICE.STORE;
+  logdebug(ENV, '[DBACTOR]', 'ACTION RESTORE KEY:', MESSAGE.KEY, 'EXISTS:', STORE[MESSAGE.KEY] !== undefined);
   var RESTOREDVALUE = STORE[MESSAGE.KEY] !== undefined ? STORE[MESSAGE.KEY] : null;
   STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: RESTOREDVALUE }, MESSAGE.TAG, 'DBACTOR');
-  return ENV;
+  return NEXTENV;
 }
 
+// @proposal=P-AC-001c — see note on DBBEHAVIORSTORE.
 function DBBEHAVIORLIST(ENV, MESSAGE) {
-  var DBSLICE = ENSUREDBSLICE(ENV);
+  var NEXTENV = ENSUREDBSLICE(ENV);
+  var DBSLICE = NEXTENV.db;
   var STORE = DBSLICE.STORE;
   logdebug(ENV, '[DBACTOR]', 'ACTION LIST COUNT:', Object.keys(STORE).length);
   STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: Object.keys(STORE) }, MESSAGE.TAG, 'DBACTOR');
-  return ENV;
+  return NEXTENV;
 }
 
+// @proposal=P-AC-001c — see note on DBBEHAVIORSTORE.
 function DBBEHAVIORDELETE(ENV, MESSAGE) {
   logdebug(ENV, '[DBACTOR]', 'ACTION DELETE KEY:', MESSAGE.KEY);
-  var DBSLICE = ENSUREDBSLICE(ENV);
+  var NEXTENV = ENSUREDBSLICE(ENV);
+  var DBSLICE = NEXTENV.db;
   var STORE = DBSLICE.STORE;
   delete STORE[MESSAGE.KEY];
   var PERSISTEDDEL = PERSIST(STORE);
   if (PERSISTEDDEL) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
   else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
-  return ENV;
+  return NEXTENV;
 }
 
 function DBBEHAVIORDEFAULT(ENV, MESSAGE) {
@@ -467,35 +482,40 @@ ACTORCONSUMERS['DBACTOR'] = DBBEHAVIOR;
 // §4 — Direct DB API (unchanged)
 // ============================================================
 
+// @proposal=P-AC-001c — route through DISPATCHTOACTOR so the fresh ENV
+// returned by the behaviour is published back to the actor state.
 function DBSTORE(KEY, VALUE) {
   var TAG = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.STORE, { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.STORE, KEY: KEY, VALUE: VALUE, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
   return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
+// @proposal=P-AC-001c — see note on DBSTORE.
 function DBRESTORE(KEY) {
   var TAG = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.RESTORE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.RESTORE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
   return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
+// @proposal=P-AC-001c — see note on DBSTORE.
 function DBLIST() {
   var TAG = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.LIST, {}, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.LIST, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
   return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
+// @proposal=P-AC-001c — see note on DBSTORE.
 function DBDELETE(KEY) {
   var TAG = GENERATETAG();
   STORESEND('DBACTOR', MESSAGETYPES.DELETE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
   var MSG = { TYPE: MESSAGETYPES.DELETE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MSG);
+  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
   return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
 }
 
@@ -517,9 +537,11 @@ function EXPECT(ID, INTERVAL, TIMEOUT) { return DBACTORHANDLEINSTANCE().EXPECT(I
 function GETACTIONRESULT(ID) { return DBACTORHANDLEINSTANCE().GETACTIONRESULT(ID); }
 
 // ============================================================
-// §6 — Start function (unchanged)
+// §6 — Start function (P64-adapted DISPATCH)
 // ============================================================
 
+// @proposal=P-AC-001c — DISPATCH routes through the framework primitive
+// so the fresh ENV is published.
 function STARTDBACTOR(OPTIONS) {
   if (OPTIONS !== undefined) {
     var LVL = typeof OPTIONS === 'number' ? OPTIONS :
@@ -531,7 +553,7 @@ function STARTDBACTOR(OPTIONS) {
   }
   return {
     GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    DISPATCH: function(MESSAGE) { return DBBEHAVIOR(GETACTORSTATE('WORLDMAPACTOR'), MESSAGE); },
+    DISPATCH: function(MESSAGE) { return DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MESSAGE); },
     SUBMIT: SUBMIT,
     EXPECT: EXPECT,
     GETACTIONRESULT: GETACTIONRESULT

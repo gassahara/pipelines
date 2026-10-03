@@ -76,6 +76,11 @@ function validatedomquerycommand(cmd, props) {
   return { valid: errors.length === 0, errors: errors };
 }
 
+// @proposal=P-AC-001c — under the fresh-env contract (I-3),
+// ENSUREENVSLICE returns the ENV (fresh when the slice is absent).
+// ENSURERENDERSLICE therefore returns the ENV that carries the `render`
+// slice. Callers read the slice via NEXTENV.render and return NEXTENV
+// so the dispatcher publishes it.
 function ENSURERENDERSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'render', function() {
     return {
@@ -862,8 +867,12 @@ HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
 };
 
 var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER;
+// @proposal=P-AC-001c — NEXTENV pattern: read the slice via the returned
+// ENV; the handler returns its response payload (unchanged); the fresh
+// ENV is published by RENDERBEHAVIOR.
 HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
-  var RENDERSLICE = ENSURERENDERSLICE(ENV);
+  var NEXTENV = ENSURERENDERSLICE(ENV);
+  var RENDERSLICE = NEXTENV.render;
   var GC = RENDERSLICE.GC;
   if (!GC) {
     GC = (typeof CREATEGARBAGECOLLECTOR === 'function') ? CREATEGARBAGECOLLECTOR() : {};
@@ -1791,23 +1800,25 @@ function REINJECTSCRIPTTAGS(SCRIPTTAGS) {
   });
 }
 
-// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
-// surface returns the input ENV when no dispatcher matched; otherwise it
-// returns the marker { HANDLED: true, RESULT: <r> } from
-// MAKERENDERHANDLER. RENDERBEHAVIOR unpacks the marker and applies
-// RESPONDIFNEEDED iff RESULT is not undefined — preserving the pre-
-// adoption discipline exactly.
+// @proposal=P64 / @proposal=P-AC-001c — the actor's behaviour is the
+// surface's dispatch. The surface returns the input ENV when no
+// dispatcher matched; otherwise it returns the marker
+// { HANDLED: true, RESULT: <r> } from MAKERENDERHANDLER. Under the
+// fresh-env contract, RENDERBEHAVIOR threads NEXTENV (from
+// ENSURERENDERSLICE) through DISPATCH, applies RESPONDIFNEEDED iff
+// OUT.RESULT is not undefined, and returns NEXTENV so the dispatcher
+// publishes it.
 function RENDERBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[RENDERACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE, MESSAGE.ID || '');
-  var RENDERSLICE = ENSURERENDERSLICE(ENV);
-  var OUT = RENDERBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+  var NEXTENV = ENSURERENDERSLICE(ENV);
+  var OUT = RENDERBEHAVIORDISPATCH.DISPATCH(NEXTENV, MESSAGE);
   if (OUT && OUT.HANDLED === true) {
     if (OUT.RESULT !== undefined) {
-      RESPONDIFNEEDED(ENV, MESSAGE, OUT.RESULT);
+      RESPONDIFNEEDED(NEXTENV, MESSAGE, OUT.RESULT);
     }
-    return ENV;
+    return NEXTENV;
   }
-  return ENV;
+  return NEXTENV;
 }
 
 // @proposal=P64 — dispatcher surface, constructed from the HANDLERS map
