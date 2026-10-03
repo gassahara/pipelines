@@ -139,8 +139,6 @@ function MAKEACTORDISPATCHSURFACE(ACTORNAME, INITIALDISPATCHERS) {
 }
 
 // @proposal=P63r2 — registries of actor surfaces and aggregate behaviours.
-// Populated by each actor file at load time. Read by helpers that need to
-// reach an actor's surface (e.g. REGISTERACTORHANDLER).
 var ACTORSURFACEREGISTRY = {};
 var AGGREGATEBEHAVIOR = {};
 
@@ -163,8 +161,7 @@ function GETAGGREGATEBEHAVIOR(ACTORNAME) {
 }
 
 // @proposal=P63r2 — convenience: register a handler against an actor by
-// name, publishing the resulting ENV to the world map. Uses the framework's
-// designated seam. Returns the fresh ENV.
+// name, publishing the resulting ENV to the world map.
 function REGISTERACTORHANDLER(ACTORNAME, TYPE, HANDLER) {
   var SURFACE = GETACTORSURFACE(ACTORNAME);
   if (!SURFACE) {
@@ -172,7 +169,6 @@ function REGISTERACTORHANDLER(ACTORNAME, TYPE, HANDLER) {
   }
   var CURRENTENV = GETACTORSTATE('WORLDMAPACTOR');
   if (CURRENTENV === undefined) {
-    // Defer: surface stages the handler; installed on first dispatch.
     return SURFACE.REGISTERHANDLER({}, TYPE, HANDLER);
   }
   var NEXTENV = SURFACE.REGISTERHANDLER(CURRENTENV, TYPE, HANDLER);
@@ -180,10 +176,7 @@ function REGISTERACTORHANDLER(ACTORNAME, TYPE, HANDLER) {
   return NEXTENV;
 }
 
-// @proposal=P68 — producer factory. Returns an enqueue function for the
-// (ACTORNAME, TYPE) pair. The produced function sends a message and returns
-// the tag. The factory itself is a pure constructor (no side effects at
-// construction time).
+// @proposal=P68 — producer factory.
 function MAKEPRODUCER(ACTORNAME, TYPE) {
   if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
     throw new Error('[MAKEPRODUCER] ACTORNAME must be a non-empty string');
@@ -203,24 +196,8 @@ function MAKEPRODUCER(ACTORNAME, TYPE) {
 // ============================================================
 // §17 — Base primitives (P64-idiomatic)
 // ============================================================
-//
-// @proposal=P-AC-001a — the 25 base primitives declared by the manifest
-// entry for actors/actorcore.js, expressed in P64 idiom (I-1..I-8).
-// The pre-rewrite base module was not brought forward when the
-// dispatcher-surface (§1..§16) was introduced; this section completes
-// the rewrite.
-//
-// Idiom witnesses in the received tree:
-//   I-1 freeze         — BROADCASTTYPESREF, MAILBOXCONFIG, MESSAGETYPES
-//   I-2 ref-swap       — BROADCASTTYPESREF, MAILBOXEXEMPTREF,
-//                        BLOCKCOMPILEREXTENSIONSREF, DYNAMICMESSAGETYPESREF
-//   I-3 fresh-env      — ADDDISPATCH, REMOVEDISPATCH, ENSUREDISPATCHERSLICE
-//   I-4 typed-dispatch — MAKETYPEDDISPATCH
-//   I-5 typeof-guard   — every actor's handler map
-//   I-6 register-at-load — REGISTERACTORSURFACE, REGISTERAGGREGATEBEHAVIOR
-//
-// Behavioural verification for the 10 NAMED-ONLY primitives is deferred
-// under @proposal=P-AC-001b.
+// (P-AC-001a; behavioural verification of the 10 NAMED-ONLY primitives
+//  deferred under P-AC-001b)
 
 // ---------- §17.1 — Actor state registry ----------
 
@@ -269,22 +246,87 @@ function ENSUREENVSLICE(ENV, SLICENAME, INITFN) {
   return NEXT;
 }
 
-// ---------- §17.3 — Actor dispatch ----------
+// ---------- §17.3 — Actor dispatch (async-capable) ----------
+//
+// @proposal=P-ACTOR-FLOW-001 — the framework flow contract.
+//
+// A handler returns one of:
+//   ENV                            — state update; no response
+//   Promise<ENV>                   — state update on resolution
+//   { ENV, RESPONSE }              — state update + response
+//   Promise<{ ENV, RESPONSE }>     — both on resolution
+//   { RESPONSE }                   — response; no state change
+//   Promise<{ RESPONSE }>          — response on resolution
+//   true | undefined               — fire-and-forget / no-op
+//
+// The dispatcher is the sole site of response emission and the sole site
+// of state publication for handler-owned returns. It never publishes a
+// Promise as state.
 
-function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE, INSTALLER) {
-  var ENV = GETACTORSTATE(ACTORNAME);
-  if (ENV === undefined) ENV = {};
-  var RESULT = BEHAVIOR(ENV, MESSAGE);
-  if (RESULT !== undefined) {
-    SETACTORSTATE(ACTORNAME, RESULT);
+function DISPATCHPROJECT(VALUE, MESSAGE, ACTORNAME) {
+  // Unwrap the handler's return into { ENV, RESPONSE }.
+  var OUT = { ENV: undefined, RESPONSE: undefined };
+  if (VALUE === undefined || VALUE === true || VALUE === false) return OUT;
+  if (VALUE === null) return OUT;
+  if (typeof VALUE !== 'object') return OUT;
+  if (Object.prototype.hasOwnProperty.call(VALUE, 'ENV') ||
+      Object.prototype.hasOwnProperty.call(VALUE, 'RESPONSE')) {
+    if (Object.prototype.hasOwnProperty.call(VALUE, 'ENV')) OUT.ENV = VALUE.ENV;
+    if (Object.prototype.hasOwnProperty.call(VALUE, 'RESPONSE')) OUT.RESPONSE = VALUE.RESPONSE;
+    return OUT;
   }
+  // A plain ENV-shaped value is a state update.
+  OUT.ENV = VALUE;
+  return OUT;
+}
+
+function DISPATCHPUBLISH(ACTORNAME, ENV) {
+  if (ENV !== undefined) {
+    SETACTORSTATE(ACTORNAME, ENV);
+  }
+}
+
+function DISPATCHRESPOND(MESSAGE, RESPONSE, ACTORNAME) {
+  if (RESPONSE === undefined) return;
+  if (!MESSAGE.SENDER || !MESSAGE.TAG) return;
+  var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
+  var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || 'response';
+  SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESPONSE, ACTORNAME, RESPONSETYPE);
+}
+
+function DISPATCHINSTALL(INSTALLER, MESSAGE) {
   if (typeof INSTALLER === 'function') {
     INSTALLER(MESSAGE);
   }
+}
+
+function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE, INSTALLER) {
+  if (typeof BEHAVIOR !== 'function') {
+    throw new Error('[DISPATCHTOACTOR] BEHAVIOR must be a function');
+  }
+  var ENV = GETACTORSTATE(ACTORNAME);
+  if (ENV === undefined) ENV = {};
+  var RESULT = BEHAVIOR(ENV, MESSAGE);
+  if (RESULT && typeof RESULT.then === 'function') {
+    return RESULT.then(function (RESOLVED) {
+      var OUT = DISPATCHPROJECT(RESOLVED, MESSAGE, ACTORNAME);
+      DISPATCHPUBLISH(ACTORNAME, OUT.ENV);
+      DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
+      DISPATCHINSTALL(INSTALLER, MESSAGE);
+      return RESOLVED;
+    });
+  }
+  var OUT = DISPATCHPROJECT(RESULT, MESSAGE, ACTORNAME);
+  DISPATCHPUBLISH(ACTORNAME, OUT.ENV);
+  DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
+  DISPATCHINSTALL(INSTALLER, MESSAGE);
   return RESULT;
 }
 
 function DISPATCHIMMUTABLE(ACTORNAME, BEHAVIOR, MESSAGE) {
+  if (typeof BEHAVIOR !== 'function') {
+    throw new Error('[DISPATCHIMMUTABLE] BEHAVIOR must be a function');
+  }
   var ENV = GETACTORSTATE(ACTORNAME);
   if (ENV === undefined) ENV = {};
   return BEHAVIOR(ENV, MESSAGE);
@@ -511,12 +553,20 @@ function CREATEACTORHANDLE(ACTORNAME) {
   function SUBMIT(ACTION) {
     COUNTER += 1;
     var ID = NAME + '-ACTION-' + COUNTER + '-' + Date.now();
-    // @proposal=P-AC-001g — unconditional read; ACTORCONSUMERS is declared at file top.
     var HANDLER = ACTORCONSUMERS[NAME];
     if (typeof HANDLER === 'function') {
       try {
         var RESULT = DISPATCHTOACTOR(NAME, HANDLER, ACTION);
-        ACTIONS[ID] = { ID: ID, STATUS: 'EXECUTED', RESULT: RESULT, ERROR: null };
+        if (RESULT && typeof RESULT.then === 'function') {
+          ACTIONS[ID] = { ID: ID, STATUS: 'PENDING', RESULT: null, ERROR: null };
+          RESULT.then(function (V) {
+            ACTIONS[ID] = { ID: ID, STATUS: 'EXECUTED', RESULT: V, ERROR: null };
+          }).catch(function (E) {
+            ACTIONS[ID] = { ID: ID, STATUS: 'FAILED', RESULT: null, ERROR: E };
+          });
+        } else {
+          ACTIONS[ID] = { ID: ID, STATUS: 'EXECUTED', RESULT: RESULT, ERROR: null };
+        }
       } catch (E) {
         ACTIONS[ID] = { ID: ID, STATUS: 'FAILED', RESULT: null, ERROR: E };
       }
@@ -556,5 +606,276 @@ function CREATEACTORHANDLE(ACTORNAME) {
     SUBMIT: SUBMIT,
     EXPECT: EXPECT,
     GETACTIONRESULT: GETACTIONRESULT
+  });
+}
+
+// ============================================================
+// §18 — Inference facility (P-INFER-001)
+// ============================================================
+//
+// INFERDISPATCHSTRATEGY is a pure function of (RECIPIENT, TYPE, PAYLOAD,
+// SENDER, TAG, RESPONSESPEC) and the current registry snapshots. It
+// returns { route, batch, suppress, reason }.
+//
+// Heuristic rules (evaluated in order):
+//   1. RECIPIENT ∈ POLLERRECIPIENTS       → mailbox
+//   2. RECIPIENT ∈ BROADCASTRECIPIENTS    → broadcast
+//   3. RECIPIENT ∈ ACTORCONSUMERS         → direct
+//   4. TYPE ∈ SUPPRESSIBLETYPES ∧ below threshold → suppress
+//   5. TYPE ∈ BATCHABLETYPES              → batch (direct if consumer, else mailbox)
+//   6. fallback                           → mailbox
+//
+// Every registry uses the frozen-value/ref-swap idiom (I-2).
+
+// ---------- §18.1 — Poller recipients ----------
+
+var POLLERRECIPIENTSREF = { current: Object.freeze({ BLOCKCOMPILER: true }) };
+
+function GETPOLLERRECIPIENTS() { return POLLERRECIPIENTSREF.current; }
+function REGISTERPOLLERRECIPIENT(NAME) {
+  if (typeof NAME !== 'string' || NAME.length === 0) {
+    throw new Error('[REGISTERPOLLERRECIPIENT] NAME must be a non-empty string');
+  }
+  var CURRENT = POLLERRECIPIENTSREF.current;
+  if (CURRENT[NAME] === true) return NAME;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[NAME] = true;
+  POLLERRECIPIENTSREF.current = Object.freeze(NEXT);
+  return NAME;
+}
+function UNREGISTERPOLLERRECIPIENT(NAME) {
+  if (typeof NAME !== 'string' || NAME.length === 0) return false;
+  var CURRENT = POLLERRECIPIENTSREF.current;
+  if (CURRENT[NAME] !== true) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { if (K !== NAME) NEXT[K] = CURRENT[K]; });
+  POLLERRECIPIENTSREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+// ---------- §18.2 — Broadcast recipients ----------
+
+var BROADCASTRECIPIENTSREF = { current: Object.freeze({ BROADCAST: true }) };
+
+function GETBROADCASTRECIPIENTS() { return BROADCASTRECIPIENTSREF.current; }
+function REGISTERBROADCASTRECIPIENT(NAME) {
+  if (typeof NAME !== 'string' || NAME.length === 0) {
+    throw new Error('[REGISTERBROADCASTRECIPIENT] NAME must be a non-empty string');
+  }
+  var CURRENT = BROADCASTRECIPIENTSREF.current;
+  if (CURRENT[NAME] === true) return NAME;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[NAME] = true;
+  BROADCASTRECIPIENTSREF.current = Object.freeze(NEXT);
+  return NAME;
+}
+function UNREGISTERBROADCASTRECIPIENT(NAME) {
+  if (typeof NAME !== 'string' || NAME.length === 0) return false;
+  var CURRENT = BROADCASTRECIPIENTSREF.current;
+  if (CURRENT[NAME] !== true) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { if (K !== NAME) NEXT[K] = CURRENT[K]; });
+  BROADCASTRECIPIENTSREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+// ---------- §18.3 — Suppressible types ----------
+
+var SUPPRESSIBLETYPESREF = { current: Object.freeze({}) };
+
+function GETSUPPRESSIBLETYPES() { return SUPPRESSIBLETYPESREF.current; }
+function REGISTERSUPPRESSIBLETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[REGISTERSUPPRESSIBLETYPE] TYPE must be a non-empty string');
+  }
+  var CURRENT = SUPPRESSIBLETYPESREF.current;
+  if (CURRENT[TYPE] === true) return TYPE;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TYPE] = true;
+  SUPPRESSIBLETYPESREF.current = Object.freeze(NEXT);
+  return TYPE;
+}
+function UNREGISTERSUPPRESSIBLETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) return false;
+  var CURRENT = SUPPRESSIBLETYPESREF.current;
+  if (CURRENT[TYPE] !== true) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { if (K !== TYPE) NEXT[K] = CURRENT[K]; });
+  SUPPRESSIBLETYPESREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+// ---------- §18.4 — Batchable types ----------
+
+var BATCHABLETYPESREF = { current: Object.freeze({}) };
+
+function GETBATCHABLETYPES() { return BATCHABLETYPESREF.current; }
+function REGISTERBATCHABLETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[REGISTERBATCHABLETYPE] TYPE must be a non-empty string');
+  }
+  var CURRENT = BATCHABLETYPESREF.current;
+  if (CURRENT[TYPE] === true) return TYPE;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TYPE] = true;
+  BATCHABLETYPESREF.current = Object.freeze(NEXT);
+  return TYPE;
+}
+function UNREGISTERBATCHABLETYPE(TYPE) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) return false;
+  var CURRENT = BATCHABLETYPESREF.current;
+  if (CURRENT[TYPE] !== true) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { if (K !== TYPE) NEXT[K] = CURRENT[K]; });
+  BATCHABLETYPESREF.current = Object.freeze(NEXT);
+  return true;
+}
+
+// ---------- §18.5 — Batch windows ----------
+
+var BATCHWINDOWSREF = { current: Object.freeze({ LOGLINE: 250 }) };
+
+function GETBATCHWINDOWS() { return BATCHWINDOWSREF.current; }
+function SETBATCHWINDOW(TYPE, MS) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[SETBATCHWINDOW] TYPE must be a non-empty string');
+  }
+  if (typeof MS !== 'number' || MS < 0 || Math.floor(MS) !== MS) {
+    throw new Error('[SETBATCHWINDOW] MS must be a non-negative integer');
+  }
+  var CURRENT = BATCHWINDOWSREF.current;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TYPE] = MS;
+  BATCHWINDOWSREF.current = Object.freeze(NEXT);
+  return MS;
+}
+
+// ---------- §18.6 — Verbosity thresholds ----------
+
+var VERBOSITYTHRESHOLDREF = { current: Object.freeze({ LOGLINE: 'DEBUG' }) };
+
+function GETVERBOSITYTHRESHOLD() { return VERBOSITYTHRESHOLDREF.current; }
+function SETVERBOSITYTHRESHOLD(TYPE, LEVEL) {
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[SETVERBOSITYTHRESHOLD] TYPE must be a non-empty string');
+  }
+  var CURRENT = VERBOSITYTHRESHOLDREF.current;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[TYPE] = LEVEL;
+  VERBOSITYTHRESHOLDREF.current = Object.freeze(NEXT);
+  return LEVEL;
+}
+
+// ---------- §18.7 — The inference facility ----------
+
+function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESPEC) {
+  var POLLERS = GETPOLLERRECIPIENTS();
+  var BROADCASTERS = GETBROADCASTRECIPIENTS();
+  var SUPPRESSIBLE = GETSUPPRESSIBLETYPES();
+  var BATCHABLE = GETBATCHABLETYPES();
+  var THRESHOLD = GETVERBOSITYTHRESHOLD();
+
+  // rule 1
+  if (POLLERS[RECIPIENT] === true) {
+    return { route: 'mailbox', batch: false, suppress: false, reason: 'poller-recipient' };
+  }
+  // rule 2
+  if (BROADCASTERS[RECIPIENT] === true) {
+    return { route: 'broadcast', batch: false, suppress: false, reason: 'broadcast-recipient' };
+  }
+  // rule 3
+  if (Object.prototype.hasOwnProperty.call(ACTORCONSUMERS, RECIPIENT)) {
+    // rules 4 and 5 may still apply for actor recipients of batchable types
+    if (BATCHABLE[TYPE] === true) {
+      return { route: 'direct', batch: true, suppress: false, reason: 'batchable-to-actor' };
+    }
+    return { route: 'direct', batch: false, suppress: false, reason: 'known-actor' };
+  }
+  // rule 4
+  if (SUPPRESSIBLE[TYPE] === true) {
+    var level = THRESHOLD[TYPE];
+    var current = (typeof getverbosity === 'function') ? getverbosity(BLOCKCOMPILERSTATE) : null;
+    var levelval = (typeof resolvelevel === 'function') ? resolvelevel(level) : null;
+    if (current !== null && levelval !== null && current < levelval) {
+      return { route: 'mailbox', batch: false, suppress: true, reason: 'suppressed-below-threshold' };
+    }
+  }
+  // rule 5
+  if (BATCHABLE[TYPE] === true) {
+    return { route: 'mailbox', batch: true, suppress: false, reason: 'batchable-to-mailbox' };
+  }
+  // rule 6
+  return { route: 'mailbox', batch: false, suppress: false, reason: 'fallback' };
+}
+
+// ============================================================
+// §18b — Batch scheduler (P-INFER-001)
+// ============================================================
+//
+// Batches by (RECIPIENT, TYPE). Each batch has a timer of the type's
+// batch-window duration. On flush, the batch is delivered as a single
+// message whose payload carries an ITEMS array; the original MESSAGE
+// fields are carried on each item.
+
+var BATCHBUFFERS = {};
+
+function BATCHKEY(RECIPIENT, TYPE) {
+  return RECIPIENT + '\u0000' + TYPE;
+}
+
+function ENQUEUEBATCH(RECIPIENT, TYPE, MESSAGE, TAG, SENDER, RESPONSESPEC) {
+  var KEY = BATCHKEY(RECIPIENT, TYPE);
+  if (!BATCHBUFFERS[KEY]) {
+    BATCHBUFFERS[KEY] = { RECIPIENT: RECIPIENT, TYPE: TYPE, ITEMS: [], TIMER: null };
+  }
+  var BUF = BATCHBUFFERS[KEY];
+  BUF.ITEMS.push({ MESSAGE: MESSAGE, TAG: TAG, SENDER: SENDER, RESPONSESPEC: RESPONSESPEC });
+  if (BUF.TIMER === null) {
+    var WINDOWS = GETBATCHWINDOWS();
+    var MS = (typeof WINDOWS[TYPE] === 'number') ? WINDOWS[TYPE] : 0;
+    BUF.TIMER = setTimeout(function () { FLUSHBATCH(KEY); }, MS);
+  }
+  return TAG;
+}
+
+function FLUSHBATCH(KEY) {
+  var BUF = BATCHBUFFERS[KEY];
+  if (!BUF) return;
+  delete BATCHBUFFERS[KEY];
+  var ITEMS = BUF.ITEMS;
+  if (ITEMS.length === 0) return;
+  var FIRST = ITEMS[0];
+  var FLAT = {
+    TYPE: BUF.TYPE,
+    SENDER: FIRST.SENDER || 'system',
+    TAG: FIRST.TAG,
+    ITEMS: ITEMS.map(function (it) { return it.MESSAGE; })
+  };
+  if (FIRST.RESPONSESPEC) FLAT.RESPONSESPEC = FIRST.RESPONSESPEC;
+  // Dispatch as a direct or mailbox delivery, bypassing batching to avoid
+  // re-enqueue. The infer has already decided the route.
+  var CONSUMER = ACTORCONSUMERS[BUF.RECIPIENT];
+  if (typeof CONSUMER === 'function') {
+    DISPATCHTOACTOR(BUF.RECIPIENT, CONSUMER, FLAT);
+  } else if (typeof SENDINSTRUCTION === 'function') {
+    // fallback to mailbox
+    SENDINSTRUCTION(BUF.RECIPIENT, BUF.TYPE, FLAT, FLAT.TAG, FLAT.SENDER);
+  }
+}
+
+function FLUSHALLBATCHES() {
+  var KEYS = Object.keys(BATCHBUFFERS);
+  KEYS.forEach(function (K) {
+    if (BATCHBUFFERS[K] && BATCHBUFFERS[K].TIMER !== null) {
+      clearTimeout(BATCHBUFFERS[K].TIMER);
+      BATCHBUFFERS[K].TIMER = null;
+    }
+    FLUSHBATCH(K);
   });
 }

@@ -614,6 +614,12 @@ function wrapblockresult(response, sig) {
 
 function exchange(recipient, type, payload, timeout, responsetype, tag) {
   if (tag === undefined) tag = GENERATETAG();
+  // @proposal=P-ACTOR-FLOW-002 — SENDINSTRUCTION returns a Promise under
+  // the flow contract. The blockcompiler consumes the response via
+  // WAITFORMAILBOX, not via that Promise: the mailbox is the designated
+  // response channel for poller recipients (the infer facility routes
+  // BLOCKCOMPILER via mailbox). The returned Promise is deliberately
+  // ignored; awaiting it would duplicate the wait.
   SENDINSTRUCTION(recipient, type, payload, tag, 'BLOCKCOMPILER', { responsetype: responsetype });
   return WAITFORMAILBOX({ TAG: tag, SENDER: recipient, TYPE: responsetype }, timeout);
 }
@@ -621,6 +627,25 @@ function exchange(recipient, type, payload, timeout, responsetype, tag) {
 function sendandawait(recipient, type, payload, timeout, responsetype) {
   return exchange(recipient, type, payload, timeout, responsetype).then(unwrap);
 }
+
+function loadscriptwithwitness(entry, basepath, timeout) {
+  return sendandawait('RENDERACTOR', MESSAGETYPES.LOADSCRIPT,
+                      { SRC: basepath + entry.src },
+                      mailboxresolve('mailboxwaittimeout'),
+                      MESSAGETYPES.SCRIPTLOADED)
+    .then(function(response) {
+      // @proposal=P-ACTOR-FLOW-002 — the renderactor's LOADSCRIPT handler
+      // resolves to { LOADED: bool, ERROR?: string } on every exit path:
+      // empty-SRC rejection, browser error event, browser load event.
+      // The ERROR branch is the failure signal.
+      if (response && response.ERROR) throw new Error(response.ERROR);
+      if (entry.provides && entry.provides.length > 0) {
+        return waitforwitness(entry, timeout);
+      }
+    });
+}
+
+
 
 function loadscripts(entries, basepath, timeout, label) {
   if (typeof timeout === 'undefined') timeout = mailboxresolve('scriptwitnesstimeout');
@@ -1596,19 +1621,6 @@ function waitforwitness(entry, timeout) {
     }
     check();
   });
-}
-
-function loadscriptwithwitness(entry, basepath, timeout) {
-  return sendandawait('RENDERACTOR', MESSAGETYPES.LOADSCRIPT,
-                      { SRC: basepath + entry.src },
-                      mailboxresolve('mailboxwaittimeout'),
-                      MESSAGETYPES.SCRIPTLOADED)
-    .then(function(response) {
-      if (response && response.ERROR) throw new Error(response.ERROR);
-      if (entry.provides && entry.provides.length > 0) {
-        return waitforwitness(entry, timeout);
-      }
-    });
 }
 
 function loadscriptssequentially(entries, basepath, timeout) {

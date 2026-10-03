@@ -37,14 +37,40 @@ var pipelinesmanifest = [
 
   { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
   { src: 'actors/actorcore.js', provides: [
+    // dispatcher-surface primitives
+    'ENSUREDISPATCHERSLICE', 'READDISPATCHES', 'ADDDISPATCH', 'REMOVEDISPATCH',
+    'RUNDISPATCHES', 'MAKETYPEDDISPATCH', 'REGISTERCONSUMER',
+    'MAKEACTORDISPATCHSURFACE', 'ACTORSURFACEREGISTRY', 'AGGREGATEBEHAVIOR',
+    'REGISTERACTORSURFACE', 'REGISTERAGGREGATEBEHAVIOR',
+    'GETACTORSURFACE', 'GETAGGREGATEBEHAVIOR', 'REGISTERACTORHANDLER',
+    'MAKEPRODUCER',
+    // shared actor registry
+    'ACTORCONSUMERS',
+    // base primitives (P-AC-001a)
     'CREATEGARBAGECOLLECTOR', 'REGISTEROBJECT', 'UPDATESTATUS', 'INCREMENTSENT',
-    'INCREMENTRECEIVED', 'COLLECTENDED', 'LISTOBJECTS', 'REGISTERACTORSTATE',
-    'GETACTORSTATE', 'SETACTORSTATE', 'DISPATCHIMMUTABLE', 'DISPATCHTOACTOR',
-    'ENSUREENVSLICE', 'CREATEMESSAGEVALIDATOR', 'PINGACTOR', 'GETACTORREGISTRY',
-    'CREATEACTORREGISTRY', 'SETRENDERACTOR', 'GETRENDERACTOR',
+    'INCREMENTRECEIVED', 'COLLECTENDED', 'LISTOBJECTS',
+    'REGISTERACTORSTATE', 'GETACTORSTATE', 'SETACTORSTATE',
+    'DISPATCHIMMUTABLE', 'DISPATCHTOACTOR', 'ENSUREENVSLICE',
+    'CREATEMESSAGEVALIDATOR', 'PINGACTOR',
+    'GETACTORREGISTRY', 'CREATEACTORREGISTRY', 'SETRENDERACTOR', 'GETRENDERACTOR',
     'CREATETRIGGERREGISTRY', 'REGISTERTRIGGER', 'UNREGISTERTRIGGER',
     'REVALIDATEALL', 'GETTRIGGERMAP', 'CREATEACTORHANDLE',
-    'ACTORCONSUMERS'
+    // flow-contract helpers (P-ACTOR-FLOW-001)
+    'DISPATCHPROJECT', 'DISPATCHPUBLISH', 'DISPATCHRESPOND', 'DISPATCHINSTALL',
+    // inference facility (P-INFER-001)
+    'INFERDISPATCHSTRATEGY',
+    'POLLERRECIPIENTSREF', 'GETPOLLERRECIPIENTS',
+    'REGISTERPOLLERRECIPIENT', 'UNREGISTERPOLLERRECIPIENT',
+    'BROADCASTRECIPIENTSREF', 'GETBROADCASTRECIPIENTS',
+    'REGISTERBROADCASTRECIPIENT', 'UNREGISTERBROADCASTRECIPIENT',
+    'SUPPRESSIBLETYPESREF', 'GETSUPPRESSIBLETYPES',
+    'REGISTERSUPPRESSIBLETYPE', 'UNREGISTERSUPPRESSIBLETYPE',
+    'BATCHABLETYPESREF', 'GETBATCHABLETYPES',
+    'REGISTERBATCHABLETYPE', 'UNREGISTERBATCHABLETYPE',
+    'BATCHWINDOWSREF', 'GETBATCHWINDOWS', 'SETBATCHWINDOW',
+    'VERBOSITYTHRESHOLDREF', 'GETVERBOSITYTHRESHOLD', 'SETVERBOSITYTHRESHOLD',
+    // batch scheduler
+    'BATCHBUFFERS', 'BATCHKEY', 'ENQUEUEBATCH', 'FLUSHBATCH', 'FLUSHALLBATCHES'
   ] },
   { src: 'factory/layoutdirectives.js', provides: ['createlayoutdirectives'] },
   { src: 'fundamental/domref.js', provides: ['getrawelement', 'createdomref', 'removeref', 'isvaliddomref'] },
@@ -63,7 +89,7 @@ var pipelinesmanifest = [
     'createnodefromtemplate', 'deepmerge'
   ] },
   { src: 'actors/dbactor.js', provides: [
-    'DBBEHAVIOR', 'STORESEND', 'STOREWAIT', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE',
+    'DBBEHAVIOR', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE',
     'STARTDBACTOR', 'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
   ] },
   { src: 'actors/mailactor.js', provides: [
@@ -199,41 +225,42 @@ function checkstateregistration(entry) {
   return { ok: state !== undefined, missing: state === undefined ? 'WORLDMAPACTOR' : null };
 }
 
+// @proposal=P-BOOTLOADER-WITNESS-001 — the per-entry existence check
+// accumulates into `existencefailures`; the load loop advances through
+// every entry regardless, then reports all failures in one pass.
 function runpipelineboot(loadprogram, report, manifest) {
   var list = manifest || pipelinesmanifest;
   var index = 0;
   var entries = list.slice();
   var loadfailures = [];
-  function loadnext() {
-    if (index >= entries.length) {
-      var regfailures = [];
-      entries.forEach(function(entry) {
-        if (entry.owner) {
-          var reg = checkregistration(entry);
-          if (!reg.ok) regfailures.push({ src: entry.src, missingtypes: reg.missing });
-          var st = checkstateregistration(entry);
-          if (!st.ok) regfailures.push({ src: entry.src, missingstate: st.missing });
-        }
-      });
-      if (regfailures.length) {
-        report({ ok: false, failures: regfailures, loaded: entries.length });
-      } else {
-        report({ ok: true, failures: [], loaded: entries.length });
+  var existencefailures = [];
+
+  function aggregate() {
+    var regfailures = [];
+    entries.forEach(function(entry) {
+      if (entry.owner) {
+        var reg = checkregistration(entry);
+        if (!reg.ok) regfailures.push({ src: entry.src, missingtypes: reg.missing });
+        var st = checkstateregistration(entry);
+        if (!st.ok) regfailures.push({ src: entry.src, missingstate: st.missing });
       }
-      return;
-    }
+    });
+    var allfailures = loadfailures
+      .concat(existencefailures)
+      .concat(regfailures);
+    if (allfailures.length) report({ ok: false, failures: allfailures, loaded: index });
+    else report({ ok: true, failures: [], loaded: index });
+  }
+
+  function loadnext() {
+    if (index >= entries.length) { aggregate(); return; }
     var entry = entries[index];
     loadprogram(entry, function(err) {
       if (err) {
         loadfailures.push({ src: entry.src, error: err });
-        report({ ok: false, failures: loadfailures, loaded: index });
-        return;
-      }
-      var exists = checkexistence(entry);
-      if (!exists.ok) {
-        loadfailures.push({ src: entry.src, missingglobals: exists.missing });
-        report({ ok: false, failures: loadfailures, loaded: index });
-        return;
+      } else {
+        var exists = checkexistence(entry);
+        if (!exists.ok) existencefailures.push({ src: entry.src, missingglobals: exists.missing });
       }
       index = index + 1;
       loadnext();

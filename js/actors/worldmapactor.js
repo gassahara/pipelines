@@ -1,37 +1,21 @@
-var WORLDMAPVERBOSITYCONSTANTS = createverbosityconstants();
-var WORLDMAPSTATE = { level: WORLDMAPVERBOSITYCONSTANTS.DEBUG };
+var WORLDMAPSTATE = { level: createverbosityconstants().DEBUG };
 
-// @proposal=P22 — framework keys are never pruned by unused-removal.
-// @proposal=P64-amendment-1 — DISPATCHERS is a framework key: it holds
-// the per-actor dispatcher lists installed by the surface on first use.
+// @proposal=P22 — framework keys are never pruned.
+// @proposal=P64-amendment-1 — DISPATCHERS is a framework key.
 var FRAMEWORKKEYS = {
-  DEBUG: true,
-  EXECUTION: true,
-  MAIL: true,
-  HYPERVISOR: true,
-  RENDER: true,
-  db: true,
-  VERBOSITY: true,
-  OBSERVERS: true,
-  pipestate: true,
-  PIPELINEUSEDKEYS: true,
-  DISPATCHERS: true
+  DEBUG: true, EXECUTION: true, MAIL: true, HYPERVISOR: true, RENDER: true,
+  db: true, VERBOSITY: true, OBSERVERS: true, pipestate: true,
+  PIPELINEUSEDKEYS: true, DISPATCHERS: true
 };
 
-// @proposal=P16 — persistent slices are included in the persisted payload.
-var PERSISTENTSLICES = {
-  HYPERVISOR: true,
-  db: true
-};
+var PERSISTENTSLICES = { HYPERVISOR: true, db: true };
 
-// @proposal=P16 — debounce parameters and state.
 var PERSISTDEBOUNCE = 500;
 var PERSISTMAXDEFER = 2000;
 var PERSISTTIMER = null;
 var PERSISTMAXTIMER = null;
 var PERSISTPENDING = false;
 
-// @proposal=P22 — settled task predicate.
 function ISSETTLEDTASK(TASK) {
   if (!TASK) return false;
   var S = TASK.STATUS;
@@ -41,16 +25,12 @@ function ISSETTLEDTASK(TASK) {
   return C.length === 0;
 }
 
-// @proposal=P22 — unused key predicate.
 function ISUNUSEDKEY(KEY, ENV) {
   if (FRAMEWORKKEYS[KEY] === true) return false;
   var USEDMAP = ENV && ENV.PIPELINEUSEDKEYS;
   if (USEDMAP) {
     var FOUND = false;
-    Object.keys(USEDMAP).forEach(function(PID) {
-      if (FOUND) return;
-      if (USEDMAP[PID] && USEDMAP[PID][KEY] === true) FOUND = true;
-    });
+    Object.keys(USEDMAP).forEach(function(PID) { if (FOUND) return; if (USEDMAP[PID] && USEDMAP[PID][KEY] === true) FOUND = true; });
     if (FOUND) return false;
   }
   return true;
@@ -64,10 +44,7 @@ function SWEEPSETTLEDTASKS(ENV) {
   var KEEPORDER = [];
   Object.keys(TASKS).forEach(function(TID) {
     var T = TASKS[TID];
-    if (!ISSETTLEDTASK(T)) {
-      KEEP[TID] = T;
-      KEEPORDER.push(TID);
-    }
+    if (!ISSETTLEDTASK(T)) { KEEP[TID] = T; KEEPORDER.push(TID); }
   });
   ENV.EXECUTION.TASKS = KEEP;
   ENV.EXECUTION.TASKORDER = KEEPORDER.length === ORDER.length ? ORDER : KEEPORDER;
@@ -76,9 +53,7 @@ function SWEEPSETTLEDTASKS(ENV) {
 function CONSOLIDATEENV(ENV) {
   if (!ENV || typeof ENV !== 'object') return ENV;
   var OUT = {};
-  Object.keys(ENV).forEach(function(K) {
-    if (!ISUNUSEDKEY(K, ENV)) OUT[K] = ENV[K];
-  });
+  Object.keys(ENV).forEach(function(K) { if (!ISUNUSEDKEY(K, ENV)) OUT[K] = ENV[K]; });
   SWEEPSETTLEDTASKS(OUT);
   return OUT;
 }
@@ -86,9 +61,7 @@ function CONSOLIDATEENV(ENV) {
 function SELECTPERSISTENTSLICES(ENV) {
   if (!ENV || typeof ENV !== 'object') return {};
   var OUT = {};
-  Object.keys(ENV).forEach(function(K) {
-    if (PERSISTENTSLICES[K] === true) OUT[K] = ENV[K];
-  });
+  Object.keys(ENV).forEach(function(K) { if (PERSISTENTSLICES[K] === true) OUT[K] = ENV[K]; });
   return OUT;
 }
 
@@ -99,44 +72,27 @@ function SETINPATH(OBJ, PATH, VALUE) {
   var REST = KEYS.slice(1).join('.');
   var NEXTOBJ = OBJ && typeof OBJ === 'object' ? OBJ : {};
   var UPDATEDCHILD = REST ? SETINPATH(NEXTOBJ[KEY], REST, VALUE) : VALUE;
-  var NEWOBJ = Array.isArray(NEXTOBJ) ? NEXTOBJ.slice() : Object.keys(NEXTOBJ).reduce(function(ACC, K) {
-    ACC[K] = NEXTOBJ[K];
-    return ACC;
-  }, {});
+  var NEWOBJ = Array.isArray(NEXTOBJ) ? NEXTOBJ.slice() : Object.keys(NEXTOBJ).reduce(function(ACC, K) { ACC[K] = NEXTOBJ[K]; return ACC; }, {});
   NEWOBJ[KEY] = UPDATEDCHILD;
   return NEWOBJ;
 }
 
 function APPLYVALUESET(ENV, UPDATES) {
-  return UPDATES.reduce(function(ACC, UPDATE) {
-    return SETINPATH(ACC, UPDATE.PATH, UPDATE.VALUE);
-  }, ENV);
+  return UPDATES.reduce(function(ACC, UPDATE) { return SETINPATH(ACC, UPDATE.PATH, UPDATE.VALUE); }, ENV);
 }
 
 function PERSISTENV(ENV) {
   PERSISTPENDING = true;
-  if (PERSISTTIMER) {
-    clearTimeout(PERSISTTIMER);
-    PERSISTTIMER = null;
-  }
+  if (PERSISTTIMER) { clearTimeout(PERSISTTIMER); PERSISTTIMER = null; }
   PERSISTTIMER = setTimeout(function() {
     PERSISTTIMER = null;
-    if (PERSISTMAXTIMER) {
-      clearTimeout(PERSISTMAXTIMER);
-      PERSISTMAXTIMER = null;
-    }
+    if (PERSISTMAXTIMER) { clearTimeout(PERSISTMAXTIMER); PERSISTMAXTIMER = null; }
     DOPERSIST(ENV);
   }, PERSISTDEBOUNCE);
   if (!PERSISTMAXTIMER) {
     PERSISTMAXTIMER = setTimeout(function() {
       PERSISTMAXTIMER = null;
-      if (PERSISTPENDING) {
-        if (PERSISTTIMER) {
-          clearTimeout(PERSISTTIMER);
-          PERSISTTIMER = null;
-        }
-        DOPERSIST(ENV);
-      }
+      if (PERSISTPENDING) { if (PERSISTTIMER) { clearTimeout(PERSISTTIMER); PERSISTTIMER = null; } DOPERSIST(ENV); }
     }, PERSISTMAXDEFER);
   }
 }
@@ -148,12 +104,8 @@ function DOPERSIST(ENV) {
   var STOREFN = (typeof DBSTORE === 'function') ? DBSTORE : (typeof DB_STORE === 'function' ? DB_STORE : function() { return Promise.resolve(true); });
   var RUNCALL = function() {
     STOREFN('actor:state:env', PAYLOAD).then(function(SUCCESS) {
-      if (SUCCESS === false) {
-        logwarn(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED');
-      }
-    }).catch(function(E) {
-      logwarn(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED:', E);
-    });
+      if (SUCCESS === false) logwarn(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED');
+    }).catch(function(E) { logwarn(ENV, '[WORLDMAPACTOR]', 'STATE PERSIST FAILED:', E); });
   };
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
     try { window.requestIdleCallback(RUNCALL, { timeout: 500 }); return; } catch (e) { /* fall through */ }
@@ -165,17 +117,14 @@ function RECOVERENV() {
   logdebug({}, '[WORLDMAPACTOR]', 'RECOVERENV START');
   var RESTOREFN = (typeof DBRESTORE === 'function') ? DBRESTORE : (typeof DB_RESTORE === 'function' ? DB_RESTORE : function() { return Promise.resolve(null); });
   return RESTOREFN('actor:state:env').then(function(SAVED) {
-    if (SAVED !== null && SAVED !== undefined) {
-      loginfo(SAVED, '[WORLDMAPACTOR]', 'RECOVERENV RESTORED ENV');
-      return CONSOLIDATEENV(SAVED);
-    }
+    if (SAVED !== null && SAVED !== undefined) { loginfo(SAVED, '[WORLDMAPACTOR]', 'RECOVERENV RESTORED ENV'); return CONSOLIDATEENV(SAVED); }
     loginfo({}, '[WORLDMAPACTOR]', 'RECOVERENV NO SAVED ENV, USING EMPTY CONTAINER');
     return {};
   });
 }
 
 // ============================================================
-// §2 — Message handlers (P64)
+// §2 — Message handlers
 // ============================================================
 
 function WORLDMAPBEHAVIORUPDATE(ENV, MESSAGE) {
@@ -213,10 +162,9 @@ function WORLDMAPBEHAVIORUNOBSERVE(ENV, MESSAGE) {
   return SETINPATH(ENV, 'OBSERVERS', FILTERED);
 }
 
+// @proposal=P-ACTOR-FLOW-002 — response via return, not SENDRESPONSE.
 function WORLDMAPBEHAVIORGETENV(ENV, MESSAGE) {
-  if (MESSAGE.SENDER && MESSAGE.TAG) {
-    SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, ENV, 'WORLDMAPACTOR');
-  }
+  if (MESSAGE.SENDER && MESSAGE.TAG) return { ENV: ENV, RESPONSE: ENV };
   return ENV;
 }
 
@@ -226,7 +174,7 @@ function WORLDMAPBEHAVIORDEFAULT(ENV, MESSAGE) {
 }
 
 // ============================================================
-// §3 — Dispatcher surface (P64)
+// §3 — Dispatcher surface
 // ============================================================
 
 var WORLDMAPBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('WORLDMAPACTOR', [
@@ -239,14 +187,11 @@ var WORLDMAPBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('WORLDMAPACTOR', [
   WORLDMAPBEHAVIORDEFAULT
 ]);
 
-// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
-// pre-adoption per-message log line is preserved at the behaviour level.
 function WORLDMAPBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[WORLDMAPACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
   return WORLDMAPBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
 }
 
-// @proposal=P64 — publish the surface and the aggregate; self-register.
 REGISTERACTORSURFACE('WORLDMAPACTOR', WORLDMAPBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('WORLDMAPACTOR', WORLDMAPBEHAVIOR);
 ACTORCONSUMERS['WORLDMAPACTOR'] = WORLDMAPBEHAVIOR;
@@ -255,7 +200,6 @@ ACTORCONSUMERS['WORLDMAPACTOR'] = WORLDMAPBEHAVIOR;
 // §4 — World-map state registration and start
 // ============================================================
 
-// Initial state is empty object; actors own their slices.
 REGISTERACTORSTATE('WORLDMAPACTOR', {});
 
 function STARTWORLDMAPACTOR(OPTIONS) {
@@ -264,9 +208,7 @@ function STARTWORLDMAPACTOR(OPTIONS) {
     if (LVL !== undefined) {
       WORLDMAPSTATE = { level: LVL };
       var ENVFORVERBOSITY = GETACTORSTATE('WORLDMAPACTOR');
-      if (ENVFORVERBOSITY) {
-        SETACTORSTATE('WORLDMAPACTOR', SETINPATH(ENVFORVERBOSITY, 'VERBOSITY', LVL));
-      }
+      if (ENVFORVERBOSITY) SETACTORSTATE('WORLDMAPACTOR', SETINPATH(ENVFORVERBOSITY, 'VERBOSITY', LVL));
     }
   }
   var CURRENTENV = GETACTORSTATE('WORLDMAPACTOR') || {};
@@ -280,15 +222,13 @@ function STARTWORLDMAPACTOR(OPTIONS) {
 }
 
 // ============================================================
-// §5 — Actor handle surface (P4, unchanged)
+// §5 — Actor handle surface
 // ============================================================
 
 var WORLDMAPHANDLE = null;
 
 function WORLDMAPHANDLEINSTANCE() {
-  if (!WORLDMAPHANDLE) {
-    WORLDMAPHANDLE = CREATEACTORHANDLE('WORLDMAPACTOR');
-  }
+  if (!WORLDMAPHANDLE) WORLDMAPHANDLE = CREATEACTORHANDLE('WORLDMAPACTOR');
   return WORLDMAPHANDLE;
 }
 
@@ -309,8 +249,7 @@ function SENDWORLDMAPPATCH(PATCH, RESPONSESPEC) {
 
 function UPDATEWORLDMAPFN(FN, RESPONSESPEC) {
   var TAG = GENERATETAG();
-  var TYPE = MESSAGETYPES.UPDATEFN;
-  SENDINSTRUCTION('WORLDMAPACTOR', TYPE, { FN: FN }, TAG, 'system', RESPONSESPEC);
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATEFN, { FN: FN }, TAG, 'system', RESPONSESPEC);
 }
 
 function OBSERVEWORLDMAP(OBSERVER, RESPONSESPEC) {
@@ -325,6 +264,5 @@ function UNOBSERVEWORLDMAP(OBSERVER, RESPONSESPEC) {
 
 function GETWORLDMAP(RESPONSESPEC) {
   var TAG = GENERATETAG();
-  var TYPE = MESSAGETYPES.GETWORLDMAP;
-  SENDINSTRUCTION('WORLDMAPACTOR', TYPE, {}, TAG, 'system', RESPONSESPEC);
+  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.GETWORLDMAP, {}, TAG, 'system', RESPONSESPEC);
 }

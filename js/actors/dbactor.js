@@ -5,65 +5,37 @@ var ROOTKEY = 'FRAMEWORKDBACTORMAP';
 var MAXKEYS = 200;
 var MAXENTRYBYTES = 6 * 1024 * 1024;
 
-// Dedicated store mailbox (independent from main MAILBOX)
-var STOREMAILBOX = [];
-
-// ------------------------------------------------------------------
-// Storage helpers
-// ------------------------------------------------------------------
-
 function GETSTORAGE() {
   try {
     var STORAGE = typeof localStorage !== 'undefined' ? localStorage :
       (typeof globalThis !== 'undefined' ? globalThis.localStorage : null);
-    if (STORAGE && typeof STORAGE.getItem === 'function' && typeof STORAGE.setItem === 'function') {
-      return STORAGE;
-    }
+    if (STORAGE && typeof STORAGE.getItem === 'function' && typeof STORAGE.setItem === 'function') return STORAGE;
   } catch (E) {}
   return null;
 }
 
-// @proposal=P-AC-001c — ENSUREDBSLICE returns the ENV that carries the
-// `db` slice. Under the P64 fresh-env contract (witness I-3),
-// ENSUREENVSLICE returns the ENV, not the slice. Callers must read the
-// slice via the returned ENV and publish the returned ENV.
 function ENSUREDBSLICE(ENV) {
   return ENSUREENVSLICE(ENV, 'db', function() { return { STORE: {} }; });
 }
 
-// full recursive serializer with per-case handlers and deduplication
 function SERIALIZEFORPERSISTENCE(VALUE, SEEN, REFMAP) {
   if (SEEN === undefined) SEEN = [];
   if (REFMAP === undefined) REFMAP = [];
   if (VALUE === null) return null;
   var T = typeof VALUE;
   if (T === 'string' || T === 'boolean') return VALUE;
-  if (T === 'number') {
-    return (isNaN(VALUE) || !isFinite(VALUE)) ? String(VALUE) : VALUE;
-  }
+  if (T === 'number') return (isNaN(VALUE) || !isFinite(VALUE)) ? String(VALUE) : VALUE;
   if (T === 'undefined') return { TYPEMARKER: 'undefined' };
   if (T === 'function') return { TYPEMARKER: 'function', SOURCE: VALUE.toString() };
-  if (typeof HTMLElement !== 'undefined' && VALUE instanceof HTMLElement) {
-    return { TYPEMARKER: 'dom', TAG: VALUE.tagName, ID: VALUE.id || null };
-  }
-  if (typeof Node !== 'undefined' && VALUE instanceof Node) {
-    return { TYPEMARKER: 'node', NODENAME: VALUE.nodeName };
-  }
-  if (typeof EventTarget !== 'undefined' && VALUE instanceof EventTarget) {
-    return { TYPEMARKER: 'eventtarget' };
-  }
+  if (typeof HTMLElement !== 'undefined' && VALUE instanceof HTMLElement) return { TYPEMARKER: 'dom', TAG: VALUE.tagName, ID: VALUE.id || null };
+  if (typeof Node !== 'undefined' && VALUE instanceof Node) return { TYPEMARKER: 'node', NODENAME: VALUE.nodeName };
+  if (typeof EventTarget !== 'undefined' && VALUE instanceof EventTarget) return { TYPEMARKER: 'eventtarget' };
   if (VALUE instanceof Date) return { TYPEMARKER: 'date', ISO: VALUE.toISOString() };
-  if (Object.prototype.toString.call(VALUE) === '[object RegExp]') {
-    return { TYPEMARKER: 'regexp', SOURCE: VALUE.source, FLAGS: VALUE.flags || '' };
-  }
-  if (VALUE instanceof Error) {
-    return { TYPEMARKER: 'error', NAME: VALUE.name, MESSAGE: VALUE.message, STACK: VALUE.stack };
-  }
+  if (Object.prototype.toString.call(VALUE) === '[object RegExp]') return { TYPEMARKER: 'regexp', SOURCE: VALUE.source, FLAGS: VALUE.flags || '' };
+  if (VALUE instanceof Error) return { TYPEMARKER: 'error', NAME: VALUE.name, MESSAGE: VALUE.message, STACK: VALUE.stack };
   if (typeof Map !== 'undefined' && VALUE instanceof Map) {
     var MAPOBJ = { TYPEMARKER: 'map', ENTRIES: [] };
-    VALUE.forEach(function(VAL, KEY) {
-      MAPOBJ.ENTRIES.push([SERIALIZEFORPERSISTENCE(KEY, SEEN, REFMAP), SERIALIZEFORPERSISTENCE(VAL, SEEN, REFMAP)]);
-    });
+    VALUE.forEach(function(VAL, KEY) { MAPOBJ.ENTRIES.push([SERIALIZEFORPERSISTENCE(KEY, SEEN, REFMAP), SERIALIZEFORPERSISTENCE(VAL, SEEN, REFMAP)]); });
     return MAPOBJ;
   }
   if (typeof Set !== 'undefined' && VALUE instanceof Set) {
@@ -78,13 +50,10 @@ function SERIALIZEFORPERSISTENCE(VALUE, SEEN, REFMAP) {
     REFMAP.push(VALUE);
     SEEN.push(VALUE);
     var RESULT;
-    if (Array.isArray(VALUE)) {
-      RESULT = VALUE.map(function(ITEM) { return SERIALIZEFORPERSISTENCE(ITEM, SEEN, REFMAP); });
-    } else {
+    if (Array.isArray(VALUE)) RESULT = VALUE.map(function(ITEM) { return SERIALIZEFORPERSISTENCE(ITEM, SEEN, REFMAP); });
+    else {
       RESULT = {};
-      Object.keys(VALUE).forEach(function(KEY) {
-        RESULT[KEY] = SERIALIZEFORPERSISTENCE(VALUE[KEY], SEEN, REFMAP);
-      });
+      Object.keys(VALUE).forEach(function(KEY) { RESULT[KEY] = SERIALIZEFORPERSISTENCE(VALUE[KEY], SEEN, REFMAP); });
     }
     SEEN.pop();
     return RESULT;
@@ -92,15 +61,9 @@ function SERIALIZEFORPERSISTENCE(VALUE, SEEN, REFMAP) {
   return VALUE;
 }
 
-// @proposal=P21 — single attempt. On failure, log once and return false.
 function PERSISTATTEMPT(STORE, ROOT, STORAGE) {
-  try {
-    STORAGE.setItem(ROOTKEY, JSON.stringify(SERIALIZEFORPERSISTENCE(ROOT)));
-    return true;
-  } catch (ERR) {
-    logwarn(DBSTATE, '[DBACTOR]', 'PERSIST FAILED (quota or serialization):', ERR && ERR.message ? ERR.message : String(ERR));
-    return false;
-  }
+  try { STORAGE.setItem(ROOTKEY, JSON.stringify(SERIALIZEFORPERSISTENCE(ROOT))); return true; }
+  catch (ERR) { logwarn(DBSTATE, '[DBACTOR]', 'PERSIST FAILED:', ERR && ERR.message ? ERR.message : String(ERR)); return false; }
 }
 
 function PERSIST(STORE) {
@@ -112,12 +75,7 @@ function PERSIST(STORE) {
 
 // ==================== DNA FUNCTION SERIALIZATION ====================
 
-function DNAREPLACER(KEY, VALUE) {
-  if (typeof VALUE === 'function') {
-    return { SERIALIZEDFUNCTION: true, SOURCE: VALUE.toString() };
-  }
-  return VALUE;
-}
+function DNAREPLACER(KEY, VALUE) { if (typeof VALUE === 'function') return { SERIALIZEDFUNCTION: true, SOURCE: VALUE.toString() }; return VALUE; }
 
 function DNAREVIVER(KEY, VALUE) {
   if (VALUE && typeof VALUE === 'object' && VALUE.SERIALIZEDFUNCTION === true) {
@@ -125,16 +83,10 @@ function DNAREVIVER(KEY, VALUE) {
       if (VALUE.DEPS) {
         var DEPS = VALUE.DEPS;
         var REVIVED = new Function('return (' + VALUE.SOURCE + ')')();
-        return function() {
-          var ARGS = Array.prototype.slice.call(arguments);
-          return REVIVED.apply(null, ARGS.concat([DEPS]));
-        };
+        return function() { var ARGS = Array.prototype.slice.call(arguments); return REVIVED.apply(null, ARGS.concat([DEPS])); };
       }
       return new Function('return (' + VALUE.SOURCE + ')')();
-    } catch (ERR) {
-      logwarn(DBSTATE, '[DBACTOR]', '[DNA] failed to revive function using new Function:', ERR);
-      return function() { throw new Error('revived function failed'); };
-    }
+    } catch (ERR) { return function() { throw new Error('revived function failed'); }; }
   }
   return VALUE;
 }
@@ -176,17 +128,10 @@ function CONSOLIDATEGRAPH(NODE) {
     if (Array.isArray(NODE)) return NODE.map(CONSOLIDATEGRAPH);
     if (NODE.BRIEFCASE && typeof NODE.BRIEFCASE === 'object') {
       var BRIEFCASE = NODE.BRIEFCASE;
-      Object.keys(BRIEFCASE).forEach(function(KEY) {
-        var REFID = STOREPAIR(KEY, BRIEFCASE[KEY]);
-        BRIEFCASE[KEY] = { PAIRREFERENCE: REFID };
-      });
+      Object.keys(BRIEFCASE).forEach(function(KEY) { var REFID = STOREPAIR(KEY, BRIEFCASE[KEY]); BRIEFCASE[KEY] = { PAIRREFERENCE: REFID }; });
     }
     if (NODE.ELEMENT === 'BLOCK') {
-      Object.keys(NODE).forEach(function(KEY) {
-        if (KEY === 'ELEMENTS') return;
-        var REFID = STOREPAIR(KEY, NODE[KEY]);
-        NODE[KEY] = { PAIRREFERENCE: REFID };
-      });
+      Object.keys(NODE).forEach(function(KEY) { if (KEY === 'ELEMENTS') return; var REFID = STOREPAIR(KEY, NODE[KEY]); NODE[KEY] = { PAIRREFERENCE: REFID }; });
       return NODE;
     }
     Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = CONSOLIDATEGRAPH(NODE[KEY]); });
@@ -199,10 +144,7 @@ function RESTOREGRAPH(NODE) {
   if (NODE === null || NODE === undefined) return NODE;
   if (typeof NODE === 'object') {
     var REFID = NODE.PAIRREFERENCE;
-    if (REFID) {
-      var ENTRY = PAIRSTORE['REF:' + REFID];
-      return ENTRY ? ENTRY.VALUE : undefined;
-    }
+    if (REFID) { var ENTRY = PAIRSTORE['REF:' + REFID]; return ENTRY ? ENTRY.VALUE : undefined; }
     if (Array.isArray(NODE)) return NODE.map(RESTOREGRAPH);
     Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = RESTOREGRAPH(NODE[KEY]); });
     return NODE;
@@ -220,19 +162,16 @@ function DESERIALIZEPAIRSTORE(JSONSTR) {
   if (!JSONSTR) return;
   var PARSED;
   try { PARSED = JSON.parse(JSONSTR, DNAREVIVER); }
-  catch (ERR) { logwarn(DBSTATE, '[DBACTOR]', 'DESERIALIZEPAIRSTORE FAILED:', ERR); return; }
+  catch (ERR) { return; }
   Object.keys(PAIRSTORE).forEach(function(KEY) { delete PAIRSTORE[KEY]; });
   Object.keys(PARSED || {}).forEach(function(KEY) { PAIRSTORE[KEY] = PARSED[KEY]; });
 }
-
-// ==================== POST-SERIALIZATION OPTIMIZATION ====================
 
 function MEASURELENGTH(OBJ) { return JSON.stringify(OBJ).length; }
 
 function OPTIMIZESERIALIZEDDNA(JSONSTRING) {
   Object.keys(PAIRSTORE).forEach(function(KEY) { delete PAIRSTORE[KEY]; });
   PAIRCOUNTER = 0;
-  logdebug(DBSTATE, '[DBACTOR]', 'OPTIMIZESERIALIZEDDNA START, INPUT LENGTH:', JSONSTRING.length);
   var OBJ = JSON.parse(JSONSTRING);
 
   var PASSOBJECTPAIRDEDUP = function(NODE) {
@@ -244,12 +183,7 @@ function OPTIMIZESERIALIZEDDNA(JSONSTRING) {
           if (KEY === 'ELEMENTS') return;
           var IDENTITY = PAIRIDENTITY(KEY, NODE[KEY]);
           var REFID = PAIRSTORE[IDENTITY];
-          if (!REFID) {
-            PAIRCOUNTER += 1;
-            REFID = 'PAIR' + PAIRCOUNTER;
-            PAIRSTORE[IDENTITY] = REFID;
-            PAIRSTORE['REF:' + REFID] = { KEY: KEY, VALUE: NODE[KEY] };
-          }
+          if (!REFID) { PAIRCOUNTER += 1; REFID = 'PAIR' + PAIRCOUNTER; PAIRSTORE[IDENTITY] = REFID; PAIRSTORE['REF:' + REFID] = { KEY: KEY, VALUE: NODE[KEY] }; }
           NODE[KEY] = { PAIRREFERENCE: REFID };
         });
         return NODE;
@@ -258,12 +192,7 @@ function OPTIMIZESERIALIZEDDNA(JSONSTRING) {
         Object.keys(NODE.BRIEFCASE).forEach(function(KEY) {
           var IDENTITY = PAIRIDENTITY(KEY, NODE.BRIEFCASE[KEY]);
           var REFID = PAIRSTORE[IDENTITY];
-          if (!REFID) {
-            PAIRCOUNTER += 1;
-            REFID = 'PAIR' + PAIRCOUNTER;
-            PAIRSTORE[IDENTITY] = REFID;
-            PAIRSTORE['REF:' + REFID] = { KEY: KEY, VALUE: NODE.BRIEFCASE[KEY] };
-          }
+          if (!REFID) { PAIRCOUNTER += 1; REFID = 'PAIR' + PAIRCOUNTER; PAIRSTORE[IDENTITY] = REFID; PAIRSTORE['REF:' + REFID] = { KEY: KEY, VALUE: NODE.BRIEFCASE[KEY] }; }
           NODE.BRIEFCASE[KEY] = { PAIRREFERENCE: REFID };
         });
       }
@@ -286,116 +215,51 @@ function OPTIMIZESERIALIZEDDNA(JSONSTRING) {
   function OPTIMIZECYCLE(CURRENT) {
     var BEFORE = MEASURELENGTH(CURRENT);
     var CANDIDATE = PASSINNERDEDUP(PASSOBJECTPAIRDEDUP(JSON.parse(JSON.stringify(CURRENT))));
-    if (MEASURELENGTH(CANDIDATE) < BEFORE) {
-      return OPTIMIZECYCLE(CANDIDATE);
-    }
+    if (MEASURELENGTH(CANDIDATE) < BEFORE) return OPTIMIZECYCLE(CANDIDATE);
     return CURRENT;
   }
 
   var OPTIMIZED = OPTIMIZECYCLE(OBJ);
   OPTIMIZED.FRAMEWORKPAIRSTORE = SERIALIZEPAIRSTORE();
-  var FINALRESULT = JSON.stringify(OPTIMIZED);
-  logdebug(DBSTATE, '[DBACTOR]', 'OPTIMIZESERIALIZEDDNA COMPLETED, OUTPUT LENGTH:', FINALRESULT.length);
-  return FINALRESULT;
+  return JSON.stringify(OPTIMIZED);
 }
 
 function DEOPTIMIZESERIALIZEDDNA(JSONSTRING) {
-  logdebug(DBSTATE, '[DBACTOR]', 'DEOPTIMIZESERIALIZEDDNA START, INPUT LENGTH:', JSONSTRING.length);
   var OBJ = JSON.parse(JSONSTRING);
   var STOREDATA = OBJ.FRAMEWORKPAIRSTORE;
-  if (STOREDATA) {
-    DESERIALIZEPAIRSTORE(STOREDATA);
-    delete OBJ.FRAMEWORKPAIRSTORE;
-  }
+  if (STOREDATA) { DESERIALIZEPAIRSTORE(STOREDATA); delete OBJ.FRAMEWORKPAIRSTORE; }
   var RESOLVENODE = function(NODE) {
     if (Array.isArray(NODE)) return NODE.map(RESOLVENODE);
     if (NODE && typeof NODE === 'object') {
       var REFID = NODE.PAIRREFERENCE;
-      if (REFID) {
-        var ENTRY = PAIRSTORE['REF:' + REFID];
-        return ENTRY ? ENTRY.VALUE : undefined;
-      }
+      if (REFID) { var ENTRY = PAIRSTORE['REF:' + REFID]; return ENTRY ? ENTRY.VALUE : undefined; }
       Object.keys(NODE).forEach(function(KEY) { NODE[KEY] = RESOLVENODE(NODE[KEY]); });
       return NODE;
     }
     return NODE;
   };
-  var FINALRESULT = JSON.stringify(RESOLVENODE(OBJ));
-  logdebug(DBSTATE, '[DBACTOR]', 'DEOPTIMIZESERIALIZEDDNA COMPLETED, OUTPUT LENGTH:', FINALRESULT.length);
-  return FINALRESULT;
-}
-
-// ==================== STORE MAILBOX & WAIT ====================
-
-function STORESEND(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER) {
-  var ENVELOPE = {
-    ID: 'STORE' + Date.now() + Math.random().toString(36).slice(2, 8),
-    RECIPIENT: RECIPIENT,
-    TYPE: TYPE,
-    PAYLOAD: PAYLOAD,
-    TAG: TAG,
-    SENDER: SENDER,
-    READ: 'UNREAD',
-    TIMESTAMP: Date.now()
-  };
-  STOREMAILBOX.push(ENVELOPE);
-  return ENVELOPE;
-}
-
-function STOREWAIT(FILTER, TIMEOUT) {
-  if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('storewaittimeout');
-  return new Promise(function(RESOLVE, REJECT) {
-    var START = Date.now();
-    function POLL() {
-      var MATCHES = STOREMAILBOX.filter(function(ITEM) {
-        if (FILTER.TAG !== undefined && ITEM.TAG !== FILTER.TAG) return false;
-        if (FILTER.SENDER !== undefined && ITEM.SENDER !== FILTER.SENDER) return false;
-        if (FILTER.RECIPIENT !== undefined && ITEM.RECIPIENT !== FILTER.RECIPIENT) return false;
-        if (FILTER.TYPE !== undefined && ITEM.TYPE !== FILTER.TYPE) return false;
-        if (FILTER.READ !== undefined && ITEM.READ !== FILTER.READ) return false;
-        if (ITEM.READ === 'READ') return false;
-        return true;
-      });
-      if (MATCHES.length > 0) {
-        var ITEM = MATCHES[0];
-        ITEM.READ = 'READ';
-        RESOLVE(ITEM);
-        return;
-      }
-      if (Date.now() - START > TIMEOUT) {
-        REJECT(new Error('STORE wait timeout for filter: ' + JSON.stringify(FILTER)));
-        return;
-      }
-      setTimeout(POLL, 50);
-    }
-    POLL();
-  });
+  return JSON.stringify(RESOLVENODE(OBJ));
 }
 
 // ============================================================
-// §2 — Message handlers (P64)
+// §2 — Message handlers (P-ACTOR-FLOW-002)
 // ============================================================
+// Every handler returns { ENV, RESPONSE } or ENV. No SENDRESPONSE, no
+// SENDINSTRUCTION(UPDATE), no callback-side mutation.
+// Response channel = framework mailbox, not the removed store mailbox.
 
-// @proposal=P-AC-001c — under the fresh-env contract, ENSUREENVSLICE
-// returns the ENV (fresh when the slice is absent); the handler reads
-// the slice via the returned ENV and returns the returned ENV so the
-// dispatcher publishes it.
 function DBBEHAVIORSTORE(ENV, MESSAGE) {
   logdebug(ENV, '[DBACTOR]', 'ACTION STORE KEY:', MESSAGE.KEY);
   var NEXTENV = ENSUREDBSLICE(ENV);
-  var DBSLICE = NEXTENV.db;
-  var STORE = DBSLICE.STORE;
+  var STORE = NEXTENV.db.STORE;
 
   try {
     var SERIALIZED = JSON.stringify(SERIALIZEFORPERSISTENCE(MESSAGE.VALUE));
     if (SERIALIZED.length > MAXENTRYBYTES) {
-      logwarn(ENV, '[DBACTOR]', 'VALUE TOO LARGE FOR KEY:', MESSAGE.KEY, 'BYTES:', SERIALIZED.length);
-      STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'value too large' }, MESSAGE.TAG, 'DBACTOR');
-      return NEXTENV;
+      return { ENV: NEXTENV, RESPONSE: { ERROR: 'value too large' } };
     }
   } catch (E) {
-    STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: E.message || String(E) }, MESSAGE.TAG, 'DBACTOR');
-    return NEXTENV;
+    return { ENV: NEXTENV, RESPONSE: { ERROR: E.message || String(E) } };
   }
   var KEYS = Object.keys(STORE);
   if (KEYS.length >= MAXKEYS && !STORE[MESSAGE.KEY]) {
@@ -404,53 +268,37 @@ function DBBEHAVIORSTORE(ENV, MESSAGE) {
   }
   STORE[MESSAGE.KEY] = MESSAGE.VALUE;
   var PERSISTED = PERSIST(STORE);
-  if (PERSISTED) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
-  else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
-  return NEXTENV;
+  return { ENV: NEXTENV, RESPONSE: PERSISTED ? { RESULT: true } : { ERROR: 'persist failed' } };
 }
 
-// @proposal=P-AC-001c — see note on DBBEHAVIORSTORE.
 function DBBEHAVIORRESTORE(ENV, MESSAGE) {
   var NEXTENV = ENSUREDBSLICE(ENV);
-  var DBSLICE = NEXTENV.db;
-  var STORE = DBSLICE.STORE;
-  logdebug(ENV, '[DBACTOR]', 'ACTION RESTORE KEY:', MESSAGE.KEY, 'EXISTS:', STORE[MESSAGE.KEY] !== undefined);
+  var STORE = NEXTENV.db.STORE;
   var RESTOREDVALUE = STORE[MESSAGE.KEY] !== undefined ? STORE[MESSAGE.KEY] : null;
-  STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: RESTOREDVALUE }, MESSAGE.TAG, 'DBACTOR');
-  return NEXTENV;
+  return { ENV: NEXTENV, RESPONSE: { RESULT: RESTOREDVALUE } };
 }
 
-// @proposal=P-AC-001c — see note on DBBEHAVIORSTORE.
 function DBBEHAVIORLIST(ENV, MESSAGE) {
   var NEXTENV = ENSUREDBSLICE(ENV);
-  var DBSLICE = NEXTENV.db;
-  var STORE = DBSLICE.STORE;
-  logdebug(ENV, '[DBACTOR]', 'ACTION LIST COUNT:', Object.keys(STORE).length);
-  STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: Object.keys(STORE) }, MESSAGE.TAG, 'DBACTOR');
-  return NEXTENV;
+  var STORE = NEXTENV.db.STORE;
+  return { ENV: NEXTENV, RESPONSE: { RESULT: Object.keys(STORE) } };
 }
 
-// @proposal=P-AC-001c — see note on DBBEHAVIORSTORE.
 function DBBEHAVIORDELETE(ENV, MESSAGE) {
-  logdebug(ENV, '[DBACTOR]', 'ACTION DELETE KEY:', MESSAGE.KEY);
   var NEXTENV = ENSUREDBSLICE(ENV);
-  var DBSLICE = NEXTENV.db;
-  var STORE = DBSLICE.STORE;
+  var STORE = NEXTENV.db.STORE;
   delete STORE[MESSAGE.KEY];
   var PERSISTEDDEL = PERSIST(STORE);
-  if (PERSISTEDDEL) STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { RESULT: true }, MESSAGE.TAG, 'DBACTOR');
-  else STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: 'persist failed' }, MESSAGE.TAG, 'DBACTOR');
-  return NEXTENV;
+  return { ENV: NEXTENV, RESPONSE: PERSISTEDDEL ? { RESULT: true } : { ERROR: 'persist failed' } };
 }
 
 function DBBEHAVIORDEFAULT(ENV, MESSAGE) {
   logwarn(ENV, '[DBACTOR]', 'UNKNOWN ACTION:', MESSAGE.TYPE);
-  STORESEND(MESSAGE.SENDER, MESSAGETYPES.DBRESULT, { ERROR: '[DBACTOR] unknown message type' }, MESSAGE.TAG, 'DBACTOR');
-  return ENV;
+  return { ENV: ENV, RESPONSE: { ERROR: '[DBACTOR] unknown message type' } };
 }
 
 // ============================================================
-// §3 — Dispatcher surface (P64)
+// §3 — Dispatcher surface
 // ============================================================
 
 var DBBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('DBACTOR', [
@@ -461,69 +309,55 @@ var DBBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('DBACTOR', [
   DBBEHAVIORDEFAULT
 ]);
 
-// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
-// pre-adoption per-message log line is preserved at the behaviour level.
 function DBBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[DBACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
   return DBBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
 }
 
-// @proposal=P64 — publish the surface and the aggregate; self-register.
 REGISTERACTORSURFACE('DBACTOR', DBBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('DBACTOR', DBBEHAVIOR);
 ACTORCONSUMERS['DBACTOR'] = DBBEHAVIOR;
 
 // ============================================================
-// §4 — Direct DB API (unchanged)
+// §4 — Direct DB API (unified with framework mailbox)
 // ============================================================
 
-// @proposal=P-AC-001c — route through DISPATCHTOACTOR so the fresh ENV
-// returned by the behaviour is published back to the actor state.
 function DBSTORE(KEY, VALUE) {
   var TAG = GENERATETAG();
-  STORESEND('DBACTOR', MESSAGETYPES.STORE, { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR');
-  var MSG = { TYPE: MESSAGETYPES.STORE, KEY: KEY, VALUE: VALUE, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
+  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.STORE, { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
+    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }
 
-// @proposal=P-AC-001c — see note on DBSTORE.
 function DBRESTORE(KEY) {
   var TAG = GENERATETAG();
-  STORESEND('DBACTOR', MESSAGETYPES.RESTORE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
-  var MSG = { TYPE: MESSAGETYPES.RESTORE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
+  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.RESTORE, { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
+    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }
 
-// @proposal=P-AC-001c — see note on DBSTORE.
 function DBLIST() {
   var TAG = GENERATETAG();
-  STORESEND('DBACTOR', MESSAGETYPES.LIST, {}, TAG, 'WORLDMAPACTOR');
-  var MSG = { TYPE: MESSAGETYPES.LIST, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
+  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.LIST, {}, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
+    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }
 
-// @proposal=P-AC-001c — see note on DBSTORE.
 function DBDELETE(KEY) {
   var TAG = GENERATETAG();
-  STORESEND('DBACTOR', MESSAGETYPES.DELETE, { KEY: KEY }, TAG, 'WORLDMAPACTOR');
-  var MSG = { TYPE: MESSAGETYPES.DELETE, KEY: KEY, SENDER: 'WORLDMAPACTOR', TAG: TAG };
-  DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MSG);
-  return STOREWAIT({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'));
+  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.DELETE, { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
+    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }
 
 // ============================================================
-// §5 — Actor handle surface (P4, unchanged)
+// §5 — Actor handle surface (unchanged)
 // ============================================================
 
 var DBACTORHANDLE = null;
 
 function DBACTORHANDLEINSTANCE() {
-  if (!DBACTORHANDLE) {
-    DBACTORHANDLE = CREATEACTORHANDLE('DBACTOR');
-  }
+  if (!DBACTORHANDLE) DBACTORHANDLE = CREATEACTORHANDLE('DBACTOR');
   return DBACTORHANDLE;
 }
 
@@ -532,25 +366,17 @@ function EXPECT(ID, INTERVAL, TIMEOUT) { return DBACTORHANDLEINSTANCE().EXPECT(I
 function GETACTIONRESULT(ID) { return DBACTORHANDLEINSTANCE().GETACTIONRESULT(ID); }
 
 // ============================================================
-// §6 — Start function (P64-adapted DISPATCH)
+// §6 — Start function
 // ============================================================
 
-// @proposal=P-AC-001c — DISPATCH routes through the framework primitive
-// so the fresh ENV is published.
 function STARTDBACTOR(OPTIONS) {
   if (OPTIONS !== undefined) {
-    var LVL = typeof OPTIONS === 'number' ? OPTIONS :
-      (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
-    if (LVL !== undefined) {
-      var ENV = GETACTORSTATE('WORLDMAPACTOR');
-      if (ENV) ENV.VERBOSITY = LVL;
-    }
+    var LVL = typeof OPTIONS === 'number' ? OPTIONS : (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
+    if (LVL !== undefined) { var ENV = GETACTORSTATE('WORLDMAPACTOR'); if (ENV) ENV.VERBOSITY = LVL; }
   }
   return {
     GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    DISPATCH: function(MESSAGE) { return DISPATCHTOACTOR('WORLDMAPACTOR', DBBEHAVIOR, MESSAGE); },
-    SUBMIT: SUBMIT,
-    EXPECT: EXPECT,
-    GETACTIONRESULT: GETACTIONRESULT
+    DISPATCH: function(MESSAGE) { return DISPATCHTOACTOR('DBACTOR', DBBEHAVIOR, MESSAGE); },
+    SUBMIT: SUBMIT, EXPECT: EXPECT, GETACTIONRESULT: GETACTIONRESULT
   };
 }

@@ -67,11 +67,6 @@ REGISTERBROADCASTTYPE(MESSAGETYPES.BLOCKFAILED);
 // ============================================================
 // Dynamic mailbox-exempt registry (P67r2)
 // ============================================================
-//
-// MAILBOXEXEMPT holds the set of recipient names whose incoming SEND
-// messages are not admitted to MAILBOX. The value is frozen; the
-// reference is replaced on registration. Readers call
-// GETMAILBOXEXEMPT() and consult the returned frozen map.
 
 var MAILBOXEXEMPTREF = { current: Object.freeze({}) };
 
@@ -263,15 +258,13 @@ function REJECTEXPECTATION(TAG, ERROR) {
 // §2 — Mail handlers (P64)
 // ============================================================
 //
-// SEND and ACK become typed handlers registered with the surface at
-// load time. The routing logic they carry is unchanged from the
-// pre-adoption switch; only their packaging changes.
-//
-// @proposal=P-AC-001c — under the fresh-env contract (I-3),
-// ENSUREENVSLICE returns the ENV (fresh when the slice is absent).
-// Each handler rebinds to NEXTENV, reads the `mail` slice via
-// NEXTENV.mail, and returns NEXTENV so the dispatcher publishes it.
+// SEND and ACK are typed handlers registered with the surface at load
+// time. Under CYCLE-05, MAILSENDHANDLER handles ONLY the mailbox path.
+// The direct-to-actor path is decided by INFERDISPATCHSTRATEGY and
+// executed by SENDINSTRUCTION, not by the handler.
 
+// @proposal=P-INFER-001 / @proposal=P-ACTOR-FLOW-002 — mailbox-only.
+// Envelope storage only; no target dispatch; no callback-side response.
 function MAILSENDHANDLER(ENV, MESSAGE) {
   logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
 
@@ -280,7 +273,7 @@ function MAILSENDHANDLER(ENV, MESSAGE) {
 
   var RECIPIENT = MESSAGE.RECIPIENT;
   if (!RECIPIENT || typeof RECIPIENT !== 'string') {
-    return NEXTENV;
+    return { ENV: NEXTENV };
   }
   if (!MAILSLICE.QUEUES[RECIPIENT]) MAILSLICE.QUEUES[RECIPIENT] = [];
   var FLATMESSAGE = MESSAGE.MESSAGE;
@@ -302,49 +295,14 @@ function MAILSENDHANDLER(ENV, MESSAGE) {
     PAYLOAD: FLATMESSAGE
   };
 
-  // @proposal=P67r2 — the exempt set is a runtime registry. Boot
-  // registration includes 'BROADCAST'; runtime registration extends it.
+  // @proposal=P67r2 — the exempt set is a runtime registry.
   if (GETMAILBOXEXEMPT()[RECIPIENT] !== true) {
     ADDENVELOPETOMAILBOX(ENVELOPE);
   }
 
-  var CONSUMERKEY1 = RECIPIENT + ':' + FLATTYPE;
-  var CONSUMERKEY2 = RECIPIENT + ':' + String(FLATTYPE).toLowerCase();
-  var CONSUMERKEY3 = RECIPIENT + ':' + String(FLATTYPE).toUpperCase();
-  // @proposal=P64 — the actor-level fallback routes any type addressed
-  // to a known actor to that actor's aggregate behaviour. Boot-time
-  // per-type registrations (via registerconsumers.js) take precedence;
-  // the fallback is the extension point.
-  var CONSUMER =
-    ACTORCONSUMERS[CONSUMERKEY1] ||
-    ACTORCONSUMERS[CONSUMERKEY2] ||
-    ACTORCONSUMERS[CONSUMERKEY3] ||
-    ACTORCONSUMERS[RECIPIENT];
-  if (CONSUMER) {
-    logdebug(ENV, '[MAILACTOR]', 'DISPATCHING TO ACTOR:', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG);
-    DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, function(stagedmessage) {
-      var stagedspec = stagedmessage && stagedmessage.RESPONSESPEC;
-      if (stagedspec && stagedmessage.TAG) {
-        CREATEEXPECTATION(
-          stagedmessage.TAG,
-          RECIPIENT,
-          stagedmessage.SENDER || 'system',
-          stagedmessage.TYPE,
-          stagedmessage.CONTEXT || null,
-          stagedspec
-        );
-      }
-    });
-    ENVELOPE.READ = 'READ';
-  } else {
-    if (RECIPIENT === 'BLOCKCOMPILER') {
-      logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1, '(BLOCKCOMPILER polls mailbox directly)');
-    } else {
-      logdebug(ENV, '[MAILACTOR]', 'NO CONSUMER REGISTERED FOR:', CONSUMERKEY1);
-    }
-  }
+  logdebug(ENV, '[MAILACTOR]', 'ENVELOPE STORED FOR POLLING RECIPIENT:', RECIPIENT, 'TAG=', FLATTAG);
 
-  return NEXTENV;
+  return { ENV: NEXTENV };
 }
 
 function MAILACKHANDLER(ENV, MESSAGE) {
@@ -361,7 +319,7 @@ function MAILACKHANDLER(ENV, MESSAGE) {
       M.UNREAD = false;
     }
   });
-  return NEXTENV;
+  return { ENV: NEXTENV };
 }
 
 var MAILBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('MAILACTOR', [
@@ -369,15 +327,12 @@ var MAILBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('MAILACTOR', [
   MAKETYPEDDISPATCH(MESSAGETYPES.ACK, MAILACKHANDLER)
 ]);
 
-// @proposal=P64 — the actor's behaviour is the surface's dispatch. The
-// switch is gone; the surface is the case list. Runtime registration
-// via REGISTERACTORHANDLER extends the list.
+// @proposal=P64 — the actor's behaviour is the surface's dispatch.
 function MAILBEHAVIOR(ENV, MESSAGE) {
   return MAILBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
 }
 
-// @proposal=P64 — publish the surface and the aggregate, and self-register
-// at the actor level so the mail routing fallback finds this actor.
+// @proposal=P64 — publish the surface and the aggregate; self-register.
 REGISTERACTORSURFACE('MAILACTOR', MAILBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('MAILACTOR', MAILBEHAVIOR);
 ACTORCONSUMERS['MAILACTOR'] = MAILBEHAVIOR;
@@ -635,6 +590,10 @@ function GENERATETAG() {
   return 'TAG' + Date.now() + Math.random().toString(36).slice(2, 10);
 }
 
+// @proposal=P-INFER-001 — routing is decided by INFERDISPATCHSTRATEGY.
+// @proposal=P-ACTOR-FLOW-002 — the mailactor's dispatch is only taken on
+// the mailbox route. The direct route dispatches straight into the
+// recipient's actor; the broadcast route fans out locally.
 function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CONTEXT) {
   if (TAG === undefined) TAG = GENERATETAG();
   if (SENDER === undefined) SENDER = 'system';
@@ -648,12 +607,8 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
       }
     });
   }
-  if (RESPONSESPEC) {
-    FLATMESSAGE.RESPONSESPEC = RESPONSESPEC;
-  }
-  if (CONTEXT) {
-    FLATMESSAGE.CONTEXT = CONTEXT;
-  }
+  if (RESPONSESPEC) FLATMESSAGE.RESPONSESPEC = RESPONSESPEC;
+  if (CONTEXT) FLATMESSAGE.CONTEXT = CONTEXT;
 
   if (MESSAGEREGISTRY && typeof MESSAGEREGISTRY.getinterfaces === 'function') {
     var GETIFACES = MESSAGEREGISTRY.getinterfaces;
@@ -667,18 +622,56 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     }
   }
 
-  DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, {
+  var STRATEGY = INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, FLATMESSAGE, SENDER, TAG, RESPONSESPEC);
+
+  if (STRATEGY.suppress === true) {
+    return Promise.resolve(TAG);
+  }
+
+  if (STRATEGY.batch === true) {
+    ENQUEUEBATCH(RECIPIENT, TYPE, FLATMESSAGE, TAG, SENDER, RESPONSESPEC);
+    return Promise.resolve(TAG);
+  }
+
+  if (STRATEGY.route === 'broadcast') {
+    if (GETBROADCASTTYPES()[TYPE] === true) {
+      DISPATCHBROADCAST(FLATMESSAGE);
+    }
+    return Promise.resolve(TAG);
+  }
+
+  if (STRATEGY.route === 'direct') {
+    var CONSUMER = ACTORCONSUMERS[RECIPIENT];
+    if (typeof CONSUMER !== 'function') {
+      // Race: registered then removed. Fall through to mailbox.
+      return Promise.resolve(DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, {
+        TYPE: MESSAGETYPES.SEND,
+        RECIPIENT: RECIPIENT,
+        MESSAGE: FLATMESSAGE
+      }));
+    }
+    var INSTALLER = function(stagedmessage) {
+      var stagedspec = stagedmessage && stagedmessage.RESPONSESPEC;
+      if (stagedspec && stagedmessage.TAG) {
+        CREATEEXPECTATION(
+          stagedmessage.TAG,
+          RECIPIENT,
+          stagedmessage.SENDER || 'system',
+          stagedmessage.TYPE,
+          stagedmessage.CONTEXT || null,
+          stagedspec
+        );
+      }
+    };
+    return Promise.resolve(DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, INSTALLER));
+  }
+
+  // mailbox
+  return Promise.resolve(DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, {
     TYPE: MESSAGETYPES.SEND,
     RECIPIENT: RECIPIENT,
     MESSAGE: FLATMESSAGE
-  });
-
-  // @proposal=P66r2 — the broadcast fan-out consults the runtime
-  // registry. Boot registration covers BLOCKEXECUTED and BLOCKFAILED;
-  // runtime registration extends the set.
-  if (GETBROADCASTTYPES()[TYPE] === true) {
-    DISPATCHBROADCAST(FLATMESSAGE);
-  }
+  }));
 }
 
 function SENDRESPONSE(RECIPIENT, TAG, RESULT, SENDER, RESPONSETYPE) {
