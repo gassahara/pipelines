@@ -1542,6 +1542,17 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
   return runnext();
 }
 
+// @proposal=P-BLOCKCOMPILER-EXCHANGE-CONTRACT-002 — the contract of
+// mailboxmessage at this site. `exchange` selects the channel from the
+// `responsetype` argument: for a registered response type (any value of
+// MAILBOXFILTERTYPES, including MESSAGETYPES.TASKRESULT) it takes the
+// promise path and delivers the actor handler's RESPONSE directly. The
+// delivered shape for EXECUTEELEMENT is the flat settlement payload
+//   { TASKID, PIPELINEID, ELEMENTID, RESULT }
+// where RESULT is the block's own return value. For an unregistered
+// responsetype it takes the mailbox path and delivers a mailbox envelope
+// whose PAYLOAD.RESULT carries the same settlement payload. The unwrap
+// below reads both shapes; it discriminates on the presence of PAYLOAD.
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
@@ -1574,9 +1585,15 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
 
     return exchange('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, waitduration, MESSAGETYPES.TASKRESULT, tag)
       .then(function(mailboxmessage) {
-        var payload = mailboxmessage && mailboxmessage.PAYLOAD ? mailboxmessage.PAYLOAD : {};
-        var outerresult = payload.RESULT !== undefined ? payload.RESULT : (payload.result !== undefined ? payload.result : payload);
-        var result = outerresult.RESULT !== undefined ? outerresult.RESULT : (outerresult.result !== undefined ? outerresult.result : outerresult);
+        // @proposal=P-BLOCKCOMPILER-EXCHANGE-SHAPE-001 — dual-shape unwrap.
+        // Promise-path deliveries are flat RESPONSEPAYLOAD objects; mailbox-
+        // path deliveries are envelopes with a PAYLOAD field. The
+        // discriminator is the presence of PAYLOAD. In both shapes the
+        // block's own return value is the final RESULT.
+        var isEnvelope = (mailboxmessage && typeof mailboxmessage === 'object' && mailboxmessage.PAYLOAD && typeof mailboxmessage.PAYLOAD === 'object');
+        var carrier = isEnvelope ? mailboxmessage.PAYLOAD : (mailboxmessage || {});
+        var outer = (carrier.RESULT !== undefined) ? carrier.RESULT : ((carrier.result !== undefined) ? carrier.result : carrier);
+        var result = (outer && typeof outer === 'object' && outer.RESULT !== undefined) ? outer.RESULT : ((outer && typeof outer === 'object' && outer.result !== undefined) ? outer.result : outer);
         if (result && typeof result === 'object' && result.ERROR !== undefined) {
           var failurediagnostic = (result.ERROR && typeof result.ERROR === 'object' && result.ERROR.DIAGNOSTIC)
             ? result.ERROR.DIAGNOSTIC
