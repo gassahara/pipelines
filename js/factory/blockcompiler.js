@@ -417,9 +417,6 @@ function buildresponse(mappingobj, raw) {
   }, {});
 }
 
-// @proposal=P12 Part 1 — compilehttpblock is restored to its pre-P12
-// (post-P3) form. No loadingoverlay property is read. The api block's
-// compiled form is not coupled to any loading-indicator concern.
 function compilehttpblock(merged, id, sig, istextual, options) {
   var innerfn = function(env) {
     logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'executing http block:', id, 'type:', istextual ? 'fetch' : 'api', 'endpoint:', merged.endpoint);
@@ -459,25 +456,6 @@ function compilehttpblock(merged, id, sig, istextual, options) {
   return wrapcompiledfn(innerfn, istextual ? 'fetch' : 'api', id);
 }
 
-// @proposal=P3 / @proposal=P15 — the loader block compiler.
-//
-// P3 defined the loader's contract: async predicate, interval, timeout,
-// inputs, markup. P15 selects Reading R2 for the executor Promise
-// semantics:
-//
-//   - dispatch SHOW;
-//   - resolve the executor Promise (with {});
-//   - launch the poll as an un-awaited background chain;
-//   - the background poll evaluates the predicate at interval-spaced
-//     ticks, dispatches HIDE when the predicate is falsy or the timeout
-//     elapses;
-//   - background errors are caught locally and logged; they do not
-//     reject the (already-resolved) executor Promise.
-//
-// Under R2 the loader composes as a normal sibling in a sequential stage:
-// the orchestrator sees the executor resolve quickly, proceeds to the
-// next child (the phase's api loop), and the loader's background poll
-// continues concurrently, releasing when the phase's output exists.
 function loaderexpressionsignature(merged, id) {
   if (typeof merged.behaviour !== 'function') {
     throw new Error('[LOADER] Block "' + id + '" must declare a behaviour function (the expression)');
@@ -545,8 +523,6 @@ function compileloaderblock(merged, id, sig) {
       return sendloading('HIDE');
     }
 
-    // Background poll. Not awaited by the executor. Errors are caught
-    // by the enclosing launchbackgroundpoll wrapper.
     function pollstep() {
       if (Date.now() - starttime >= efftimeout) {
         return release();
@@ -582,8 +558,6 @@ function compileloaderblock(merged, id, sig) {
       });
     }
 
-    // @proposal=P15 — R2 semantics. Dispatch SHOW; resolve the executor
-    // Promise; launch the background poll.
     return sendloading('SHOW').then(function() {
       launchbackgroundpoll();
       return {};
@@ -994,6 +968,145 @@ function processnestedstage(childstage, pipelinename, stagepath, constants, dnac
   };
 }
 
+// @proposal=P29 — the RECOVERY stage. Its children execute sequentially.
+// On the first child failure, the stage increments the failing element's
+// retrycount key, builds a state.error summary, evaluates the predicate,
+// and branches on the outcome: 'retry' re-runs the sequence from index 0;
+// 'continue' resolves with the current env; 'abort' rejects. On the
+// completion path (all children succeeded), the predicate is also
+// evaluated (without state.error) so the pipeline can express its
+// envelope-validity policy. The capture path also dispatches the
+// corresponding CCC message to the execution actor, so manual and
+// programmatic recovery share the same transport.
+function buildrecoveryerrorstate(err, elementid, pipelinename, stagepath) {
+  var diag = (err && err.diagnostic) || {};
+  return {
+    BLOCKID: diag.BLOCKID || elementid || null,
+    ELEMENTID: diag.ELEMENTID || elementid || null,
+    PIPELINEID: diag.PIPELINEID || pipelinename || null,
+    STAGEPATH: diag.STAGEPATH || stagepath || [],
+    KIND: diag.KIND || null,
+    MESSAGE: (err && err.message) ? err.message : String(err)
+  };
+}
+
+function dispatchcccrecovery(type, pipelinename, stagepath, elementid, continuation) {
+  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+  SENDINSTRUCTION('EXECUTIONACTOR', type, {
+    PIPELINEID: pipelinename || 'UNKNOWNPIPELINE',
+    PATH: (stagepath || []).concat([elementid]),
+    ELEMENTID: elementid || 'UNKNOWNELEMENT',
+    CONTINUATION: continuation || null
+  }, null, 'BLOCKCOMPILER');
+}
+
+function runrecovery(stage, pipelinename, stagepath, env, options, runblocks) {
+  var control = stage.control || {};
+  var inputnames = control.inputs || [];
+  var predicate = control.fn;
+
+  var constants = createblockcompilerconstants();
+  var dnaconstants = creatednaserializerconstants();
+  var analyzers = createblockanalyzers(constants.blocktypes, dnaconstants);
+  var compilers = createblockcompilers(constants.blocktypes, constants.inheritedkeys, options);
+  var compilerconstants = { blocktypes: constants.blocktypes, inheritedkeys: constants.inheritedkeys, analyzers: analyzers, compilers: compilers };
+
+  function buildstate(errorState) {
+    var state = {};
+    inputnames.forEach(function(k) {
+      if (k === 'error') {
+        state.error = errorState || null;
+      } else {
+        state[k] = env[k];
+      }
+    });
+    if (inputnames.indexOf('error') === -1) {
+      state.error = errorState || null;
+    }
+    return state;
+  }
+
+  function runchilddef(childdef, index, done, fail) {
+    if (index >= (stage.elements || []).length) {
+      done();
+      return;
+    }
+    if (!childdef) { runchilddef(resolvenextelement(stage, index + 1), index + 1, done, fail); return; }
+
+    if (childdef.element === 'BLOCK' && runblocks !== true) {
+      runchilddef(resolvenextelement(stage, index + 1), index + 1, done, fail);
+      return;
+    }
+
+    var elementfn;
+    try {
+      if (childdef.element === 'BLOCK') {
+        elementfn = processelement(childdef, pipelinename, stagepath.concat([childdef.id]), {}, compilerconstants, dnaconstants, options);
+      } else if (childdef.element === 'PIPELINE') {
+        elementfn = processpipelineelement(childdef, pipelinename, stagepath.concat([childdef.id]), {}, options);
+      } else if (childdef.element === 'STAGE') {
+        elementfn = processnestedstage(childdef, pipelinename, stagepath.concat([childdef.id]), compilerconstants, dnaconstants, options, runblocks);
+      } else {
+        throw new Error('[runrecovery] unexpected element type: ' + childdef.element);
+      }
+    } catch (thrown) {
+      fail(thrown, childdef);
+      return;
+    }
+
+    Promise.resolve(elementfn).then(function(fn) {
+      return fn(env);
+    }).then(function() {
+      runchilddef(resolvenextelement(stage, index + 1), index + 1, done, fail);
+    }).catch(function(err) {
+      fail(err, childdef);
+    });
+  }
+
+  function evaluate(outcomeenv, errorstate, fromcapture, elementid, continuation) {
+    var state = buildstate(errorstate);
+    var outcome;
+    try {
+      outcome = predicate(control, state);
+    } catch (e) {
+      outcome = 'abort';
+    }
+    if (outcome === 'retry') {
+      if (fromcapture) {
+        dispatchcccrecovery('CCCRETRY', pipelinename, stagepath, elementid, continuation);
+      }
+      return Promise.resolve().then(function() {
+        return runrecovery(stage, pipelinename, stagepath, outcomeenv, options, runblocks);
+      });
+    }
+    if (outcome === 'continue') {
+      if (fromcapture) {
+        dispatchcccrecovery('CCCCONTINUE', pipelinename, stagepath, elementid, continuation);
+      }
+      return Promise.resolve(outcomeenv);
+    }
+    if (fromcapture) {
+      dispatchcccrecovery('CCCABORT', pipelinename, stagepath, elementid, continuation);
+    }
+    var abortmessage = errorstate && errorstate.MESSAGE ? errorstate.MESSAGE : 'recovery abort';
+    return Promise.reject(new Error(abortmessage));
+  }
+
+  return new Promise(function(resolve, reject) {
+    runchilddef(resolvenextelement(stage, 0), 0, function() {
+      // completion path — all children succeeded
+      evaluate(env, null, false, null, null).then(resolve).catch(reject);
+    }, function(err, childdef) {
+      // capture path
+      var failingid = (childdef && childdef.id) ? childdef.id : 'elementunknown';
+      env[failingid + 'retrycount'] = (env[failingid + 'retrycount'] || 0) + 1;
+      var errorstate = buildrecoveryerrorstate(err, failingid, pipelinename, stagepath);
+      var continuation = (err && err.diagnostic) ? err.diagnostic.CONTINUATION : null;
+      evaluate(env, errorstate, true, failingid, continuation).then(resolve).catch(reject);
+    });
+  });
+}
+
 function runstage(stage, pipelinename, stagepath, env, options, runblocks) {
   if (!stage) return Promise.resolve(env);
   var kind = (stage.control && stage.control.command) || null;
@@ -1005,6 +1118,10 @@ function runstage(stage, pipelinename, stagepath, env, options, runblocks) {
 
   if (kind === 'LOOP') {
     return runloop(stage, pipelinename, stagepath, env, options, 0, runblocks);
+  }
+
+  if (kind === 'RECOVERY') {
+    return runrecovery(stage, pipelinename, stagepath, env, options, runblocks);
   }
 
   if (stage.async === true) {
@@ -1102,6 +1219,10 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
   return runnext();
 }
 
+// @proposal=P27 — enrich err.diagnostic with PIPELINEID, STAGEPATH, and
+// ELEMENTID (if-absent) before propagating the failure.
+// @proposal=P30 — switch the catchtimeout check to the classifier
+// 'mailbox-wait-timeout'.
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
@@ -1156,10 +1277,21 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         return result;
       })
       .catch(function(err) {
+        // @proposal=P27 — enrich the diagnostic before any rethrow.
+        if (err && typeof err === 'object') {
+          if (!err.diagnostic || typeof err.diagnostic !== 'object') {
+            err.diagnostic = {};
+          }
+          if (err.diagnostic.PIPELINEID === undefined) err.diagnostic.PIPELINEID = pipelinename;
+          if (err.diagnostic.STAGEPATH === undefined) err.diagnostic.STAGEPATH = stagepath;
+          if (err.diagnostic.ELEMENTID === undefined) err.diagnostic.ELEMENTID = elementid;
+        }
+
+        // @proposal=P30 — classifier-based timeout check.
         var istimeout = catchtimeout
           && err
-          && typeof err.message === 'string'
-          && err.message.indexOf('Mailbox wait timeout') === 0;
+          && err.diagnostic
+          && err.diagnostic.KIND === 'mailbox-wait-timeout';
         if (!istimeout) throw err;
         var timeoutenv = { ERROR: 'timeout', TAG: tag, KIND: 'mailbox-wait-timeout' };
         var outputkeys2 = Object.keys(blockoutputs || {});

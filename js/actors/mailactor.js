@@ -1,3 +1,23 @@
+// mailactor.js — mail transport concern.
+//
+// @proposal=P5 (corrected, Cycle 39R) — the OP-011 (FB-14) payload-key
+// case aliasing is removed.
+//
+// @proposal=P1 (P-MAILBOX-EXCHANGE-CONSOLIDATION) — resolver channel.
+//
+// @proposal=P1-fix (P-MAILBOX-RESOLVER-PAYLOAD-ENVELOPE) — resolver
+// fires with the raw envelope.
+//
+// @proposal=P7 (P-ACTORCORE-PREDISPATCH-STAGE) — MAILBEHAVIOR's SEND
+// branch creates the expectation in a pre-dispatch stage.
+//
+// @proposal=P30 (P-CATCHTIMEOUT-STRUCTURAL-KIND) — the timeout errors
+// produced by WAITFORMAILBOX's push path, POLLFALLBACK's terminal
+// timer, and REJECTEXPECTATION's rejection all carry
+// diagnostic.KIND = 'mailbox-wait-timeout'. The catchtimeout check in
+// blockcompiler.js reads this classifier instead of the error's
+// message prefix. The human-readable messages are unchanged.
+
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
@@ -45,7 +65,7 @@ function ADDENVELOPETOMAILBOX(ENVELOPE) {
   }
 
   // @proposal=P1 / @proposal=P1-fix — fire the live expectation's
-  // resolver with the arriving envelope (F4/i, F41).
+  // resolver with the arriving envelope.
   if (TAG && EXPECTATIONS[TAG] && EXPECTATIONS[TAG].STATUS === 'PENDING') {
     RESOLVEEXPECTATION(TAG, ENVELOPE);
   }
@@ -112,9 +132,7 @@ function ARMEXPECTATIONRESOLVER(TAG, ONRESOLVE, ONREJECT) {
 }
 
 // @proposal=P1 / @proposal=P1-fix — the resolver fires with the raw
-// envelope, matching the poll path's payload shape. The optional
-// lowercase `envelope` parameter carries the caller-supplied envelope;
-// when omitted, the lookup falls back to INDEXBYTAG[TAG][0] (F39).
+// envelope.
 function RESOLVEEXPECTATION(TAG, envelope) {
   var EXP = EXPECTATIONS[TAG];
   if (!EXP) return;
@@ -141,6 +159,8 @@ function RESOLVEEXPECTATION(TAG, envelope) {
   SCHEDULERETENTIONPRUNE(TAG);
 }
 
+// @proposal=P30 — the rejection error carries the classifier
+// 'mailbox-wait-timeout'. The message remains human-readable.
 function REJECTEXPECTATION(TAG, ERROR) {
   var EXP = EXPECTATIONS[TAG];
   if (!EXP) return;
@@ -154,6 +174,8 @@ function REJECTEXPECTATION(TAG, ERROR) {
   }
   var SPEC = EXP.RESPONSESPEC;
   var REJECTIONERROR = new Error(ERROR && ERROR.MESSAGE ? ERROR.MESSAGE : 'Expectation rejected');
+  REJECTIONERROR.diagnostic = REJECTIONERROR.diagnostic || {};
+  REJECTIONERROR.diagnostic.KIND = 'mailbox-wait-timeout';
   if (SPEC && typeof SPEC.reject === 'function') {
     SPEC.reject(REJECTIONERROR);
   }
@@ -206,12 +228,6 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
     var CONSUMER = ACTORCONSUMERS[CONSUMERKEY1] || ACTORCONSUMERS[CONSUMERKEY2] || ACTORCONSUMERS[CONSUMERKEY3];
     if (CONSUMER) {
       logdebug(ENV, '[MAILACTOR]', 'DISPATCHING TO ACTOR:', RECIPIENT, 'TYPE=', FLATTYPE, 'TAG=', FLATTAG);
-      // @proposal=P7 (Part 2) — the expectation is created in the
-      // pre-dispatch stage, which DISPATCHTOACTOR invokes synchronously
-      // before the recipient's handler runs. For a synchronous
-      // responder, the response envelope is therefore observed by
-      // ADDENVELOPETOMAILBOX while EXPECTATIONS[TAG] is present; the
-      // resolver fires on arrival (P1-fix path).
       DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, function(stagedmessage) {
         var stagedspec = stagedmessage && stagedmessage.RESPONSESPEC;
         if (stagedspec && stagedmessage.TAG) {
@@ -348,8 +364,6 @@ function QUERYMAILBOX(FILTER) {
 
   RESULT.forEach(function(ITEM) {
     var TAGVAL = ITEM && ITEM.TAG;
-    // @proposal=P1 / @proposal=P1-fix — poll-side fire passes the read
-    // envelope, matching the arrival-side fire (I009′).
     if (ITEM && TAGVAL && EXPECTATIONS[TAGVAL] && (ITEM.READ === 'READ')) {
       RESOLVEEXPECTATION(TAGVAL, ITEM);
     }
@@ -364,6 +378,7 @@ function QUERYMAILBOX(FILTER) {
 }
 
 // @proposal=P1 — pre-existing poll path, preserved as the fallback.
+// @proposal=P30 — the timeout rejection carries the classifier.
 function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
   if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
     REJECT(new Error('Cancelled'));
@@ -413,16 +428,20 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
       LATE[0].READ = 'READ';
       RESOLVE(LATE[0]);
     } else {
-      REJECT(new Error('Mailbox wait timeout for filter: ' + JSON.stringify(FILTER)));
+      var TIMEOUTERR = new Error('Mailbox wait timeout for filter: ' + JSON.stringify(FILTER));
+      TIMEOUTERR.diagnostic = TIMEOUTERR.diagnostic || {};
+      TIMEOUTERR.diagnostic.KIND = 'mailbox-wait-timeout';
+      REJECT(TIMEOUTERR);
     }
   }, TIMEOUT);
 }
 
+// @proposal=P30 — the push-path timeout rejection carries the
+// classifier.
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
   var TAGVAL = FILTER && FILTER.TAG;
 
-  // @proposal=P1 — push path for live TAG-keyed expectations (F4/i).
   if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS === 'PENDING') {
     return new Promise(function(RESOLVE, REJECT) {
       var SETTLED = false;
@@ -440,12 +459,14 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
         if (SETTLED) return;
         var LATE = MAILGETACTIONSTATUS(TAGVAL);
         if (LATE !== null) { ONSETTLE(RESOLVE, LATE); return; }
-        ONSETTLE(REJECT, new Error('Mailbox wait timeout for filter: ' + JSON.stringify(FILTER)));
+        var TIMEOUTERR = new Error('Mailbox wait timeout for filter: ' + JSON.stringify(FILTER));
+        TIMEOUTERR.diagnostic = TIMEOUTERR.diagnostic || {};
+        TIMEOUTERR.diagnostic.KIND = 'mailbox-wait-timeout';
+        ONSETTLE(REJECT, TIMEOUTERR);
       }, TIMEOUT);
     });
   }
 
-  // Non-live path: pre-existing poll (TAG-less filter, or settled-after-send).
   return new Promise(function(RESOLVE, REJECT) {
     POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT);
   });
