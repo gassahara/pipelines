@@ -206,7 +206,7 @@ var pipelinesmanifest = [
   // Load order: pipelinecompilers → blockcompilers →
   // pipelineorchestration → pipelinediagnostics → blockcompiler.
   // ============================================================
-  { src: 'factory/pipelinecompilers.js',
+  { src: 'factory/pipelinecompiler.js',
     source: 'factory/blockcompiler.js',
     provides: [
       'pipeline',
