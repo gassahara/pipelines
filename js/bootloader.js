@@ -131,6 +131,44 @@ var pipelinesmanifest = [
     'CCCCONTINUE', 'CCCRETRY', 'TASKSETTLED', 'RECOVER', 'REGISTERPIPELINE', 'PING'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
 
+  // ============================================================
+  // @proposal=CP3 (CYCLE-25) — the render-actor module is split into
+  // ten files. The nine new files carry `source: 'actors/renderactor.js'`;
+  // the truncated renderactor.js retains the original path.
+  // Load order: primitives (declares HANDLERS) → metrics → events →
+  // style (declares SU_*/LC_* helpers) → five handler-domain files
+  // (populate HANDLERS) → renderactor.js (dispatcher surface, reads
+  // the fully-populated HANDLERS at load time).
+  // ============================================================
+  { src: 'actors/renderactorprimitives.js',
+    source: 'actors/renderactor.js',
+    provides: [
+      'validatedomquerycommand', 'DOMQUERYCOMMANDREGISTRY'
+    ] },
+  { src: 'actors/renderactormetrics.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
+  { src: 'actors/renderactorevents.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
+  { src: 'actors/renderactorstyle.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
+  { src: 'actors/renderactorhandlerqueries.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
+  { src: 'actors/renderactorhandlersetters.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
+  { src: 'actors/renderactorhandlerlayout.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
+  { src: 'actors/renderactorhandlertheme.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
+  { src: 'actors/renderactorhandlerio.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
   { src: 'actors/renderactor.js', provides: [
     'RENDERBEHAVIOR',
     'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE',
@@ -142,7 +180,6 @@ var pipelinesmanifest = [
     'ENQUEUEPROPERTY', 'ENQUEUESETLAYOUT',
     'ENQUEUEGETVIEWPORT', 'ENQUEUEGETSCREEN', 'ENQUEUEMATCHMEDIA',
     'STARTRENDERACTOR', 'EXPECTELEMENT',
-    'validatedomquerycommand', 'DOMQUERYCOMMANDREGISTRY',
     'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
   ], owner: 'RENDERACTOR', types: [
     'RENDER', 'CLEAR', 'HTML', 'REMOVE', 'SETSTYLES', 'SETATTR', 'TOGGLECLASS',
@@ -162,23 +199,47 @@ var pipelinesmanifest = [
     'LOADSCRIPT'
   ] },
 
+  // ============================================================
+  // @proposal=CP2 (CYCLE-25) — the blockcompiler module is split into
+  // five files. The four new files carry `source: 'factory/blockcompiler.js'`;
+  // the truncated blockcompiler.js retains the original path.
+  // Load order: pipelinecompilers → blockcompilers →
+  // pipelineorchestration → pipelinediagnostics → blockcompiler.
+  // ============================================================
+  { src: 'factory/pipelinecompilers.js',
+    source: 'factory/blockcompiler.js',
+    provides: [
+      'pipeline',
+      'makelib', 'makeprogram', 'makestage', 'makeblock', 'makepipelineelement',
+      'appendlib', 'appendprogram', 'appendstage', 'appendblock', 'appendpipelineelement',
+      'nodeat',
+      'createpersistentelementwrapper'
+    ] },
+  { src: 'factory/blockcompilers.js',
+    source: 'factory/blockcompiler.js',
+    provides: [
+      'buildblockproperties', 'wrapblockresult'
+    ] },
+  { src: 'factory/pipelineorchestration.js',
+    source: 'factory/blockcompiler.js',
+    provides: [
+      'run', 'compile',
+      'orchestratepipeline', 'loadpipelineresources',
+      'resolvenextelement', 'orchestratestage',
+      'processelement', 'processpipelineelement', 'registereventstage',
+      'processnestedstage'
+    ] },
+  { src: 'factory/pipelinediagnostics.js',
+    source: 'factory/blockcompiler.js',
+    provides: [
+      'setaccent',
+      'showbootloader', 'hidebootloader'
+    ] },
   { src: 'factory/blockcompiler.js', provides: [
-    'pipeline',
-    'makelib', 'makeprogram', 'makestage', 'makeblock', 'makepipelineelement',
-    'appendlib', 'appendprogram', 'appendstage', 'appendblock', 'appendpipelineelement',
-    'nodeat',
-    'run', 'compile',
-    'orchestratepipeline', 'loadpipelineresources',
-    'resolvenextelement', 'orchestratestage',
-    'createblockcompilerconstants', 'buildblockproperties',
-    'processelement', 'processpipelineelement', 'registereventstage',
-    'processnestedstage', 'createpersistentelementwrapper', 'wrapblockresult',
-    'BLOCKCOMPILERSTATE', 'setaccent',
-    // @proposal=P-FRONTEND-BOUNDARY-001v2 — boot diagnostics are exported
-    // from the blockcompiler so that the frontend does not interact with
-    // actors directly.
-    'showbootloader', 'hidebootloader'
+    'createblockcompilerconstants',
+    'BLOCKCOMPILERSTATE'
   ] },
+
   { src: 'actors/hypervisoractor.js', provides: [
     'HYPERVISORBEHAVIOR',
     'ENQUEUEHYPERVISORLOAD', 'ENQUEUEHYPERVISORSAVE',

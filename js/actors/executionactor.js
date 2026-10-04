@@ -64,6 +64,21 @@ function REMOVETASKFROMHISTORY(EXECSLICE, TASKID) {
   EXECSLICE.TASKORDER = (EXECSLICE.TASKORDER || []).filter(function(ID) { return ID !== TASKID; });
 }
 
+// @proposal=CP1 (site s3) — TRIMTASKORDER replaces the imperative while
+// loop that previously trimmed EXECSLICE.TASKORDER. The helper uses the
+// framework's trampoline driver so that the recursion is stack-safe; the
+// termination condition and the shift-then-remove order are preserved
+// exactly. No new imperative loop is introduced.
+function TRIMTASKORDER(EXECSLICE) {
+  function STEP() {
+    if (EXECSLICE.TASKORDER.length <= TASKHISTORYMAX) return null;
+    var OLDEST = EXECSLICE.TASKORDER.shift();
+    if (EXECSLICE.TASKS[OLDEST]) REMOVETASKFROMHISTORY(EXECSLICE, OLDEST);
+    return STEP;
+  }
+  return trampoline(STEP)();
+}
+
 // @proposal=P-ACTOR-FLOW-002 — each task carries a settle signal. The
 // signal is a Promise plus its resolve function. When the task settles,
 // the signal resolves with { STATUS, RESULT, ERROR }. EXECUTEELEMENT's
@@ -94,10 +109,7 @@ function MAKETASK(EXECSLICE, DESCRIPTOR) {
   EXECSLICE.TASKS[TASKID] = TASK;
   if (!EXECSLICE.TASKORDER) EXECSLICE.TASKORDER = [];
   EXECSLICE.TASKORDER.push(TASKID);
-  while (EXECSLICE.TASKORDER.length > TASKHISTORYMAX) {
-    var OLDEST = EXECSLICE.TASKORDER.shift();
-    if (EXECSLICE.TASKS[OLDEST]) REMOVETASKFROMHISTORY(EXECSLICE, OLDEST);
-  }
+  TRIMTASKORDER(EXECSLICE);
   logdebug(EXECSLICE, '[EXECUTIONACTOR]', 'MAKETASK CREATED ELEMENT TASK:', TASKID, 'PIPELINEID:', TASK.PIPELINEID, 'ELEMENTID:', TASK.ELEMENTID);
   return TASK;
 }

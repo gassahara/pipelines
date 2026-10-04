@@ -1,7 +1,7 @@
 function APIREQUESTHANDLER(ENV, MESSAGE) {
   logdebug(ENV, '[APIACTOR]', 'ACTION:', MESSAGE.TYPE, 'METHOD:', MESSAGE.METHOD, 'ENDPOINT:', MESSAGE.ENDPOINT);
 
-  var API_SLICE = ENV.API || {};
+  var APISLICE = ENV.API || {};
   var UPDATEDAPI = {
     LASTREQUEST: {
       TYPE: MESSAGE.TYPE,
@@ -11,10 +11,10 @@ function APIREQUESTHANDLER(ENV, MESSAGE) {
       TOKEN: MESSAGE.TOKEN || '',
       TIMESTAMP: Date.now()
     },
-    REQUESTCOUNT: (API_SLICE.REQUESTCOUNT || 0) + 1
+    REQUESTCOUNT: (APISLICE.REQUESTCOUNT || 0) + 1
   };
 
-  function buildNextEnv() {
+  function BUILDNEXTENV() {
     var NEXTENV = {};
     Object.keys(ENV).forEach(function(K) { NEXTENV[K] = ENV[K]; });
     NEXTENV.API = UPDATEDAPI;
@@ -42,11 +42,11 @@ function APIREQUESTHANDLER(ENV, MESSAGE) {
     logdebug(ENV, '[APIACTOR]', 'ACTION RESPONSE STATUS:', STATUS, 'FOR:', MESSAGE.ENDPOINT);
     var PARSED = ISTEXTUAL ? RESPONSE.text() : RESPONSE.json();
     return PARSED.then(function(DATA) {
-      return { ENV: buildNextEnv(), RESPONSE: { STATUS: STATUS, DATA: DATA } };
+      return { ENV: BUILDNEXTENV(), RESPONSE: { STATUS: STATUS, DATA: DATA } };
     });
   }).catch(function(ERR) {
     logerror(ENV, '[APIACTOR]', 'ACTION REQUEST ERROR FOR:', MESSAGE.ENDPOINT, ERR);
-    return { ENV: buildNextEnv(), RESPONSE: { ERROR: ERR.message || String(ERR) } };
+    return { ENV: BUILDNEXTENV(), RESPONSE: { ERROR: ERR.message || String(ERR) } };
   });
 }
 

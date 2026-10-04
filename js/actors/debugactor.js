@@ -318,6 +318,10 @@ function DEBUGBEHAVIORSHOW(ENV, MESSAGE) {
 // Applies the slice cap and schedules the debounced update once per
 // invocation.
 // @proposal=P-ACTOR-FLOW-002 — sync response via return.
+// @proposal=CP1 (sites s1, s2) — the two imperative for-loops that
+// previously accumulated INCOMING and appended it to DEBUGSLICE.LOGS
+// are now expressed as forEach. No semantic change: the per-item
+// side effect and the append order are preserved.
 function DEBUGBEHAVIORLOGLINE(ENV, MESSAGE) {
   logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.MESSAGE || ('batch[' + (MESSAGE.ITEMS ? MESSAGE.ITEMS.length : 1) + ']'));
   var NEXTENV = ENSUREDEBUGSLICE(ENV);
@@ -325,16 +329,16 @@ function DEBUGBEHAVIORLOGLINE(ENV, MESSAGE) {
 
   var INCOMING = [];
   if (Array.isArray(MESSAGE.ITEMS)) {
-    for (var i = 0; i < MESSAGE.ITEMS.length; i++) {
-      var IT = MESSAGE.ITEMS[i] || {};
+    MESSAGE.ITEMS.forEach(function(IT) {
+      var SAFEIT = IT || {};
       INCOMING.push({
-        LEVEL: IT.LEVEL || 'info',
-        MESSAGE: IT.MESSAGE || '',
-        DATA: TRUNCATELOGDATA(IT.DATA || null),
-        TIMESTAMP: IT.TIMESTAMP || Date.now(),
-        PREFIX: IT.PREFIX || ''
+        LEVEL: SAFEIT.LEVEL || 'info',
+        MESSAGE: SAFEIT.MESSAGE || '',
+        DATA: TRUNCATELOGDATA(SAFEIT.DATA || null),
+        TIMESTAMP: SAFEIT.TIMESTAMP || Date.now(),
+        PREFIX: SAFEIT.PREFIX || ''
       });
-    }
+    });
   } else {
     INCOMING.push({
       LEVEL: MESSAGE.LEVEL || 'info',
@@ -346,7 +350,7 @@ function DEBUGBEHAVIORLOGLINE(ENV, MESSAGE) {
   }
 
   if (!DEBUGSLICE.LOGS) DEBUGSLICE.LOGS = [];
-  for (var j = 0; j < INCOMING.length; j++) DEBUGSLICE.LOGS.push(INCOMING[j]);
+  INCOMING.forEach(function(ENTRY) { DEBUGSLICE.LOGS.push(ENTRY); });
 
   var CAP = DEBUGSLICE.LOGSMAX || DEBUGLOGSMAX;
   if (DEBUGSLICE.LOGS.length > CAP) {

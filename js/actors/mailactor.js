@@ -194,7 +194,7 @@ function ARMEXPECTATIONRESOLVER(TAG, ONRESOLVE, ONREJECT) {
   return false;
 }
 
-function RESOLVEEXPECTATION(TAG, envelope) {
+function RESOLVEEXPECTATION(TAG, ENVELOPE) {
   var EXP = EXPECTATIONS[TAG];
   if (!EXP) return;
   EXP.STATUS = 'RESOLVED';
@@ -206,15 +206,15 @@ function RESOLVEEXPECTATION(TAG, envelope) {
   }
   delete EXPECTATIONS[TAG];
 
-  var firepayload = envelope;
-  if (firepayload === undefined || firepayload === null) {
+  var FIREPAYLOAD = ENVELOPE;
+  if (FIREPAYLOAD === undefined || FIREPAYLOAD === null) {
     var CANDIDATES = INDEXBYTAG[TAG] || [];
-    firepayload = CANDIDATES.length > 0 ? CANDIDATES[0] : null;
+    FIREPAYLOAD = CANDIDATES.length > 0 ? CANDIDATES[0] : null;
   }
 
   var RESOLVERS = EXP.RESOLVERS.slice();
   RESOLVERS.forEach(function(FN) {
-    try { FN(firepayload); } catch (E) { /* resolver error does not block others */ }
+    try { FN(FIREPAYLOAD); } catch (E) { /* resolver error does not block others */ }
   });
 
   SCHEDULERETENTIONPRUNE(TAG);
