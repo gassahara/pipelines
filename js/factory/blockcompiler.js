@@ -924,7 +924,20 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           MARKUP: result.html,
           APPEND: !merged.replace
         }, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
-          .then(function() {
+          .then(function(response) {
+            // @proposal=P-WRITER-ERROR-CHECK-001 — surface the RENDERACTOR's
+            // reported error, if any, before proceeding to EXPECTELEMENT.
+            if (response && typeof response === 'object' && response.ERROR !== undefined) {
+              var htmlErr = new Error('[WRITER] HTML action failed for "' + target + '": ' +
+                (typeof response.ERROR === 'string' ? response.ERROR : JSON.stringify(response.ERROR)));
+              htmlErr.diagnostic = { KIND: 'writer-html-failed', TARGET: target, RESPONSE: response };
+              throw htmlErr;
+            }
+            // @proposal=P-WRITER-RESPONSE-DIAGNOSTIC-002 — name the response
+            // kind so a trace can distinguish ok from error at the writer.
+            logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]',
+              'writer HTML response for', target, ':',
+              (response && response.ERROR ? 'error' : 'ok'));
             if (result.id && Object.keys(sig.outputs || {}).length > 0) {
               return EXPECTELEMENT(result.id, result.timeout || 5000).then(function(domref) {
                 env[Object.keys(sig.outputs)[0]] = result;
@@ -1066,6 +1079,20 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
 
       return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
         .then(function(r) {
+          // @proposal=P-DOMQUERY-ERROR-CHECK-002 — surface the RENDERACTOR's
+          // reported error, if any, before wrapping the response.
+          if (r && typeof r === 'object' && r.ERROR !== undefined) {
+            var domqErr = new Error('[DOMQUERY] ' + cmd + ' failed for id "' + props.id + '": ' +
+              (typeof r.ERROR === 'string' ? r.ERROR : JSON.stringify(r.ERROR)));
+            domqErr.diagnostic = { KIND: 'domquery-renderactor-failed', CMD: cmd, ID: props.id, RESPONSE: r };
+            throw domqErr;
+          }
+          // @proposal=P-DOMQUERY-RESPONSE-DIAGNOSTIC-003 — name the response
+          // kind so a trace can distinguish ok from error at the domquery
+          // compiler.
+          logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]',
+            'domquery', cmd, 'for', props.id, ':',
+            (r && typeof r === 'object' && r.ERROR ? 'error' : 'ok'));
           if (cmd === 'palettegenerate' && r && typeof r === 'object' && r.PALETTE !== undefined) {
             return wrapblockresult(r.PALETTE, sig);
           }

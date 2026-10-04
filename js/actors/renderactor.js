@@ -92,6 +92,12 @@ function WITHELEMENT(ID, REJECT, FN) {
   return FN(EL);
 }
 
+// @proposal=P-RENDERACTOR-ELEMENT-WAIT-MECHANISM-005 (option a)
+// Mechanism: MutationObserver on document.body with
+// { childList: true, subtree: true }. This function does NOT poll on an
+// interval. The observer callback re-checks getElementById(ID) on every
+// DOM mutation under body. If no mutation occurs during the window, the
+// timeout fires without any intermediate re-check.
 function WITHELEMENTRETRY(ID, REJECT, FN, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = 5000;
   var EXISTING = document.getElementById(ID);
@@ -631,6 +637,11 @@ HANDLERS[MESSAGETYPES.CHECKFOCUSVISIBILITY] = function(ENV, MSG) {
 // ---------- Async responses — R-a: return Promise<{RESPONSE: value}> ----------
 // @proposal=P-RENDERACTOR-FLOW-008 — every async exit path resolves to
 // { RESPONSE: value }. No handler captures the received ENV.
+//
+// @proposal=P-RENDERACTOR-HTML-POSTCONDITION-001 — the HTML handler's
+// success signal is now postcondition-verified: after the write, the
+// anchor must still be reachable via getElementById. If it is not, the
+// response carries an ERROR rather than {true}.
 
 HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
   return WAITFORDOMREADY()
@@ -640,7 +651,16 @@ HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
         else EL.innerHTML = MSG.MARKUP;
       });
     })
-    .then(function() { return { RESPONSE: true }; })
+    .then(function() {
+      // @proposal=P-RENDERACTOR-HTML-POSTCONDITION-001 — the tested element
+      // must exist in the document after the write. This is the
+      // postcondition that the previous precondition-only signal omitted.
+      var POST = document.getElementById(MSG.ID);
+      if (!POST) {
+        return { RESPONSE: { ERROR: '[RENDERACTOR] anchor missing after HTML write: ' + MSG.ID } };
+      }
+      return { RESPONSE: true };
+    })
     .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
@@ -1606,6 +1626,12 @@ var STARTRENDERACTOR = function(OPTIONS) {
   };
 };
 
+// @proposal=P-RENDERACTOR-ELEMENT-WAIT-MECHANISM-005 (option a)
+// Mechanism: MutationObserver on document.body with
+// { childList: true, subtree: true }. This function does NOT poll on an
+// interval. The observer callback re-checks getElementById(ID) on every
+// DOM mutation under body. If no mutation occurs during the window, the
+// timeout fires without any intermediate re-check.
 var EXPECTELEMENT = function(ID, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = 30000;
   return new Promise(function(RESOLVE, REJECT) {
