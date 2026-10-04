@@ -1,19 +1,33 @@
-HANDLERS[MESSAGETYPES.CHECKOVERFLOW] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var OPTS = MSG.OPTIONS || {};
+REGISTERMESSAGETYPE('CHECKOVERFLOW');
+REGISTERMESSAGETYPE('CORRECTOVERFLOW');
+REGISTERMESSAGETYPE('CHECKSPACING');
+REGISTERMESSAGETYPE('CORRECTSPACING');
+REGISTERMESSAGETYPE('CHECKOVERLAP');
+REGISTERMESSAGETYPE('CORRECTOVERLAP');
+REGISTERMESSAGETYPE('CHECKSCROLLABILITY');
+REGISTERMESSAGETYPE('CORRECTSCROLLABILITY');
+REGISTERMESSAGETYPE('CHECKCONTROLLEDOVERLAY');
+REGISTERMESSAGETYPE('CORRECTCONTROLLEDOVERLAY');
+REGISTERMESSAGETYPE('REWRITESTYLEATTRS');
+REGISTERMESSAGETYPE('CONSOLIDATESTYLES');
+REGISTERMESSAGETYPE('PANELAYOUT');
+
+function RENDERHANDLER_CHECKOVERFLOW(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  var OPTS = ARGS.OPTIONS || {};
   var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var CW = OPTS.containerwidths || {};
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
   return { RESPONSE: { VIOLATIONS: LCCHECKOVERFLOWDOC(ROOT, VW, CW, SC) } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CORRECTOVERFLOW] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var OPTS = MSG.OPTIONS || {};
+function RENDERHANDLER_CORRECTOVERFLOW(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  var OPTS = ARGS.OPTIONS || {};
   var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var CW = OPTS.containerwidths || {};
@@ -21,93 +35,93 @@ HANDLERS[MESSAGETYPES.CORRECTOVERFLOW] = function(ENV, MSG) {
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
   var RESULT = LCCORRECTOVERFLOWDOC(ROOT, VW, CW, SC);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CHECKSPACING] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var OPTS = MSG.OPTIONS || {};
+function RENDERHANDLER_CHECKSPACING(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  var OPTS = ARGS.OPTIONS || {};
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
   var V = LCCHECKSPACINGDOC(ROOT, MINGAP, SC);
   return { RESPONSE: { VIOLATIONS: V.map(function(x) { return { ELEMENTA: x.elementa.tagName + (x.elementa.id ? '#' + x.elementa.id : ''), ELEMENTB: x.elementb.tagName + (x.elementb.id ? '#' + x.elementb.id : ''), GAP: x.gap }; }) } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CORRECTSPACING] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var OPTS = MSG.OPTIONS || {};
+function RENDERHANDLER_CORRECTSPACING(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  var OPTS = ARGS.OPTIONS || {};
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
   var RESULT = LCCORRECTSPACINGDOC(ROOT, MINGAP, SC);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CHECKOVERLAP] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_CHECKOVERLAP(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: { VIOLATIONS: LCCHECKOVERLAPDOC(ROOT) } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CORRECTOVERLAP] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_CORRECTOVERLAP(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var RESULT = LCCORRECTOVERLAPDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CHECKSCROLLABILITY] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_CHECKSCROLLABILITY(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: { VIOLATIONS: LCCHECKSCROLLABILITYDOC(ROOT) } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CORRECTSCROLLABILITY] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_CORRECTSCROLLABILITY(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var RESULT = LCCORRECTSCROLLABILITYDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CHECKCONTROLLEDOVERLAY] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_CHECKCONTROLLEDOVERLAY(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: { VIOLATIONS: LCCHECKCONTROLLEDOVERLAYDOC(ROOT) } };
-};
+}
 
-HANDLERS[MESSAGETYPES.CORRECTCONTROLLEDOVERLAY] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_CORRECTCONTROLLEDOVERLAY(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var RESULT = LCCORRECTCONTROLLEDOVERLAYDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
-};
+}
 
-HANDLERS[MESSAGETYPES.REWRITESTYLEATTRS] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_REWRITESTYLEATTRS(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { APPLIED: SUREWRITESTYLEATTRS(ROOT, MSG.RULES || [], SC) } };
-};
+  return { RESPONSE: { APPLIED: SUREWRITESTYLEATTRS(ROOT, ARGS.RULES || [], SC) } };
+}
 
-HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_CONSOLIDATESTYLES(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  var SAFEPROPS = MSG.SAFEPROPS || (SC && SC.createstylizerconstants ? SC.createstylizerconstants().safeprops : null);
+  var SAFEPROPS = ARGS.SAFEPROPS || (SC && SC.createstylizerconstants ? SC.createstylizerconstants().safeprops : null);
   return { RESPONSE: { APPLIED: SUCONSOLIDATESTYLES(ROOT, SAFEPROPS, SC) } };
-};
+}
 
-HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
-  var EL = document.getElementById(MSG.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_PANELAYOUT(ENV, ARGS) {
+  var EL = document.getElementById(ARGS.ID);
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC || typeof SC.computepanemaxwidth !== 'function') return { RESPONSE: { ERROR: 'stylizercore.computepanemaxwidth unavailable' } };
-  var VIEWPORT = MSG.VIEWPORT || {};
+  var VIEWPORT = ARGS.VIEWPORT || {};
   var VW = (typeof VIEWPORT.VIEWPORTWIDTH === 'number' && VIEWPORT.VIEWPORTWIDTH > 0) ? VIEWPORT.VIEWPORTWIDTH : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
-  var SHAPE = MSG.SHAPE === 'row' ? 'row' : 'column';
+  var SHAPE = ARGS.SHAPE === 'row' ? 'row' : 'column';
   var ROLE = SHAPE === 'row' ? 'app-shell' : 'reading-column';
   var SPACING = SC.computebasespacing(VW);
   var MAXW = SC.computepanemaxwidth(VW, ROLE);
@@ -117,12 +131,64 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   EL.style.flexDirection = SHAPE;
   EL.style.gap = SPACING.gap + 'px';
   var HEIGHTAPPLIED = null;
-  if (MSG.HEIGHT === 'viewport') {
+  if (ARGS.HEIGHT === 'viewport') {
     var VH = SUDETECTVIEWPORTHEIGHT();
     if (VH !== null) { EL.style.height = VH + 'px'; HEIGHTAPPLIED = VH; }
-  } else if (typeof MSG.HEIGHT === 'number' && MSG.HEIGHT > 0) {
-    EL.style.height = MSG.HEIGHT + 'px';
-    HEIGHTAPPLIED = MSG.HEIGHT;
+  } else if (typeof ARGS.HEIGHT === 'number' && ARGS.HEIGHT > 0) {
+    EL.style.height = ARGS.HEIGHT + 'px';
+    HEIGHTAPPLIED = ARGS.HEIGHT;
   }
   return { RESPONSE: { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE, HEIGHT: HEIGHTAPPLIED } };
-};
+}
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKOVERFLOW',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CHECKOVERFLOW);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTOVERFLOW',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CORRECTOVERFLOW);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKSPACING',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CHECKSPACING);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTSPACING',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CORRECTSPACING);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKOVERLAP',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CHECKOVERLAP);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTOVERLAP',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CORRECTOVERLAP);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKSCROLLABILITY',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CHECKSCROLLABILITY);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTSCROLLABILITY',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CORRECTSCROLLABILITY);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKCONTROLLEDOVERLAY',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CHECKCONTROLLEDOVERLAY);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTCONTROLLEDOVERLAY',
+  { ID: 'string', OPTIONS: 'object?' },
+  RENDERHANDLER_CORRECTCONTROLLEDOVERLAY);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'REWRITESTYLEATTRS',
+  { ID: 'string', RULES: 'array' },
+  RENDERHANDLER_REWRITESTYLEATTRS);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CONSOLIDATESTYLES',
+  { ID: 'string', SAFEPROPS: 'array?' },
+  RENDERHANDLER_CONSOLIDATESTYLES);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'PANELAYOUT',
+  { ID: 'string', SHAPE: 'string', VIEWPORT: 'object', HEIGHT: 'any?' },
+		     RENDERHANDLER_PANELAYOUT);

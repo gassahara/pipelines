@@ -1,19 +1,3 @@
-// js/factory/pipelinediagnostics.js — pipeline diagnostics and
-// accent application.
-//
-// @proposal=CP2 (CYCLE-25) — extracted from /js/factory/blockcompiler.js
-// as concerns B15 (setaccent) and B16 (boot diagnostics). The function
-// bodies are byte-identical to their pre-split forms.
-//
-// Load order: this file loads after pipelinecompilers.js and
-// blockcompilers.js. It is loaded before blockcompiler.js (which
-// declares compileblock, the entry point that does not read
-// setaccent, showbootloader, hidebootloader, or emitinitializationroster).
-
-// ============================================================
-// setaccent
-// ============================================================
-
 function setaccent(selector, accentref, palette, prop) {
   if (!selector || typeof selector !== 'object') {
     throw new Error('[setaccent] selector required');
@@ -71,7 +55,7 @@ function setaccent(selector, accentref, palette, prop) {
 
   var cssprop = prop || 'color';
 
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.SETACCENT, {
+  SENDINSTRUCTION('RENDERACTOR', 'SETACCENT', {
     SELECTOR: selector,
     PROP: cssprop,
     HEX: hex,
@@ -112,7 +96,7 @@ function showbootloader() {
       + '<span style="display:inline-block;width:12px;height:12px;border-radius:50%;'
       + 'background:#f59e0b;animation:bootloaderpulse 1.2s ease-in-out 0.4s infinite"></span>'
       + '</div>';
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, {
+  SENDINSTRUCTION('RENDERACTOR', 'LOADINGINDICATOR', {
     ACTION: 'SHOW',
     ID: 'bootloadingindicator',
     MARKUP: bootloadermarkup
@@ -121,7 +105,7 @@ function showbootloader() {
 
 function hidebootloader() {
   if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
-  SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, {
+  SENDINSTRUCTION('RENDERACTOR', 'LOADINGINDICATOR', {
     ACTION: 'HIDE',
     ID: 'bootloadingindicator'
   }, null, 'BLOCKCOMPILER');
@@ -134,7 +118,7 @@ function emitinitializationroster(p) {
   if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
 
   function emitline(kind, id, blocktype) {
-    SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.LOGLINE, {
+    SENDINSTRUCTION('DEBUGACTOR', 'LOGLINE', {
       LEVEL: 'info',
       MESSAGE: 'set',
       DATA: { kind: kind, blockid: id, blocktype: blocktype || null },

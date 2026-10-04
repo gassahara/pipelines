@@ -135,17 +135,6 @@ function wrapblockresult(response, sig) {
 // B6 — Composite-error capture
 // ============================================================
 
-// @proposal=P38-refined-rev5 — the composite-block error capture.
-// @proposal=P41 — attemptsubmit guards synchronous throws.
-// @proposal=P43 — suppressshow sentinel.
-// @proposal=P55 — built via makegenerator.
-// @proposal=P-CCC-FLOW-009 — the CCC registers its settlement handler
-// under the wrapped block's innertoken. The CCCNOTIFY connector on
-// DISPATCHRESPOND fires this handler when a response carrying
-// CCC_TOKEN=innertoken is delivered. The broadcast subscriptions are
-// retained as the secondary settlement channel.
-// @proposal=CP2 (ARC-49) — the local error binding `_e` is renamed to
-// ERRTHROWN.
 function makecaptureerror(wrapped, policy) {
   if (!wrapped || wrapped.element !== 'BLOCK') {
     var ERRTHROWN = new Error('[makecaptureerror] wrapped must be a block value');
@@ -189,8 +178,6 @@ function makecaptureerror(wrapped, policy) {
     var resolvepromise = null;
     var rejectpromise = null;
 
-    // @proposal=P-CCC-FLOW-009 — cleanup also unregisters the CCC
-    // handler (the primary flow-side settlement channel).
     function cleanup() {
       if (subfailed !== null) UNSUBSCRIBEBROADCAST(subfailed);
       if (subexecuted !== null) UNSUBSCRIBEBROADCAST(subexecuted);
@@ -235,7 +222,6 @@ function makecaptureerror(wrapped, policy) {
       resolvepromise = resolve;
       rejectpromise = reject;
 
-      // Secondary channel — the broadcast fan-out.
       subfailed = SUBSCRIBEBROADCAST(
         { TYPE: 'BLOCKFAILED', TOKEN: innertoken },
         handlefailure
@@ -245,9 +231,6 @@ function makecaptureerror(wrapped, policy) {
         handlesuccess
       );
 
-      // Primary channel — the CCC registry. Fired by DISPATCHRESPOND's
-      // connector when a response carries CCC_TOKEN=innertoken. The
-      // signal has shape { TYPE, TAG, SENDER, RESPONSE }.
       if (typeof REGISTERCCCHANDLER === 'function') {
         REGISTERCCCHANDLER(innertoken, function (signal) {
           if (!signal) return;
@@ -267,7 +250,6 @@ function makecaptureerror(wrapped, policy) {
   });
 }
 
-// @proposal=P38-refined-rev5 / @proposal=P43 / @proposal=P52 — submitwrapped.
 function submitwrapped(block, env) {
   var submissionenv = {};
   Object.keys(env || {}).forEach(function (k) { submissionenv[k] = env[k]; });
@@ -304,12 +286,12 @@ function compilehttpblock(merged, id, sig, istextual, options) {
 
     var timeout = merged.timeout || mailboxresolve('mailboxwaittimeout');
 
-    return sendandawait('APIACTOR', istextual ? MESSAGETYPES.FETCH : MESSAGETYPES.API, {
+    return sendandawait('APIACTOR', istextual ? 'FETCH' : 'API', {
       ENDPOINT: endpoint,
       METHOD: merged.method,
       PAYLOAD: payload,
       TOKEN: env.authsessionaccesstoken || ''
-    }, timeout, istextual ? MESSAGETYPES.FETCHRESULT : MESSAGETYPES.APIRESULT)
+    }, timeout, istextual ? 'FETCHRESULT' : 'APIRESULT')
       .then(function(result) {
         if (result && result.error) throw new Error(result.error);
         var finalresult = result && result.data !== undefined ? result.data : result;
@@ -386,7 +368,7 @@ function compileloaderblock(merged, id, sig) {
       var payload = { ACTION: action, ID: overlayid };
       if (action === 'SHOW' && markup !== null) payload.MARKUP = markup;
       if (typeof SENDINSTRUCTION === 'function' && typeof MESSAGETYPES !== 'undefined') {
-        SENDINSTRUCTION('RENDERACTOR', MESSAGETYPES.LOADINGINDICATOR, payload, tag, 'BLOCKCOMPILER');
+        SENDINSTRUCTION('RENDERACTOR', 'LOADINGINDICATOR', payload, tag, 'BLOCKCOMPILER');
       }
       return Promise.resolve();
     }
@@ -475,11 +457,20 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         var target = merged.targetlabel || env.approot;
         if (!target) throw new Error('[WRITER] missing targetlabel/approot');
 
-        return sendandawait('RENDERACTOR', MESSAGETYPES.HTML, {
+        // @proposal=P-WRITER-POST-WRITE-PROOF — inject a sentinel span
+        // (display:none, aria-hidden) carrying the block's id, then
+        // verify the sentinel is present in the target's DOM subtree
+        // after the write. This distinguishes "the target already
+        // existed" from "the write actually delivered the markup".
+        var SENTINELATTR = 'data-writer-proof-id';
+        var sentinelMarkup = '<span ' + SENTINELATTR + '="' + id +
+          '" style="display:none" aria-hidden="true"></span>' + result.html;
+
+        return sendandawait('RENDERACTOR', 'HTML', {
           ID: target,
-          MARKUP: result.html,
+          MARKUP: sentinelMarkup,
           APPEND: !merged.replace
-        }, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
+        }, mailboxresolve('mailboxwaittimeout'), 'DOMRESULT')
           .then(function(response) {
             if (response && typeof response === 'object' && response.ERROR !== undefined) {
               var htmlErr = new Error('[WRITER] HTML action failed for "' + target + '": ' +
@@ -490,6 +481,21 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
             logdebug(blockcompilerstate, '[BLOCKCOMPILER]',
               'writer HTML response for', target, ':',
               (response && response.ERROR ? 'error' : 'ok'));
+
+            var targetNode = document.getElementById(target);
+            var sentinelFound = targetNode && targetNode.querySelector('[' + SENTINELATTR + '="' + id + '"]');
+            if (!sentinelFound) {
+              var proofErr = new Error('[WRITER-WRITE-PROOF-FAILED] writer "' + id +
+                '" reported success but the sentinel was not found in #' + target);
+              proofErr.diagnostic = {
+                KIND: 'writer-write-proof-failed',
+                BLOCKID: id,
+                TARGET: target,
+                SENTINEL: id
+              };
+              throw proofErr;
+            }
+
             if (target && Object.keys(sig.outputs || {}).length > 0) {
               return EXPECTELEMENT(target, 5000, 500).then(function(domref) {
                 env[Object.keys(sig.outputs)[0]] = result;
@@ -559,45 +565,45 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
 
       var msgtype;
       switch (cmd) {
-        case 'gethtml': msgtype = MESSAGETYPES.GETHTML; break;
-        case 'getvalue': msgtype = MESSAGETYPES.GETVALUE; break;
-        case 'getstyle': msgtype = MESSAGETYPES.GETSTYLE; break;
-        case 'getposition': msgtype = MESSAGETYPES.GETPOSITION; break;
-        case 'getlayout': msgtype = MESSAGETYPES.GETLAYOUT; break;
-        case 'sethtml': msgtype = MESSAGETYPES.SETHTML; break;
-        case 'setposition': msgtype = MESSAGETYPES.SETPOSITION; break;
-        case 'setstyle': msgtype = MESSAGETYPES.SETSTYLE; break;
-        case 'setvalue': msgtype = MESSAGETYPES.SETVALUE; break;
-        case 'setlayout': msgtype = MESSAGETYPES.SETLAYOUT; break;
-        case 'toggleclass': msgtype = MESSAGETYPES.TOGGLECLASS; break;
-        case 'property': msgtype = MESSAGETYPES.PROPERTY; break;
-        case 'getviewport': msgtype = MESSAGETYPES.GETVIEWPORT; break;
-        case 'getscreen': msgtype = MESSAGETYPES.GETSCREEN; break;
-        case 'matchmedia': msgtype = MESSAGETYPES.MATCHMEDIA; break;
-        case 'getelements': msgtype = MESSAGETYPES.GETELEMENTS; break;
-        case 'checkoverflow':            msgtype = MESSAGETYPES.CHECKOVERFLOW; break;
-        case 'checkspacing':             msgtype = MESSAGETYPES.CHECKSPACING; break;
-        case 'checkoverlap':             msgtype = MESSAGETYPES.CHECKOVERLAP; break;
-        case 'checkscrollability':       msgtype = MESSAGETYPES.CHECKSCROLLABILITY; break;
-        case 'checkcontrolledoverlay':   msgtype = MESSAGETYPES.CHECKCONTROLLEDOVERLAY; break;
-        case 'correctoverflow':          msgtype = MESSAGETYPES.CORRECTOVERFLOW; break;
-        case 'correctspacing':           msgtype = MESSAGETYPES.CORRECTSPACING; break;
-        case 'correctoverlap':           msgtype = MESSAGETYPES.CORRECTOVERLAP; break;
-        case 'correctscrollability':     msgtype = MESSAGETYPES.CORRECTSCROLLABILITY; break;
-        case 'correctcontrolledoverlay': msgtype = MESSAGETYPES.CORRECTCONTROLLEDOVERLAY; break;
-        case 'rewritestyleattrs':        msgtype = MESSAGETYPES.REWRITESTYLEATTRS; break;
-        case 'consolidatestyles':        msgtype = MESSAGETYPES.CONSOLIDATESTYLES; break;
-        case 'panelayout':               msgtype = MESSAGETYPES.PANELAYOUT; break;
-        case 'palettegenerate':          msgtype = MESSAGETYPES.PALETTEGENERATE; break;
-        case 'optimizecontrast':         msgtype = MESSAGETYPES.OPTIMIZECONTRAST; break;
-        case 'optimizeharmony':          msgtype = MESSAGETYPES.OPTIMIZEHARMONY; break;
-        case 'optimizetextvisibility':   msgtype = MESSAGETYPES.OPTIMIZETEXTVISIBILITY; break;
-        case 'optimizebuttonvisibility': msgtype = MESSAGETYPES.OPTIMIZEBUTTONVISIBILITY; break;
-        case 'verifycontrast':           msgtype = MESSAGETYPES.VERIFYCONTRAST; break;
-        case 'verifytextvisibility':     msgtype = MESSAGETYPES.VERIFYTEXTVISIBILITY; break;
-        case 'verifybuttonvisibility':   msgtype = MESSAGETYPES.VERIFYBUTTONVISIBILITY; break;
-        case 'verifyharmony':            msgtype = MESSAGETYPES.VERIFYHARMONY; break;
-        case 'checkfocusvisibility':     msgtype = MESSAGETYPES.CHECKFOCUSVISIBILITY; break;
+        case 'gethtml': msgtype = 'GETHTML'; break;
+        case 'getvalue': msgtype = 'GETVALUE'; break;
+        case 'getstyle': msgtype = 'GETSTYLE'; break;
+        case 'getposition': msgtype = 'GETPOSITION'; break;
+        case 'getlayout': msgtype = 'GETLAYOUT'; break;
+        case 'sethtml': msgtype = 'SETHTML'; break;
+        case 'setposition': msgtype = 'SETPOSITION'; break;
+        case 'setstyle': msgtype = 'SETSTYLE'; break;
+        case 'setvalue': msgtype = 'SETVALUE'; break;
+        case 'setlayout': msgtype = 'SETLAYOUT'; break;
+        case 'toggleclass': msgtype = 'TOGGLECLASS'; break;
+        case 'property': msgtype = 'PROPERTY'; break;
+        case 'getviewport': msgtype = 'GETVIEWPORT'; break;
+        case 'getscreen': msgtype = 'GETSCREEN'; break;
+        case 'matchmedia': msgtype = 'MATCHMEDIA'; break;
+        case 'getelements': msgtype = 'GETELEMENTS'; break;
+        case 'checkoverflow':            msgtype = 'CHECKOVERFLOW'; break;
+        case 'checkspacing':             msgtype = 'CHECKSPACING'; break;
+        case 'checkoverlap':             msgtype = 'CHECKOVERLAP'; break;
+        case 'checkscrollability':       msgtype = 'CHECKSCROLLABILITY'; break;
+        case 'checkcontrolledoverlay':   msgtype = 'CHECKCONTROLLEDOVERLAY'; break;
+        case 'correctoverflow':          msgtype = 'CORRECTOVERFLOW'; break;
+        case 'correctspacing':           msgtype = 'CORRECTSPACING'; break;
+        case 'correctoverlap':           msgtype = 'CORRECTOVERLAP'; break;
+        case 'correctscrollability':     msgtype = 'CORRECTSCROLLABILITY'; break;
+        case 'correctcontrolledoverlay': msgtype = 'CORRECTCONTROLLEDOVERLAY'; break;
+        case 'rewritestyleattrs':        msgtype = 'REWRITESTYLEATTRS'; break;
+        case 'consolidatestyles':        msgtype = 'CONSOLIDATESTYLES'; break;
+        case 'panelayout':               msgtype = 'PANELAYOUT'; break;
+        case 'palettegenerate':          msgtype = 'PALETTEGENERATE'; break;
+        case 'optimizecontrast':         msgtype = 'OPTIMIZECONTRAST'; break;
+        case 'optimizeharmony':          msgtype = 'OPTIMIZEHARMONY'; break;
+        case 'optimizetextvisibility':   msgtype = 'OPTIMIZETEXTVISIBILITY'; break;
+        case 'optimizebuttonvisibility': msgtype = 'OPTIMIZEBUTTONVISIBILITY'; break;
+        case 'verifycontrast':           msgtype = 'VERIFYCONTRAST'; break;
+        case 'verifytextvisibility':     msgtype = 'VERIFYTEXTVISIBILITY'; break;
+        case 'verifybuttonvisibility':   msgtype = 'VERIFYBUTTONVISIBILITY'; break;
+        case 'verifyharmony':            msgtype = 'VERIFYHARMONY'; break;
+        case 'checkfocusvisibility':     msgtype = 'CHECKFOCUSVISIBILITY'; break;
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
 
@@ -629,8 +635,30 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         outbound.OVERRIDES = props.overrides;
       }
 
-      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
+      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), 'DOMRESULT')
         .then(function(r) {
+          // @proposal=P-RESPONSE-SHAPE-FIDELITY — defense-in-depth: the
+          // DOMQUERY response must never be the RENDERACTOR's env slice
+          // (the shape produced when no typed dispatcher matched, as in
+          // the RUN 5 anomaly). Such a shape indicates the response chain
+          // has been corrupted. Centralized shape validation lives in
+          // sendandawait (C20-PO).
+          if (r && typeof r === 'object' && !Array.isArray(r) &&
+              Object.prototype.hasOwnProperty.call(r, 'GC') &&
+              Object.prototype.hasOwnProperty.call(r, 'HTML') &&
+              Object.prototype.hasOwnProperty.call(r, 'VIEWPORT') &&
+              Object.prototype.hasOwnProperty.call(r, 'TRIGGEROBSERVERINSTALLED')) {
+            var shapeErr = new Error('[RESPONSE-SHAPE-VIOLATION] DOMQUERY ' + cmd +
+              ' received the RENDERACTOR env slice for id "' + props.id +
+              '" — the response chain has been corrupted');
+            shapeErr.diagnostic = {
+              KIND: 'response-shape-violation',
+              CMD: cmd,
+              ID: props.id,
+              RECEIVED_KEYS: Object.keys(r)
+            };
+            throw shapeErr;
+          }
           if (r && typeof r === 'object' && r.ERROR !== undefined) {
             var domqErr = new Error('[DOMQUERY] ' + cmd + ' failed for id "' + props.id + '": ' +
               (typeof r.ERROR === 'string' ? r.ERROR : JSON.stringify(r.ERROR)));
@@ -655,7 +683,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
-      return sendandawait('RENDERACTOR', MESSAGETYPES.CRYPTO, { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.DOMRESULT)
+      return sendandawait('RENDERACTOR', 'CRYPTO', { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), 'DOMRESULT')
         .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'crypto', id);
@@ -676,15 +704,15 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       var command = merged.command || {};
       var cmd = command.COMMAND;
       var args = command.args || {};
-      var responsetype = MESSAGETYPES.TASKRESULT;
+      var responsetype = 'TASKRESULT';
       var msgtype;
       switch (cmd) {
-        case 'get': msgtype = MESSAGETYPES.GETSTATUS; break;
-        case 'tasks': msgtype = MESSAGETYPES.GETTASKS; break;
-        case 'taskstatus': msgtype = MESSAGETYPES.GETTASKSTATUS; break;
-        case 'awaittask': msgtype = MESSAGETYPES.AWAITTASK; break;
-        case 'canceltask': msgtype = MESSAGETYPES.CANCELTASK; break;
-        case 'stoptask': msgtype = MESSAGETYPES.STOPTASK; break;
+        case 'get': msgtype = 'GETSTATUS'; break;
+        case 'tasks': msgtype = 'GETTASKS'; break;
+        case 'taskstatus': msgtype = 'GETTASKSTATUS'; break;
+        case 'awaittask': msgtype = 'AWAITTASK'; break;
+        case 'canceltask': msgtype = 'CANCELTASK'; break;
+        case 'stoptask': msgtype = 'STOPTASK'; break;
         default: throw new Error('[executionquery] unknown command: ' + cmd);
       }
       return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxresolve('mailboxwaittimeout'), responsetype)

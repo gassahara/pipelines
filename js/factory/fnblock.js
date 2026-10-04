@@ -1,30 +1,3 @@
-// fnblock.js — function-value concern
-// Top of the DAG: reads tokenscanner.js and parser.js globals;
-// provides the fn-value surface.
-//
-// @proposal=P2 — assertdefinedinputs and containsstyleaccess use
-// trampolined recursion. No `for` / `while` remains in this file.
-// @proposal=P3 — camelCase local identifiers normalized to lowercase.
-// @proposal=P5 — compilefnblock does not read runtime.evalstack.
-// @proposal=P9 (Cycle P9-06) — validaterevivableobject removed;
-// compilefnblock signature aligned (no `dependencies` parameter).
-// @proposal=P11 (Cycle P11-01) — reader alignment: the fn/writer block's
-// behaviour lives on the canonical `behaviour` field.
-// @proposal=P11 (Cycle P11-03, batch 11.2) — the DNA-era serialization
-// pipeline is removed.
-// @proposal=P-AE — the fn block calling convention changes: the
-// behaviour receives (inputs, deps, properties).
-// @proposal=P-AF — bindaliases is tightened.
-// @proposal=P-AL — the erroneous guard in containsstyleaccess's pass2
-// is removed. The previous guard skipped every `var`/`let`/`const`
-// declaration because `isidchar` is true for every valid identifier
-// start; localbindings was therefore never populated and the heuristic
-// false-positived on any local name ending in `style`.
-
-// ============================================================
-// §1 — Serializer constants
-// ============================================================
-
 function creatednaserializerconstants() {
   return Object.freeze({
     defaultfnkeys: Object.freeze(['length', 'name', 'prototype'])
@@ -236,24 +209,84 @@ function containsstyleaccess(source) {
   return trampoline(pass3)(0);
 }
 
-function mapoutputs(rawresult, outputkeys) {
+// ============================================================
+// §4b — Response-shape validation
+// ============================================================
+//
+// @proposal=P-RESPONSE-SHAPE-FIDELITY (frozen, RUN 13 Iteration 8) —
+// mapoutputs accepts an optional `outputtypes` argument and validates
+// each mapped value against its declared type spec. The type-spec
+// vocabulary matches the framework's iface strings: 'string', 'number',
+// 'boolean', 'object', 'array', 'function', 'any', each optionally
+// suffixed with '?' to mark an optional value (declared with '?' and
+// provided as null).
+//
+// MATCHESTYPES and DESCRIBEOBSERVED are declared locally in this file.
+// fnblock.js loads at manifest position #5; pipelinecompilers.js (which
+// hosts a sibling copy) loads later. Referencing the later helpers from
+// this file would violate the framework's load-order discipline
+// (colorutils.js#P-BOOT-RECOVERY-COLORUTILS precedent). The duplication
+// is confined to a ten-line pure type-checker.
+
+function MATCHESTYPES(VALUE, SPEC) {
+  if (typeof SPEC !== 'string' || SPEC.length === 0) return true;
+  var OPTIONAL = SPEC.charAt(SPEC.length - 1) === '?';
+  var EXPECTED = OPTIONAL ? SPEC.slice(0, -1) : SPEC;
+  if (VALUE === undefined || VALUE === null) return OPTIONAL;
+  if (EXPECTED === 'any') return true;
+  if (EXPECTED === 'array') return Array.isArray(VALUE);
+  if (EXPECTED === 'object') return typeof VALUE === 'object' && VALUE !== null && !Array.isArray(VALUE);
+  return typeof VALUE === EXPECTED;
+}
+
+function DESCRIBEOBSERVED(VALUE) {
+  if (VALUE === null) return 'null';
+  if (VALUE === undefined) return 'undefined';
+  if (Array.isArray(VALUE)) return 'array';
+  return typeof VALUE;
+}
+
+function mapoutputs(rawresult, outputkeys, outputtypes) {
   if (rawresult === null || typeof rawresult !== 'object' || Array.isArray(rawresult)) {
     throw new Error('mapoutputs: rawresult must be an object');
   }
   if (!Array.isArray(outputkeys)) {
     throw new Error('mapoutputs: outputkeys must be an array');
   }
+  var TYPES = (outputtypes && typeof outputtypes === 'object' && !Array.isArray(outputtypes))
+    ? outputtypes
+    : null;
+
   function scan(index, acc) {
     if (index >= outputkeys.length) return acc;
     var key = outputkeys[index];
     if (rawresult[key] === undefined) {
       throw new Error('missing required output "' + key + '" from block result');
     }
+    if (TYPES !== null && TYPES[key] !== undefined) {
+      var SPEC = TYPES[key];
+      if (!MATCHESTYPES(rawresult[key], SPEC)) {
+        var shapeErr = new Error('[RESPONSE-SHAPE-VIOLATION] output "' + key +
+          '" expected ' + SPEC + ', observed ' + DESCRIBEOBSERVED(rawresult[key]));
+        shapeErr.diagnostic = {
+          KIND: 'response-shape-violation',
+          KEY: key,
+          EXPECTED: SPEC,
+          OBSERVED: DESCRIBEOBSERVED(rawresult[key]),
+          VALUE: rawresult[key]
+        };
+        throw shapeErr;
+      }
+    }
     acc[key] = rawresult[key];
     return scan(index + 1, acc);
   }
   return scan(0, {});
 }
+
+// ============================================================
+// §5 — Input assertion
+// ============================================================
 
 function assertdefinedinputs(blockid, iokeys, env, accessor, allowundefined) {
   if (allowundefined === true) return;
@@ -276,6 +309,10 @@ function assertdefinedinputs(blockid, iokeys, env, accessor, allowundefined) {
     throw err;
   }
 }
+
+// ============================================================
+// §6 — Container-usage analysis
+// ============================================================
 
 function analyzecontainerusage(src, container, declared, opts) {
   if (opts === undefined) opts = {};
@@ -463,6 +500,10 @@ function analyzefnblock(block, depsmap, env, parser) {
   };
 }
 
+// ============================================================
+// §7 — Block analyzers
+// ============================================================
+
 function createblockanalyzer(rules) {
   return function(block) {
     var errors = [];
@@ -497,6 +538,10 @@ function createblockanalyzers(blocktypes, dnaconstants) {
   analyzers[blocktypes.writer] = analyzers[blocktypes.fn];
   return analyzers;
 }
+
+// ============================================================
+// §8 — fn-block compiler
+// ============================================================
 
 function compilefnblock(merged, id, sig, inheritedproperties, options, runtime) {
   if (inheritedproperties === undefined) inheritedproperties = {};

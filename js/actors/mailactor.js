@@ -1,26 +1,164 @@
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
-// @proposal=P-AC-001d — ACTORCONSUMERS is declared in actorcore.js
-// (manifest position #13), the earliest-loading actor module. This file
-// continues to write its aggregate behaviour to that registry at load
-// time and to read it at call time in SENDINSTRUCTION.
+REGISTERMESSAGETYPE('PING');
+REGISTERMESSAGETYPE('RESPONSE');
+REGISTERMESSAGETYPE('SEND');
+REGISTERMESSAGETYPE('ACK');
+
+REGISTERRESPONSETYPE('RESPONSE');
+var MAILACTORVOCABULARY = {};
+
+var MAILACTORENVELOPEKEYS = {
+  TYPE: true,
+  SENDER: true,
+  TAG: true,
+  WAITMODE: true,
+  RESPONSESPEC: true,
+  CONTEXT: true
+};
+
+// Private. Reads the iface map for one actor; used by SENDINSTRUCTION's
+// validation gate.
+function MAILACTORINTERFACES(ACTORNAME) {
+  var ENTRY = MAILACTORVOCABULARY[ACTORNAME] || {};
+  var MAP = {};
+  Object.keys(ENTRY).forEach(function (TYPE) {
+    MAP[TYPE] = ENTRY[TYPE].iface;
+  });
+  return MAP;
+}
+
+// Private. Transplanted body of the former MESSAGEREGISTRY.validate,
+// reading from MAILACTORVOCABULARY instead. MESSAGETYPEEXISTS is the
+// dynamic-register predicate from js/messagetypes.js (manifest #6).
+function MAILACTORVALIDATE(ACTORNAME, MESSAGE) {
+  if (!MESSAGE || typeof MESSAGE !== 'object') {
+    return { valid: false, error: 'message must be a non-null object', type: 'null' };
+  }
+  var TYPE = MESSAGE.TYPE || MESSAGE.type;
+  if (!TYPE || typeof TYPE !== 'string') {
+    return { valid: false, error: 'message type must be a string, got: ' + typeof TYPE, type: String(TYPE) };
+  }
+  var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
+  var IFACE = (ENTRY && ENTRY[TYPE]) ? ENTRY[TYPE].iface : null;
+  if (!IFACE) {
+    if (MESSAGETYPEEXISTS(TYPE)) {
+      IFACE = {};
+    } else {
+      return { valid: false, error: 'unknown message type: ' + TYPE, type: TYPE };
+    }
+  }
+  var KEYS = Object.keys(IFACE);
+  var INVALID = null;
+  KEYS.forEach(function (KEY) {
+    if (INVALID) return;
+    var SPEC = IFACE[KEY];
+    var OPTIONAL = SPEC.charAt(SPEC.length - 1) === '?';
+    var EXPECTEDTYPE = OPTIONAL ? SPEC.slice(0, -1) : SPEC;
+    var VAL = MESSAGE[KEY] !== undefined ? MESSAGE[KEY] :
+      (MESSAGE[KEY.toLowerCase()] !== undefined ? MESSAGE[KEY.toLowerCase()] :
+      MESSAGE[KEY.toUpperCase()]);
+    if (VAL === undefined || VAL === null) {
+      if (!OPTIONAL) {
+        INVALID = { valid: false, error: 'type "' + TYPE + '" missing required field "' + KEY + '" (' + EXPECTEDTYPE + ')', type: TYPE };
+      }
+      return;
+    }
+    if (EXPECTEDTYPE === 'any') return;
+    if (EXPECTEDTYPE === 'array') {
+      if (!Array.isArray(VAL)) {
+        INVALID = { valid: false, error: 'type "' + TYPE + '" field "' + KEY + '" expected array got ' + (Array.isArray(VAL) ? 'array' : typeof VAL), type: TYPE };
+      }
+    } else if (EXPECTEDTYPE === 'object') {
+      if (VAL === null || typeof VAL !== 'object') {
+        INVALID = { valid: false, error: 'type "' + TYPE + '" field "' + KEY + '" expected object got ' + (VAL === null ? 'null' : typeof VAL), type: TYPE };
+      }
+    } else {
+      var ACTUALTYPE = typeof VAL;
+      if (ACTUALTYPE !== EXPECTEDTYPE) {
+        INVALID = { valid: false, error: 'type "' + TYPE + '" field "' + KEY + '" expected ' + EXPECTEDTYPE + ' got ' + ACTUALTYPE, type: TYPE };
+      }
+    }
+  });
+  if (INVALID) return INVALID;
+  return { valid: true, error: null, type: TYPE };
+}
+
+// Public. Registers a (type ↦ handler) mapping for ACTORNAME. IFACE is
+// the payload schema; HANDLERFN is the per-type handler (ENV, ARGS) → ….
+function REGISTERACTORMESSAGE(ACTORNAME, TYPE, IFACE, HANDLERFN) {
+  if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
+    throw new Error('[REGISTERACTORMESSAGE] ACTORNAME must be a non-empty string');
+  }
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    throw new Error('[REGISTERACTORMESSAGE] TYPE must be a non-empty string');
+  }
+  var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
+  if (!ENTRY) {
+    ENTRY = {};
+    MAILACTORVOCABULARY[ACTORNAME] = ENTRY;
+  }
+  ENTRY[TYPE] = { iface: IFACE || {}, handler: HANDLERFN || null };
+  return ENTRY[TYPE];
+}
+
+// Public. Returns the per-type handler for (ACTORNAME, TYPE), or null.
+function RESOLVEHANDLER(ACTORNAME, TYPE) {
+  var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
+  if (ENTRY && ENTRY[TYPE] && typeof ENTRY[TYPE].handler === 'function') {
+    return ENTRY[TYPE].handler;
+  }
+  return null;
+}
+
+// Public. Projects MESSAGE onto the payload keys of the iface for
+// (ACTORNAME, TYPE), excluding envelope keys.
+function EXTRACTPAYLOAD(ACTORNAME, TYPE, MESSAGE) {
+  var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
+  if (!ENTRY || !ENTRY[TYPE]) return {};
+  var IFACE = ENTRY[TYPE].iface || {};
+  var ARGS = {};
+  Object.keys(IFACE).forEach(function (KEY) {
+    if (MAILACTORENVELOPEKEYS[KEY] === true) return;
+    if (MESSAGE && MESSAGE[KEY] !== undefined) ARGS[KEY] = MESSAGE[KEY];
+  });
+  return ARGS;
+}
+
+// Public. Resolves the handler for (ACTORNAME, MESSAGE.TYPE), projects
+// MESSAGE to ARGS, and invokes the handler. Returns { matched, result }.
+// The sentinel is structurally distinct from any handler-returned value.
+function INVOKEHANDLER(ACTORNAME, ENV, MESSAGE) {
+  if (!MESSAGE || typeof MESSAGE !== 'object') {
+    return { matched: false, result: undefined };
+  }
+  var TYPE = MESSAGE.TYPE;
+  if (typeof TYPE !== 'string' || TYPE.length === 0) {
+    return { matched: false, result: undefined };
+  }
+  var HANDLER = RESOLVEHANDLER(ACTORNAME, TYPE);
+  if (typeof HANDLER !== 'function') {
+    return { matched: false, result: undefined };
+  }
+  var ARGS = EXTRACTPAYLOAD(ACTORNAME, TYPE, MESSAGE);
+  return { matched: true, result: HANDLER(ENV, ARGS) };
+}
+
+// ============================================================
+// §1 — Mailbox state
+// ============================================================
 
 var EXPECTATIONS = {};
 var MAILBOX = [];
-
 var INDEXBYTAG = {};
 var INDEXBYSENDER = {};
 var INDEXBYTYPE = {};
 
-// @proposal=P-AC-001f — MAILBOXRESPONSETYPE removed: dead top-level
-// declaration (declared once, no reference anywhere in the bundle).
-
-// @proposal=P1 — retention timer for settled envelopes (F6/F34).
 var RETENTIONTIMERS = {};
 
 // ============================================================
-// Dynamic broadcast-type registry (P66r2)
+// §2 — Dynamic broadcast-type registry
 // ============================================================
 
 var BROADCASTTYPESREF = { current: Object.freeze({}) };
@@ -54,12 +192,13 @@ function UNREGISTERBROADCASTTYPE(TYPE) {
   return true;
 }
 
-// Boot registrations — preserve the RUN 42 behaviour.
-REGISTERBROADCASTTYPE(MESSAGETYPES.BLOCKEXECUTED);
-REGISTERBROADCASTTYPE(MESSAGETYPES.BLOCKFAILED);
+// @proposal=P-COMPILER-TYPE-LITERALS — literal type names, not
+// MESSAGETYPES lookups. The type-name register is dynamic.
+REGISTERBROADCASTTYPE('BLOCKEXECUTED');
+REGISTERBROADCASTTYPE('BLOCKFAILED');
 
 // ============================================================
-// Dynamic mailbox-exempt registry (P67r2)
+// §3 — Dynamic mailbox-exempt registry
 // ============================================================
 
 var MAILBOXEXEMPTREF = { current: Object.freeze({}) };
@@ -93,11 +232,10 @@ function UNREGISTERMAILBOXEXEMPT(RECIPIENT) {
   return true;
 }
 
-// Boot registration — preserve the RUN 42 behaviour.
 REGISTERMAILBOXEXEMPT('BROADCAST');
 
 // ============================================================
-// Mail transport primitives (unchanged)
+// §4 — Mail transport primitives
 // ============================================================
 
 function SCHEDULERETENTIONPRUNE(TAG) {
@@ -129,7 +267,6 @@ function ADDENVELOPETOMAILBOX(ENVELOPE) {
     if (!INDEXBYTYPE[TYPE]) INDEXBYTYPE[TYPE] = [];
     INDEXBYTYPE[TYPE].push(ENVELOPE);
   }
-
   if (TAG && EXPECTATIONS[TAG] && EXPECTATIONS[TAG].STATUS === 'PENDING') {
     RESOLVEEXPECTATION(TAG, ENVELOPE);
   }
@@ -174,13 +311,11 @@ function CREATEEXPECTATION(TAG, RECIPIENT, SENDER, TYPE, CONTEXT, RESPONSESPEC) 
     TIMEOUTID: null
   };
   EXPECTATIONS[TAG] = EXPECTATION;
-
   EXPECTATION.TIMEOUTID = setTimeout(function() {
     if (EXPECTATIONS[TAG] && (EXPECTATIONS[TAG].STATUS === 'PENDING')) {
       REJECTEXPECTATION(TAG, { MESSAGE: 'Response timeout for tag ' + TAG });
     }
   }, mailboxresolve('expectationtimeout'));
-
   return EXPECTATION;
 }
 
@@ -205,18 +340,15 @@ function RESOLVEEXPECTATION(TAG, ENVELOPE) {
     EXP.TIMEOUTID = null;
   }
   delete EXPECTATIONS[TAG];
-
   var FIREPAYLOAD = ENVELOPE;
   if (FIREPAYLOAD === undefined || FIREPAYLOAD === null) {
     var CANDIDATES = INDEXBYTAG[TAG] || [];
     FIREPAYLOAD = CANDIDATES.length > 0 ? CANDIDATES[0] : null;
   }
-
   var RESOLVERS = EXP.RESOLVERS.slice();
   RESOLVERS.forEach(function(FN) {
     try { FN(FIREPAYLOAD); } catch (E) { /* resolver error does not block others */ }
   });
-
   SCHEDULERETENTIONPRUNE(TAG);
 }
 
@@ -239,31 +371,32 @@ function REJECTEXPECTATION(TAG, ERROR) {
     SPEC.reject(REJECTIONERROR);
   }
   delete EXPECTATIONS[TAG];
-
   var REJECTERS = EXP.REJECTERS.slice();
   REJECTERS.forEach(function(FN) {
     try { FN(REJECTIONERROR); } catch (E) { /* do not block */ }
   });
-
   SCHEDULERETENTIONPRUNE(TAG);
 }
 
 // ============================================================
-// §2 — Mail handlers (P64)
+// §5 — Mail handlers (P-HANDLER-FUNCTIONAL-CONVENTION)
 // ============================================================
+//
+// Handlers take (ENV, ARGS); ARGS is the payload projection from
+// EXTRACTPAYLOAD. Envelope keys (TYPE, SENDER, TAG, …) do not appear
+// in ARGS.
 
-function MAILSENDHANDLER(ENV, MESSAGE) {
-  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
-
+function MAILSENDHANDLER(ENV, ARGS) {
+  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION: SEND');
   var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
   var MAILSLICE = NEXTENV.mail;
 
-  var RECIPIENT = MESSAGE.RECIPIENT;
+  var RECIPIENT = ARGS.RECIPIENT;
   if (!RECIPIENT || typeof RECIPIENT !== 'string') {
     return { ENV: NEXTENV };
   }
   if (!MAILSLICE.QUEUES[RECIPIENT]) MAILSLICE.QUEUES[RECIPIENT] = [];
-  var FLATMESSAGE = MESSAGE.MESSAGE;
+  var FLATMESSAGE = ARGS.MESSAGE;
 
   var FLATTYPE = FLATMESSAGE && FLATMESSAGE.TYPE;
   var FLATTAG = FLATMESSAGE && FLATMESSAGE.TAG;
@@ -287,18 +420,16 @@ function MAILSENDHANDLER(ENV, MESSAGE) {
   }
 
   logdebug(ENV, '[MAILACTOR]', 'ENVELOPE STORED FOR POLLING RECIPIENT:', RECIPIENT, 'TAG=', FLATTAG);
-
   return { ENV: NEXTENV };
 }
 
-function MAILACKHANDLER(ENV, MESSAGE) {
-  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
-
+function MAILACKHANDLER(ENV, ARGS) {
+  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION: ACK');
   var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
   var MAILSLICE = NEXTENV.mail;
 
-  var ACKRECIPIENT = MESSAGE.RECIPIENT;
-  var ACKIDS = MESSAGE.IDS || [];
+  var ACKRECIPIENT = ARGS.RECIPIENT;
+  var ACKIDS = ARGS.IDS || [];
   var ACKQUEUE = MAILSLICE.QUEUES[ACKRECIPIENT] || [];
   ACKQUEUE.forEach(function(M) {
     if (ACKIDS.indexOf(M.ID || M.id) !== -1) {
@@ -308,21 +439,53 @@ function MAILACKHANDLER(ENV, MESSAGE) {
   return { ENV: NEXTENV };
 }
 
-var MAILBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('MAILACTOR', [
-  MAKETYPEDDISPATCH(MESSAGETYPES.SEND, MAILSENDHANDLER),
-  MAKETYPEDDISPATCH(MESSAGETYPES.ACK, MAILACKHANDLER)
-]);
+// ============================================================
+// §6 — Mailactor's own vocabulary registration
+// ============================================================
+
+REGISTERACTORMESSAGE('MAILACTOR', 'SEND', { RECIPIENT: 'string', MESSAGE: 'object' }, MAILSENDHANDLER);
+REGISTERACTORMESSAGE('MAILACTOR', 'ACK', { RECIPIENT: 'string', IDS: 'array' }, MAILACKHANDLER);
+
+// @proposal=P-MESSAGEREGISTRY-ABSORPTION, R-EXEC — the BROADCAST ifaces
+// recovered from the deleted registerconsumers.js. The BROADCAST
+// recipient has no aggregate; the handler is null. Registration exists
+// for MAILACTORVALIDATE's field-shape check.
+REGISTERACTORMESSAGE('BROADCAST', 'BLOCKEXECUTED', {
+  PIPELINEID: 'string?',
+  STAGEPATH: 'array?',
+  ELEMENTID: 'string?',
+  TOKEN: 'string?',
+  RESULT: 'object'
+}, null);
+
+REGISTERACTORMESSAGE('BROADCAST', 'BLOCKFAILED', {
+  PIPELINEID: 'string?',
+  STAGEPATH: 'array?',
+  ELEMENTID: 'string?',
+  TOKEN: 'string?',
+  ERROR: 'string',
+  DIAGNOSTIC: 'object'
+}, null);
+
+// ============================================================
+// §7 — Mailactor's aggregate behaviour
+// ============================================================
+//
+// @proposal=P-ACTOR-L1-L2-SEPARATION — delegates to INVOKEHANDLER.
+// The { matched, result } shape is unwrapped; a non-match returns the
+// ENV unchanged so DISPATCHPROJECT's contract is preserved.
 
 function MAILBEHAVIOR(ENV, MESSAGE) {
-  return MAILBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+  var OUT = INVOKEHANDLER('MAILACTOR', ENV, MESSAGE);
+  if (OUT.matched !== true) return ENV;
+  return OUT.result;
 }
 
-REGISTERACTORSURFACE('MAILACTOR', MAILBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('MAILACTOR', MAILBEHAVIOR);
 ACTORCONSUMERS['MAILACTOR'] = MAILBEHAVIOR;
 
 // ============================================================
-// §3 — Mailbox query, polling, subscriptions
+// §8 — Mailbox query, polling, subscriptions
 // ============================================================
 
 function GETMAILBOX() {
@@ -331,23 +494,19 @@ function GETMAILBOX() {
 
 function QUERYMAILBOX(FILTER) {
   if (!FILTER) FILTER = {};
-
   var FILTERTYPE = FILTER.TYPE;
   if (FILTERTYPE !== undefined) {
     if (!MESSAGETYPEEXISTS(FILTERTYPE)) {
       throw new Error('[QUERYMAILBOX] Invalid filter type: ' + FILTERTYPE);
     }
   }
-
   logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX FILTER:', JSON.stringify(FILTER));
-
   var CANDIDATES = MAILBOX;
   var FILTERTAG = FILTER.TAG;
   var FILTERSENDER = FILTER.SENDER;
   var FILTERRECIPIENT = FILTER.RECIPIENT;
   var FILTERSTATUS = FILTER.STATUS;
   var FILTERREAD = FILTER.READ;
-
   if (FILTERTAG && INDEXBYTAG[FILTERTAG]) {
     CANDIDATES = INDEXBYTAG[FILTERTAG];
   } else if (FILTERSENDER && INDEXBYSENDER[FILTERSENDER]) {
@@ -355,7 +514,6 @@ function QUERYMAILBOX(FILTER) {
   } else if (FILTERTYPE && (INDEXBYTYPE[FILTERTYPE] || INDEXBYTYPE[String(FILTERTYPE).toUpperCase()] || INDEXBYTYPE[String(FILTERTYPE).toLowerCase()])) {
     CANDIDATES = INDEXBYTYPE[FILTERTYPE] || INDEXBYTYPE[String(FILTERTYPE).toUpperCase()] || INDEXBYTYPE[String(FILTERTYPE).toLowerCase()];
   }
-
   var MATCHED = CANDIDATES.filter(function(ITEM) {
     if (!ITEM || !ITEM.PAYLOAD) return false;
     var MATCHES = true;
@@ -367,7 +525,6 @@ function QUERYMAILBOX(FILTER) {
     var ITEMREAD = ITEM.READ;
     var ITEMPAYLOAD = ITEM.PAYLOAD;
     var ITEMTYPE = ITEMPAYLOAD ? ITEMPAYLOAD.TYPE : ITEM.TYPE;
-
     if (FILTERRECIPIENT !== undefined && ITEMRECIPIENT !== FILTERRECIPIENT) MATCHES = false;
     if (FILTERSENDER !== undefined && ITEMSENDER !== FILTERSENDER) MATCHES = false;
     if (FILTERTAG !== undefined && ITEMTAG !== FILTERTAG) MATCHES = false;
@@ -393,7 +550,6 @@ function QUERYMAILBOX(FILTER) {
     }
     return MATCHES;
   });
-
   var SEENTAGS = {};
   var DEDUPED = MATCHED.filter(function(ITEM) {
     var TAGVAL = ITEM.TAG;
@@ -403,9 +559,7 @@ function QUERYMAILBOX(FILTER) {
     }
     return true;
   });
-
   logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX RAW MATCHES:', DEDUPED.length);
-
   var RESULT = DEDUPED.map(function(ITEM) {
     if (ITEM && (ITEM.READ !== 'READ')) {
       ITEM.READ = 'READ';
@@ -413,7 +567,6 @@ function QUERYMAILBOX(FILTER) {
     }
     return ITEM;
   });
-
   RESULT.forEach(function(ITEM) {
     var TAGVAL = ITEM && ITEM.TAG;
     if (ITEM && TAGVAL && EXPECTATIONS[TAGVAL] && (ITEM.READ === 'READ')) {
@@ -424,7 +577,6 @@ function QUERYMAILBOX(FILTER) {
       else setTimeout(function() { REMOVEENVELOPEFROMMAILBOX(ITEM); }, 0);
     }
   });
-
   logdebug(MAILSTATE, '[MAILACTOR]', 'QUERYMAILBOX RETURNING', RESULT.length, 'ITEMS');
   return RESULT;
 }
@@ -434,20 +586,17 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
     REJECT(new Error('Cancelled'));
     return;
   }
-
   var TAGVAL = FILTER && FILTER.TAG;
   if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS !== 'PENDING') {
     REJECT(new Error('Expectation already settled'));
     return;
   }
-
   var FOUND = QUERYMAILBOX(FILTER);
   if (FOUND.length > 0) {
     FOUND[0].READ = 'READ';
     RESOLVE(FOUND[0]);
     return;
   }
-
   var CHECKINTERVAL = setInterval(function() {
     if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.ACTIVECANCELLATIONTOKEN && blockcompilerstate.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       clearInterval(CHECKINTERVAL);
@@ -466,7 +615,6 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
       RESOLVE(RES[0]);
     }
   }, mailboxresolve('pollinterval'));
-
   setTimeout(function() {
     clearInterval(CHECKINTERVAL);
     if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.ACTIVECANCELLATIONTOKEN && blockcompilerstate.ACTIVECANCELLATIONTOKEN.CANCELLED) {
@@ -486,16 +634,9 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
   }, TIMEOUT);
 }
 
-// @proposal=P-FLOW-MAILBOX-DRAIN-005 — the "expectation exists and is
-// PENDING" branch performs a QUERYMAILBOX on entry. This closes the
-// ordering race in which an envelope admitted before the expectation
-// was created would otherwise be invisible to the wait (the mailbox's
-// sole resolution hook — RESOLVEEXPECTATION from ADDENVELOPETOMAILBOX —
-// fires only at admission time).
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
   var TAGVAL = FILTER && FILTER.TAG;
-
   if (TAGVAL && EXPECTATIONS[TAGVAL] && EXPECTATIONS[TAGVAL].STATUS === 'PENDING') {
     var EARLY = QUERYMAILBOX(FILTER);
     if (EARLY.length > 0) {
@@ -525,14 +666,13 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
       }, TIMEOUT);
     });
   }
-
   return new Promise(function(RESOLVE, REJECT) {
     POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT);
   });
 }
 
 // ============================================================
-// §4 — Broadcast subscription (P38r5)
+// §9 — Broadcast subscription
 // ============================================================
 
 var BROADCASTSUBSCRIPTIONS = {};
@@ -578,24 +718,13 @@ function DISPATCHBROADCAST(MESSAGE) {
 }
 
 // ============================================================
-// §5 — Tag generation and send primitives
+// §10 — Tag generation and send primitives
 // ============================================================
 
 function GENERATETAG() {
   return 'TAG' + Date.now() + Math.random().toString(36).slice(2, 10);
 }
 
-// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — single-channel response. The
-// message's WAITMODE declares the caller's channel:
-//   'mailbox' — the response is emitted as a mailbox envelope; an
-//               expectation is created by the dispatcher's installer;
-//               the caller awaits WAITFORMAILBOX.
-//   'promise' — the response is the resolved SENDINSTRUCTION return
-//               value; no expectation is created; no envelope is
-//               emitted.
-// The default is 'mailbox' when RESPONSESPEC is present (traditional
-// callers), 'promise' otherwise (callers that do not expect a response
-// need no mailbox bookkeeping).
 function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CONTEXT, WAITMODE) {
   if (TAG === undefined) TAG = GENERATETAG();
   if (SENDER === undefined) SENDER = 'system';
@@ -613,42 +742,31 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
   if (RESPONSESPEC) FLATMESSAGE.RESPONSESPEC = RESPONSESPEC;
   if (CONTEXT) FLATMESSAGE.CONTEXT = CONTEXT;
 
-  if (MESSAGEREGISTRY && typeof MESSAGEREGISTRY.getinterfaces === 'function') {
-    var GETIFACES = MESSAGEREGISTRY.getinterfaces;
-    var IFACES = GETIFACES(RECIPIENT);
-    if (IFACES && Object.keys(IFACES).length > 0) {
-      var VALIDATEFN = MESSAGEREGISTRY.validate;
-      var VALIDATION = VALIDATEFN(RECIPIENT, FLATMESSAGE);
-      if (VALIDATION.valid === false) {
-        throw new Error('[MAILACTOR] Message validation failed for ' + RECIPIENT + ': ' + VALIDATION.error);
-      }
+  var IFACES = MAILACTORINTERFACES(RECIPIENT);
+  if (IFACES && Object.keys(IFACES).length > 0) {
+    var VALIDATION = MAILACTORVALIDATE(RECIPIENT, FLATMESSAGE);
+    if (VALIDATION.valid === false) {
+      throw new Error('[MAILACTOR] Message validation failed for ' + RECIPIENT + ': ' + VALIDATION.error);
     }
   }
 
   var STRATEGY = INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, FLATMESSAGE, SENDER, TAG, RESPONSESPEC);
-
-  if (STRATEGY.suppress === true) {
-    return Promise.resolve(TAG);
-  }
-
+  if (STRATEGY.suppress === true) return Promise.resolve(TAG);
   if (STRATEGY.batch === true) {
     ENQUEUEBATCH(RECIPIENT, TYPE, FLATMESSAGE, TAG, SENDER, RESPONSESPEC);
     return Promise.resolve(TAG);
   }
-
   if (STRATEGY.route === 'broadcast') {
     if (GETBROADCASTTYPES()[TYPE] === true) {
       DISPATCHBROADCAST(FLATMESSAGE);
     }
     return Promise.resolve(TAG);
   }
-
   if (STRATEGY.route === 'direct') {
     var CONSUMER = ACTORCONSUMERS[RECIPIENT];
     if (typeof CONSUMER !== 'function') {
-      // Race: registered then removed. Fall through to mailbox.
       return Promise.resolve(DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, {
-        TYPE: MESSAGETYPES.SEND,
+        TYPE: 'SEND',
         RECIPIENT: RECIPIENT,
         MESSAGE: FLATMESSAGE
       }));
@@ -668,20 +786,13 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     };
     return Promise.resolve(DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, INSTALLER));
   }
-
-  // mailbox
   return Promise.resolve(DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, {
-    TYPE: MESSAGETYPES.SEND,
+    TYPE: 'SEND',
     RECIPIENT: RECIPIENT,
     MESSAGE: FLATMESSAGE
   }));
 }
 
-// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — SENDRESPONSE is the framework's
-// internal channel for emitting a response envelope. Its routing MUST be
-// via the mailbox regardless of the message's default wait mode (which
-// would otherwise be 'promise' because SENDRESPONSE does not carry a
-// RESPONSESPEC). The explicit 'mailbox' argument is required.
 function SENDRESPONSE(RECIPIENT, TAG, RESULT, SENDER, RESPONSETYPE) {
   if (RESPONSETYPE === undefined) {
     throw new Error('[SENDRESPONSE] responseType is required');
@@ -696,20 +807,11 @@ function MAILGETACTIONSTATUS(ID) {
 
   var EXP = EXPECTATIONS[ID];
   if (EXP) {
-    if (EXP.STATUS === 'PENDING') {
-      return { STATUS: 'PENDING', RESULT: null, ERROR: null };
-    }
-    if (EXP.STATUS === 'TIMEOUT') {
-      return { STATUS: 'EXPIRED', RESULT: null, ERROR: EXP.ERROR || null };
-    }
+    if (EXP.STATUS === 'PENDING') return { STATUS: 'PENDING', RESULT: null, ERROR: null };
+    if (EXP.STATUS === 'TIMEOUT') return { STATUS: 'EXPIRED', RESULT: null, ERROR: EXP.ERROR || null };
   }
 
-  var RESPONSETYPESET = {};
-  if (typeof MAILBOXFILTERTYPES !== 'undefined') {
-    Object.keys(MAILBOXFILTERTYPES).forEach(function(K) {
-      RESPONSETYPESET[MAILBOXFILTERTYPES[K]] = true;
-    });
-  }
+  var RESPONSETYPESET = GETRESPONSETYPES();
   var ENVELOPES = INDEXBYTAG[ID] || [];
   var RESPONSEENVELOPE = null;
   ENVELOPES.forEach(function(E) {
@@ -736,7 +838,6 @@ function MAILGETACTIONSTATUS(ID) {
       ERROR: null
     };
   }
-
   return null;
 }
 

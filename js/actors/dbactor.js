@@ -1,3 +1,10 @@
+REGISTERMESSAGETYPE('STORE');
+REGISTERMESSAGETYPE('RESTORE');
+REGISTERMESSAGETYPE('LIST');
+REGISTERMESSAGETYPE('DELETE');
+
+REGISTERRESPONSETYPE('DBRESULT');
+
 var DBVERBOSITYCONSTANTS = createverbosityconstants();
 var DBSTATE = { level: DBVERBOSITYCONSTANTS.DEBUG };
 
@@ -244,9 +251,8 @@ function DEOPTIMIZESERIALIZEDDNA(JSONSTRING) {
 // ============================================================
 // §2 — Message handlers (P-ACTOR-FLOW-002)
 // ============================================================
-// Every handler returns { ENV, RESPONSE } or ENV. No SENDRESPONSE, no
-// SENDINSTRUCTION(UPDATE), no callback-side mutation.
-// Response channel = framework mailbox, not the removed store mailbox.
+// DBACTOR-EXEMPTION: handlers keep (ENV, MESSAGE); they read MESSAGE.X
+// directly. P-HANDLER-FUNCTIONAL-CONVENTION does not apply.
 
 function DBBEHAVIORSTORE(ENV, MESSAGE) {
   logdebug(ENV, '[DBACTOR]', 'ACTION STORE KEY:', MESSAGE.KEY);
@@ -298,54 +304,56 @@ function DBBEHAVIORDEFAULT(ENV, MESSAGE) {
 }
 
 // ============================================================
-// §3 — Dispatcher surface
+// §3 — Local dispatcher (DBACTOR-EXEMPTION: inline switch, no
+// framework helper; the shared MAKEACTORDISPATCHSURFACE is not used)
 // ============================================================
 
-var DBBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('DBACTOR', [
-  MAKETYPEDDISPATCH(MESSAGETYPES.STORE, DBBEHAVIORSTORE),
-  MAKETYPEDDISPATCH(MESSAGETYPES.RESTORE, DBBEHAVIORRESTORE),
-  MAKETYPEDDISPATCH(MESSAGETYPES.LIST, DBBEHAVIORLIST),
-  MAKETYPEDDISPATCH(MESSAGETYPES.DELETE, DBBEHAVIORDELETE),
-  DBBEHAVIORDEFAULT
-]);
+function DBBEHAVIORDISPATCH(ENV, MESSAGE) {
+  switch (MESSAGE.TYPE) {
+    case 'STORE':   return DBBEHAVIORSTORE(ENV, MESSAGE);
+    case 'RESTORE': return DBBEHAVIORRESTORE(ENV, MESSAGE);
+    case 'LIST':    return DBBEHAVIORLIST(ENV, MESSAGE);
+    case 'DELETE':  return DBBEHAVIORDELETE(ENV, MESSAGE);
+    default:        return DBBEHAVIORDEFAULT(ENV, MESSAGE);
+  }
+}
 
 function DBBEHAVIOR(ENV, MESSAGE) {
   logdebug(ENV, '[DBACTOR]', 'BEHAVIOR HANDLING ACTION:', MESSAGE.TYPE);
-  return DBBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+  return DBBEHAVIORDISPATCH(ENV, MESSAGE);
 }
 
-REGISTERACTORSURFACE('DBACTOR', DBBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('DBACTOR', DBBEHAVIOR);
 ACTORCONSUMERS['DBACTOR'] = DBBEHAVIOR;
 
 // ============================================================
-// §4 — Direct DB API (unified with framework mailbox)
+// §4 — Direct DB API (literals)
 // ============================================================
 
 function DBSTORE(KEY, VALUE) {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.STORE, { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  SENDINSTRUCTION('DBACTOR', 'STORE', { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
   return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
     .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }
 
 function DBRESTORE(KEY) {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.RESTORE, { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  SENDINSTRUCTION('DBACTOR', 'RESTORE', { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
   return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
     .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }
 
 function DBLIST() {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.LIST, {}, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  SENDINSTRUCTION('DBACTOR', 'LIST', {}, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
   return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
     .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }
 
 function DBDELETE(KEY) {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', MESSAGETYPES.DELETE, { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
+  SENDINSTRUCTION('DBACTOR', 'DELETE', { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
   return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
     .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
 }

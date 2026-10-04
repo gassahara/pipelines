@@ -17,9 +17,9 @@ var pipelinesmanifest = [
     'analyzefnblock', 'createblockanalyzer', 'createblockanalyzers',
     'compilefnblock'
   ] },
-  { src: 'messageregistry.js', provides: [
-    'MESSAGEREGISTRY', 'MESSAGETYPES',
-    'MAILBOXFILTERTYPES', 'MESSAGEREGISTRYSTORE'
+  { src: 'messagetypes.js', provides: [
+    'DYNAMICMESSAGETYPESREF', 'GETDYNAMICMESSAGETYPES',
+    'REGISTERMESSAGETYPE', 'UNREGISTERMESSAGETYPE', 'MESSAGETYPEEXISTS'
   ] },
   { src: 'verbosity.js', provides: [
     'createverbosityconstants', 'getverbosity', 'setverbosity',
@@ -37,16 +37,14 @@ var pipelinesmanifest = [
 
   { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
   { src: 'actors/actorcore.js', provides: [
-    // dispatcher-surface primitives
-    'ENSUREDISPATCHERSLICE', 'READDISPATCHES', 'ADDDISPATCH', 'REMOVEDISPATCH',
-    'RUNDISPATCHES', 'MAKETYPEDDISPATCH', 'REGISTERCONSUMER',
-    'MAKEACTORDISPATCHSURFACE', 'ACTORSURFACEREGISTRY', 'AGGREGATEBEHAVIOR',
+    // actor-surface and aggregate registries
+    'ACTORSURFACEREGISTRY', 'AGGREGATEBEHAVIOR',
     'REGISTERACTORSURFACE', 'REGISTERAGGREGATEBEHAVIOR',
     'GETACTORSURFACE', 'GETAGGREGATEBEHAVIOR', 'REGISTERACTORHANDLER',
     'MAKEPRODUCER',
     // shared actor registry
     'ACTORCONSUMERS',
-    // base primitives (P-AC-001a)
+    // base primitives
     'CREATEGARBAGECOLLECTOR', 'REGISTEROBJECT', 'UPDATESTATUS', 'INCREMENTSENT',
     'INCREMENTRECEIVED', 'COLLECTENDED', 'LISTOBJECTS',
     'REGISTERACTORSTATE', 'GETACTORSTATE', 'SETACTORSTATE',
@@ -55,9 +53,9 @@ var pipelinesmanifest = [
     'GETACTORREGISTRY', 'CREATEACTORREGISTRY', 'SETRENDERACTOR', 'GETRENDERACTOR',
     'CREATETRIGGERREGISTRY', 'REGISTERTRIGGER', 'UNREGISTERTRIGGER',
     'REVALIDATEALL', 'GETTRIGGERMAP', 'CREATEACTORHANDLE',
-    // flow-contract helpers (P-ACTOR-FLOW-001)
+    // flow-contract helpers
     'DISPATCHPROJECT', 'DISPATCHPUBLISH', 'DISPATCHRESPOND', 'DISPATCHINSTALL',
-    // inference facility (P-INFER-001)
+    // inference facility
     'INFERDISPATCHSTRATEGY',
     'POLLERRECIPIENTSREF', 'GETPOLLERRECIPIENTS',
     'REGISTERPOLLERRECIPIENT', 'UNREGISTERPOLLERRECIPIENT',
@@ -71,12 +69,12 @@ var pipelinesmanifest = [
     'VERBOSITYTHRESHOLDREF', 'GETVERBOSITYTHRESHOLD', 'SETVERBOSITYTHRESHOLD',
     // batch scheduler
     'BATCHBUFFERS', 'BATCHKEY', 'ENQUEUEBATCH', 'FLUSHBATCH', 'FLUSHALLBATCHES',
-    // CYCLE-06 — script-load timeout (P-FLOW-BOUND-001)
+    // script-load timeout
     'SCRIPTLOADTIMEOUTREF', 'GETSCRIPTLOADTIMEOUT', 'SETSCRIPTLOADTIMEOUT',
-    // CYCLE-06 — response-type registry (P-FLOW-RESPONSE-ROUTING-003)
+    // response-type registry
     'RESPONSETYPESREF', 'GETRESPONSETYPES',
     'REGISTERRESPONSETYPE', 'UNREGISTERRESPONSETYPE',
-    // CYCLE-07 — CCC registry + connector (P-CCC-FLOW-009)
+    // CCC registry + connector
     'CCCREGISTRYREF', 'GETCCCREGISTRY',
     'REGISTERCCCHANDLER', 'UNREGISTERCCCHANDLER', 'CCCNOTIFY'
   ] },
@@ -99,10 +97,11 @@ var pipelinesmanifest = [
   { src: 'actors/dbactor.js', provides: [
     'DBBEHAVIOR', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE',
     'STARTDBACTOR', 'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
-  ] },
+  ], exemptFromL1L2: true },
   { src: 'actors/mailactor.js', provides: [
     'MAILBEHAVIOR', 'GENERATETAG', 'SENDINSTRUCTION', 'SENDRESPONSE',
-    'QUERYMAILBOX', 'WAITFORMAILBOX', 'STARTMAILACTOR', 'MAILGETACTIONSTATUS'
+    'QUERYMAILBOX', 'WAITFORMAILBOX', 'STARTMAILACTOR', 'MAILGETACTIONSTATUS',
+    'REGISTERACTORMESSAGE', 'RESOLVEHANDLER', 'EXTRACTPAYLOAD', 'INVOKEHANDLER'
   ], owner: 'MAILACTOR', types: ['SEND', 'ACK'] },
   { src: 'actors/worldmapactor.js', provides: [
     'WORLDMAPBEHAVIOR', 'STARTWORLDMAPACTOR', 'SENDWORLDMAPPATCH',
@@ -256,8 +255,7 @@ var pipelinesmanifest = [
     'REGISTERPIPELINE', 'UNREGISTERPIPELINE',
     'SETPROGRAM', 'GETPROGRAM', 'MARKBOOT',
     'EVENTTRIGGERED', 'PING', 'RECOVER', 'ACTIVATEACTORS'
-  ] },
-  { src: 'registerconsumers.js', provides: ['REGISTEREDCONSUMERS'] }
+  ] }
 ];
 
 function getroot() {
@@ -273,14 +271,19 @@ function checkexistence(entry) {
   return { ok: missing.length === 0, missing: missing };
 }
 
+// @proposal=P-MAILACTOR-VOCABULARY-API (revision 2, RUN 23) — the
+// per-actor registration check now consults MAILACTOR's RESOLVEHANDLER.
+// The former MESSAGEREGISTRY.gethandler no longer exists. RESOLVEHANDLER
+// is defined at mailactor.js (manifest position 21); checkregistration
+// runs from aggregate(), after every script has loaded.
 function checkregistration(entry) {
   if (!entry.owner) return { ok: true, missing: [] };
+  if (typeof RESOLVEHANDLER !== 'function') {
+    return { ok: false, missing: entry.types };
+  }
   var missing = [];
-  var reg = (typeof MESSAGEREGISTRY !== 'undefined') ? MESSAGEREGISTRY : null;
-  if (!reg) return { ok: false, missing: entry.types };
-  var gethandlerfn = reg.gethandler;
   entry.types.forEach(function(type) {
-    if (typeof gethandlerfn.call(reg, entry.owner, type) !== 'function') missing.push(type);
+    if (typeof RESOLVEHANDLER(entry.owner, type) !== 'function') missing.push(type);
   });
   return { ok: missing.length === 0, missing: missing };
 }

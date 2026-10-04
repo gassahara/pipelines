@@ -1,3 +1,12 @@
+REGISTERMESSAGETYPE('INITOVERLAY');
+REGISTERMESSAGETYPE('SHOW');
+REGISTERMESSAGETYPE('HIDE');
+REGISTERMESSAGETYPE('LOGLINE');
+REGISTERMESSAGETYPE('PING');
+REGISTERMESSAGETYPE('RECOVER');
+
+SETBATCHWINDOW('LOGLINE', 250);
+
 // @proposal=P16 — bounded log storage.
 var DEBUGLOGSMAX = 200;
 var DEBUGLOGDATAMAX = 2048;
@@ -27,7 +36,7 @@ function SCHEDULEDEBUGSLICEUPDATE(ENV) {
     if (!TARGETENV) return;
     var SLICE = TARGETENV.DEBUG;
     if (!SLICE) return;
-    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+    SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
       UPDATES: [{ PATH: 'DEBUG', VALUE: SLICE }]
     }, GENERATETAG(), 'DEBUGACTOR');
   }, DEBUGSLICEUPDATEDEBOUNCE);
@@ -137,24 +146,16 @@ function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
 // §1 — Message handlers (P64, P-ACTOR-FLOW-002)
 // ============================================================
 //
-// Handlers return one of the flow contract's shapes:
-//   ENV                            — state update; no response
-//   { ENV, RESPONSE }              — state update + response
-//   Promise<ENV>                   — state update on resolution
-//   Promise<{ ENV, RESPONSE }>     — both on resolution
-// No handler emits SENDRESPONSE / RESPONDIFNEEDED.
+// Handlers return { ENV, RESPONSE } or ENV or Promise<…>. Response
+// emission is handled by DISPATCHRESPOND; a response with no SENDER/TAG
+// is silently suppressed by the dispatcher.
 
-// @proposal=P-ACTOR-FLOW-002 — sync response via return.
-function DEBUGBEHAVIORPING(ENV, MESSAGE) {
+function DEBUGBEHAVIORPING(ENV, ARGS) {
   logdebug(ENV, '[DEBUGACTOR]', 'ACTION PING');
-  if (MESSAGE.SENDER && MESSAGE.TAG) {
-    return { ENV: ENV, RESPONSE: true };
-  }
-  return ENV;
+  return { ENV: ENV, RESPONSE: true };
 }
 
-// @proposal=P-ACTOR-FLOW-002 — sync response via return.
-function DEBUGBEHAVIORINITOVERLAY(ENV, MESSAGE) {
+function DEBUGBEHAVIORINITOVERLAY(ENV, ARGS) {
   logdebug(ENV, '[DEBUGACTOR]', 'ACTION INITOVERLAY');
   var NEXTENV = ENSUREDEBUGSLICE(ENV);
   var DEBUGSLICE = NEXTENV.debug;
@@ -168,30 +169,26 @@ function DEBUGBEHAVIORINITOVERLAY(ENV, MESSAGE) {
     window.addEventListener('error', function(E) {
       E.preventDefault();
       logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL WINDOW ERROR CAPTURED:', E.error || E);
-      SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, { ERROR: E.error || E, CONTINUATION: null }, null, 'window');
+      SENDINSTRUCTION('DEBUGACTOR', 'SHOW', { ERROR: E.error || E, CONTINUATION: null }, null, 'window');
     });
     window.addEventListener('unhandledrejection', function(E) {
       if (E.reason && E.reason.diagnostic) {
         E.preventDefault();
         logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL UNHANDLED REJECTION CAPTURED:', E.reason);
-        SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.SHOW, { ERROR: E.reason, CONTINUATION: E.reason.diagnostic.CONTINUATION || null }, null, 'window');
+        SENDINSTRUCTION('DEBUGACTOR', 'SHOW', { ERROR: E.reason, CONTINUATION: E.reason.diagnostic.CONTINUATION || null }, null, 'window');
       }
     });
   }
 
   DEBUGSLICE.OVERLAYVISIBLE = false;
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+  SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
     UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
   }, GENERATETAG(), 'DEBUGACTOR');
 
-  if (MESSAGE.SENDER && MESSAGE.TAG) {
-    return { ENV: NEXTENV, RESPONSE: true };
-  }
-  return NEXTENV;
+  return { ENV: NEXTENV, RESPONSE: true };
 }
 
-// @proposal=P-ACTOR-FLOW-002 — sync response via return.
-function DEBUGBEHAVIORHIDE(ENV, MESSAGE) {
+function DEBUGBEHAVIORHIDE(ENV, ARGS) {
   logdebug(ENV, '[DEBUGACTOR]', 'ACTION HIDE');
   var NEXTENV = ENSUREDEBUGSLICE(ENV);
   var DEBUGSLICE = NEXTENV.debug;
@@ -203,31 +200,23 @@ function DEBUGBEHAVIORHIDE(ENV, MESSAGE) {
   DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = null;
   DEBUGSLICE.CURRENTCONTINUATION = null;
 
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+  SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
     UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
   }, GENERATETAG(), 'DEBUGACTOR');
 
-  if (MESSAGE.SENDER && MESSAGE.TAG) {
-    return { ENV: NEXTENV, RESPONSE: NEXTENV };
-  }
-  return NEXTENV;
+  return { ENV: NEXTENV, RESPONSE: NEXTENV };
 }
 
-// @proposal=P-ACTOR-FLOW-002 — sync response via return. The setTimeout
-// below wires UI listeners; those listeners mutate the debug slice
-// (which is shared with NEXTENV) and publish via the debounced update.
-// This is fire-and-forget with slice-scoped writes; it does not mutate
-// the received ENV.
-function DEBUGBEHAVIORSHOW(ENV, MESSAGE) {
+function DEBUGBEHAVIORSHOW(ENV, ARGS) {
   loginfo(ENV, '[DEBUGACTOR]', 'ACTION SHOW DEBUG OVERLAY');
-  logdebug(ENV, '[DEBUGACTOR]', 'ACTION SHOW ERROR:', MESSAGE.ERROR, 'CONTINUATION:', MESSAGE.CONTINUATION);
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION SHOW ERROR:', ARGS.ERROR, 'CONTINUATION:', ARGS.CONTINUATION);
   var NEXTENV = ENSUREDEBUGSLICE(ENV);
   var DEBUGSLICE = NEXTENV.debug;
   var OVERLAY = ENSUREOVERLAY(DEBUGSLICE);
 
   OVERLAY.innerHTML = formatdebugtrace(
-    MESSAGE.ERROR,
-    (MESSAGE.ERROR && MESSAGE.ERROR.DIAGNOSTIC && MESSAGE.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
+    ARGS.ERROR,
+    (ARGS.ERROR && ARGS.ERROR.DIAGNOSTIC && ARGS.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
   );
 
   var LOGVIEWERHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
@@ -240,38 +229,38 @@ function DEBUGBEHAVIORSHOW(ENV, MESSAGE) {
   var ACTIONS = document.createElement('div');
   ACTIONS.style.cssText = 'position:fixed;bottom:40px;right:40px;display:flex;gap:20px;';
 
-  if (MESSAGE.CONTINUATION) {
-    var CTX = GETCTX(MESSAGE.ERROR, MESSAGE.CONTINUATION);
+  if (ARGS.CONTINUATION) {
+    var CTX = GETCTX(ARGS.ERROR, ARGS.CONTINUATION);
     ACTIONS.appendChild(BTN('RETRY STAGE', 'background:#00ff00;color:#000;', function() {
       logdebug(ENV, '[DEBUGACTOR]', 'RETRYING STAGE:', CTX);
       OVERLAY.style.display = 'none';
       OVERLAY.innerHTML = '';
-      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCRETRY', { PIPELINEID: CTX.PIPELINEID, PATH: CTX.PATH, ELEMENTID: CTX.ELEMENTID, CONTINUATION: MESSAGE.CONTINUATION }, null, 'DEBUGACTOR');
+      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCRETRY', { PIPELINEID: CTX.PIPELINEID, PATH: CTX.PATH, ELEMENTID: CTX.ELEMENTID, CONTINUATION: ARGS.CONTINUATION }, null, 'DEBUGACTOR');
     }));
     ACTIONS.appendChild(BTN('CONTINUE', 'background:#4488ff;color:#fff;', function() {
       logdebug(ENV, '[DEBUGACTOR]', 'CONTINUING STAGE:', CTX);
       OVERLAY.style.display = 'none';
       OVERLAY.innerHTML = '';
-      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCCONTINUE', { PIPELINEID: CTX.PIPELINEID, PATH: CTX.PATH, ELEMENTID: CTX.ELEMENTID, CONTINUATION: MESSAGE.CONTINUATION }, null, 'DEBUGACTOR');
+      SENDINSTRUCTION('EXECUTIONACTOR', 'CCCCONTINUE', { PIPELINEID: CTX.PIPELINEID, PATH: CTX.PATH, ELEMENTID: CTX.ELEMENTID, CONTINUATION: ARGS.CONTINUATION }, null, 'DEBUGACTOR');
     }));
   }
 
   ACTIONS.appendChild(BTN('ABORT', 'background:#ff5555;color:#fff;', function() {
-    var ABORTCTX = MESSAGE.CONTINUATION ? GETCTX(null, MESSAGE.CONTINUATION) : { PIPELINEID: 'unknownpipeline', PATH: ['unknownstage', 'unknownelement'], ELEMENTID: 'unknownelement' };
+    var ABORTCTX = ARGS.CONTINUATION ? GETCTX(null, ARGS.CONTINUATION) : { PIPELINEID: 'unknownpipeline', PATH: ['unknownstage', 'unknownelement'], ELEMENTID: 'unknownelement' };
     logdebug(ENV, '[DEBUGACTOR]', 'ABORTING STAGE:', ABORTCTX);
     OVERLAY.style.display = 'none';
     OVERLAY.innerHTML = '';
-    SENDINSTRUCTION('EXECUTIONACTOR', 'CCCABORT', { PIPELINEID: ABORTCTX.PIPELINEID, PATH: ABORTCTX.PATH, ELEMENTID: ABORTCTX.ELEMENTID, CONTINUATION: MESSAGE.CONTINUATION }, null, 'DEBUGACTOR');
+    SENDINSTRUCTION('EXECUTIONACTOR', 'CCCABORT', { PIPELINEID: ABORTCTX.PIPELINEID, PATH: ABORTCTX.PATH, ELEMENTID: ABORTCTX.ELEMENTID, CONTINUATION: ARGS.CONTINUATION }, null, 'DEBUGACTOR');
   }));
 
   OVERLAY.appendChild(ACTIONS);
   OVERLAY.style.display = 'flex';
 
   DEBUGSLICE.OVERLAYVISIBLE = true;
-  DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
-  DEBUGSLICE.CURRENTCONTINUATION = MESSAGE.CONTINUATION || null;
+  DEBUGSLICE.CCCSTATE.CURRENTCONTINUATION = ARGS.CONTINUATION || null;
+  DEBUGSLICE.CURRENTCONTINUATION = ARGS.CONTINUATION || null;
 
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+  SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
     UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }]
   }, GENERATETAG(), 'DEBUGACTOR');
 
@@ -284,7 +273,7 @@ function DEBUGBEHAVIORSHOW(ENV, MESSAGE) {
         DEBUGSLICE.LOGFILTER = FILTERSELECT.value;
         var PANEL = document.getElementById('debuglogpanel');
         if (PANEL) PANEL.innerHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER, DEBUGSLICE.LOGVIEWERAUTO !== false);
-        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }] }, GENERATETAG(), 'DEBUGACTOR');
+        SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', { UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }] }, GENERATETAG(), 'DEBUGACTOR');
       });
     }
     if (CLEARBTN) {
@@ -292,7 +281,7 @@ function DEBUGBEHAVIORSHOW(ENV, MESSAGE) {
         DEBUGSLICE.LOGS = [];
         var PANEL = document.getElementById('debuglogpanel');
         if (PANEL) PANEL.innerHTML = BUILDLOGVIEWERHTML([], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
-        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }] }, GENERATETAG(), 'DEBUGACTOR');
+        SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', { UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }] }, GENERATETAG(), 'DEBUGACTOR');
       });
     }
     if (AUTOCHECK) {
@@ -302,34 +291,22 @@ function DEBUGBEHAVIORSHOW(ENV, MESSAGE) {
           var LIST = document.getElementById('debugloglist');
           if (LIST) LIST.scrollTop = LIST.scrollHeight;
         }
-        SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, { UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }] }, GENERATETAG(), 'DEBUGACTOR');
+        SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', { UPDATES: [{ PATH: 'DEBUG', VALUE: DEBUGSLICE }] }, GENERATETAG(), 'DEBUGACTOR');
       });
     }
   }, 100);
 
-  if (MESSAGE.SENDER && MESSAGE.TAG) {
-    return { ENV: NEXTENV, RESPONSE: NEXTENV };
-  }
-  return NEXTENV;
+  return { ENV: NEXTENV, RESPONSE: NEXTENV };
 }
 
-// @proposal=P-DEBUG-BUFFER-001 — accepts a batched ITEMS payload (from
-// the infer facility's LOGLINE batching) OR a single-entry payload.
-// Applies the slice cap and schedules the debounced update once per
-// invocation.
-// @proposal=P-ACTOR-FLOW-002 — sync response via return.
-// @proposal=CP1 (sites s1, s2) — the two imperative for-loops that
-// previously accumulated INCOMING and appended it to DEBUGSLICE.LOGS
-// are now expressed as forEach. No semantic change: the per-item
-// side effect and the append order are preserved.
-function DEBUGBEHAVIORLOGLINE(ENV, MESSAGE) {
-  logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', MESSAGE.MESSAGE || ('batch[' + (MESSAGE.ITEMS ? MESSAGE.ITEMS.length : 1) + ']'));
+function DEBUGBEHAVIORLOGLINE(ENV, ARGS) {
+  logdebug(ENV, '[DEBUGACTOR]', 'ACTION LOGLINE:', ARGS.MESSAGE || ('batch[' + (ARGS.ITEMS ? ARGS.ITEMS.length : 1) + ']'));
   var NEXTENV = ENSUREDEBUGSLICE(ENV);
   var DEBUGSLICE = NEXTENV.debug;
 
   var INCOMING = [];
-  if (Array.isArray(MESSAGE.ITEMS)) {
-    MESSAGE.ITEMS.forEach(function(IT) {
+  if (Array.isArray(ARGS.ITEMS)) {
+    ARGS.ITEMS.forEach(function(IT) {
       var SAFEIT = IT || {};
       INCOMING.push({
         LEVEL: SAFEIT.LEVEL || 'info',
@@ -341,11 +318,11 @@ function DEBUGBEHAVIORLOGLINE(ENV, MESSAGE) {
     });
   } else {
     INCOMING.push({
-      LEVEL: MESSAGE.LEVEL || 'info',
-      MESSAGE: MESSAGE.MESSAGE || '',
-      DATA: TRUNCATELOGDATA(MESSAGE.DATA || null),
-      TIMESTAMP: MESSAGE.TIMESTAMP || Date.now(),
-      PREFIX: MESSAGE.PREFIX || ''
+      LEVEL: ARGS.LEVEL || 'info',
+      MESSAGE: ARGS.MESSAGE || '',
+      DATA: TRUNCATELOGDATA(ARGS.DATA || null),
+      TIMESTAMP: ARGS.TIMESTAMP || Date.now(),
+      PREFIX: ARGS.PREFIX || ''
     });
   }
 
@@ -371,15 +348,10 @@ function DEBUGBEHAVIORLOGLINE(ENV, MESSAGE) {
   }
   SCHEDULEDEBUGSLICEUPDATE(NEXTENV);
 
-  if (MESSAGE.SENDER && MESSAGE.TAG) {
-    return { ENV: NEXTENV, RESPONSE: { stored: true } };
-  }
-  return NEXTENV;
+  return { ENV: NEXTENV, RESPONSE: { stored: true } };
 }
 
-// @proposal=P-ACTOR-FLOW-002 — RECOVER returns Promise<ENV> with a fresh
-// debug slice; no callback-side ENV mutation.
-function DEBUGBEHAVIORRECOVER(ENV, MESSAGE) {
+function DEBUGBEHAVIORRECOVER(ENV, ARGS) {
   logdebug(ENV, '[DEBUGACTOR]', 'ACTION RECOVER DEBUG STATE');
   return DBRESTORE('actor:state:debug').then(function(SAVED) {
     var NEWDEBUG = (SAVED !== null && SAVED !== undefined) ? SAVED : {
@@ -396,7 +368,7 @@ function DEBUGBEHAVIORRECOVER(ENV, MESSAGE) {
     var NEXTENV = {};
     Object.keys(ENV).forEach(function(K) { NEXTENV[K] = ENV[K]; });
     NEXTENV.DEBUG = NEWDEBUG;
-    SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+    SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
       UPDATES: [{ PATH: 'DEBUG', VALUE: NEWDEBUG }]
     }, GENERATETAG(), 'DEBUGACTOR');
     return NEXTENV;
@@ -406,49 +378,63 @@ function DEBUGBEHAVIORRECOVER(ENV, MESSAGE) {
   });
 }
 
-function DEBUGBEHAVIORDEFAULT(ENV, MESSAGE) {
-  logwarn(ENV, '[DEBUGACTOR]', 'UNKNOWN MESSAGE TYPE:', MESSAGE.TYPE);
-  return ENV;
-}
-
 // ============================================================
-// §2 — Dispatcher surface
+// §2 — Handler registration
 // ============================================================
 
-var DEBUGBEHAVIORDISPATCH = MAKEACTORDISPATCHSURFACE('DEBUGACTOR', [
-  MAKETYPEDDISPATCH(MESSAGETYPES.PING, DEBUGBEHAVIORPING),
-  MAKETYPEDDISPATCH(MESSAGETYPES.INITOVERLAY, DEBUGBEHAVIORINITOVERLAY),
-  MAKETYPEDDISPATCH(MESSAGETYPES.HIDE, DEBUGBEHAVIORHIDE),
-  MAKETYPEDDISPATCH(MESSAGETYPES.SHOW, DEBUGBEHAVIORSHOW),
-  MAKETYPEDDISPATCH(MESSAGETYPES.LOGLINE, DEBUGBEHAVIORLOGLINE),
-  MAKETYPEDDISPATCH(MESSAGETYPES.RECOVER, DEBUGBEHAVIORRECOVER),
-  DEBUGBEHAVIORDEFAULT
-]);
+REGISTERACTORMESSAGE('DEBUGACTOR', 'PING',
+  { SENDER: 'string?', TAG: 'string?' },
+  DEBUGBEHAVIORPING);
+
+REGISTERACTORMESSAGE('DEBUGACTOR', 'INITOVERLAY',
+  { SENDER: 'string?', TAG: 'string?' },
+  DEBUGBEHAVIORINITOVERLAY);
+
+REGISTERACTORMESSAGE('DEBUGACTOR', 'HIDE',
+  { SENDER: 'string?', TAG: 'string?' },
+  DEBUGBEHAVIORHIDE);
+
+REGISTERACTORMESSAGE('DEBUGACTOR', 'SHOW',
+  { ERROR: 'object', CONTINUATION: 'object?', SENDER: 'string?', TAG: 'string?' },
+  DEBUGBEHAVIORSHOW);
+
+REGISTERACTORMESSAGE('DEBUGACTOR', 'LOGLINE',
+  { LEVEL: 'string', MESSAGE: 'string', DATA: 'object?', TIMESTAMP: 'number', PREFIX: 'string?' },
+  DEBUGBEHAVIORLOGLINE);
+
+REGISTERACTORMESSAGE('DEBUGACTOR', 'RECOVER',
+  { SENDER: 'string?', TAG: 'string?' },
+  DEBUGBEHAVIORRECOVER);
+
+// ============================================================
+// §3 — Aggregate behaviour
+// ============================================================
 
 function DEBUGBEHAVIOR(ENV, MESSAGE) {
-  return DEBUGBEHAVIORDISPATCH.DISPATCH(ENV, MESSAGE);
+  var OUT = INVOKEHANDLER('DEBUGACTOR', ENV, MESSAGE);
+  if (OUT.matched !== true) return ENV;
+  return OUT.result;
 }
 
-REGISTERACTORSURFACE('DEBUGACTOR', DEBUGBEHAVIORDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('DEBUGACTOR', DEBUGBEHAVIOR);
 ACTORCONSUMERS['DEBUGACTOR'] = DEBUGBEHAVIOR;
 
 // ============================================================
-// §3 — Enqueue helpers (unchanged)
+// §4 — Enqueue helpers (literals)
 // ============================================================
 
 function ENQUEUEDEBUGPING(RESPONSESPEC) {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.PING, {}, TAG, 'system', RESPONSESPEC);
+  SENDINSTRUCTION('DEBUGACTOR', 'PING', {}, TAG, 'system', RESPONSESPEC);
 }
 
 function ENQUEUEDEBUGRECOVER(RESPONSESPEC) {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('DEBUGACTOR', MESSAGETYPES.RECOVER, {}, TAG, 'system', RESPONSESPEC);
+  SENDINSTRUCTION('DEBUGACTOR', 'RECOVER', {}, TAG, 'system', RESPONSESPEC);
 }
 
 // ============================================================
-// §4 — Actor handle surface (unchanged)
+// §5 — Actor handle surface (unchanged)
 // ============================================================
 
 var DEBUGHANDLE = null;

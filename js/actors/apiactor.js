@@ -1,14 +1,20 @@
-function APIREQUESTHANDLER(ENV, MESSAGE) {
-  logdebug(ENV, '[APIACTOR]', 'ACTION:', MESSAGE.TYPE, 'METHOD:', MESSAGE.METHOD, 'ENDPOINT:', MESSAGE.ENDPOINT);
+REGISTERMESSAGETYPE('API');
+REGISTERMESSAGETYPE('FETCH');
+
+REGISTERRESPONSETYPE('APIRESULT');
+REGISTERRESPONSETYPE('FETCHRESULT');
+
+function APIREQUESTCORE(ENV, ARGS, ISTEXTUAL) {
+  logdebug(ENV, '[APIACTOR]', 'ACTION:', ISTEXTUAL ? 'FETCH' : 'API', 'METHOD:', ARGS.METHOD, 'ENDPOINT:', ARGS.ENDPOINT);
 
   var APISLICE = ENV.API || {};
   var UPDATEDAPI = {
     LASTREQUEST: {
-      TYPE: MESSAGE.TYPE,
-      ENDPOINT: MESSAGE.ENDPOINT,
-      METHOD: MESSAGE.METHOD,
-      PAYLOAD: MESSAGE.PAYLOAD || {},
-      TOKEN: MESSAGE.TOKEN || '',
+      TYPE: ISTEXTUAL ? 'FETCH' : 'API',
+      ENDPOINT: ARGS.ENDPOINT,
+      METHOD: ARGS.METHOD,
+      PAYLOAD: ARGS.PAYLOAD || {},
+      TOKEN: ARGS.TOKEN || '',
       TIMESTAMP: Date.now()
     },
     REQUESTCOUNT: (APISLICE.REQUESTCOUNT || 0) + 1
@@ -23,11 +29,10 @@ function APIREQUESTHANDLER(ENV, MESSAGE) {
 
   var APICONSTANTS = (typeof createapiconstants === 'function') ? createapiconstants() : { APIBASE: 'https://vflkhntzwfovnuyccxow.supabase.co/functions/v1' };
   var APIBASE = APICONSTANTS.APIBASE || '';
-  var URL = APIBASE + '/' + MESSAGE.ENDPOINT;
-  var ISTEXTUAL = MESSAGE.TYPE === MESSAGETYPES.FETCH;
-  var METHOD = String(MESSAGE.METHOD || 'GET').toUpperCase();
+  var URL = APIBASE + '/' + ARGS.ENDPOINT;
+  var METHOD = String(ARGS.METHOD || 'GET').toUpperCase();
   var HEADERS = {
-    'Authorization': 'Bearer ' + (MESSAGE.TOKEN || '')
+    'Authorization': 'Bearer ' + (ARGS.TOKEN || '')
   };
   if (METHOD === 'POST') {
     HEADERS['Content-Type'] = 'application/json';
@@ -35,47 +40,46 @@ function APIREQUESTHANDLER(ENV, MESSAGE) {
   if (ISTEXTUAL) {
     HEADERS['Accept'] = 'text/plain, */*';
   }
-  var BODY = METHOD === 'POST' ? JSON.stringify(MESSAGE.PAYLOAD || {}) : undefined;
+  var BODY = METHOD === 'POST' ? JSON.stringify(ARGS.PAYLOAD || {}) : undefined;
 
   return fetch(URL, { method: METHOD, headers: HEADERS, body: BODY }).then(function(RESPONSE) {
     var STATUS = RESPONSE.status;
-    logdebug(ENV, '[APIACTOR]', 'ACTION RESPONSE STATUS:', STATUS, 'FOR:', MESSAGE.ENDPOINT);
+    logdebug(ENV, '[APIACTOR]', 'ACTION RESPONSE STATUS:', STATUS, 'FOR:', ARGS.ENDPOINT);
     var PARSED = ISTEXTUAL ? RESPONSE.text() : RESPONSE.json();
     return PARSED.then(function(DATA) {
       return { ENV: BUILDNEXTENV(), RESPONSE: { STATUS: STATUS, DATA: DATA } };
     });
   }).catch(function(ERR) {
-    logerror(ENV, '[APIACTOR]', 'ACTION REQUEST ERROR FOR:', MESSAGE.ENDPOINT, ERR);
+    logerror(ENV, '[APIACTOR]', 'ACTION REQUEST ERROR FOR:', ARGS.ENDPOINT, ERR);
     return { ENV: BUILDNEXTENV(), RESPONSE: { ERROR: ERR.message || String(ERR) } };
   });
 }
 
-// ============================================================
-// §2 — Dispatcher surface
-// ============================================================
+function APIHANDLER_API(ENV, ARGS)   { return APIREQUESTCORE(ENV, ARGS, false); }
+function APIHANDLER_FETCH(ENV, ARGS) { return APIREQUESTCORE(ENV, ARGS, true); }
 
-var APIDISPATCH = MAKEACTORDISPATCHSURFACE('APIACTOR', [
-  MAKETYPEDDISPATCH(MESSAGETYPES.API, APIREQUESTHANDLER),
-  MAKETYPEDDISPATCH(MESSAGETYPES.FETCH, APIREQUESTHANDLER)
-]);
+var APIREQUESTIFACE = {
+  ENDPOINT: 'string',
+  METHOD: 'string',
+  PAYLOAD: 'object?',
+  TOKEN: 'string?'
+};
 
-// @proposal=P64 — the actor's behaviour is the surface's dispatch.
+REGISTERACTORMESSAGE('APIACTOR', 'API', APIREQUESTIFACE, APIHANDLER_API);
+REGISTERACTORMESSAGE('APIACTOR', 'FETCH', APIREQUESTIFACE, APIHANDLER_FETCH);
+
 function APIBEHAVIOR(ENV, MESSAGE) {
-  return APIDISPATCH.DISPATCH(ENV, MESSAGE);
+  var OUT = INVOKEHANDLER('APIACTOR', ENV, MESSAGE);
+  if (OUT.matched !== true) return ENV;
+  return OUT.result;
 }
 
-// @proposal=P64 — publish the surface and the aggregate, and self-register.
-REGISTERACTORSURFACE('APIACTOR', APIDISPATCH);
 REGISTERAGGREGATEBEHAVIOR('APIACTOR', APIBEHAVIOR);
 ACTORCONSUMERS['APIACTOR'] = APIBEHAVIOR;
 
-// ============================================================
-// §3 — Enqueue helpers (unchanged)
-// ============================================================
-
 function ENQUEUEAPI(ENDPOINT, METHOD, PAYLOAD, OPTIONS, RESPONSESPEC) {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('APIACTOR', MESSAGETYPES.API, {
+  SENDINSTRUCTION('APIACTOR', 'API', {
     ENDPOINT: ENDPOINT,
     METHOD: METHOD,
     PAYLOAD: PAYLOAD || {},
@@ -85,17 +89,13 @@ function ENQUEUEAPI(ENDPOINT, METHOD, PAYLOAD, OPTIONS, RESPONSESPEC) {
 
 function ENQUEUEFETCH(ENDPOINT, METHOD, PAYLOAD, OPTIONS, RESPONSESPEC) {
   var TAG = GENERATETAG();
-  SENDINSTRUCTION('APIACTOR', MESSAGETYPES.FETCH, {
+  SENDINSTRUCTION('APIACTOR', 'FETCH', {
     ENDPOINT: ENDPOINT,
     METHOD: METHOD,
     PAYLOAD: PAYLOAD || {},
     TOKEN: (OPTIONS && OPTIONS.TOKEN) || ''
   }, TAG, 'system', RESPONSESPEC);
 }
-
-// ============================================================
-// §4 — Actor handle surface (unchanged)
-// ============================================================
 
 var APIHANDLE = null;
 

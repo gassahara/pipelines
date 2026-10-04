@@ -22,14 +22,46 @@ function exchange(recipient, type, payload, timeout, responsetype, tag) {
 }
 
 function sendandawait(recipient, type, payload, timeout, responsetype) {
-  return exchange(recipient, type, payload, timeout, responsetype).then(unwrap);
+  return exchange(recipient, type, payload, timeout, responsetype).then(function (V) {
+    if (V === undefined) {
+      var undefErr = new Error('[RESPONSE-SHAPE-VIOLATION] undefined response for responsetype ' + responsetype);
+      undefErr.diagnostic = {
+        KIND: 'response-shape-violation',
+        RESPONSETYPE: responsetype,
+        RECIPIENT: recipient,
+        TYPE: type
+      };
+      throw undefErr;
+    }
+    if (V !== null && typeof V === 'object' && !Array.isArray(V) &&
+        Object.prototype.hasOwnProperty.call(V, 'GC') &&
+        Object.prototype.hasOwnProperty.call(V, 'HTML') &&
+        Object.prototype.hasOwnProperty.call(V, 'VIEWPORT') &&
+        Object.prototype.hasOwnProperty.call(V, 'TRIGGEROBSERVERINSTALLED')) {
+      var sliceErr = new Error('[RESPONSE-SHAPE-VIOLATION] response for responsetype ' + responsetype +
+        ' is the RENDERACTOR env slice (the response chain has been corrupted)');
+      sliceErr.diagnostic = {
+        KIND: 'response-shape-violation',
+        RESPONSETYPE: responsetype,
+        RECIPIENT: recipient,
+        TYPE: type,
+        RECEIVED_KEYS: Object.keys(V)
+      };
+      throw sliceErr;
+    }
+    return unwrap(V);
+  });
 }
 
+// ============================================================
+// B11b — Loader primitives
+// ============================================================
+
 function loadscriptwithwitness(entry, basepath, timeout) {
-  return sendandawait('RENDERACTOR', MESSAGETYPES.LOADSCRIPT,
+  return sendandawait('RENDERACTOR', 'LOADSCRIPT',
                       { SRC: basepath + entry.src },
                       mailboxresolve('mailboxwaittimeout'),
-                      MESSAGETYPES.SCRIPTLOADED)
+                      'SCRIPTLOADED')
     .then(function(response) {
       if (response && response.ERROR) throw new Error(response.ERROR);
       if (entry.provides && entry.provides.length > 0) {
@@ -62,7 +94,7 @@ function wrapcompiledfn(innerfn, kind, id, blockkind) {
 }
 
 // ============================================================
-// B11 — Stage runners
+// B11c — Stage runners
 // ============================================================
 
 function tagfn(fn, meta) {
@@ -142,7 +174,7 @@ function processpipelineelement(el, pipelinename, stagepath, inherited, options)
 
       return run(childstate, childoptions).then(function(result) {
         var wrapped = wrapblockresult(result, { outputs: el.outputs || {} });
-        var mapped = mapoutputs(wrapped, Object.keys(el.outputs || {}));
+        var mapped = mapoutputs(wrapped, Object.keys(el.outputs || {}), el.outputs);
         Object.keys(mapped).forEach(function(k) { parentenv[k] = mapped[k]; });
         return wrapped;
       });
@@ -171,7 +203,7 @@ function registereventstage(stage, pipelinename, stagepath, env, options) {
     BRIEFCASE: stage.briefcase || {},
     OPTIONS: options || {}
   };
-  return sendandawait('RENDERACTOR', MESSAGETYPES.REGISTEREVENTLISTENER, payload, mailboxresolve('mailboxwaittimeout'), MESSAGETYPES.EVENTLISTENERREGISTERED)
+  return sendandawait('RENDERACTOR', 'REGISTEREVENTLISTENER', payload, mailboxresolve('mailboxwaittimeout'), 'EVENTLISTENERREGISTERED')
     .then(function(response) {
       if (response && response.error) {
         throw new Error('[registereventstage] Registration failed for ' + stage.id + ': ' + response.error);

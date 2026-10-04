@@ -1,67 +1,78 @@
-HANDLERS[MESSAGETYPES.GETHTML] = function(ENV, MSG) {
-  var EL = document.getElementById(MSG.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+REGISTERMESSAGETYPE('GETHTML');
+REGISTERMESSAGETYPE('GETVALUE');
+REGISTERMESSAGETYPE('GETSTYLE');
+REGISTERMESSAGETYPE('GETPOSITION');
+REGISTERMESSAGETYPE('GETLAYOUT');
+REGISTERMESSAGETYPE('GETVIEWPORT');
+REGISTERMESSAGETYPE('GETSCREEN');
+REGISTERMESSAGETYPE('MATCHMEDIA');
+REGISTERMESSAGETYPE('GETBODYHTML');
+REGISTERMESSAGETYPE('GETELEMENTS');
+
+function RENDERHANDLER_GETHTML(ENV, ARGS) {
+  var EL = document.getElementById(ARGS.ID);
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: { TAG: EL.tagName.toLowerCase(), INNERHTML: EL.innerHTML } };
-};
+}
 
-HANDLERS[MESSAGETYPES.GETVALUE] = function(ENV, MSG) {
-  var EL = document.getElementById(MSG.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_GETVALUE(ENV, ARGS) {
+  var EL = document.getElementById(ARGS.ID);
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: EL.value };
-};
+}
 
-HANDLERS[MESSAGETYPES.GETSTYLE] = function(ENV, MSG) {
-  var EL = document.getElementById(MSG.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_GETSTYLE(ENV, ARGS) {
+  var EL = document.getElementById(ARGS.ID);
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var COMPUTED = window.getComputedStyle(EL);
   var STYLEOBJ = Array.prototype.slice.call(COMPUTED).reduce(function(ACC, PROP) {
     ACC[PROP] = COMPUTED.getPropertyValue(PROP);
     return ACC;
   }, {});
   return { RESPONSE: STYLEOBJ };
-};
+}
 
-HANDLERS[MESSAGETYPES.GETPOSITION] = function(ENV, MSG) {
-  var EL = document.getElementById(MSG.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_GETPOSITION(ENV, ARGS) {
+  var EL = document.getElementById(ARGS.ID);
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   var RECT = EL.getBoundingClientRect();
   return { RESPONSE: { X: RECT.x, Y: RECT.y, WIDTH: RECT.width, HEIGHT: RECT.height, TOP: RECT.top, RIGHT: RECT.right, BOTTOM: RECT.bottom, LEFT: RECT.left } };
-};
+}
 
-HANDLERS[MESSAGETYPES.GETLAYOUT] = function(ENV, MSG) {
-  var EL = document.getElementById(MSG.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
+function RENDERHANDLER_GETLAYOUT(ENV, ARGS) {
+  var EL = document.getElementById(ARGS.ID);
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: {
     OFFSETWIDTH: EL.offsetWidth, OFFSETHEIGHT: EL.offsetHeight,
     OFFSETLEFT: EL.offsetLeft, OFFSETTOP: EL.offsetTop,
     SCROLLWIDTH: EL.scrollWidth, SCROLLHEIGHT: EL.scrollHeight,
     CLIENTWIDTH: EL.clientWidth, CLIENTHEIGHT: EL.clientHeight
   } };
-};
+}
 
-HANDLERS[MESSAGETYPES.GETVIEWPORT] = function(ENV, MSG) {
+function RENDERHANDLER_GETVIEWPORT(ENV, ARGS) {
   var DOC = document.documentElement;
   return { RESPONSE: { VIEWPORTWIDTH: DOC.clientWidth, VIEWPORTHEIGHT: DOC.clientHeight } };
-};
+}
 
-HANDLERS[MESSAGETYPES.GETSCREEN] = function(ENV, MSG) {
+function RENDERHANDLER_GETSCREEN(ENV, ARGS) {
   var SCR = window.screen;
   return { RESPONSE: { SCREENWIDTH: SCR.width, SCREENHEIGHT: SCR.height, AVAILWIDTH: SCR.availWidth, AVAILHEIGHT: SCR.availHeight } };
-};
+}
 
-HANDLERS[MESSAGETYPES.MATCHMEDIA] = function(ENV, MSG) {
-  return { RESPONSE: { MATCHES: window.matchMedia(MSG.QUERY).matches } };
-};
+function RENDERHANDLER_MATCHMEDIA(ENV, ARGS) {
+  return { RESPONSE: { MATCHES: window.matchMedia(ARGS.QUERY).matches } };
+}
 
-HANDLERS[MESSAGETYPES.GETBODYHTML] = function(ENV, MSG) {
+function RENDERHANDLER_GETBODYHTML(ENV, ARGS) {
   return { RESPONSE: document.body ? document.body.innerHTML : '' };
-};
+}
 
-HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
-  var ROOT = document.getElementById(MSG.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var TAGFILTER = MSG.TAGNAME ? String(MSG.TAGNAME).toLowerCase() : null;
-  var LIMIT = (typeof MSG.LIMIT === 'number' && MSG.LIMIT > 0) ? MSG.LIMIT : Infinity;
+function RENDERHANDLER_GETELEMENTS(ENV, ARGS) {
+  var ROOT = document.getElementById(ARGS.ID);
+  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  var TAGFILTER = ARGS.TAGNAME ? String(ARGS.TAGNAME).toLowerCase() : null;
+  var LIMIT = (typeof ARGS.LIMIT === 'number' && ARGS.LIMIT > 0) ? ARGS.LIMIT : Infinity;
   var DESCRIPTORS = [];
   function walk(EL) {
     if (DESCRIPTORS.length >= LIMIT) return;
@@ -78,4 +89,44 @@ HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
   }
   walk(ROOT);
   return { RESPONSE: { DESCRIPTORS: DESCRIPTORS } };
-};
+}
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETHTML',
+  { ID: 'string' },
+  RENDERHANDLER_GETHTML);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETVALUE',
+  { ID: 'string' },
+  RENDERHANDLER_GETVALUE);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETSTYLE',
+  { ID: 'string' },
+  RENDERHANDLER_GETSTYLE);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETPOSITION',
+  { ID: 'string' },
+  RENDERHANDLER_GETPOSITION);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETLAYOUT',
+  { ID: 'string' },
+  RENDERHANDLER_GETLAYOUT);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETVIEWPORT',
+  {},
+  RENDERHANDLER_GETVIEWPORT);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETSCREEN',
+  {},
+  RENDERHANDLER_GETSCREEN);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'MATCHMEDIA',
+  { QUERY: 'string' },
+  RENDERHANDLER_MATCHMEDIA);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETBODYHTML',
+  {},
+  RENDERHANDLER_GETBODYHTML);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GETELEMENTS',
+  { ID: 'string', TAGNAME: 'string?', LIMIT: 'number?' },
+		     RENDERHANDLER_GETELEMENTS);

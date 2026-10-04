@@ -1,64 +1,80 @@
-HANDLERS[MESSAGETYPES.PING] = function(ENV, MSG) { return true; };
+REGISTERMESSAGETYPE('PING');
+REGISTERMESSAGETYPE('CRYPTO');
+REGISTERMESSAGETYPE('PERSISTENCE');
+REGISTERMESSAGETYPE('CREATEELEMENT');
+REGISTERMESSAGETYPE('CREATECONTAINER');
+REGISTERMESSAGETYPE('CREATEFROMHTML');
+REGISTERMESSAGETYPE('PROPERTY');
+REGISTERMESSAGETYPE('GEOLOCATION');
+REGISTERMESSAGETYPE('LOADSCRIPT');
+REGISTERMESSAGETYPE('RECOVER');
+REGISTERMESSAGETYPE('LOADINGINDICATOR');
+REGISTERMESSAGETYPE('REGISTEREVENTLISTENER');
 
-// ---------- Synchronous responses — R-a: return {RESPONSE: value} ----------
+// ---------- Synchronous handlers — return { RESPONSE: value } ----------
 
-HANDLERS[MESSAGETYPES.CRYPTO] = function(ENV, MSG) {
+function RENDERHANDLER_PING(ENV, ARGS) { return true; }
+
+function RENDERHANDLER_CRYPTO(ENV, ARGS) {
   var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
-  var ARRAY = new Uint8Array(MSG.BYTES);
+  var ARRAY = new Uint8Array(ARGS.BYTES);
   WIN.crypto.getRandomValues(ARRAY);
   return { RESPONSE: Array.prototype.slice.call(ARRAY) };
-};
-HANDLERS[MESSAGETYPES.PERSISTENCE] = function(ENV, MSG) {
+}
+
+function RENDERHANDLER_PERSISTENCE(ENV, ARGS) {
   var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
   var STORAGE = WIN.localStorage;
   if (!STORAGE) return { RESPONSE: { ERROR: 'localStorage unavailable' } };
   try {
-    if (MSG.ACTION === 'getItem') return { RESPONSE: { VALUE: STORAGE.getItem(MSG.KEY) } };
-    else if (MSG.ACTION === 'setItem') { STORAGE.setItem(MSG.KEY, MSG.VALUE); return { RESPONSE: { SUCCESS: true } }; }
-    else if (MSG.ACTION === 'removeItem') { STORAGE.removeItem(MSG.KEY); return { RESPONSE: { SUCCESS: true } }; }
-    else if (MSG.ACTION === 'clear') { STORAGE.clear(); return { RESPONSE: { SUCCESS: true } }; }
-    else return { RESPONSE: { ERROR: 'unknown persistence action: ' + MSG.ACTION } };
+    if (ARGS.ACTION === 'getItem') return { RESPONSE: { VALUE: STORAGE.getItem(ARGS.KEY) } };
+    else if (ARGS.ACTION === 'setItem') { STORAGE.setItem(ARGS.KEY, ARGS.VALUE); return { RESPONSE: { SUCCESS: true } }; }
+    else if (ARGS.ACTION === 'removeItem') { STORAGE.removeItem(ARGS.KEY); return { RESPONSE: { SUCCESS: true } }; }
+    else if (ARGS.ACTION === 'clear') { STORAGE.clear(); return { RESPONSE: { SUCCESS: true } }; }
+    else return { RESPONSE: { ERROR: 'unknown persistence action: ' + ARGS.ACTION } };
   } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
-};
-HANDLERS[MESSAGETYPES.CREATEELEMENT] = function(ENV, MSG) {
+}
+
+function RENDERHANDLER_CREATEELEMENT(ENV, ARGS) {
   try {
-    var EL = document.createElement(MSG.TAG);
-    if (MSG.PROPS) Object.keys(MSG.PROPS).forEach(function(PROP) { EL[PROP] = MSG.PROPS[PROP]; });
+    var EL = document.createElement(ARGS.TAG);
+    if (ARGS.PROPS) Object.keys(ARGS.PROPS).forEach(function(PROP) { EL[PROP] = ARGS.PROPS[PROP]; });
     var REG = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return { RESPONSE: DOMREFFN(EL, REG) };
   } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
-};
-HANDLERS[MESSAGETYPES.CREATECONTAINER] = function(ENV, MSG) {
+}
+
+function RENDERHANDLER_CREATECONTAINER(ENV, ARGS) {
   try {
     var REG2 = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN2 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return { RESPONSE: DOMREFFN2(document.createElement('div'), REG2) };
   } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
-};
-HANDLERS[MESSAGETYPES.CREATEFROMHTML] = function(ENV, MSG) {
+}
+
+function RENDERHANDLER_CREATEFROMHTML(ENV, ARGS) {
   try {
     var WRAPPER = document.createElement('div');
-    WRAPPER.innerHTML = MSG.HTML;
+    WRAPPER.innerHTML = ARGS.HTML;
     var CHILD = WRAPPER.firstElementChild || WRAPPER;
     var REG3 = ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
     var DOMREFFN3 = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
     return { RESPONSE: DOMREFFN3(CHILD, REG3) };
   } catch (ERR) { return { RESPONSE: { ERROR: ERR.message } }; }
-};
-HANDLERS[MESSAGETYPES.PROPERTY] = function(ENV, MSG) {
-  var EL = document.getElementById(MSG.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var FN = EL[MSG.NAME];
-  if (typeof FN !== 'function') return { RESPONSE: { ERROR: 'property "' + MSG.NAME + '" is not a function' } };
-  try { return { RESPONSE: FN.apply(EL, MSG.ARGUMENTS || []) }; } catch (E) { return { RESPONSE: { ERROR: E.message } }; }
-};
+}
 
-// ---------- Async responses — R-a: return Promise<{RESPONSE: value}> ----------
-// @proposal=P-RENDERACTOR-FLOW-008 — every async exit path resolves to
-// { RESPONSE: value }. No handler captures the received ENV.
+function RENDERHANDLER_PROPERTY(ENV, ARGS) {
+  var EL = document.getElementById(ARGS.ID);
+  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  var FN = EL[ARGS.NAME];
+  if (typeof FN !== 'function') return { RESPONSE: { ERROR: 'property "' + ARGS.NAME + '" is not a function' } };
+  try { return { RESPONSE: FN.apply(EL, ARGS.ARGUMENTS || []) }; } catch (E) { return { RESPONSE: { ERROR: E.message } }; }
+}
 
-HANDLERS[MESSAGETYPES.GEOLOCATION] = function(ENV, MSG) {
+// ---------- Async handlers — return Promise<{RESPONSE: value}> ----------
+
+function RENDERHANDLER_GEOLOCATION(ENV, ARGS) {
   return new Promise(function(RESOLVE) {
     var WIN = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : (typeof global !== 'undefined' ? global : null));
     var GEO = WIN.navigator && WIN.navigator.geolocation;
@@ -66,20 +82,14 @@ HANDLERS[MESSAGETYPES.GEOLOCATION] = function(ENV, MSG) {
     GEO.getCurrentPosition(
       function(POS) { RESOLVE({ RESPONSE: { LATITUDE: POS.coords.latitude, LONGITUDE: POS.coords.longitude, ACCURACY: POS.coords.accuracy } }); },
       function(ERR) { RESOLVE({ RESPONSE: { ERROR: 'geolocation failed: ' + ERR.message } }); },
-      { enableHighAccuracy: MSG.ENABLEHIGHACCURACY || false, timeout: MSG.TIMEOUT || 5000 }
+      { enableHighAccuracy: ARGS.ENABLEHIGHACCURACY || false, timeout: ARGS.TIMEOUT || 5000 }
     );
   });
-};
+}
 
-// @proposal=P-ACTOR-FLOW-002 / @proposal=P-FLOW-BOUND-001 — LOADSCRIPT
-// resolves on every exit path via the settle-guarded resolver.
-// @proposal=P-RENDERACTOR-FLOW-008 — the resolved payload is
-// { RESPONSE: { LOADED: bool, ERROR?: string } }.
-// @proposal=CP1 (ARC-49) — CYCLE-17 CP3 rename applied: the `settle`
-// parameter `payload` is renamed to `PAYLOAD`.
-HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
+function RENDERHANDLER_LOADSCRIPT(ENV, ARGS) {
   return new Promise(function(RESOLVE) {
-    if (!MSG.SRC || typeof MSG.SRC !== 'string') {
+    if (!ARGS.SRC || typeof ARGS.SRC !== 'string') {
       RESOLVE({ RESPONSE: { LOADED: false, ERROR: 'LOADSCRIPT requires SRC as a non-empty string' } });
       return;
     }
@@ -96,19 +106,17 @@ HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
       RESOLVE({ RESPONSE: PAYLOAD });
     }
     var S = document.createElement('script');
-    S.src = MSG.SRC;
+    S.src = ARGS.SRC;
     S.addEventListener('load', function() { settle({ LOADED: true }); }, { once: true });
-    S.addEventListener('error', function() { settle({ LOADED: false, ERROR: 'failed to load ' + MSG.SRC }); }, { once: true });
+    S.addEventListener('error', function() { settle({ LOADED: false, ERROR: 'failed to load ' + ARGS.SRC }); }, { once: true });
     TIMER = setTimeout(function() {
-      settle({ LOADED: false, ERROR: 'load-timeout: ' + MSG.SRC });
+      settle({ LOADED: false, ERROR: 'load-timeout: ' + ARGS.SRC });
     }, GETSCRIPTLOADTIMEOUT());
     document.head.appendChild(S);
   });
-};
+}
 
-// @proposal=P-ACTOR-FLOW-002 — RECOVER is state-only. It returns
-// Promise<ENV> with a fresh render slice. No callback-side ENV mutation.
-HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
+function RENDERHANDLER_RECOVER(ENV, ARGS) {
   return WAITFORDOMREADY().then(function() {
     return DBRESTORE('actor:state:render').then(function(SAVED) {
       var NEXTENV = {};
@@ -116,7 +124,7 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
       NEXTENV.RENDER = (SAVED !== null && SAVED !== undefined) ? SAVED : { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
       SCHEDULEGCCYCLE(NEXTENV.RENDER);
       REINJECTSCRIPTTAGS(NEXTENV.RENDER.SCRIPTTAGS || NEXTENV.RENDER.scriptTags || []);
-      SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+      SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
         UPDATES: [{ PATH: 'RENDER', VALUE: NEXTENV.RENDER }]
       }, GENERATETAG(), 'RENDERACTOR');
       return NEXTENV;
@@ -124,22 +132,20 @@ HANDLERS[MESSAGETYPES.RECOVER] = function(ENV, MSG) {
       var NEXTENV = {};
       Object.keys(ENV).forEach(function(K) { NEXTENV[K] = ENV[K]; });
       NEXTENV.RENDER = { HTML: '', VIEWPORT: null, ACTORREGISTRY: null, SCRIPTTAGS: [] };
-      SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+      SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
         UPDATES: [{ PATH: 'RENDER', VALUE: NEXTENV.RENDER }]
       }, GENERATETAG(), 'RENDERACTOR');
       return NEXTENV;
     });
   });
-};
+}
 
-// @proposal=P-RENDERACTOR-FLOW-008 — LOADINGINDICATOR returns
-// { RESPONSE: { APPLIED, ID, ACTION, ... } } synchronously.
-HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
-  var action = MSG.ACTION;
-  var id = (typeof MSG.ID === 'string' && MSG.ID.length > 0) ? MSG.ID : 'loadingindicator';
+function RENDERHANDLER_LOADINGINDICATOR(ENV, ARGS) {
+  var action = ARGS.ACTION;
+  var id = (typeof ARGS.ID === 'string' && ARGS.ID.length > 0) ? ARGS.ID : 'loadingindicator';
   if (action === 'SHOW') {
     var defaultmarkup = '<span role="status" aria-live="polite"></span>';
-    var markup = (typeof MSG.MARKUP === 'string' && MSG.MARKUP.length > 0) ? MSG.MARKUP : defaultmarkup;
+    var markup = (typeof ARGS.MARKUP === 'string' && ARGS.MARKUP.length > 0) ? ARGS.MARKUP : defaultmarkup;
     var existing = document.getElementById(id);
     if (!existing) {
       var container = document.createElement('div');
@@ -157,12 +163,12 @@ HANDLERS[MESSAGETYPES.LOADINGINDICATOR] = function(ENV, MSG) {
     return { RESPONSE: { APPLIED: true, ID: id, ACTION: 'HIDE', REMOVED: false } };
   }
   return { RESPONSE: { ERROR: 'LOADINGINDICATOR requires ACTION SHOW|HIDE' } };
-};
+}
 
-// @proposal=P-RENDERACTOR-FLOW-008 — REGISTEREVENTLISTENER returns
-// { RESPONSE: { REGISTERED, SOURCEID, EVENT } } synchronously.
-var REGLISTENERKEY = MESSAGETYPES.REGISTEREVENTLISTENER;
-HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
+// @proposal=P-COMPILER-TYPE-LITERALS — REGLISTENERKEY is a literal.
+var REGLISTENERKEY = 'REGISTEREVENTLISTENER';
+
+function RENDERHANDLER_REGISTEREVENTLISTENER(ENV, ARGS) {
   var NEXTENV = ENSURERENDERSLICE(ENV);
   var RENDERSLICE = NEXTENV.render;
   var GC = RENDERSLICE.GC;
@@ -171,9 +177,9 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
     RENDERSLICE.GC = GC;
   }
   loginfo(ENV, '[RENDERACTOR]', 'REGISTEREVENTLISTENER START:', {
-    SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT, PIPELINEID: MSG.PIPELINEID, STAGEID: MSG.STAGEID
+    SOURCEID: ARGS.SOURCEID, EVENT: ARGS.EVENT, PIPELINEID: ARGS.PIPELINEID, STAGEID: ARGS.STAGEID
   });
-  var PC = CREATEEVENTPRODUCERCONSUMER(MSG);
+  var PC = CREATEEVENTPRODUCERCONSUMER(ARGS);
   var LISTFN = (typeof LISTOBJECTS === 'function') ? LISTOBJECTS : function() { return []; };
   var REGOBJFN = (typeof REGISTEROBJECT === 'function') ? REGISTEROBJECT : function() {};
   var INCRECVFN = (typeof INCREMENTRECEIVED === 'function') ? INCREMENTRECEIVED : function() {};
@@ -184,7 +190,7 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
       C.PIPELINEID === PC.CONSUMER.PIPELINEID && C.STAGEID === PC.CONSUMER.STAGEID;
   })[0];
   if (EXISTING) {
-    loginfo(ENV, '[RENDERACTOR]', 'EVENT LISTENER ALREADY REGISTERED FOR', MSG.SOURCEID, MSG.EVENT);
+    loginfo(ENV, '[RENDERACTOR]', 'EVENT LISTENER ALREADY REGISTERED FOR', ARGS.SOURCEID, ARGS.EVENT);
     EXISTING.METADATA = PC.METADATA;
     EXISTING.STATUS = 'EXPECTING';
     EXISTING.SENTCOUNT = 0;
@@ -194,11 +200,62 @@ HANDLERS[REGLISTENERKEY] = function(ENV, MSG) {
     REGOBJFN(GC, GCOBJECT);
     INCRECVFN(GC, GCOBJECT.ID, 1);
     ENSUREEVENTOBSERVER(RENDERSLICE);
-    loginfo(ENV, '[RENDERACTOR]', 'EVENT LISTENER REGISTERED:', MSG.SOURCEID, MSG.EVENT, 'FOR STAGE', MSG.STAGEID);
+    loginfo(ENV, '[RENDERACTOR]', 'EVENT LISTENER REGISTERED:', ARGS.SOURCEID, ARGS.EVENT, 'FOR STAGE', ARGS.STAGEID);
   }
   SCHEDULEGCCYCLE(RENDERSLICE);
-  SENDINSTRUCTION('WORLDMAPACTOR', MESSAGETYPES.UPDATE, {
+  SENDINSTRUCTION('WORLDMAPACTOR', 'UPDATE', {
     UPDATES: [{ PATH: 'RENDER', VALUE: RENDERSLICE }]
   }, GENERATETAG(), 'RENDERACTOR');
-  return { RESPONSE: { REGISTERED: true, SOURCEID: MSG.SOURCEID, EVENT: MSG.EVENT } };
-};
+  return { RESPONSE: { REGISTERED: true, SOURCEID: ARGS.SOURCEID, EVENT: ARGS.EVENT } };
+}
+
+// ---------- Registration ----------
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'PING',
+  {},
+  RENDERHANDLER_PING);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CRYPTO',
+  { BYTES: 'number' },
+  RENDERHANDLER_CRYPTO);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'PERSISTENCE',
+  { ACTION: 'string', KEY: 'string?', VALUE: 'string?' },
+  RENDERHANDLER_PERSISTENCE);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CREATEELEMENT',
+  { TAG: 'string', PROPS: 'object?' },
+  RENDERHANDLER_CREATEELEMENT);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CREATECONTAINER',
+  {},
+  RENDERHANDLER_CREATECONTAINER);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'CREATEFROMHTML',
+  { HTML: 'string' },
+  RENDERHANDLER_CREATEFROMHTML);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'PROPERTY',
+  { ID: 'string', NAME: 'string', ARGUMENTS: 'array?' },
+  RENDERHANDLER_PROPERTY);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'GEOLOCATION',
+  { ENABLEHIGHACCURACY: 'boolean', TIMEOUT: 'number' },
+  RENDERHANDLER_GEOLOCATION);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'LOADSCRIPT',
+  { SRC: 'string' },
+  RENDERHANDLER_LOADSCRIPT);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'RECOVER',
+  {},
+  RENDERHANDLER_RECOVER);
+
+REGISTERACTORMESSAGE('RENDERACTOR', 'LOADINGINDICATOR',
+  { ACTION: 'string', MARKUP: 'string?', ID: 'string?' },
+  RENDERHANDLER_LOADINGINDICATOR);
+
+REGISTERACTORMESSAGE('RENDERACTOR', REGLISTENERKEY,
+  { PIPELINEID: 'string', STAGEID: 'string', STAGEPATH: 'array', SOURCEID: 'string', EVENT: 'string',
+    CONTROL: 'object', ELEMENTS: 'array', BRIEFCASE: 'object?', OPTIONS: 'object?' },
+		     RENDERHANDLER_REGISTEREVENTLISTENER);

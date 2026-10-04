@@ -1,138 +1,4 @@
 var ACTORCONSUMERS = {};
-
-function ENSUREDISPATCHERSLICE(ENV) {
-  if (ENV && ENV.DISPATCHERS) return ENV;
-  var NEXT = {};
-  Object.keys(ENV || {}).forEach(function (K) { NEXT[K] = ENV[K]; });
-  NEXT.DISPATCHERS = {};
-  return NEXT;
-}
-
-// @proposal=P61r2 — read the actor's dispatcher list. Returns a fresh
-// array (never an alias into ENV).
-function READDISPATCHES(ENV, ACTORNAME) {
-  if (!ENV || !ENV.DISPATCHERS) return [];
-  var LIST = ENV.DISPATCHERS[ACTORNAME];
-  return LIST ? LIST.slice() : [];
-}
-
-// @proposal=P61r2 — append a dispatcher. Returns a fresh ENV.
-function ADDDISPATCH(ENV, ACTORNAME, DISPATCHFN) {
-  if (typeof DISPATCHFN !== 'function') {
-    throw new Error('[ADDDISPATCH] DISPATCHFN must be a function');
-  }
-  var NEXT = {};
-  Object.keys(ENV || {}).forEach(function (K) { NEXT[K] = ENV[K]; });
-  var SLICE = NEXT.DISPATCHERS ? NEXT.DISPATCHERS : {};
-  var NEWSLICE = {};
-  Object.keys(SLICE).forEach(function (K) { NEWSLICE[K] = SLICE[K]; });
-  NEWSLICE[ACTORNAME] = (SLICE[ACTORNAME] || []).concat([DISPATCHFN]);
-  NEXT.DISPATCHERS = NEWSLICE;
-  return NEXT;
-}
-
-// @proposal=P61r2 — remove a dispatcher by reference. Returns a fresh ENV.
-function REMOVEDISPATCH(ENV, ACTORNAME, DISPATCHFN) {
-  if (!ENV || !ENV.DISPATCHERS || !ENV.DISPATCHERS[ACTORNAME]) return ENV;
-  var NEXT = {};
-  Object.keys(ENV).forEach(function (K) { NEXT[K] = ENV[K]; });
-  var SLICE = NEXT.DISPATCHERS;
-  var NEWSLICE = {};
-  Object.keys(SLICE).forEach(function (K) { NEWSLICE[K] = SLICE[K]; });
-  NEWSLICE[ACTORNAME] = SLICE[ACTORNAME].filter(function (D) { return D !== DISPATCHFN; });
-  NEXT.DISPATCHERS = NEWSLICE;
-  return NEXT;
-}
-
-// @proposal=P61r2 — run the dispatchers in order. The first non-undefined
-// result wins. Uses the framework's trampoline for stack-safe recursion
-// (FT-4); no accumulator state.
-function RUNDISPATCHES(ENV, ACTORNAME, MESSAGE) {
-  var LIST = READDISPATCHES(ENV, ACTORNAME);
-  var MESSAGEVAL = MESSAGE;
-  function SCAN(INDEX, CURRENTENV) {
-    if (INDEX >= LIST.length) return CURRENTENV;
-    var RESULT = LIST[INDEX](CURRENTENV, MESSAGEVAL);
-    if (RESULT !== undefined) return RESULT;
-    return function () { return SCAN(INDEX + 1, CURRENTENV); };
-  }
-  return trampoline(SCAN)(0, ENV);
-}
-
-// @proposal=P62r2 — produce a typed dispatcher. Handles exactly one TYPE;
-// returns undefined for every other type so the aggregate scan falls through.
-function MAKETYPEDDISPATCH(TYPE, HANDLER) {
-  if (typeof TYPE !== 'string' || TYPE.length === 0) {
-    throw new Error('[MAKETYPEDDISPATCH] TYPE must be a non-empty string');
-  }
-  if (typeof HANDLER !== 'function') {
-    throw new Error('[MAKETYPEDDISPATCH] HANDLER must be a function');
-  }
-  var TYPECAP = TYPE;
-  var HANDLERCAP = HANDLER;
-  return function (ENV, MESSAGE) {
-    if (!MESSAGE || MESSAGE.TYPE !== TYPECAP) return undefined;
-    return HANDLERCAP(ENV, MESSAGE);
-  };
-}
-
-// @proposal=P62r2 — unified registration. Registration IS dispatcher
-// creation: the handler is wrapped as a typed dispatcher and appended to
-// the actor's list. Returns a fresh ENV. The caller publishes it at the
-// seam.
-function REGISTERCONSUMER(ENV, ACTORNAME, TYPE, HANDLER) {
-  var DISPATCHFN = MAKETYPEDDISPATCH(TYPE, HANDLER);
-  return ADDDISPATCH(ENV, ACTORNAME, DISPATCHFN);
-}
-
-// @proposal=P63r2 — per-actor dispatcher surface.
-function MAKEACTORDISPATCHSURFACE(ACTORNAME, INITIALDISPATCHERS) {
-  if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
-    throw new Error('[MAKEACTORDISPATCHSURFACE] ACTORNAME must be a non-empty string');
-  }
-  var INITIAL = (INITIALDISPATCHERS || []).slice();
-  var STAGED = INITIAL.slice();
-  var STAGEDINSTALLED = false;
-
-  function INSTALLSTAGED(ENV) {
-    if (STAGEDINSTALLED) return ENV;
-    var NEXT = ENV;
-    STAGED.forEach(function (D) { NEXT = ADDDISPATCH(NEXT, ACTORNAME, D); });
-    STAGEDINSTALLED = true;
-    return NEXT;
-  }
-
-  function READ(ENV) {
-    var INSTALLED = STAGEDINSTALLED ? ENV : INSTALLSTAGED(ENV);
-    return READDISPATCHES(INSTALLED, ACTORNAME);
-  }
-
-  function REGISTERHANDLER(ENV, TYPE, HANDLER) {
-    var DISPATCHFN = MAKETYPEDDISPATCH(TYPE, HANDLER);
-    var BASE = STAGEDINSTALLED ? ENV : INSTALLSTAGED(ENV);
-    return ADDDISPATCH(BASE, ACTORNAME, DISPATCHFN);
-  }
-
-  function UNREGISTERHANDLER(ENV, DISPATCHFN) {
-    var BASE = STAGEDINSTALLED ? ENV : INSTALLSTAGED(ENV);
-    return REMOVEDISPATCH(BASE, ACTORNAME, DISPATCHFN);
-  }
-
-  function DISPATCH(ENV, MESSAGE) {
-    var BASE = STAGEDINSTALLED ? ENV : INSTALLSTAGED(ENV);
-    return RUNDISPATCHES(BASE, ACTORNAME, MESSAGE);
-  }
-
-  return {
-    NAME: ACTORNAME,
-    READDISPATCHES: READ,
-    REGISTERHANDLER: REGISTERHANDLER,
-    UNREGISTERHANDLER: UNREGISTERHANDLER,
-    DISPATCH: DISPATCH
-  };
-}
-
-// @proposal=P63r2 — registries of actor surfaces and aggregate behaviours.
 var ACTORSURFACEREGISTRY = {};
 var AGGREGATEBEHAVIOR = {};
 
@@ -154,8 +20,6 @@ function GETAGGREGATEBEHAVIOR(ACTORNAME) {
   return AGGREGATEBEHAVIOR[ACTORNAME] || null;
 }
 
-// @proposal=P63r2 — convenience: register a handler against an actor by
-// name, publishing the resulting ENV to the world map.
 function REGISTERACTORHANDLER(ACTORNAME, TYPE, HANDLER) {
   var SURFACE = GETACTORSURFACE(ACTORNAME);
   if (!SURFACE) {
@@ -186,12 +50,6 @@ function MAKEPRODUCER(ACTORNAME, TYPE) {
     return TAG;
   };
 }
-
-// ============================================================
-// §17 — Base primitives (P64-idiomatic)
-// ============================================================
-
-// ---------- §17.1 — Actor state registry ----------
 
 var ACTORSTATESREF = { current: Object.freeze({}) };
 
@@ -238,50 +96,6 @@ function ENSUREENVSLICE(ENV, SLICENAME, INITFN) {
   return NEXT;
 }
 
-// ---------- §17.3 — Actor dispatch (async-capable) ----------
-//
-// @proposal=P-ACTOR-FLOW-001 — the framework flow contract.
-//
-// A handler returns one of:
-//   ENV                            — state update; no response
-//   Promise<ENV>                   — state update on resolution
-//   { ENV, RESPONSE }              — state update + response
-//   Promise<{ ENV, RESPONSE }>     — both on resolution
-//   { RESPONSE }                   — response; no state change
-//   Promise<{ RESPONSE }>          — response on resolution
-//   true | undefined               — fire-and-forget / no-op
-//
-// The dispatcher is the sole site of response emission and the sole site
-// of state publication for handler-owned returns. It never publishes a
-// Promise as state.
-//
-// @proposal=P-FLOW-BOUND-001 — bounded-resolution invariant. An async
-// handler MUST bound its own resolution. An "external event never fires"
-// path is a valid exit path and MUST resolve the handler's Promise via a
-// handler-owned internal timeout. The bound is a registry value, not a
-// literal, and MUST be strictly smaller than the mailbox expectation
-// window that the caller is waiting on.
-//
-// @proposal=P-FLOW-INSTALL-FIRST-004 — the dispatcher's side-effect
-// order MUST be publish → install → respond. The installer creates the
-// expectation the caller is waiting on; the response is the emission
-// that must resolve it. Reversing the order makes the mailbox's sole
-// resolution hook a no-op (the expectation does not yet exist at
-// envelope-admission time), and the wait runs to timeout.
-//
-// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — single-channel response. A
-// message's WAITMODE field declares the caller's channel: 'mailbox'
-// (traditional; envelope delivery) or 'promise' (the resolved
-// SENDINSTRUCTION return). The dispatcher MUST emit exactly one channel
-// per message. In 'promise' mode, no expectation is created and no
-// envelope is emitted.
-//
-// @proposal=P-CCC-FLOW-009 — CCC connector. A response message whose
-// payload carries CCC_TOKEN also fires the CCC registry's handler for
-// that token, in addition to its declared channel. The CCC connector
-// runs after install (PH2) so that any expectation the response
-// resolves already exists.
-
 function DISPATCHPROJECT(VALUE, MESSAGE, ACTORNAME) {
   var OUT = { ENV: undefined, RESPONSE: undefined };
   if (VALUE === undefined || VALUE === true || VALUE === false) return OUT;
@@ -303,21 +117,13 @@ function DISPATCHPUBLISH(ACTORNAME, ENV) {
   }
 }
 
-// @proposal=P-FLOW-RESPONSE-CHANNEL-006 / @proposal=P-CCC-FLOW-009 —
-// response emission is gated by WAITMODE and also fires the CCC
-// connector for messages carrying CCC_TOKEN.
 function DISPATCHRESPOND(MESSAGE, RESPONSE, ACTORNAME) {
-  // promise-mode: the response travels via the returned Promise; no
-  // mailbox envelope is emitted.
   if (MESSAGE && MESSAGE.WAITMODE === 'promise') return;
   if (RESPONSE !== undefined && MESSAGE.SENDER && MESSAGE.TAG) {
     var RESPONSESPEC = MESSAGE.RESPONSESPEC || MESSAGE.responseSpec;
     var RESPONSETYPE = (RESPONSESPEC && (RESPONSESPEC.responsetype || RESPONSESPEC.responseType)) || 'response';
     SENDRESPONSE(MESSAGE.SENDER, MESSAGE.TAG, RESPONSE, ACTORNAME, RESPONSETYPE);
   }
-  // @proposal=P-CCC-FLOW-009 — the CCC connector fires for any message
-  // carrying a CCC_TOKEN, regardless of response presence. The connector
-  // runs after install (ordering guaranteed by DISPATCHTOACTOR).
   if (MESSAGE && MESSAGE.CCC_TOKEN !== undefined && typeof CCCNOTIFY === 'function') {
     CCCNOTIFY(MESSAGE.CCC_TOKEN, {
       TYPE: MESSAGE.TYPE,
@@ -328,10 +134,6 @@ function DISPATCHRESPOND(MESSAGE, RESPONSE, ACTORNAME) {
   }
 }
 
-// @proposal=P-FLOW-RESPONSE-CHANNEL-006 — installation is gated by
-// WAITMODE. In 'promise' mode, no expectation is created (the caller
-// receives the response through the returned Promise, and creating an
-// expectation would orphan it).
 function DISPATCHINSTALL(INSTALLER, MESSAGE) {
   if (MESSAGE && MESSAGE.WAITMODE === 'promise') return;
   if (typeof INSTALLER === 'function') {
@@ -339,10 +141,6 @@ function DISPATCHINSTALL(INSTALLER, MESSAGE) {
   }
 }
 
-// @proposal=P-FLOW-INSTALL-FIRST-004 — publish → install → respond.
-// The install step precedes the respond step so that the response
-// envelope, when routed via the mailbox, resolves an expectation that
-// already exists.
 function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE, INSTALLER) {
   if (typeof BEHAVIOR !== 'function') {
     throw new Error('[DISPATCHTOACTOR] BEHAVIOR must be a function');
@@ -661,7 +459,7 @@ function CREATEACTORHANDLE(ACTORNAME) {
 // returns { route, batch, suppress, reason }.
 //
 // Heuristic rules (evaluated in order):
-//   0. TYPE ∈ RESPONSETYPES                → mailbox  (P-FLOW-RESPONSE-ROUTING-003)
+//   0. TYPE ∈ RESPONSETYPES                → mailbox
 //   1. RECIPIENT ∈ POLLERRECIPIENTS        → mailbox
 //   2. RECIPIENT ∈ BROADCASTRECIPIENTS     → broadcast
 //   3. RECIPIENT ∈ ACTORCONSUMERS          → direct
@@ -798,8 +596,11 @@ function UNREGISTERBATCHABLETYPE(TYPE) {
 }
 
 // ---------- §18.5 — Batch windows ----------
+//
+// @refinement=R-BATCH (RUN 23) — initial value empty. DEBUGACTOR registers
+// the LOGLINE window (250 ms) at its own load time via SETBATCHWINDOW.
 
-var BATCHWINDOWSREF = { current: Object.freeze({ LOGLINE: 250 }) };
+var BATCHWINDOWSREF = { current: Object.freeze({}) };
 
 function GETBATCHWINDOWS() { return BATCHWINDOWSREF.current; }
 function SETBATCHWINDOW(TYPE, MS) {
@@ -844,8 +645,6 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
   var THRESHOLD = GETVERBOSITYTHRESHOLD();
   var RESPONSETYPES = (typeof GETRESPONSETYPES === 'function') ? GETRESPONSETYPES() : {};
 
-  // @proposal=P-FLOW-RESPONSE-ROUTING-003 — rule 0: response types are
-  // always routed via mailbox.
   if (RESPONSETYPES[TYPE] === true) {
     return { route: 'mailbox', batch: false, suppress: false, reason: 'response-type' };
   }
@@ -876,6 +675,11 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
 }
 
 // ---------- §18.8 — Response-type registry (P-FLOW-RESPONSE-ROUTING-003) ----------
+//
+// @proposal=P-TYPE-REGISTER-DYNAMIC-ONLY (RUN 23 Iteration 1'),
+// @refinement=R-BATCH — the bootstrap block that read MAILBOXFILTERTYPES
+// has been deleted. Each actor that owns a response type calls
+// REGISTERRESPONSETYPE at its own load time.
 
 var RESPONSETYPESREF = { current: Object.freeze({}) };
 
@@ -902,15 +706,6 @@ function UNREGISTERRESPONSETYPE(TYPE) {
   Object.keys(CURRENT).forEach(function (K) { if (K !== TYPE) NEXT[K] = CURRENT[K]; });
   RESPONSETYPESREF.current = Object.freeze(NEXT);
   return true;
-}
-
-if (typeof MAILBOXFILTERTYPES !== 'undefined' && MAILBOXFILTERTYPES) {
-  Object.keys(MAILBOXFILTERTYPES).forEach(function (K) {
-    var TYPE = MAILBOXFILTERTYPES[K];
-    if (typeof TYPE === 'string' && TYPE.length > 0) {
-      REGISTERRESPONSETYPE(TYPE);
-    }
-  });
 }
 
 // ---------- §18.9 — CCC registry + CCCNOTIFY (P-CCC-FLOW-009) ----------

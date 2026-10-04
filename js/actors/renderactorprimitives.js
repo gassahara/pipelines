@@ -92,12 +92,6 @@ function WITHELEMENT(ID, REJECT, FN) {
   return FN(EL);
 }
 
-// @proposal=P-RENDERACTOR-ELEMENT-WAIT-MECHANISM-005 (option a)
-// Mechanism: MutationObserver on document.body with
-// { childList: true, subtree: true }. This function does NOT poll on an
-// interval. The observer callback re-checks getElementById(ID) on every
-// DOM mutation under body. If no mutation occurs during the window, the
-// timeout fires without any intermediate re-check.
 function WITHELEMENTRETRY(ID, REJECT, FN, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = 5000;
   var EXISTING = document.getElementById(ID);
@@ -133,24 +127,6 @@ function WAITFORDOMREADY() {
   }
   return Promise.resolve();
 }
-
-// @proposal=P64 / @proposal=P-RENDERACTOR-FLOW-008 (R-a) — the wrapper
-// marks "handled" for the surface's fall-through. The handler's return
-// value is the RESPONSE-bearing shape; the wrapper does not modify it.
-function MAKERENDERHANDLER(TYPE, HANDLER) {
-  var TYPECAP = TYPE;
-  var HANDLERCAP = HANDLER;
-  return function (ENV, MESSAGE) {
-    if (!MESSAGE || MESSAGE.TYPE !== TYPECAP) return undefined;
-    var RESULT = HANDLERCAP(ENV, MESSAGE);
-    return { HANDLED: true, RESULT: RESULT };
-  };
-}
-
-// The HANDLERS table. Declared empty here; populated by the five
-// handler-domain files that load after this file and before
-// renderactor.js (the dispatcher surface).
-var HANDLERS = {};
 
 function REINJECTSCRIPTTAGS(SCRIPTTAGS) {
   if (!SCRIPTTAGS || !SCRIPTTAGS.length || typeof document === 'undefined') return;
