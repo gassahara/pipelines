@@ -863,7 +863,7 @@ function INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, PAYLOAD, SENDER, TAG, RESPONSESP
   }
   if (SUPPRESSIBLE[TYPE] === true) {
     var level = THRESHOLD[TYPE];
-    var current = (typeof getverbosity === 'function') ? getverbosity(BLOCKCOMPILERSTATE) : null;
+    var current = (typeof getverbosity === 'function') ? getverbosity(blockcompilerstate) : null;
     var levelval = (typeof resolvelevel === 'function') ? resolvelevel(level) : null;
     if (current !== null && levelval !== null && current < levelval) {
       return { route: 'mailbox', batch: false, suppress: true, reason: 'suppressed-below-threshold' };

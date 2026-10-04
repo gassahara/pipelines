@@ -310,7 +310,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     };
     var blockinputs = elementdef && elementdef.inputs ? elementdef.inputs : [];
     var blockoutputs = elementdef && elementdef.outputs ? elementdef.outputs : {};
-    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelinename, 'stagepath:', JSON.stringify(stagepath));
+    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelinename, 'stagepath:', JSON.stringify(stagepath));
     var tag = GENERATETAG();
     var descriptor = {
       PIPELINEID: pipelinename,
@@ -364,7 +364,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var outputkeys = Object.keys(blockoutputs || {});
         var mapped = mapoutputs(result, outputkeys);
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
-        logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelinename);
+        logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelinename);
         return result;
       })
       .catch(function(err) {
@@ -385,7 +385,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var timeoutenv = { ERROR: 'timeout', TAG: tag, KIND: 'mailbox-wait-timeout' };
         var outputkeys2 = Object.keys(blockoutputs || {});
         outputkeys2.forEach(function(k) { execenv[k] = timeoutenv; });
-        logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element timed out (caught):', elementid, 'pipeline:', pipelinename);
+        logwarn(blockcompilerstate, '[BLOCKCOMPILER]', 'element timed out (caught):', elementid, 'pipeline:', pipelinename);
         return timeoutenv;
       });
   }
