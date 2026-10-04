@@ -2,24 +2,24 @@ HANDLERS[MESSAGETYPES.CHECKOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var OPTS = MSG.OPTIONS || {};
-  var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SU_detectviewportwidth();
+  var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var CW = OPTS.containerwidths || {};
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
-  return { RESPONSE: { VIOLATIONS: LC_checkoverflowdoc(ROOT, VW, CW, SC) } };
+  return { RESPONSE: { VIOLATIONS: LCCHECKOVERFLOWDOC(ROOT, VW, CW, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.CORRECTOVERFLOW] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var OPTS = MSG.OPTIONS || {};
-  var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SU_detectviewportwidth();
+  var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var CW = OPTS.containerwidths || {};
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
-  var RESULT = LC_correctoverflowdoc(ROOT, VW, CW, SC);
+  var RESULT = LCCORRECTOVERFLOWDOC(ROOT, VW, CW, SC);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 
@@ -30,7 +30,7 @@ HANDLERS[MESSAGETYPES.CHECKSPACING] = function(ENV, MSG) {
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
-  var V = LC_checkspacingdoc(ROOT, MINGAP, SC);
+  var V = LCCHECKSPACINGDOC(ROOT, MINGAP, SC);
   return { RESPONSE: { VIOLATIONS: V.map(function(x) { return { ELEMENTA: x.elementa.tagName + (x.elementa.id ? '#' + x.elementa.id : ''), ELEMENTB: x.elementb.tagName + (x.elementb.id ? '#' + x.elementb.id : ''), GAP: x.gap }; }) } };
 };
 
@@ -41,46 +41,46 @@ HANDLERS[MESSAGETYPES.CORRECTSPACING] = function(ENV, MSG) {
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC) return { RESPONSE: { ERROR: 'stylizercore unavailable' } };
-  var RESULT = LC_correctspacingdoc(ROOT, MINGAP, SC);
+  var RESULT = LCCORRECTSPACINGDOC(ROOT, MINGAP, SC);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 
 HANDLERS[MESSAGETYPES.CHECKOVERLAP] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  return { RESPONSE: { VIOLATIONS: LC_checkoverlapdoc(ROOT) } };
+  return { RESPONSE: { VIOLATIONS: LCCHECKOVERLAPDOC(ROOT) } };
 };
 
 HANDLERS[MESSAGETYPES.CORRECTOVERLAP] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var RESULT = LC_correctoverlapdoc(ROOT);
+  var RESULT = LCCORRECTOVERLAPDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 
 HANDLERS[MESSAGETYPES.CHECKSCROLLABILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  return { RESPONSE: { VIOLATIONS: LC_checkscrollabilitydoc(ROOT) } };
+  return { RESPONSE: { VIOLATIONS: LCCHECKSCROLLABILITYDOC(ROOT) } };
 };
 
 HANDLERS[MESSAGETYPES.CORRECTSCROLLABILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var RESULT = LC_correctscrollabilitydoc(ROOT);
+  var RESULT = LCCORRECTSCROLLABILITYDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 
 HANDLERS[MESSAGETYPES.CHECKCONTROLLEDOVERLAY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  return { RESPONSE: { VIOLATIONS: LC_checkcontrolledoverlaydoc(ROOT) } };
+  return { RESPONSE: { VIOLATIONS: LCCHECKCONTROLLEDOVERLAYDOC(ROOT) } };
 };
 
 HANDLERS[MESSAGETYPES.CORRECTCONTROLLEDOVERLAY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
-  var RESULT = LC_correctcontrolledoverlaydoc(ROOT);
+  var RESULT = LCCORRECTCONTROLLEDOVERLAYDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 };
 
@@ -88,7 +88,7 @@ HANDLERS[MESSAGETYPES.REWRITESTYLEATTRS] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { APPLIED: SU_rewritestyleattrs(ROOT, MSG.RULES || [], SC) } };
+  return { RESPONSE: { APPLIED: SUREWRITESTYLEATTRS(ROOT, MSG.RULES || [], SC) } };
 };
 
 HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
@@ -96,7 +96,7 @@ HANDLERS[MESSAGETYPES.CONSOLIDATESTYLES] = function(ENV, MSG) {
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   var SAFEPROPS = MSG.SAFEPROPS || (SC && SC.createstylizerconstants ? SC.createstylizerconstants().safeprops : null);
-  return { RESPONSE: { APPLIED: SU_consolidatestyles(ROOT, SAFEPROPS, SC) } };
+  return { RESPONSE: { APPLIED: SUCONSOLIDATESTYLES(ROOT, SAFEPROPS, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
@@ -105,7 +105,7 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC || typeof SC.computepanemaxwidth !== 'function') return { RESPONSE: { ERROR: 'stylizercore.computepanemaxwidth unavailable' } };
   var VIEWPORT = MSG.VIEWPORT || {};
-  var VW = (typeof VIEWPORT.VIEWPORTWIDTH === 'number' && VIEWPORT.VIEWPORTWIDTH > 0) ? VIEWPORT.VIEWPORTWIDTH : SU_detectviewportwidth();
+  var VW = (typeof VIEWPORT.VIEWPORTWIDTH === 'number' && VIEWPORT.VIEWPORTWIDTH > 0) ? VIEWPORT.VIEWPORTWIDTH : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
   var SHAPE = MSG.SHAPE === 'row' ? 'row' : 'column';
   var ROLE = SHAPE === 'row' ? 'app-shell' : 'reading-column';
@@ -118,7 +118,7 @@ HANDLERS[MESSAGETYPES.PANELAYOUT] = function(ENV, MSG) {
   EL.style.gap = SPACING.gap + 'px';
   var HEIGHTAPPLIED = null;
   if (MSG.HEIGHT === 'viewport') {
-    var VH = SU_detectviewportheight();
+    var VH = SUDETECTVIEWPORTHEIGHT();
     if (VH !== null) { EL.style.height = VH + 'px'; HEIGHTAPPLIED = VH; }
   } else if (typeof MSG.HEIGHT === 'number' && MSG.HEIGHT > 0) {
     EL.style.height = MSG.HEIGHT + 'px';

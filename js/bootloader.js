@@ -135,15 +135,11 @@ var pipelinesmanifest = [
   // @proposal=CP3 (CYCLE-25) — the render-actor module is split into
   // ten files. The nine new files carry `source: 'actors/renderactor.js'`;
   // the truncated renderactor.js retains the original path.
-  // Load order: primitives (declares HANDLERS) → metrics → events →
-  // style (declares SU_*/LC_* helpers) → five handler-domain files
-  // (populate HANDLERS) → renderactor.js (dispatcher surface, reads
-  // the fully-populated HANDLERS at load time).
   // ============================================================
   { src: 'actors/renderactorprimitives.js',
     source: 'actors/renderactor.js',
     provides: [
-      'validatedomquerycommand', 'DOMQUERYCOMMANDREGISTRY'
+      'VALIDATEDOMQUERYCOMMAND', 'DOMQUERYCOMMANDREGISTRY'
     ] },
   { src: 'actors/renderactormetrics.js',
     source: 'actors/renderactor.js',
@@ -203,10 +199,8 @@ var pipelinesmanifest = [
   // @proposal=CP2 (CYCLE-25) — the blockcompiler module is split into
   // five files. The four new files carry `source: 'factory/blockcompiler.js'`;
   // the truncated blockcompiler.js retains the original path.
-  // Load order: pipelinecompilers → blockcompilers →
-  // pipelineorchestration → pipelinediagnostics → blockcompiler.
   // ============================================================
-  { src: 'factory/pipelinecompiler.js',
+  { src: 'factory/pipelinecompilers.js',
     source: 'factory/blockcompiler.js',
     provides: [
       'pipeline',
@@ -215,7 +209,7 @@ var pipelinesmanifest = [
       'nodeat',
       'createpersistentelementwrapper'
     ] },
-  { src: 'factory/blockcompiler.js',
+  { src: 'factory/blockcompilers.js',
     source: 'factory/blockcompiler.js',
     provides: [
       'buildblockproperties', 'wrapblockresult'
@@ -237,7 +231,7 @@ var pipelinesmanifest = [
     ] },
   { src: 'factory/blockcompiler.js', provides: [
     'createblockcompilerconstants',
-    'BLOCKCOMPILERSTATE'
+    'blockcompilerstate'
   ] },
 
   { src: 'actors/hypervisoractor.js', provides: [

@@ -1,23 +1,3 @@
-// js/factory/pipelinecompilers.js — pipeline and stage constructors,
-// manipulation helpers, path accessors, and the persistent-element
-// wrapper.
-//
-// @proposal=CP2 (CYCLE-25) — extracted from /js/factory/blockcompiler.js
-// as concerns B1, B2, B4, B12.
-//
-// @proposal=CP2 (ARC-49) — factory-file NOMENCLATURE rename applied:
-//     BLOCKCOMPILERSTATE → blockcompilerstate
-//     (three sites inside createpersistentelementwrapper's inner
-//     `wrapper` function, all as the first argument of a log call).
-//
-// Load order: first among the five blockcompiler split files. The
-// identifiers declared here are consumed by blockcompilers.js,
-// pipelineorchestration.js, and blockcompiler.js at call time.
-
-// ============================================================
-// B1 — Pipeline and block constructors
-// ============================================================
-
 function makelib(src, provides) {
   return { src: src, provides: provides };
 }
@@ -330,7 +310,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
     };
     var blockinputs = elementdef && elementdef.inputs ? elementdef.inputs : [];
     var blockoutputs = elementdef && elementdef.outputs ? elementdef.outputs : {};
-    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelinename, 'stagepath:', JSON.stringify(stagepath));
+    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'submitting element:', elementid, 'pipeline:', pipelinename, 'stagepath:', JSON.stringify(stagepath));
     var tag = GENERATETAG();
     var descriptor = {
       PIPELINEID: pipelinename,
@@ -384,7 +364,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var outputkeys = Object.keys(blockoutputs || {});
         var mapped = mapoutputs(result, outputkeys);
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
-        logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelinename);
+        logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelinename);
         return result;
       })
       .catch(function(err) {
@@ -405,7 +385,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
         var timeoutenv = { ERROR: 'timeout', TAG: tag, KIND: 'mailbox-wait-timeout' };
         var outputkeys2 = Object.keys(blockoutputs || {});
         outputkeys2.forEach(function(k) { execenv[k] = timeoutenv; });
-        logwarn(blockcompilerstate, '[BLOCKCOMPILER]', 'element timed out (caught):', elementid, 'pipeline:', pipelinename);
+        logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'element timed out (caught):', elementid, 'pipeline:', pipelinename);
         return timeoutenv;
       });
   }

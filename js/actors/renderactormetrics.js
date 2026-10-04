@@ -1,14 +1,4 @@
-// js/actors/renderactormetrics.js — render-actor viewport and font
-// measurement helpers.
-//
-// @proposal=CP3 (CYCLE-25) — extracted from /js/actors/renderactor.js
-// as concern R3 (viewport and font measurement). The function bodies
-// are byte-identical to their pre-split forms. The load order places
-// this file after renderactorprimitives.js and before
-// renderactorhandlerlayout.js (whose layout corrections consume the
-// measurements).
-
-function SU_detectviewportwidth() {
+function SUDETECTVIEWPORTWIDTH() {
   if (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientWidth > 0) {
     return document.documentElement.clientWidth;
   }
@@ -22,11 +12,11 @@ function SU_detectviewportwidth() {
   return null;
 }
 
-function SU_detectfontsize(node) {
+function SUDETECTFONTSIZE(NODE) {
   if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
     try {
-      if (node && typeof node === 'object' && node.nodeType === 1) {
-        var cs = window.getComputedStyle(node);
+      if (NODE && typeof NODE === 'object' && NODE.nodeType === 1) {
+        var cs = window.getComputedStyle(NODE);
         if (cs && cs.fontSize) {
           var v = parseFloat(cs.fontSize);
           if (isFinite(v) && v > 0) return v;
@@ -44,7 +34,7 @@ function SU_detectfontsize(node) {
   return 16;
 }
 
-function SU_detectviewportheight() {
+function SUDETECTVIEWPORTHEIGHT() {
   if (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientHeight > 0) {
     return document.documentElement.clientHeight;
   }

@@ -1,59 +1,59 @@
-function SU_getancestors(el) {
+function SUGETANCESTORS(EL) {
   function climb(p, acc) {
     if (!p || p.nodeType !== 1) return acc;
     return climb(p.parentNode, acc.concat([p]));
   }
-  return climb(el.parentNode, []);
+  return climb(EL.parentNode, []);
 }
 
-function SU_getsiblings(el, dir) {
+function SUGETSIBLINGS(EL, dir) {
   function walk(s, acc) {
     if (!s) return acc;
     return walk(s[dir], s.nodeType === 1 ? acc.concat([s]) : acc);
   }
-  return walk(el[dir], []);
+  return walk(EL[dir], []);
 }
 
-function SU_getdepth(ancestor, descendant) {
+function SUGETDEPTH(ancestor, descendant) {
   if (!descendant || descendant === ancestor) return 0;
-  if (descendant.nodeType !== 1) return SU_getdepth(ancestor, descendant.parentNode);
-  return 1 + SU_getdepth(ancestor, descendant.parentNode);
+  if (descendant.nodeType !== 1) return SUGETDEPTH(ancestor, descendant.parentNode);
+  return 1 + SUGETDEPTH(ancestor, descendant.parentNode);
 }
 
-function SU_getalldescendants(el, stylizercore) {
-  var children = Array.prototype.slice.call(el.children || []);
+function SUGETALLDESCENDANTS(EL, stylizercore) {
+  var children = Array.prototype.slice.call(EL.children || []);
   return children.reduce(function(all, child) {
-    return all.concat(child, SU_getalldescendants(child, stylizercore));
+    return all.concat(child, SUGETALLDESCENDANTS(child, stylizercore));
   }, []);
 }
 
-function SU_applystep(nodes, step, filterfn, stylizercore) {
+function SUAPPLYSTEP(nodes, step, filterfn, stylizercore) {
   if (filterfn === undefined) filterfn = null;
-  return nodes.reduce(function(next, node) {
+  return nodes.reduce(function(next, NODE) {
     var candidates = [];
     switch (step.axis || 'child') {
-      case 'self': candidates = [node]; break;
-      case 'parent': if (node.parentNode) candidates = [node.parentNode]; break;
-      case 'ancestor': candidates = SU_getancestors(node); break;
-      case 'child': candidates = Array.prototype.slice.call(node.children || []); break;
-      case 'descendant': candidates = SU_getalldescendants(node, stylizercore); break;
-      case 'nextsibling': candidates = SU_getsiblings(node, 'nextSibling'); break;
-      case 'previoussibling': candidates = SU_getsiblings(node, 'previousSibling'); break;
+      case 'self': candidates = [NODE]; break;
+      case 'parent': if (NODE.parentNode) candidates = [NODE.parentNode]; break;
+      case 'ancestor': candidates = SUGETANCESTORS(NODE); break;
+      case 'child': candidates = Array.prototype.slice.call(NODE.children || []); break;
+      case 'descendant': candidates = SUGETALLDESCENDANTS(NODE, stylizercore); break;
+      case 'nextsibling': candidates = SUGETSIBLINGS(NODE, 'nextSibling'); break;
+      case 'previoussibling': candidates = SUGETSIBLINGS(NODE, 'previousSibling'); break;
       default: throw new Error('Unknown axis: ' + step.axis);
     }
-    if (step.tag) candidates = candidates.filter(function(el) { return el.tagName && el.tagName.toLowerCase() === step.tag.toLowerCase(); });
-    if (step.class) candidates = candidates.filter(function(el) { return el.classList && el.classList.contains(step.class); });
-    if (step.id) candidates = candidates.filter(function(el) { return el.id === step.id; });
+    if (step.tag) candidates = candidates.filter(function(EL) { return EL.tagName && EL.tagName.toLowerCase() === step.tag.toLowerCase(); });
+    if (step.class) candidates = candidates.filter(function(EL) { return EL.classList && EL.classList.contains(step.class); });
+    if (step.id) candidates = candidates.filter(function(EL) { return EL.id === step.id; });
     if (step.index !== undefined) candidates = candidates.length > step.index ? [candidates[step.index]] : [];
-    if (step.depth !== undefined && step.axis === 'descendant') candidates = candidates.filter(function(el) { return SU_getdepth(node, el) === step.depth; });
+    if (step.depth !== undefined && step.axis === 'descendant') candidates = candidates.filter(function(EL) { return SUGETDEPTH(NODE, EL) === step.depth; });
     if (step.skip !== undefined && (step.axis === 'nextsibling' || step.axis === 'previoussibling')) candidates = candidates.length > step.skip ? [candidates[step.skip]] : [];
     if (step.content) {
       var text = step.content.text || '';
       var mode = step.content.mode || 'substring';
       var casesensitive = step.content.casesensitive || false;
       var search = casesensitive ? text : text.toLowerCase();
-      candidates = candidates.filter(function(el) {
-        var eltext = casesensitive ? el.textContent : el.textContent.toLowerCase();
+      candidates = candidates.filter(function(EL) {
+        var eltext = casesensitive ? EL.textContent : EL.textContent.toLowerCase();
         if (mode === 'exact') return eltext.trim() === search.trim();
         return eltext.indexOf(search) !== -1;
       });
@@ -64,11 +64,11 @@ function SU_applystep(nodes, step, filterfn, stylizercore) {
   }, []);
 }
 
-function SU_buildlayoutpropertymap(rootel, viewportwidth, inheritedfontsize, stylizercore) {
-  if (inheritedfontsize === undefined) inheritedfontsize = SU_detectfontsize(rootel);
+function SUBUILDLAYOUTPROPERTYMAP(rootel, viewportwidth, inheritedfontsize, stylizercore) {
+  if (inheritedfontsize === undefined) inheritedfontsize = SUDETECTFONTSIZE(rootel);
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
-  function walk(el, parentavailablewidth, parentfontsize, acc) {
-    var style = el.style || {};
+  function walk(EL, parentavailablewidth, parentfontsize, acc) {
+    var style = EL.style || {};
     var props = { fontsize: parentfontsize, width: null, maxwidth: null, minwidth: null, height: null, margintop: 0, marginbottom: 0, marginleft: 0, marginright: 0, paddingtop: 0, paddingbottom: 0, paddingleft: 0, paddingright: 0, bordertopwidth: 0, borderbottomwidth: 0, borderleftwidth: 0, borderrightwidth: 0, availablewidth: parentavailablewidth };
     var propnames = ['fontsize','width','maxwidth','minwidth','height','margintop','marginbottom','marginleft','marginright','paddingtop','paddingbottom','paddingleft','paddingright','bordertopwidth','borderbottomwidth','borderleftwidth','borderrightwidth'];
     propnames.forEach(function(prop) {
@@ -88,27 +88,27 @@ function SU_buildlayoutpropertymap(rootel, viewportwidth, inheritedfontsize, sty
     if (props.width !== null) selfavailable = Math.min(selfavailable, props.width);
     if (props.minwidth !== null) selfavailable = Math.max(selfavailable, props.minwidth);
     props.availablewidth = selfavailable;
-    var nextacc = acc.concat([{ element: el, props: props }]);
-    var children = SU_applystep([el], { axis: 'child' }, null, sc);
+    var nextacc = acc.concat([{ element: EL, props: props }]);
+    var children = SUAPPLYSTEP([EL], { axis: 'child' }, null, sc);
     return children.reduce(function(inneracc, child) { return walk(child, selfavailable, props.fontsize, inneracc); }, nextacc);
   }
   return walk(rootel, viewportwidth, inheritedfontsize, []);
 }
 
-function SU_getpropsfrommap(propsmap, el, stylizercore) {
-  var entry = propsmap.filter(function(item) { return item.element === el; })[0];
+function SUGETPROPSFROMMAP(propsmap, EL, stylizercore) {
+  var entry = propsmap.filter(function(item) { return item.element === EL; })[0];
   return entry ? entry.props : null;
 }
 
-function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore) {
+function SUCOMPUTEINTRINSICSIZE(NODE, propertymap, inheritedprops, stylizercore) {
   if (inheritedprops === undefined) inheritedprops = {};
   var defaultlineheightfactor = 1.2;
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
-  if (!node) return { width: 0, height: 0 };
-  if (node.nodeType === 3) {
-    var txt = node.nodeValue.trim();
+  if (!NODE) return { width: 0, height: 0 };
+  if (NODE.nodeType === 3) {
+    var txt = NODE.nodeValue.trim();
     if (!txt) return { width: 0, height: 0 };
-    var fontsize = inheritedprops.fontsize || SU_detectfontsize(node.parentElement);
+    var fontsize = inheritedprops.fontsize || SUDETECTFONTSIZE(NODE.parentElement);
     var lines = txt.split('\n');
     var isnowrap = inheritedprops.whitespace === 'nowrap' || inheritedprops.whitespace === 'pre';
     var maxlinelen = Math.max.apply(null, lines.map(function(line) {
@@ -118,10 +118,10 @@ function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore
     var lineheight = inheritedprops.lineheight || fontsize * defaultlineheightfactor;
     return { width: maxlinelen, height: lines.length * lineheight };
   }
-  if (node.nodeType !== 1) return { width: 0, height: 0 };
-  var props = SU_getpropsfrommap(propertymap, node, sc);
-  if (!props) throw new Error('[computeintrinsicsize] Missing property map entry: ' + node.tagName);
-  var tag = node.tagName.toLowerCase();
+  if (NODE.nodeType !== 1) return { width: 0, height: 0 };
+  var props = SUGETPROPSFROMMAP(propertymap, NODE, sc);
+  if (!props) throw new Error('[computeintrinsicsize] Missing property map entry: ' + NODE.tagName);
+  var tag = NODE.tagName.toLowerCase();
   var padh = (props.paddingleft || 0) + (props.paddingright || 0) + (props.borderleftwidth || 0) + (props.borderrightwidth || 0);
   var padv = (props.paddingtop || 0) + (props.paddingbottom || 0);
   if (tag === 'img' || tag === 'svg') {
@@ -130,13 +130,13 @@ function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore
   }
   if (tag === 'table') {
     if (props.width !== null) return { width: props.width, height: props.height || 0 };
-    var rows = SU_applystep([node], { axis: 'descendant', tag: 'tr' }, null, sc);
+    var rows = SUAPPLYSTEP([NODE], { axis: 'descendant', tag: 'tr' }, null, sc);
     var colmax = {};
     var totalh = 0;
     rows.forEach(function(row) {
       var rowh = 0;
-      SU_applystep([row], { axis: 'child' }, null, sc).forEach(function(cell, idx) {
-        var s = SU_computeintrinsicsize(cell, propertymap, props, sc);
+      SUAPPLYSTEP([row], { axis: 'child' }, null, sc).forEach(function(cell, idx) {
+        var s = SUCOMPUTEINTRINSICSIZE(cell, propertymap, props, sc);
         colmax[idx] = Math.max(colmax[idx] || 0, s.width);
         rowh = Math.max(rowh, s.height);
       });
@@ -146,31 +146,31 @@ function SU_computeintrinsicsize(node, propertymap, inheritedprops, stylizercore
     var totalw = colvals.reduce(function(sum, w) { return sum + w; }, 0) + padh;
     return { width: totalw, height: totalh + padv };
   }
-  var children = Array.prototype.slice.call(node.childNodes);
+  var children = Array.prototype.slice.call(NODE.childNodes);
   if (!children.length) return { width: padh, height: padv };
-  var isflexrow = node.style && node.style.display === 'flex' && (node.style.flexDirection === 'row' || !node.style.flexDirection);
+  var isflexrow = NODE.style && NODE.style.display === 'flex' && (NODE.style.flexDirection === 'row' || !NODE.style.flexDirection);
   var totalw = 0, maxw = 0, totalh = 0;
   children.forEach(function(child) {
-    var s = SU_computeintrinsicsize(child, propertymap, props, sc);
+    var s = SUCOMPUTEINTRINSICSIZE(child, propertymap, props, sc);
     if (isflexrow) { totalw += s.width; totalh = Math.max(totalh, s.height); }
     else { maxw = Math.max(maxw, s.width); totalh += s.height; }
   });
   return { width: (isflexrow ? totalw : maxw) + padh, height: totalh + padv };
 }
 
-function SU_estimaterecursivebounds(node, stylizercore) {
+function SUESTIMATERECURSIVEBOUNDS(NODE, stylizercore) {
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
-  if (node.nodeType === 3) {
-    var txt = node.nodeValue.trim();
+  if (NODE.nodeType === 3) {
+    var txt = NODE.nodeValue.trim();
     if (!txt) return 0;
-    var fsize = SU_detectfontsize(node.parentElement || node);
+    var fsize = SUDETECTFONTSIZE(NODE.parentElement || NODE);
     var isnowrap = false;
     function climb(p, size, nowrap) {
       if (!p || !p.style) return { size: size, nowrap: nowrap };
       if (p.style.fontSize) { var raw = p.style.fontSize; return { size: (raw.indexOf('rem') !== -1 || raw.indexOf('em') !== -1) ? parseFloat(raw) * 16 : parseFloat(raw), nowrap: nowrap }; }
       return climb(p.parentElement, size, nowrap || p.style.whiteSpace === 'nowrap');
     }
-    var resolved = climb(node.parentElement, fsize, isnowrap);
+    var resolved = climb(NODE.parentElement, fsize, isnowrap);
     fsize = resolved.size; isnowrap = resolved.nowrap;
     var charpx = fsize * 0.6;
     if (isnowrap) return txt.length * charpx;
@@ -178,12 +178,12 @@ function SU_estimaterecursivebounds(node, stylizercore) {
     var maxwordlen = Math.max.apply(null, words.map(function(w) { return w.length; }));
     return maxwordlen * charpx;
   }
-  if (node.nodeType === 1) {
-    if (node.tagName && (node.tagName.toLowerCase() === 'img' || node.tagName.toLowerCase() === 'svg')) return parseFloat(node.style.width || node.getAttribute('width') || 24);
-    var isflexrow = node.style.display === 'flex' && (node.style.flexDirection === 'row' || !node.style.flexDirection);
+  if (NODE.nodeType === 1) {
+    if (NODE.tagName && (NODE.tagName.toLowerCase() === 'img' || NODE.tagName.toLowerCase() === 'svg')) return parseFloat(NODE.style.width || NODE.getAttribute('width') || 24);
+    var isflexrow = NODE.style.display === 'flex' && (NODE.style.flexDirection === 'row' || !NODE.style.flexDirection);
     var totalw = 0;
-    Array.prototype.slice.call(node.childNodes).forEach(function(child) {
-      var w = SU_estimaterecursivebounds(child, sc);
+    Array.prototype.slice.call(NODE.childNodes).forEach(function(child) {
+      var w = SUESTIMATERECURSIVEBOUNDS(child, sc);
       totalw = isflexrow ? totalw + w : Math.max(totalw, w);
     });
     return totalw;
@@ -191,7 +191,7 @@ function SU_estimaterecursivebounds(node, stylizercore) {
   return 0;
 }
 
-function SU_geteffectivebackground(el, stylizercore) {
+function SUGETEFFECTIVEBACKGROUND(EL, stylizercore) {
   function ishexdigit(ch) { return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F'); }
   function findhexcolor(str) {
     function scanhex(j, count) { if (j < str.length && ishexdigit(str.charAt(j))) return scanhex(j + 1, count + 1); return { j: j, count: count }; }
@@ -199,19 +199,19 @@ function SU_geteffectivebackground(el, stylizercore) {
     return scan(0);
   }
   function findrgbcolor(str) { var idx = str.indexOf('rgb('); if (idx === -1) return null; var end = str.indexOf(')', idx); if (end === -1) return null; return str.slice(idx, end + 1); }
-  function extractbgfromshorthand(node) { if (node.style.backgroundColor) return node.style.backgroundColor; var bg = node.style.background; if (!bg) return null; return findhexcolor(bg) || findrgbcolor(bg) || null; }
+  function extractbgfromshorthand(NODE) { if (NODE.style.backgroundColor) return NODE.style.backgroundColor; var bg = NODE.style.background; if (!bg) return null; return findhexcolor(bg) || findrgbcolor(bg) || null; }
   function climbbg(curr) { if (!curr || curr.nodeType !== 1) return ''; var bg = extractbgfromshorthand(curr); if (bg) return bg; return climbbg(curr.parentNode); }
-  return climbbg(el);
+  return climbbg(EL);
 }
 
-function SU_getrgbhex(input, sc) {
+function SUGETRGBHEX(input, sc) {
   var core = (sc && sc.color && sc.color.core) || (typeof colorcore !== 'undefined' ? colorcore : null);
   if (!core) return input;
   var rgb = core.hextorgb(input, core);
   return core.rgbtohex(rgb[0], rgb[1], rgb[2], core);
 }
 
-function SU_harmonyscore(fg, bg, sc) {
+function SUHARMONYSCORE(fg, bg, sc) {
   var core = (sc && sc.color && sc.color.core) || (typeof colorcore !== 'undefined' ? colorcore : null);
   if (!core) return 0.7;
   var fghsl = core.rgbtohsl.apply(null, core.hextorgb(fg, core));
@@ -225,34 +225,34 @@ function SU_harmonyscore(fg, bg, sc) {
   return 0.7;
 }
 
-function SU_rewritestyleattrs(root, rules, sc) {
+function SUREWRITESTYLEATTRS(root, rules, sc) {
   var count = 0;
-  function applyrules(el) {
+  function applyrules(EL) {
     rules.forEach(function(rule) {
       var matched = false;
-      if (rule.id && el.id === rule.id) matched = true;
-      else if (rule.tag && el.tagName && el.tagName.toLowerCase() === rule.tag.toLowerCase()) matched = true;
-      else if (rule.class && el.classList && el.classList.contains(rule.class)) matched = true;
+      if (rule.id && EL.id === rule.id) matched = true;
+      else if (rule.tag && EL.tagName && EL.tagName.toLowerCase() === rule.tag.toLowerCase()) matched = true;
+      else if (rule.class && EL.classList && EL.classList.contains(rule.class)) matched = true;
       if (matched && rule.style) {
-        Object.keys(rule.style).forEach(function(prop) { el.style[prop] = rule.style[prop]; });
+        Object.keys(rule.style).forEach(function(prop) { EL.style[prop] = rule.style[prop]; });
         count++;
       }
     });
-    Array.prototype.slice.call(el.children).forEach(applyrules);
+    Array.prototype.slice.call(EL.children).forEach(applyrules);
   }
   applyrules(root);
   return count;
 }
 
-function SU_consolidatestyles(root, safeprops, sc) {
+function SUCONSOLIDATESTYLES(root, safeprops, sc) {
   if (!safeprops) safeprops = ['color','font-family','font-size','font-weight','font-style','line-height','text-align','cursor','letter-spacing','word-spacing','text-transform','text-decoration','font-variant'];
   var count = 0;
-  function walk(el) {
-    Array.prototype.slice.call(el.children).forEach(function(child) {
+  function walk(EL) {
+    Array.prototype.slice.call(EL.children).forEach(function(child) {
       if (child.style) {
         var styleprops = Array.prototype.slice.call(child.style);
         styleprops.forEach(function(prop) {
-          if (safeprops.indexOf(prop) !== -1 && el.style && el.style[prop] === child.style[prop]) { child.style.removeProperty(prop); count++; }
+          if (safeprops.indexOf(prop) !== -1 && EL.style && EL.style[prop] === child.style[prop]) { child.style.removeProperty(prop); count++; }
         });
       }
       walk(child);
@@ -262,7 +262,7 @@ function SU_consolidatestyles(root, safeprops, sc) {
   return count;
 }
 
-function SU_optimizecontrast(root, themestyles, options, sc) {
+function SUOPTIMIZECONTRAST(root, themestyles, options, sc) {
   var minratio = (options && options.minratio != null) ? options.minratio : 4.5;
   var count = 0;
   var els = Array.prototype.slice.call(root.getElementsByTagName('*'));
@@ -270,15 +270,15 @@ function SU_optimizecontrast(root, themestyles, options, sc) {
   var contrast = (sc && sc.color && sc.color.contrast) || (typeof colorcontrast !== 'undefined' ? colorcontrast : null);
   var harmony = (sc && sc.color && sc.color.harmony) || (typeof colorharmony !== 'undefined' ? colorharmony : null);
   if (!core || !contrast) return 0;
-  els.forEach(function(el) {
-    if (el.textContent.trim() && el.style.color) {
-      var bg = SU_geteffectivebackground(el, sc);
+  els.forEach(function(EL) {
+    if (EL.textContent.trim() && EL.style.color) {
+      var bg = SUGETEFFECTIVEBACKGROUND(EL, sc);
       if (!bg) return;
-      var fghex = SU_getrgbhex(el.style.color, sc);
-      var bghex = SU_getrgbhex(bg, sc);
+      var fghex = SUGETRGBHEX(EL.style.color, sc);
+      var bghex = SUGETRGBHEX(bg, sc);
       if (contrast.contrastratio(fghex, bghex, core) < minratio) {
         var newfg = contrast.getoptimalforeground(bghex, minratio, { scheme: 'complementary' }, harmony, contrast, core);
-        el.style.color = newfg;
+        EL.style.color = newfg;
         count++;
       }
     }
@@ -286,57 +286,57 @@ function SU_optimizecontrast(root, themestyles, options, sc) {
   return count;
 }
 
-function SU_optimizeharmony(root, themestyles, options, sc) {
+function SUOPTIMIZEHARMONY(root, themestyles, options, sc) {
   var count = 0;
   var els = Array.prototype.slice.call(root.getElementsByTagName('*'));
   var core = (sc && sc.color && sc.color.core) || (typeof colorcore !== 'undefined' ? colorcore : null);
   var harmony = (sc && sc.color && sc.color.harmony) || (typeof colorharmony !== 'undefined' ? colorharmony : null);
   if (!core || !harmony) return 0;
-  els.forEach(function(el) {
-    if (el.textContent.trim() && el.style.color) {
-      var bg = SU_geteffectivebackground(el, sc);
+  els.forEach(function(EL) {
+    if (EL.textContent.trim() && EL.style.color) {
+      var bg = SUGETEFFECTIVEBACKGROUND(EL, sc);
       if (!bg) return;
-      var fg = SU_getrgbhex(el.style.color, sc);
-      var bghex = SU_getrgbhex(bg, sc);
-      if (SU_harmonyscore(fg, bghex, sc) < 0.5) {
+      var fg = SUGETRGBHEX(EL.style.color, sc);
+      var bghex = SUGETRGBHEX(bg, sc);
+      if (SUHARMONYSCORE(fg, bghex, sc) < 0.5) {
         var pal = harmony.getharmoniouspalette(bghex, 3, { scheme: 'analogous' }, harmony, core);
-        if (pal.length) { el.style.color = pal[0]; count++; }
+        if (pal.length) { EL.style.color = pal[0]; count++; }
       }
     }
   });
   return count;
 }
 
-function SU_optimizetextvisibility(root, themestyles, options, sc) {
+function SUOPTIMIZETEXTVISIBILITY(root, themestyles, options, sc) {
   if (!themestyles) themestyles = {};
   var minlh = (options && options.minlineheight != null) ? options.minlineheight : 1.2;
   var count = 0;
   var els = Array.prototype.slice.call(root.getElementsByTagName('*'));
-  els.forEach(function(el) {
-    if (el.textContent.trim()) {
-      var tag = el.tagName.toLowerCase();
+  els.forEach(function(EL) {
+    if (EL.textContent.trim()) {
+      var tag = EL.tagName.toLowerCase();
       var minsize = (sc && sc.parselength) ? sc.parselength(themestyles[tag] && themestyles[tag].fontsize || themestyles['p'] && themestyles['p'].fontsize || '12px', 16) : 12;
-      var cursize = (sc && sc.parselength) ? sc.parselength(el.style.fontSize, 16) || 0 : (parseFloat(el.style.fontSize) || 0);
-      var curlh = parseFloat(el.style.lineHeight) || 0;
+      var cursize = (sc && sc.parselength) ? sc.parselength(EL.style.fontSize, 16) || 0 : (parseFloat(EL.style.fontSize) || 0);
+      var curlh = parseFloat(EL.style.lineHeight) || 0;
       var modified = false;
-      if (cursize > 0 && cursize < minsize) { el.style.fontSize = minsize + 'px'; modified = true; }
-      if (curlh && curlh < minlh) { el.style.lineHeight = String(minlh); modified = true; }
+      if (cursize > 0 && cursize < minsize) { EL.style.fontSize = minsize + 'px'; modified = true; }
+      if (curlh && curlh < minlh) { EL.style.lineHeight = String(minlh); modified = true; }
       if (modified) count++;
     }
   });
   return count;
 }
 
-function SU_optimizebuttonvisibility(root, sc) {
+function SUOPTIMIZEBUTTONVISIBILITY(root, sc) {
   var count = 0;
-  var els = Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) {
-    var tag = el.tagName.toLowerCase();
-    return tag === 'button' || el.getAttribute('role') === 'button' || (tag === 'input' && ['submit', 'button'].indexOf(el.getAttribute('type')) !== -1);
+  var els = Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(EL) {
+    var tag = EL.tagName.toLowerCase();
+    return tag === 'button' || EL.getAttribute('role') === 'button' || (tag === 'input' && ['submit', 'button'].indexOf(EL.getAttribute('type')) !== -1);
   });
   els.forEach(function(btn) {
     var w = parseFloat(btn.style.width) || 0;
     var h = parseFloat(btn.style.height) || 0;
-    var minw = Math.max(44, SU_estimaterecursivebounds(btn, sc) + 24);
+    var minw = Math.max(44, SUESTIMATERECURSIVEBOUNDS(btn, sc) + 24);
     var modified = false;
     if (w < minw) { btn.style.minWidth = minw + 'px'; modified = true; }
     if (h < 44) { btn.style.minHeight = '44px'; modified = true; }
@@ -346,51 +346,51 @@ function SU_optimizebuttonvisibility(root, sc) {
   return count;
 }
 
-function SU_verifycontrast(root, minratio, sc) {
+function SUVERIFYCONTRAST(root, minratio, sc) {
   if (minratio === undefined) minratio = 4.5;
   var violations = [];
   var core = (sc && sc.color && sc.color.core) || (typeof colorcore !== 'undefined' ? colorcore : null);
   var contrast = (sc && sc.color && sc.color.contrast) || (typeof colorcontrast !== 'undefined' ? colorcontrast : null);
   if (!core || !contrast) return violations;
-  function walk(el) {
-    if (el.nodeType === 1 && el.textContent.trim() && el.style.color) {
-      var bg = SU_geteffectivebackground(el, sc);
+  function walk(EL) {
+    if (EL.nodeType === 1 && EL.textContent.trim() && EL.style.color) {
+      var bg = SUGETEFFECTIVEBACKGROUND(EL, sc);
       if (bg) {
-        var fghex = SU_getrgbhex(el.style.color, sc);
-        var bghex = SU_getrgbhex(bg, sc);
+        var fghex = SUGETRGBHEX(EL.style.color, sc);
+        var bghex = SUGETRGBHEX(bg, sc);
         var ratio = contrast.contrastratio(fghex, bghex, core);
-        if (ratio < minratio) violations.push({ element: el.tagName + (el.id ? '#' + el.id : ''), ratio: ratio, expected: minratio, color: fghex, bg: bghex });
+        if (ratio < minratio) violations.push({ element: EL.tagName + (EL.id ? '#' + EL.id : ''), ratio: ratio, expected: minratio, color: fghex, bg: bghex });
       }
     }
-    Array.prototype.slice.call(el.children).forEach(walk);
+    Array.prototype.slice.call(EL.children).forEach(walk);
   }
   walk(root);
   return violations;
 }
 
-function SU_verifytextvisibility(root, sc) {
+function SUVERIFYTEXTVISIBILITY(root, sc) {
   var violations = [];
-  function walk(el) {
-    if (el.nodeType === 1 && el.textContent.trim()) {
-      var fsize = (sc && sc.parselength) ? sc.parselength(el.style.fontSize, 16) || 0 : (parseFloat(el.style.fontSize) || 0);
-      var lh = parseFloat(el.style.lineHeight) || 0;
-      var col = el.style.color;
-      var id = el.tagName + (el.id ? '#' + el.id : '');
+  function walk(EL) {
+    if (EL.nodeType === 1 && EL.textContent.trim()) {
+      var fsize = (sc && sc.parselength) ? sc.parselength(EL.style.fontSize, 16) || 0 : (parseFloat(EL.style.fontSize) || 0);
+      var lh = parseFloat(EL.style.lineHeight) || 0;
+      var col = EL.style.color;
+      var id = EL.tagName + (EL.id ? '#' + EL.id : '');
       if (fsize && fsize < 12) violations.push({ element: id, issue: 'font-size too small', value: fsize });
       if (lh && lh < 1.2) violations.push({ element: id, issue: 'line-height too tight', value: lh });
       if (!col || col === 'transparent') violations.push({ element: id, issue: 'text color not set or transparent' });
     }
-    Array.prototype.slice.call(el.children).forEach(walk);
+    Array.prototype.slice.call(EL.children).forEach(walk);
   }
   walk(root);
   return violations;
 }
 
-function SU_verifybuttonvisibility(root, sc) {
+function SUVERIFYBUTTONVISIBILITY(root, sc) {
   var violations = [];
-  Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) {
-    var tag = el.tagName.toLowerCase();
-    return tag === 'button' || el.getAttribute('role') === 'button' || (tag === 'input' && ['submit', 'button'].indexOf(el.getAttribute('type')) !== -1);
+  Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(EL) {
+    var tag = EL.tagName.toLowerCase();
+    return tag === 'button' || EL.getAttribute('role') === 'button' || (tag === 'input' && ['submit', 'button'].indexOf(EL.getAttribute('type')) !== -1);
   }).forEach(function(btn) {
     var w = parseFloat(btn.style.width) || 0;
     var h = parseFloat(btn.style.height) || 0;
@@ -401,64 +401,64 @@ function SU_verifybuttonvisibility(root, sc) {
   return violations;
 }
 
-function SU_verifyharmony(root, options, sc) {
+function SUVERIFYHARMONY(root, options, sc) {
   if (options === undefined) options = {};
   var violations = [];
   var core = (sc && sc.color && sc.color.core) || (typeof colorcore !== 'undefined' ? colorcore : null);
   var harmony = (sc && sc.color && sc.color.harmony) || (typeof colorharmony !== 'undefined' ? colorharmony : null);
   if (!core || !harmony) return violations;
-  Array.prototype.slice.call(root.getElementsByTagName('*')).forEach(function(el) {
-    if (!el.textContent.trim() || !el.style.color) return;
-    var bg = SU_geteffectivebackground(el, sc);
+  Array.prototype.slice.call(root.getElementsByTagName('*')).forEach(function(EL) {
+    if (!EL.textContent.trim() || !EL.style.color) return;
+    var bg = SUGETEFFECTIVEBACKGROUND(EL, sc);
     if (!bg) return;
-    var fg = SU_getrgbhex(el.style.color, sc);
-    var bghex = SU_getrgbhex(bg, sc);
+    var fg = SUGETRGBHEX(EL.style.color, sc);
+    var bghex = SUGETRGBHEX(bg, sc);
     var score = harmony.colorharmonyscore(fg, bghex, core);
     if (score < 0.5) {
-      violations.push({ element: el.tagName + (el.id ? '#' + el.id : ''), score: score, color: fg, bg: bg });
+      violations.push({ element: EL.tagName + (EL.id ? '#' + EL.id : ''), score: score, color: fg, bg: bg });
       if (options.autocorrect) {
         var pal = harmony.getharmoniouspalette(bghex, 3, { scheme: 'analogous' }, harmony, core);
-        if (pal.length) el.style.color = pal[0];
+        if (pal.length) EL.style.color = pal[0];
       }
     }
   });
   return violations;
 }
 
-function SU_checkfocusvisibility(root, sc) {
-  return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) {
-    var tag = el.tagName.toLowerCase();
-    return (tag === 'a' && el.getAttribute('href')) || ['button', 'input', 'select', 'textarea'].indexOf(tag) !== -1 || el.getAttribute('tabindex') !== null;
-  }).filter(function(el) {
-    return !el.hasAttribute('onfocus') && (!el.style.outline || ['none', '0px'].indexOf(el.style.outline) !== -1);
-  }).map(function(el) {
-    return { element: el.tagName + (el.id ? '#' + el.id : ''), issue: 'no focus indicator' };
+function SUCHECKFOCUSVISIBILITY(root, sc) {
+  return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(EL) {
+    var tag = EL.tagName.toLowerCase();
+    return (tag === 'a' && EL.getAttribute('href')) || ['button', 'input', 'select', 'textarea'].indexOf(tag) !== -1 || EL.getAttribute('tabindex') !== null;
+  }).filter(function(EL) {
+    return !EL.hasAttribute('onfocus') && (!EL.style.outline || ['none', '0px'].indexOf(EL.style.outline) !== -1);
+  }).map(function(EL) {
+    return { element: EL.tagName + (EL.id ? '#' + EL.id : ''), issue: 'no focus indicator' };
   });
 }
 
-var LC_CORRECTION_MAXITER = 32;
+var LCCORRECTIONMAXITER = 32;
 
-function LC_getcandidateelements(root, stylizercore) {
+function LCGETCANDIDATEELEMENTS(root, stylizercore) {
   var sc = stylizercore || (typeof stylizercore !== 'undefined' ? stylizercore : null);
-  var applyfn = (sc && sc.applystep) ? sc.applystep : SU_applystep;
-  return applyfn([root], { axis: 'descendant' }, null, sc).filter(function(el) {
-    var tag = el.tagName.toLowerCase();
+  var applyfn = (sc && sc.applystep) ? sc.applystep : SUAPPLYSTEP;
+  return applyfn([root], { axis: 'descendant' }, null, sc).filter(function(EL) {
+    var tag = EL.tagName.toLowerCase();
     if (tag === 'table' || tag === 'pre' || tag === 'img') return true;
-    if (tag === 'div' && el.style && (el.style.width || el.style.maxWidth)) return true;
+    if (tag === 'div' && EL.style && (EL.style.width || EL.style.maxWidth)) return true;
     return false;
   });
 }
 
-function LC_checkspacingdoc(root, mingap, stylizercore) {
+function LCCHECKSPACINGDOC(root, mingap, stylizercore) {
   if (mingap === undefined) mingap = 12;
   var blocktags = ['div','section','article','header','footer','nav','p','h1','h2','h3','h4','h5','h6','li'];
   function contains(arr, item) { return arr.indexOf(item) !== -1; }
-  function iseligiblecontainer(el) { var s = el.style || {}; var d = s.display || ''; return d !== 'flex' && d !== 'grid'; }
-  function iseligiblechild(el) {
-    if (!el || el.nodeType !== 1) return false;
-    var s = el.style || {};
+  function iseligiblecontainer(EL) { var s = EL.style || {}; var d = s.display || ''; return d !== 'flex' && d !== 'grid'; }
+  function iseligiblechild(EL) {
+    if (!EL || EL.nodeType !== 1) return false;
+    var s = EL.style || {};
     if (s.display === 'none' || s.position === 'absolute' || s.position === 'fixed') return false;
-    if (contains(blocktags, el.tagName.toLowerCase())) return true;
+    if (contains(blocktags, EL.tagName.toLowerCase())) return true;
     var d = s.display || '';
     return d === 'block' || d === 'flex' || d === 'grid';
   }
@@ -481,35 +481,36 @@ function LC_checkspacingdoc(root, mingap, stylizercore) {
     walk(rawchildren[childindex], violations);
     return walkparentchildren(parent, childindex + 1, violations);
   }
-  function walk(node, violations) {
-    if (!node || node.nodeType !== 1) return violations;
-    if (!iseligiblecontainer(node)) return violations;
-    var rawchildren = Array.prototype.slice.call(node.children);
+  function walk(NODE, violations) {
+    if (!NODE || NODE.nodeType !== 1) return violations;
+    if (!iseligiblecontainer(NODE)) return violations;
+    var rawchildren = Array.prototype.slice.call(NODE.children);
     var eligible = filtereligiblechildren(rawchildren, 0, []);
     violations = comparechildren(eligible, 0, violations);
-    return walkparentchildren(node, 0, violations);
+    return walkparentchildren(NODE, 0, violations);
   }
   return walk(root, []);
 }
 
-function LC_correctspacingdoc(root, mingap, stylizercore) {
-  if (mingap === undefined) mingap = 12;
-  var register = new WeakSet();
-  var applied = 0;
-  var converged = false;
-  var iter = 0;
-  while (iter < LC_CORRECTION_MAXITER) {
-    var violations = LC_checkspacingdoc(root, mingap, stylizercore);
-    var uncorrected = violations.filter(function(v) { return !register.has(v.elementa); });
-    if (uncorrected.length === 0) { converged = true; break; }
-    uncorrected.forEach(function(v) { register.add(v.elementa); if (!v.elementa) return; v.elementa.style.marginBottom = mingap + 'px'; applied += 1; });
-    iter += 1;
+function LCCORRECTSPACINGDOC(ROOT, MINGAP, STYLIZERCORE) {
+  if (MINGAP === undefined) MINGAP = 12;
+  var REGISTER = new WeakSet();
+  var APPLIED = 0;
+  var CONVERGED = false;
+  function STEP(ITER) {
+    if (ITER >= LCCORRECTIONMAXITER) return null;
+    var VIOLATIONS = LCCHECKSPACINGDOC(ROOT, MINGAP, STYLIZERCORE);
+    var UNCORRECTED = VIOLATIONS.filter(function(V) { return !REGISTER.has(V.elementa); });
+    if (UNCORRECTED.length === 0) { CONVERGED = true; return null; }
+    UNCORRECTED.forEach(function(V) { REGISTER.add(V.elementa); if (!V.elementa) return; V.elementa.style.marginBottom = MINGAP + 'px'; APPLIED += 1; });
+    return function () { return STEP(ITER + 1); };
   }
-  return { applied: applied, converged: converged };
+  trampoline(STEP)(0);
+  return { applied: APPLIED, converged: CONVERGED };
 }
 
-function LC_checkoverlapdoc(root) {
-  var positioned = Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) { return el.style && (el.style.position === 'absolute' || el.style.position === 'fixed'); });
+function LCCHECKOVERLAPDOC(root) {
+  var positioned = Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(EL) { return EL.style && (EL.style.position === 'absolute' || EL.style.position === 'fixed'); });
   return positioned.reduce(function(acc, a, i) {
     return positioned.slice(i + 1).reduce(function(inneracc, b) {
       var atop = parseFloat(a.style.top) || 0, aleft = parseFloat(a.style.left) || 0, aw = parseFloat(a.style.width) || 0, ah = parseFloat(a.style.height) || 0;
@@ -522,104 +523,108 @@ function LC_checkoverlapdoc(root) {
   }, []);
 }
 
-function LC_correctoverlapdoc(root) {
-  var register = new WeakSet();
-  var applied = 0;
-  var converged = false;
-  var iter = 0;
-  while (iter < LC_CORRECTION_MAXITER) {
-    var violations = LC_checkoverlapdoc(root);
-    var uncorrected = violations.filter(function(v) { return v.elementbref && !register.has(v.elementbref); });
-    if (uncorrected.length === 0) { converged = true; break; }
-    uncorrected.forEach(function(v) { var el = v.elementbref; if (!el) return; register.add(el); el.style.position = 'relative'; applied += 1; });
-    iter += 1;
+function LCCORRECTOVERLAPDOC(ROOT) {
+  var REGISTER = new WeakSet();
+  var APPLIED = 0;
+  var CONVERGED = false;
+  function STEP(ITER) {
+    if (ITER >= LCCORRECTIONMAXITER) return null;
+    var VIOLATIONS = LCCHECKOVERLAPDOC(ROOT);
+    var UNCORRECTED = VIOLATIONS.filter(function(V) { return V.elementbref && !REGISTER.has(V.elementbref); });
+    if (UNCORRECTED.length === 0) { CONVERGED = true; return null; }
+    UNCORRECTED.forEach(function(V) { var EL = V.elementbref; if (!EL) return; REGISTER.add(EL); EL.style.position = 'relative'; APPLIED += 1; });
+    return function () { return STEP(ITER + 1); };
   }
-  return { applied: applied, converged: converged };
+  trampoline(STEP)(0);
+  return { applied: APPLIED, converged: CONVERGED };
 }
 
-function LC_checkscrollabilitydoc(root) {
-  return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) {
-    var s = el.style;
+function LCCHECKSCROLLABILITYDOC(root) {
+  return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(EL) {
+    var s = EL.style;
     return s && (s.overflow === 'auto' || s.overflow === 'scroll') && !s.touchAction;
-  }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : ''), elementref: el }; });
+  }).map(function(EL) { return { element: EL.tagName + (EL.id ? '#' + EL.id : ''), elementref: EL }; });
 }
 
-function LC_correctscrollabilitydoc(root) {
-  var register = new WeakSet();
-  var applied = 0;
-  var converged = false;
-  var iter = 0;
-  while (iter < LC_CORRECTION_MAXITER) {
-    var violations = LC_checkscrollabilitydoc(root);
-    var uncorrected = violations.filter(function(v) { return v.elementref && !register.has(v.elementref); });
-    if (uncorrected.length === 0) { converged = true; break; }
-    uncorrected.forEach(function(v) { var el = v.elementref; if (!el) return; register.add(el); el.style.touchAction = 'pan-y'; applied += 1; });
-    iter += 1;
+function LCCORRECTSCROLLABILITYDOC(ROOT) {
+  var REGISTER = new WeakSet();
+  var APPLIED = 0;
+  var CONVERGED = false;
+  function STEP(ITER) {
+    if (ITER >= LCCORRECTIONMAXITER) return null;
+    var VIOLATIONS = LCCHECKSCROLLABILITYDOC(ROOT);
+    var UNCORRECTED = VIOLATIONS.filter(function(V) { return V.elementref && !REGISTER.has(V.elementref); });
+    if (UNCORRECTED.length === 0) { CONVERGED = true; return null; }
+    UNCORRECTED.forEach(function(V) { var EL = V.elementref; if (!EL) return; REGISTER.add(EL); EL.style.touchAction = 'pan-y'; APPLIED += 1; });
+    return function () { return STEP(ITER + 1); };
   }
-  return { applied: applied, converged: converged };
+  trampoline(STEP)(0);
+  return { applied: APPLIED, converged: CONVERGED };
 }
 
-function LC_checkcontrolledoverlaydoc(root) {
-  return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(el) {
-    var s = el.style;
+function LCCHECKCONTROLLEDOVERLAYDOC(root) {
+  return Array.prototype.slice.call(root.getElementsByTagName('*')).filter(function(EL) {
+    var s = EL.style;
     return s && (s.position === 'absolute' || s.position === 'fixed') && !s.zIndex;
-  }).map(function(el) { return { element: el.tagName + (el.id ? '#' + el.id : ''), elementref: el }; });
+  }).map(function(EL) { return { element: EL.tagName + (EL.id ? '#' + EL.id : ''), elementref: EL }; });
 }
 
-function LC_correctcontrolledoverlaydoc(root) {
-  var register = new WeakSet();
-  var applied = 0;
-  var converged = false;
-  var iter = 0;
-  while (iter < LC_CORRECTION_MAXITER) {
-    var violations = LC_checkcontrolledoverlaydoc(root);
-    var uncorrected = violations.filter(function(v) { return v.elementref && !register.has(v.elementref); });
-    if (uncorrected.length === 0) { converged = true; break; }
-    uncorrected.forEach(function(v) { var el = v.elementref; if (!el) return; register.add(el); el.style.zIndex = '10'; applied += 1; });
-    iter += 1;
+function LCCORRECTCONTROLLEDOVERLAYDOC(ROOT) {
+  var REGISTER = new WeakSet();
+  var APPLIED = 0;
+  var CONVERGED = false;
+  function STEP(ITER) {
+    if (ITER >= LCCORRECTIONMAXITER) return null;
+    var VIOLATIONS = LCCHECKCONTROLLEDOVERLAYDOC(ROOT);
+    var UNCORRECTED = VIOLATIONS.filter(function(V) { return V.elementref && !REGISTER.has(V.elementref); });
+    if (UNCORRECTED.length === 0) { CONVERGED = true; return null; }
+    UNCORRECTED.forEach(function(V) { var EL = V.elementref; if (!EL) return; REGISTER.add(EL); EL.style.zIndex = '10'; APPLIED += 1; });
+    return function () { return STEP(ITER + 1); };
   }
-  return { applied: applied, converged: converged };
+  trampoline(STEP)(0);
+  return { applied: APPLIED, converged: CONVERGED };
 }
 
-function LC_checkoverflowdoc(root, viewportwidth, containerwidths, stylizercore) {
-  function isinsidescrollwrapper(el) {
+function LCCHECKOVERFLOWDOC(root, viewportwidth, containerwidths, stylizercore) {
+  function isinsidescrollwrapper(EL) {
     function climb(parent) { if (!parent) return false; var s = parent.style || {}; if (parent.tagName.toLowerCase() === 'div' && (s.width || s.maxWidth) && s.overflow === 'scroll') return true; return climb(parent.parentElement); }
-    return climb(el.parentElement);
+    return climb(EL.parentElement);
   }
-  var buildmapfn = (stylizercore && stylizercore.buildlayoutpropertymap) ? stylizercore.buildlayoutpropertymap : SU_buildlayoutpropertymap;
-  var getpropsfn = (stylizercore && stylizercore.getpropsfrommap) ? stylizercore.getpropsfrommap : SU_getpropsfrommap;
-  var computefn = (stylizercore && stylizercore.computeintrinsicsize) ? stylizercore.computeintrinsicsize : SU_computeintrinsicsize;
+  var buildmapfn = (stylizercore && stylizercore.buildlayoutpropertymap) ? stylizercore.buildlayoutpropertymap : SUBUILDLAYOUTPROPERTYMAP;
+  var getpropsfn = (stylizercore && stylizercore.getpropsfrommap) ? stylizercore.getpropsfrommap : SUGETPROPSFROMMAP;
+  var computefn = (stylizercore && stylizercore.computeintrinsicsize) ? stylizercore.computeintrinsicsize : SUCOMPUTEINTRINSICSIZE;
   var propertymap = buildmapfn(root, viewportwidth, undefined, stylizercore);
-  return LC_getcandidateelements(root, stylizercore)
-    .filter(function(el) { return !isinsidescrollwrapper(el); })
-    .filter(function(el) {
-      var props = getpropsfn(propertymap, el, stylizercore);
+  return LCGETCANDIDATEELEMENTS(root, stylizercore)
+    .filter(function(EL) { return !isinsidescrollwrapper(EL); })
+    .filter(function(EL) {
+      var props = getpropsfn(propertymap, EL, stylizercore);
       if (!props) return false;
-      try { var size = computefn(el, propertymap, props, stylizercore); return size.width > props.availablewidth; }
-      catch (err) { if (stylizercore && stylizercore.warn) { stylizercore.warn('[checkoverflowdoc] Failed to compute intrinsic size:', el.tagName, err); } return false; }
+      try { var size = computefn(EL, propertymap, props, stylizercore); return size.width > props.availablewidth; }
+      catch (err) { if (stylizercore && stylizercore.warn) { stylizercore.warn('[checkoverflowdoc] Failed to compute intrinsic size:', EL.tagName, err); } return false; }
     });
 }
 
-function LC_correctoverflowdoc(root, viewportwidth, containerwidths, stylizercore) {
-  var register = new WeakSet();
-  var applied = 0;
-  var converged = false;
-  var iter = 0;
-  while (iter < LC_CORRECTION_MAXITER) {
-    var violations = LC_checkoverflowdoc(root, viewportwidth, containerwidths, stylizercore);
-    var uncorrected = violations.filter(function(el) { return !register.has(el); });
-    if (uncorrected.length === 0) { converged = true; break; }
-    uncorrected.forEach(function(el) {
-      register.add(el);
-      if (LC_isintentionalclip(el)) return;
+function LCCORRECTOVERFLOWDOC(ROOT, VIEWPORTWIDTH, CONTAINERWIDTHS, STYLIZERCORE) {
+  var REGISTER = new WeakSet();
+  var APPLIED = 0;
+  var CONVERGED = false;
+  function STEP(ITER) {
+    if (ITER >= LCCORRECTIONMAXITER) return null;
+    var VIOLATIONS = LCCHECKOVERFLOWDOC(ROOT, VIEWPORTWIDTH, CONTAINERWIDTHS, STYLIZERCORE);
+    var UNCORRECTED = VIOLATIONS.filter(function(EL) { return !REGISTER.has(EL); });
+    if (UNCORRECTED.length === 0) { CONVERGED = true; return null; }
+    UNCORRECTED.forEach(function(EL) {
+      REGISTER.add(EL);
+      if (LCISINTENTIONALCLIP(EL)) return;
       var wrapper = document.createElement('div');
       wrapper.style.width = '80%';
       wrapper.style.overflow = 'scroll';
-      el.parentNode.insertBefore(wrapper, el);
-      wrapper.appendChild(el);
-      applied += 1;
+      EL.parentNode.insertBefore(wrapper, EL);
+      wrapper.appendChild(EL);
+      APPLIED += 1;
     });
-    iter += 1;
+    return function () { return STEP(ITER + 1); };
   }
-  return { applied: applied, converged: converged };
+  trampoline(STEP)(0);
+  return { applied: APPLIED, converged: CONVERGED };
 }

@@ -430,7 +430,7 @@ function QUERYMAILBOX(FILTER) {
 }
 
 function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
-  if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
+  if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.ACTIVECANCELLATIONTOKEN && blockcompilerstate.ACTIVECANCELLATIONTOKEN.CANCELLED) {
     REJECT(new Error('Cancelled'));
     return;
   }
@@ -449,7 +449,7 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
   }
 
   var CHECKINTERVAL = setInterval(function() {
-    if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
+    if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.ACTIVECANCELLATIONTOKEN && blockcompilerstate.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       clearInterval(CHECKINTERVAL);
       REJECT(new Error('Cancelled'));
       return;
@@ -469,7 +469,7 @@ function POLLFALLBACK(FILTER, TIMEOUT, RESOLVE, REJECT) {
 
   setTimeout(function() {
     clearInterval(CHECKINTERVAL);
-    if (typeof BLOCKCOMPILERSTATE !== 'undefined' && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN && BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN.CANCELLED) {
+    if (typeof blockcompilerstate !== 'undefined' && blockcompilerstate.ACTIVECANCELLATIONTOKEN && blockcompilerstate.ACTIVECANCELLATIONTOKEN.CANCELLED) {
       REJECT(new Error('Cancelled'));
       return;
     }

@@ -75,6 +75,8 @@ HANDLERS[MESSAGETYPES.GEOLOCATION] = function(ENV, MSG) {
 // resolves on every exit path via the settle-guarded resolver.
 // @proposal=P-RENDERACTOR-FLOW-008 — the resolved payload is
 // { RESPONSE: { LOADED: bool, ERROR?: string } }.
+// @proposal=CP1 (ARC-49) — CYCLE-17 CP3 rename applied: the `settle`
+// parameter `payload` is renamed to `PAYLOAD`.
 HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
   return new Promise(function(RESOLVE) {
     if (!MSG.SRC || typeof MSG.SRC !== 'string') {
@@ -87,11 +89,11 @@ HANDLERS[MESSAGETYPES.LOADSCRIPT] = function(ENV, MSG) {
     }
     var SETTLED = false;
     var TIMER = null;
-    function settle(payload) {
+    function settle(PAYLOAD) {
       if (SETTLED) return;
       SETTLED = true;
       if (TIMER !== null) clearTimeout(TIMER);
-      RESOLVE({ RESPONSE: payload });
+      RESOLVE({ RESPONSE: PAYLOAD });
     }
     var S = document.createElement('script');
     S.src = MSG.SRC;

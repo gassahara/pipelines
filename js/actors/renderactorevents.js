@@ -1,24 +1,6 @@
-// js/actors/renderactorevents.js — render-actor event producer /
-// consumer and garbage-collection scheduling.
-//
-// @proposal=CP3 (CYCLE-25) — extracted from /js/actors/renderactor.js
-// as concern R4 (event producer/consumer & GC scheduler). The function
-// bodies are byte-identical to their pre-split forms.
-//
-// LC_CORRECTION_MAXITER is NOT declared here: per the concern partition
-// it belongs to R6 (renderactorstyle.js).
-//
-// LC_isintentionalclip is used by the layout-correction helpers in
-// renderactorstyle.js; it is declared here because the concern table
-// places it in R4. The call site resolves it as a global at run time.
-//
-// The load order places this file after renderactorprimitives.js and
-// before renderactorhandlerlayout.js (whose GC scheduler and event
-// registration consume SCHEDULEGCCYCLE and ENSUREEVENTOBSERVER).
-
-function LC_isintentionalclip(el) {
-  if (!el || !el.style) return false;
-  var ov = el.style.overflow;
+function LCISINTENTIONALCLIP(EL) {
+  if (!EL || !EL.style) return false;
+  var ov = EL.style.overflow;
   if (ov === 'hidden' || ov === 'clip') return true;
   return false;
 }

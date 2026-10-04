@@ -70,8 +70,11 @@ HANDLERS[MESSAGETYPES.GETELEMENTS] = function(ENV, MSG) {
     if (!TAGFILTER || TAG === TAGFILTER) {
       DESCRIPTORS.push({ TAG: TAG, ID: EL.id || null, CLASS: (typeof EL.className === 'string' ? EL.className : null), INLINESTYLE: EL.getAttribute('style') || '', INDEX: DESCRIPTORS.length });
     }
-    var CHILDREN = Array.prototype.slice.call(EL.children || []);
-    for (var i = 0; i < CHILDREN.length; i++) { if (DESCRIPTORS.length >= LIMIT) return; walk(CHILDREN[i]); }
+    Array.prototype.slice.call(EL.children || []).some(function (CHILD) {
+      if (DESCRIPTORS.length >= LIMIT) return true;
+      walk(CHILD);
+      return false;
+    });
   }
   walk(ROOT);
   return { RESPONSE: { DESCRIPTORS: DESCRIPTORS } };

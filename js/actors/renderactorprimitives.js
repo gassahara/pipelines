@@ -32,8 +32,8 @@ var DOMQUERYCOMMANDREGISTRY = {
     'verifycontrast', 'verifytextvisibility', 'verifybuttonvisibility',
     'verifyharmony', 'checkfocusvisibility'
   ],
-  id_exempt: ['getviewport', 'getscreen', 'matchmedia'],
-  setter_reqs: {
+  idexempt: ['getviewport', 'getscreen', 'matchmedia'],
+  setterreqs: {
     sethtml: ['value'],
     setposition: ['value'],
     setstyle: ['value'],
@@ -44,25 +44,25 @@ var DOMQUERYCOMMANDREGISTRY = {
   }
 };
 
-function validatedomquerycommand(cmd, props) {
-  var errors = [];
-  if (!cmd || typeof cmd !== 'string') {
-    errors.push('requires command.COMMAND');
-    return { valid: false, errors: errors };
+function VALIDATEDOMQUERYCOMMAND(CMD, PROPS) {
+  var ERRORS = [];
+  if (!CMD || typeof CMD !== 'string') {
+    ERRORS.push('requires command.COMMAND');
+    return { valid: false, errors: ERRORS };
   }
-  if (DOMQUERYCOMMANDREGISTRY.messages.indexOf(cmd) === -1) {
-    errors.push('unknown COMMAND: ' + cmd);
-    return { valid: false, errors: errors };
+  if (DOMQUERYCOMMANDREGISTRY.messages.indexOf(CMD) === -1) {
+    ERRORS.push('unknown COMMAND: ' + CMD);
+    return { valid: false, errors: ERRORS };
   }
-  if (DOMQUERYCOMMANDREGISTRY.id_exempt.indexOf(cmd) === -1) {
-    if (!props || !props.id || typeof props.id !== 'string') {
-      errors.push('requires command.properties.id');
+  if (DOMQUERYCOMMANDREGISTRY.idexempt.indexOf(CMD) === -1) {
+    if (!PROPS || !PROPS.id || typeof PROPS.id !== 'string') {
+      ERRORS.push('requires command.properties.id');
     }
   }
-  if (DOMQUERYCOMMANDREGISTRY.setters.indexOf(cmd) !== -1) {
-    var reqs = DOMQUERYCOMMANDREGISTRY.setters_setter_reqs_helper;
+  if (DOMQUERYCOMMANDREGISTRY.setters.indexOf(CMD) !== -1) {
+    var REQS = DOMQUERYCOMMANDREGISTRY.setters_setter_reqs_helper;
   }
-  return { valid: errors.length === 0, errors: errors };
+  return { valid: ERRORS.length === 0, errors: ERRORS };
 }
 
 function ENSURERENDERSLICE(ENV) {

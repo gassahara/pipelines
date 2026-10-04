@@ -1,4 +1,4 @@
-var BLOCKCOMPILERSTATE = { level: createverbosityconstants().DEBUG };
+var blockcompilerstate = { level: createverbosityconstants().DEBUG };
 
 var frontendbase = (typeof window !== 'undefined') ? window.location.origin + '/' : '';
 
@@ -32,7 +32,7 @@ function createblockcompilerconstants() {
 // §2b — Dynamic block-compiler extensions (P56r2)
 // ============================================================
 
-var BLOCKCOMPILEREXTENSIONSREF = {
+var blockcompilerextensionsref = {
   current: Object.freeze({
     blocktypes: Object.freeze({}),
     compilers: Object.freeze({}),
@@ -40,18 +40,18 @@ var BLOCKCOMPILEREXTENSIONSREF = {
   })
 };
 
-function GETBLOCKCOMPILEREXTENSIONS() {
-  return BLOCKCOMPILEREXTENSIONSREF.current;
+function getblockcompilerextensions() {
+  return blockcompilerextensionsref.current;
 }
 
-function REGISTERBLOCKCOMPILEREXTENSION(KIND, KEY, VALUE) {
+function registerblockcompilerextension(KIND, KEY, VALUE) {
   if (KIND !== 'blocktypes' && KIND !== 'compilers' && KIND !== 'analyzers') {
     throw new Error('[REGISTERBLOCKCOMPILEREXTENSION] KIND must be blocktypes, compilers, or analyzers');
   }
   if (typeof KEY !== 'string' || KEY.length === 0) {
     throw new Error('[REGISTERBLOCKCOMPILEREXTENSION] KEY must be a non-empty string');
   }
-  var CURRENT = BLOCKCOMPILEREXTENSIONSREF.current;
+  var CURRENT = blockcompilerextensionsref.current;
   var NEXTKIND = {};
   Object.keys(CURRENT[KIND]).forEach(function (K) { NEXTKIND[K] = CURRENT[KIND][K]; });
   NEXTKIND[KEY] = VALUE;
@@ -60,14 +60,14 @@ function REGISTERBLOCKCOMPILEREXTENSION(KIND, KEY, VALUE) {
     compilers:  KIND === 'compilers'  ? Object.freeze(NEXTKIND) : CURRENT.compilers,
     analyzers:  KIND === 'analyzers'  ? Object.freeze(NEXTKIND) : CURRENT.analyzers
   };
-  BLOCKCOMPILEREXTENSIONSREF.current = Object.freeze(NEXT);
+  blockcompilerextensionsref.current = Object.freeze(NEXT);
   return VALUE;
 }
 
-function UNREGISTERBLOCKCOMPILEREXTENSION(KIND, KEY) {
+function unregisterblockcompilerextension(KIND, KEY) {
   if (KIND !== 'blocktypes' && KIND !== 'compilers' && KIND !== 'analyzers') return false;
   if (typeof KEY !== 'string' || KEY.length === 0) return false;
-  var CURRENT = BLOCKCOMPILEREXTENSIONSREF.current;
+  var CURRENT = blockcompilerextensionsref.current;
   if (CURRENT[KIND][KEY] === undefined) return false;
   var NEXTKIND = {};
   Object.keys(CURRENT[KIND]).forEach(function (K) {
@@ -78,7 +78,7 @@ function UNREGISTERBLOCKCOMPILEREXTENSION(KIND, KEY) {
     compilers:  KIND === 'compilers'  ? Object.freeze(NEXTKIND) : CURRENT.compilers,
     analyzers:  KIND === 'analyzers'  ? Object.freeze(NEXTKIND) : CURRENT.analyzers
   };
-  BLOCKCOMPILEREXTENSIONSREF.current = Object.freeze(NEXT);
+  blockcompilerextensionsref.current = Object.freeze(NEXT);
   return true;
 }
 
@@ -91,7 +91,7 @@ function UNREGISTERBLOCKCOMPILEREXTENSION(KIND, KEY) {
 function makecompilerconstants(options) {
   var constants = createblockcompilerconstants();
   var dnaconstants = creatednaserializerconstants();
-  var extensions = GETBLOCKCOMPILEREXTENSIONS();
+  var extensions = getblockcompilerextensions();
 
   var blocktypes = {};
   Object.keys(constants.blocktypes).forEach(function (K) { blocktypes[K] = constants.blocktypes[K]; });

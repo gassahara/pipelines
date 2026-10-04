@@ -41,7 +41,7 @@ function loadscriptwithwitness(entry, basepath, timeout) {
 function loadscripts(entries, basepath, timeout, label) {
   if (typeof timeout === 'undefined') timeout = mailboxresolve('scriptwitnesstimeout');
   var normalized = normalizeentries(entries);
-  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', label, normalized.length);
+  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', label, normalized.length);
   return loadscriptssequentially(normalized, basepath, timeout);
 }
 
@@ -336,7 +336,7 @@ function runstage(stage, pipelinename, stagepath, env, options, runblocks) {
       function() {
         orchestratestage(stage, pipelinename, env, stagepath, options || {}, runblocks)
           .catch(function(err) {
-            logwarn(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
+            logwarn(blockcompilerstate, '[BLOCKCOMPILER]', 'async nested stage failed:', err);
           });
         return undefined;
       },
@@ -396,7 +396,7 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
       throw new Error('[orchestratestage] unexpected element type: ' + elementdef.element);
     }
 
-    BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN = stagetoken;
+    blockcompilerstate.ACTIVECANCELLATIONTOKEN = stagetoken;
 
     return Promise.resolve(elementfn).then(function(fn) {
       return fn(env);
@@ -405,11 +405,11 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
       return runnext();
     }).catch(function(err) {
       stagetoken.CANCELLED = true;
-      BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN = null;
-      logerror(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'Element failed:', elementdef.id, err);
+      blockcompilerstate.ACTIVECANCELLATIONTOKEN = null;
+      logerror(blockcompilerstate, '[BLOCKCOMPILER]', 'Element failed:', elementdef.id, err);
       throw err;
     }).then(function(result) {
-      BLOCKCOMPILERSTATE.ACTIVECANCELLATIONTOKEN = null;
+      blockcompilerstate.ACTIVECANCELLATIONTOKEN = null;
       return result;
     });
   }
@@ -443,9 +443,9 @@ function loadscriptssequentially(entries, basepath, timeout) {
   function loadnext() {
     if (index >= entries.length) return Promise.resolve();
     var entry = entries[index];
-    logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'loading script:', entry.src);
+    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'loading script:', entry.src);
     return loadscriptwithwitness(entry, basepath, timeout).then(function() {
-      logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'script loaded:', entry.src);
+      logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'script loaded:', entry.src);
       index++;
       return loadnext();
     });
@@ -489,32 +489,24 @@ function loadpipelineresources(p, options) {
   return loadpipelinedependencies(p, options);
 }
 
-// @proposal=P51 — single traversal after the load gate.
-// @proposal=P-FRONTEND-BOUNDARY-002v2 (option a) — options.roster gates an
-// internal initialization-roster emission. The frontend supplies the boolean;
-// the walk and the LOGLINE dispatch live here, in the blockcompiler layer.
 function run(p, options) {
   if (options === undefined) options = {};
-  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
+  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'run pipeline:', p.name, 'type:', p.type);
 
   return loadpipelineresources(p, options).then(function() {
     if (options && options.roster === true) emitinitializationroster(p);
     var cenv = p.env || options.baseenv || {};
     return orchestratepipeline(p, 0, cenv, options, true).then(function(finalenv) {
       p.env = finalenv;
-      loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
+      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
       return finalenv;
     });
   });
 }
 
-// @proposal=P-FRONTEND-BOUNDARY-002v2 (option a) — compile() honours
-// options.roster under the same rule as run(). Compile-only callers
-// (e.g. shellspawnyjdna → yjrecipeprogram({compileonly: true})) can be
-// audited under the same emission.
 function compile(p, options) {
   if (options === undefined) options = {};
-  loginfo(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]', 'compile pipeline:', p.name, 'type:', p.type);
+  loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'compile pipeline:', p.name, 'type:', p.type);
   return loadpipelineresources(p, options).then(function() {
     if (options && options.roster === true) emitinitializationroster(p);
     return p;

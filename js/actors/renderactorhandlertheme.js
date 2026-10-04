@@ -18,7 +18,7 @@ HANDLERS[MESSAGETYPES.SETACCENT] = function(ENV, MSG) {
   if (!rule.id && !rule.tag && !rule.class) return { RESPONSE: { ERROR: 'SETACCENT selector must declare id, tag, or class' } };
   rule.style[PROP] = HEX;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  var applied = SU_rewritestyleattrs(root, [rule], SC);
+  var applied = SUREWRITESTYLEATTRS(root, [rule], SC);
   return { RESPONSE: { APPLIED: applied, REF: MSG.REF || null, HEX: HEX, PROP: PROP } };
 };
 
@@ -26,28 +26,28 @@ HANDLERS[MESSAGETYPES.OPTIMIZECONTRAST] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { APPLIED: SU_optimizecontrast(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
+  return { RESPONSE: { APPLIED: SUOPTIMIZECONTRAST(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.OPTIMIZEHARMONY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { APPLIED: SU_optimizeharmony(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
+  return { RESPONSE: { APPLIED: SUOPTIMIZEHARMONY(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.OPTIMIZETEXTVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { APPLIED: SU_optimizetextvisibility(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
+  return { RESPONSE: { APPLIED: SUOPTIMIZETEXTVISIBILITY(ROOT, MSG.THEMESTYLES || {}, MSG.OPTIONS || {}, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.OPTIMIZEBUTTONVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { APPLIED: SU_optimizebuttonvisibility(ROOT, SC) } };
+  return { RESPONSE: { APPLIED: SUOPTIMIZEBUTTONVISIBILITY(ROOT, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.VERIFYCONTRAST] = function(ENV, MSG) {
@@ -55,33 +55,33 @@ HANDLERS[MESSAGETYPES.VERIFYCONTRAST] = function(ENV, MSG) {
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   var MINRATIO = MSG.MINRATIO !== undefined ? MSG.MINRATIO : 4.5;
-  return { RESPONSE: { VIOLATIONS: SU_verifycontrast(ROOT, MINRATIO, SC) } };
+  return { RESPONSE: { VIOLATIONS: SUVERIFYCONTRAST(ROOT, MINRATIO, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.VERIFYTEXTVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { VIOLATIONS: SU_verifytextvisibility(ROOT, SC) } };
+  return { RESPONSE: { VIOLATIONS: SUVERIFYTEXTVISIBILITY(ROOT, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.VERIFYBUTTONVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { VIOLATIONS: SU_verifybuttonvisibility(ROOT, SC) } };
+  return { RESPONSE: { VIOLATIONS: SUVERIFYBUTTONVISIBILITY(ROOT, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.VERIFYHARMONY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { VIOLATIONS: SU_verifyharmony(ROOT, MSG.OPTIONS || {}, SC) } };
+  return { RESPONSE: { VIOLATIONS: SUVERIFYHARMONY(ROOT, MSG.OPTIONS || {}, SC) } };
 };
 
 HANDLERS[MESSAGETYPES.CHECKFOCUSVISIBILITY] = function(ENV, MSG) {
   var ROOT = document.getElementById(MSG.ID);
   if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + MSG.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
-  return { RESPONSE: { VIOLATIONS: SU_checkfocusvisibility(ROOT, SC) } };
+  return { RESPONSE: { VIOLATIONS: SUCHECKFOCUSVISIBILITY(ROOT, SC) } };
 };
