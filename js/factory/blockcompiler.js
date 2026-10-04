@@ -938,10 +938,16 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
             logdebug(BLOCKCOMPILERSTATE, '[BLOCKCOMPILER]',
               'writer HTML response for', target, ':',
               (response && response.ERROR ? 'error' : 'ok'));
-            if (result.id && Object.keys(sig.outputs || {}).length > 0) {
-              return EXPECTELEMENT(result.id, result.timeout || 5000).then(function(domref) {
+            // @proposal=P3 (CYCLE-05) — the postcondition targets the write
+            // destination (`target`), not the envelope's id. The window is
+            // a framework-level literal (5000ms), sampled at 500ms by the
+            // interval-based EXPECTELEMENT. The HTML handler carries no
+            // postcondition of its own (see @proposal=P2, /js/actors/
+            // renderactor.js).
+            if (target && Object.keys(sig.outputs || {}).length > 0) {
+              return EXPECTELEMENT(target, 5000, 500).then(function(domref) {
                 env[Object.keys(sig.outputs)[0]] = result;
-                env[result.id] = domref;
+                env[target] = domref;
                 return result;
               });
             }

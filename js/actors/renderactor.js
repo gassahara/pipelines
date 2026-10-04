@@ -638,10 +638,11 @@ HANDLERS[MESSAGETYPES.CHECKFOCUSVISIBILITY] = function(ENV, MSG) {
 // @proposal=P-RENDERACTOR-FLOW-008 — every async exit path resolves to
 // { RESPONSE: value }. No handler captures the received ENV.
 //
-// @proposal=P-RENDERACTOR-HTML-POSTCONDITION-001 — the HTML handler's
-// success signal is now postcondition-verified: after the write, the
-// anchor must still be reachable via getElementById. If it is not, the
-// response carries an ERROR rather than {true}.
+// @proposal=P2 (this cycle) — the HTML handler's postcondition was
+// removed. The writer compiler is now the sole authority on the
+// presence of the written-to id; it calls EXPECTELEMENT(target).
+// The HTML handler reports only the mechanical outcome of the
+// WITHELEMENTRETRY step.
 
 HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
   return WAITFORDOMREADY()
@@ -651,16 +652,7 @@ HANDLERS[MESSAGETYPES.HTML] = function(ENV, MSG) {
         else EL.innerHTML = MSG.MARKUP;
       });
     })
-    .then(function() {
-      // @proposal=P-RENDERACTOR-HTML-POSTCONDITION-001 — the tested element
-      // must exist in the document after the write. This is the
-      // postcondition that the previous precondition-only signal omitted.
-      var POST = document.getElementById(MSG.ID);
-      if (!POST) {
-        return { RESPONSE: { ERROR: '[RENDERACTOR] anchor missing after HTML write: ' + MSG.ID } };
-      }
-      return { RESPONSE: true };
-    })
+    .then(function() { return { RESPONSE: true }; })
     .catch(function(ERR) { return { RESPONSE: { ERROR: ERR.message || String(ERR) } }; });
 };
 
@@ -1626,34 +1618,84 @@ var STARTRENDERACTOR = function(OPTIONS) {
   };
 };
 
-// @proposal=P-RENDERACTOR-ELEMENT-WAIT-MECHANISM-005 (option a)
-// Mechanism: MutationObserver on document.body with
-// { childList: true, subtree: true }. This function does NOT poll on an
-// interval. The observer callback re-checks getElementById(ID) on every
-// DOM mutation under body. If no mutation occurs during the window, the
-// timeout fires without any intermediate re-check.
-var EXPECTELEMENT = function(ID, TIMEOUT) {
+// @proposal=P1 (this cycle) — EXPECTELEMENT is a presence-expectation
+// primitive, sampled on an interval. It observes the predicate
+// getElementById(ID) !== null directly, at a declared cadence, rather
+// than waiting for a document.body subtree mutation to trigger a
+// re-check. This is faithful to the semantics of "expect the element"
+// and is insensitive to the mutation queue's ordering pathologies.
+//
+// Signature: EXPECTELEMENT(ID, TIMEOUT, INTERVAL)
+//   - ID       : the id to expect.
+//   - TIMEOUT  : maximum wall-clock window, milliseconds.
+//                Default 30000 when undefined.
+//   - INTERVAL : sampling cadence, milliseconds.
+//                Default 500 when undefined.
+//
+// Behaviour:
+//   - Immediate synchronous check on entry. If the id is present, the
+//     promise resolves immediately and no timer is created.
+//   - Otherwise, an interval sampler runs every INTERVAL ms; the first
+//     tick at which the id is present clears both handles and resolves.
+//   - On timeout, the interval handle is cleared and the promise
+//     rejects with an Error carrying a diagnostic object under
+//     err.diagnostic describing the sampling window.
+//
+// The MutationObserver-based mechanism previously used here is
+// preserved as-is in WITHELEMENTRETRY, which has a different obligation
+// (locate the write target before the write).
+var EXPECTELEMENT = function(ID, TIMEOUT, INTERVAL) {
   if (TIMEOUT === undefined) TIMEOUT = 30000;
+  if (INTERVAL === undefined) INTERVAL = 500;
   return new Promise(function(RESOLVE, REJECT) {
-    var EXISTING = document.getElementById(ID);
     var DOMREFFN = (typeof createdomref === 'function') ? createdomref : function(E) { return E; };
+
+    var EXISTING = document.getElementById(ID);
     if (EXISTING) {
       var ENV = GETACTORSTATE('WORLDMAPACTOR');
       var REG = ENV && ENV.RENDER && ENV.RENDER.ACTORREGISTRY;
-      return RESOLVE(DOMREFFN(EXISTING, REG));
+      RESOLVE(DOMREFFN(EXISTING, REG));
+      return;
     }
-    var OBSERVER = null;
-    var TIMEOUTID = setTimeout(function() { if (OBSERVER) OBSERVER.disconnect(); REJECT(new Error('[EXPECTELEMENT] ELEMENT NOT FOUND: ' + ID)); }, TIMEOUT);
-    OBSERVER = new MutationObserver(function() {
+
+    var SAMPLES = 0;
+    var INTERVALID = null;
+    var TIMEOUTID = null;
+
+    function clearhandles() {
+      if (INTERVALID !== null) { clearInterval(INTERVALID); INTERVALID = null; }
+      if (TIMEOUTID !== null) { clearTimeout(TIMEOUTID); TIMEOUTID = null; }
+    }
+
+    function tick() {
+      SAMPLES = SAMPLES + 1;
       var EL = document.getElementById(ID);
       if (EL) {
-        clearTimeout(TIMEOUTID);
-        OBSERVER.disconnect();
+        clearhandles();
         var ENVNOW = GETACTORSTATE('WORLDMAPACTOR');
         var REGNOW = ENVNOW && ENVNOW.RENDER && ENVNOW.RENDER.ACTORREGISTRY;
         RESOLVE(DOMREFFN(EL, REGNOW));
       }
-    });
-    OBSERVER.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function onTimeout() {
+      clearhandles();
+      var ERR = new Error('[EXPECTELEMENT] ELEMENT NOT FOUND: ' + ID);
+      ERR.diagnostic = {
+        KIND: 'expectelement-timeout',
+        ID: ID,
+        TIMEOUT: TIMEOUT,
+        INTERVAL: INTERVAL,
+        SAMPLES: SAMPLES,
+        LASTHIT: false,
+        MATCHCOUNT: document.querySelectorAll('[id="' + ID + '"]').length,
+        DOCREADYSTATE: document.readyState,
+        BODYCHILDCOUNT: document.body ? document.body.childElementCount : null
+      };
+      REJECT(ERR);
+    }
+
+    INTERVALID = setInterval(tick, INTERVAL);
+    TIMEOUTID = setTimeout(onTimeout, TIMEOUT);
   });
 };
