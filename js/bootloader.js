@@ -215,7 +215,7 @@ var pipelinesmanifest = [
       'nodeat',
       'createpersistentelementwrapper'
     ] },
-  { src: 'factory/blockcompilers.js',
+  { src: 'factory/blockcompiler.js',
     source: 'factory/blockcompiler.js',
     provides: [
       'buildblockproperties', 'wrapblockresult'
