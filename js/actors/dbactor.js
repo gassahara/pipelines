@@ -6,6 +6,17 @@ REGISTERMESSAGETYPE('DELETE');
 REGISTERMESSAGETYPE('DBRESULT');
 REGISTERRESPONSETYPE('DBRESULT');
 
+// ============================================================
+// §1b — DB-native message and dispatch system
+// @proposal=P-DBACTOR-NATIVE-MESSAGE-SYSTEM
+// ============================================================
+//
+// DBACTOR provides its own tag generation and send-await primitive so
+// that the four client wrappers (DBSTORE, DBRESTORE, DBLIST, DBDELETE)
+// reference no symbol provided by mailactor.js (R6). The dispatch is
+// in-process: SENDDBINSTRUCTION reaches DBBEHAVIOR directly. There is
+// no mailbox, no expectation registry, and no timeout on this path.
+
 var DBTAGCOUNTER = 0;
 
 function GENERATEDBTAG() {
@@ -312,10 +323,19 @@ function DBBEHAVIORRESTORE(ENV, MESSAGE) {
   return { ENV: NEXTENV, RESPONSE: { RESULT: RESTOREDVALUE } };
 }
 
+// @proposal=P-MAIL-INTERVAL-QUIET — DBBEHAVIORLIST now honors an optional
+// MESSAGE.PREFIX. When PREFIX is a non-empty string, only keys beginning
+// with that prefix are returned. When PREFIX is absent, the prior
+// behavior (full key set) is preserved.
 function DBBEHAVIORLIST(ENV, MESSAGE) {
   var NEXTENV = ENSUREDBSLICE(ENV);
   var STORE = NEXTENV.db.STORE;
-  return { ENV: NEXTENV, RESPONSE: { RESULT: Object.keys(STORE) } };
+  var ALLKEYS = Object.keys(STORE);
+  var PREFIX = MESSAGE.PREFIX;
+  var RESULT = (typeof PREFIX === 'string' && PREFIX.length > 0)
+    ? ALLKEYS.filter(function (K) { return K.indexOf(PREFIX) === 0; })
+    : ALLKEYS;
+  return { ENV: NEXTENV, RESPONSE: { RESULT: RESULT } };
 }
 
 function DBBEHAVIORDELETE(ENV, MESSAGE) {
@@ -370,6 +390,14 @@ function DBRESTORE(KEY) {
 function DBLIST() {
   return SENDDBINSTRUCTION('LIST', {}, { responsetype: 'DBRESULT' })
     .then(function(RESPONSE) { return RESPONSE && RESPONSE.RESULT !== undefined ? RESPONSE.RESULT : undefined; });
+}
+
+// @proposal=P-MAIL-INTERVAL-QUIET — prefix-filtered list primitive.
+// Returns a Promise resolving to an array of keys beginning with PREFIX.
+// The filtering is performed inside DBBEHAVIORLIST, keyed on MESSAGE.PREFIX.
+function DBLISTPREFIX(PREFIX) {
+  return SENDDBINSTRUCTION('LIST', { PREFIX: PREFIX }, { responsetype: 'DBRESULT' })
+    .then(function(RESPONSE) { return RESPONSE && RESPONSE.RESULT !== undefined ? RESPONSE.RESULT : []; });
 }
 
 function DBDELETE(KEY) {

@@ -126,11 +126,6 @@ function INVOKEHANDLER(ACTORNAME, ENV, MESSAGE) {
   return { matched: true, result: HANDLER(ENV, ARGS) };
 }
 var EXPECTATIONS = {};
-
-// ============================================================
-// §2 — Dynamic broadcast-type registry
-// ============================================================
-
 var BROADCASTTYPESREF = { current: Object.freeze({}) };
 
 function GETBROADCASTTYPES() {
@@ -161,16 +156,8 @@ function UNREGISTERBROADCASTTYPE(TYPE) {
   BROADCASTTYPESREF.current = Object.freeze(NEXT);
   return true;
 }
-
-// @proposal=P-COMPILER-TYPE-LITERALS — literal type names, not
-// MESSAGETYPES lookups. The type-name register is dynamic.
 REGISTERBROADCASTTYPE('BLOCKEXECUTED');
 REGISTERBROADCASTTYPE('BLOCKFAILED');
-
-// ============================================================
-// §3 — Dynamic mailbox-exempt registry
-// ============================================================
-
 var MAILBOXEXEMPTREF = { current: Object.freeze({}) };
 
 function GETMAILBOXEXEMPT() {
@@ -203,7 +190,6 @@ function UNREGISTERMAILBOXEXEMPT(RECIPIENT) {
 }
 
 REGISTERMAILBOXEXEMPT('BROADCAST');
-
 function CREATEEXPECTATION(TAG, RECIPIENT, SENDER, TYPE, CONTEXT, RESPONSESPEC) {
   if (EXPECTATIONS[TAG] && EXPECTATIONS[TAG].STATUS === 'PENDING') {
     return EXPECTATIONS[TAG];
@@ -285,7 +271,6 @@ function REJECTEXPECTATION(TAG, ERROR) {
     try { FN(REJECTIONERROR); } catch (E) { /* do not block */ }
   });
 }
-
 function MAILSENDHANDLER(ENV, ARGS) {
   logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION: SEND');
   var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
@@ -297,11 +282,6 @@ function MAILACKHANDLER(ENV, ARGS) {
   var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
   return { ENV: NEXTENV };
 }
-
-// ============================================================
-// §6 — Mailactor's own vocabulary registration
-// ============================================================
-
 REGISTERACTORMESSAGE('MAILACTOR', 'SEND', { RECIPIENT: 'string', MESSAGE: 'object' }, MAILSENDHANDLER);
 REGISTERACTORMESSAGE('MAILACTOR', 'ACK', { RECIPIENT: 'string', IDS: 'array' }, MAILACKHANDLER);
 REGISTERACTORMESSAGE('BROADCAST', 'BLOCKEXECUTED', {
@@ -320,7 +300,6 @@ REGISTERACTORMESSAGE('BROADCAST', 'BLOCKFAILED', {
   ERROR: 'string',
   DIAGNOSTIC: 'object'
 }, null);
-
 function MAILBEHAVIOR(ENV, MESSAGE) {
   var OUT = INVOKEHANDLER('MAILACTOR', ENV, MESSAGE);
   if (OUT.matched !== true) return ENV;
@@ -328,7 +307,6 @@ function MAILBEHAVIOR(ENV, MESSAGE) {
 }
 
 REGISTERDISPATCH('MAILACTOR', MAILBEHAVIOR);
-
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
   var TAGVAL = FILTER && FILTER.TAG;
@@ -357,7 +335,6 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
     }, TIMEOUT);
   });
 }
-
 var BROADCASTSUBSCRIPTIONS = {};
 var BROADCASTSUBCOUNTER = 0;
 
@@ -466,7 +443,13 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
       return DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, INSTALLER).then(function () { return TAG; });
     }
   }
-  return DBSTORE('mail:unopened:' + TAG, FLATMESSAGE).then(function () { return TAG; });
+  MAILUNOPENEDCOUNT = MAILUNOPENEDCOUNT + 1;
+  return DBSTORE('mail:unopened:' + TAG, FLATMESSAGE)
+    .then(function () { return TAG; })
+    .catch(function (ERR) {
+      MAILUNOPENEDCOUNT = Math.max(0, MAILUNOPENEDCOUNT - 1);
+      throw ERR;
+    });
 }
 
 function SENDRESPONSE(RECIPIENT, TAG, RESULT, SENDER, RESPONSETYPE) {
@@ -502,7 +485,16 @@ function STARTMAILACTOR(OPTIONS) {
     DISPATCH: function(MSG) { return DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, MSG); }
   };
 }
+
+var MAILUNOPENEDCOUNT = 0;
+var MAILOPENEDCOUNT = 0;
+var MAILCONSUMERBOOTED = false;
+
 function MAILCONSUMERSTEP() {
+  if (MAILCONSUMERBOOTED === true && MAILUNOPENEDCOUNT === 0 && MAILOPENEDCOUNT === 0) {
+    return;
+  }
+  MAILCONSUMERBOOTED = true;
   MAILGCSTEP().then(MAILREADSTEP).catch(function (ERR) {
     logwarn(MAILSTATE, '[MAILACTOR]', 'CONSUMER STEP FAILED:',
             ERR && ERR.message ? ERR.message : String(ERR));
@@ -510,21 +502,16 @@ function MAILCONSUMERSTEP() {
 }
 
 function MAILGCSTEP() {
-  return DBLIST().then(function (KEYS) {
-    var OPENED = (KEYS || []).filter(function (K) {
-      return K.indexOf('mail:opened:') === 0;
-    });
+  return DBLISTPREFIX('mail:opened:').then(function (OPENED) {
     return OPENED.reduce(function (CHAIN, K) {
-      return CHAIN.then(function () { return DBDELETE(K); });
+      return CHAIN.then(function () { return DBDELETE(K); })
+        .then(function () { MAILOPENEDCOUNT = Math.max(0, MAILOPENEDCOUNT - 1); });
     }, Promise.resolve());
   });
 }
 
 function MAILREADSTEP() {
-  return DBLIST().then(function (KEYS) {
-    var UNOPENED = (KEYS || []).filter(function (K) {
-      return K.indexOf('mail:unopened:') === 0;
-    });
+  return DBLISTPREFIX('mail:unopened:').then(function (UNOPENED) {
     return UNOPENED.reduce(function (CHAIN, K) {
       return CHAIN.then(function () { return MAILCONSUMEONE(K); });
     }, Promise.resolve());
@@ -533,15 +520,21 @@ function MAILREADSTEP() {
 
 function MAILCONSUMEONE(KEY) {
   return DBRESTORE(KEY).then(function (MESSAGE) {
-    if (MESSAGE === null || MESSAGE === undefined) return;
+    if (MESSAGE === null || MESSAGE === undefined) {
+      MAILUNOPENEDCOUNT = Math.max(0, MAILUNOPENEDCOUNT - 1);
+      return;
+    }
     var TAG = MESSAGE.TAG;
     var VALIDATION = MAILACTORVALIDATE(MESSAGE.RECIPIENT, MESSAGE);
     if (VALIDATION.valid !== true) {
       logwarn(MAILSTATE, '[MAILACTOR]', 'DISCARDED INVALID MESSAGE:', VALIDATION.error);
+      MAILUNOPENEDCOUNT = Math.max(0, MAILUNOPENEDCOUNT - 1);
       return DBDELETE(KEY);
     }
     return DBDELETE(KEY)
+      .then(function () { MAILUNOPENEDCOUNT = Math.max(0, MAILUNOPENEDCOUNT - 1); })
       .then(function () { return DBSTORE('mail:opened:' + TAG, MESSAGE); })
+      .then(function () { MAILOPENEDCOUNT = MAILOPENEDCOUNT + 1; })
       .then(function () { MAILDELIVER(MESSAGE); });
   });
 }
