@@ -37,13 +37,10 @@ var pipelinesmanifest = [
 
   { src: 'factory/closureconsolidator.js', provides: ['consolidateclosures'] },
   { src: 'actors/actorcore.js', provides: [
-    // actor-surface and aggregate registries
     'ACTORSURFACEREGISTRY', 'AGGREGATEBEHAVIOR',
     'REGISTERACTORSURFACE',
     'GETACTORSURFACE', 'GETAGGREGATEBEHAVIOR', 'REGISTERACTORHANDLER',
-    // shared actor registry
     'ACTORCONSUMERS',
-    // base primitives
     'CREATEGARBAGECOLLECTOR', 'REGISTEROBJECT', 'UPDATESTATUS', 'INCREMENTSENT',
     'INCREMENTRECEIVED', 'COLLECTENDED', 'LISTOBJECTS',
     'REGISTERACTORSTATE', 'GETACTORSTATE', 'SETACTORSTATE',
@@ -52,9 +49,7 @@ var pipelinesmanifest = [
     'GETACTORREGISTRY', 'CREATEACTORREGISTRY', 'SETRENDERACTOR', 'GETRENDERACTOR',
     'CREATETRIGGERREGISTRY', 'REGISTERTRIGGER', 'UNREGISTERTRIGGER',
     'REVALIDATEALL', 'GETTRIGGERMAP', 'CREATEACTORHANDLE',
-    // flow-contract helpers
     'DISPATCHPROJECT', 'DISPATCHPUBLISH', 'DISPATCHRESPOND', 'DISPATCHINSTALL',
-    // inference facility
     'INFERDISPATCHSTRATEGY',
     'POLLERRECIPIENTSREF', 'GETPOLLERRECIPIENTS',
     'REGISTERPOLLERRECIPIENT', 'UNREGISTERPOLLERRECIPIENT',
@@ -66,14 +61,10 @@ var pipelinesmanifest = [
     'REGISTERBATCHABLETYPE', 'UNREGISTERBATCHABLETYPE',
     'BATCHWINDOWSREF', 'GETBATCHWINDOWS', 'SETBATCHWINDOW',
     'VERBOSITYTHRESHOLDREF', 'GETVERBOSITYTHRESHOLD', 'SETVERBOSITYTHRESHOLD',
-    // batch scheduler
     'BATCHBUFFERS', 'BATCHKEY', 'ENQUEUEBATCH', 'FLUSHBATCH', 'FLUSHALLBATCHES',
-    // script-load timeout
     'SCRIPTLOADTIMEOUTREF', 'GETSCRIPTLOADTIMEOUT', 'SETSCRIPTLOADTIMEOUT',
-    // response-type registry
     'RESPONSETYPESREF', 'GETRESPONSETYPES',
     'REGISTERRESPONSETYPE', 'UNREGISTERRESPONSETYPE',
-    // CCC registry + connector
     'CCCREGISTRYREF', 'GETCCCREGISTRY',
     'REGISTERCCCHANDLER', 'UNREGISTERCCCHANDLER', 'CCCNOTIFY'
   ] },
@@ -130,11 +121,6 @@ var pipelinesmanifest = [
     'CCCCONTINUE', 'CCCRETRY', 'TASKSETTLED', 'RECOVER', 'REGISTERPIPELINE', 'PING'] },
   { src: 'context.js', provides: ['createinitialworldmap', 'updateworldmap', 'select'] },
 
-  // ============================================================
-  // @proposal=CP3 (CYCLE-25) — the render-actor module is split into
-  // ten files. The nine new files carry `source: 'actors/renderactor.js'`;
-  // the truncated renderactor.js retains the original path.
-  // ============================================================
   { src: 'actors/renderactorprimitives.js',
     source: 'actors/renderactor.js',
     provides: [
@@ -194,11 +180,6 @@ var pipelinesmanifest = [
     'LOADSCRIPT'
   ] },
 
-  // ============================================================
-  // @proposal=CP2 (CYCLE-25) — the blockcompiler module is split into
-  // five files. The four new files carry `source: 'factory/blockcompiler.js'`;
-  // the truncated blockcompiler.js retains the original path.
-  // ============================================================
   { src: 'factory/pipelinecompilers.js',
     source: 'factory/blockcompiler.js',
     provides: [

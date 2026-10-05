@@ -1,10 +1,24 @@
 var MAILVERBOSITYCONSTANTS = createverbosityconstants();
 var MAILSTATE = { level: MAILVERBOSITYCONSTANTS.DEBUG };
 
-REGISTERMESSAGETYPE('PING');
-REGISTERMESSAGETYPE('RESPONSE');
-REGISTERMESSAGETYPE('SEND');
-REGISTERMESSAGETYPE('ACK');
+var PINGTYPE = messagetype('PING', {
+  SENDER: optionaltype(stringtype()),
+  TAG: optionaltype(stringtype())
+});
+var RESPONSETYPE = messagetype('RESPONSE', {});
+var SENDTYPE = messagetype('SEND', {
+  RECIPIENT: stringtype(),
+  MESSAGE: objecttype()
+});
+var ACKTYPE = messagetype('ACK', {
+  RECIPIENT: stringtype(),
+  IDS: arraytype()
+});
+
+REGISTERMESSAGETYPE(PINGTYPE);
+REGISTERMESSAGETYPE(RESPONSETYPE);
+REGISTERMESSAGETYPE(SENDTYPE);
+REGISTERMESSAGETYPE(ACKTYPE);
 
 REGISTERRESPONSETYPE('RESPONSE');
 var MAILACTORVOCABULARY = {};
@@ -13,94 +27,78 @@ var MAILACTORENVELOPEKEYS = {
   TYPE: true,
   SENDER: true,
   TAG: true,
+  RECIPIENT: true,
   WAITMODE: true,
   RESPONSESPEC: true,
   CONTEXT: true
 };
 
-// Private. Reads the iface map for one actor; used by SENDINSTRUCTION's
+// Private. Reads the type-value map for one actor; used by SENDINSTRUCTION's
 // validation gate.
 function MAILACTORINTERFACES(ACTORNAME) {
   var ENTRY = MAILACTORVOCABULARY[ACTORNAME] || {};
   var MAP = {};
   Object.keys(ENTRY).forEach(function (TYPE) {
-    MAP[TYPE] = ENTRY[TYPE].iface;
+    MAP[TYPE] = ENTRY[TYPE].type ? ENTRY[TYPE].type.iface : {};
   });
   return MAP;
 }
 
-// Private. Transplanted body of the former MESSAGEREGISTRY.validate,
-// reading from MAILACTORVOCABULARY instead. MESSAGETYPEEXISTS is the
-// dynamic-register predicate from js/messagetypes.js (manifest #6).
+// Private. Validates a message against its type value's shape (required
+// fields) and against the envelope-undeclared-field rule (R43). The
+// envelope-identity keys are exempt from the undeclared-field rule.
 function MAILACTORVALIDATE(ACTORNAME, MESSAGE) {
   if (!MESSAGE || typeof MESSAGE !== 'object') {
-    return { valid: false, error: 'message must be a non-null object', type: 'null' };
+    return { valid: false, error: 'message must be a non-null object', type: null };
   }
   var TYPE = MESSAGE.TYPE || MESSAGE.type;
   if (!TYPE || typeof TYPE !== 'string') {
     return { valid: false, error: 'message type must be a string, got: ' + typeof TYPE, type: String(TYPE) };
   }
   var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
-  var IFACE = (ENTRY && ENTRY[TYPE]) ? ENTRY[TYPE].iface : null;
-  if (!IFACE) {
-    if (MESSAGETYPEEXISTS(TYPE)) {
-      IFACE = {};
-    } else {
-      return { valid: false, error: 'unknown message type: ' + TYPE, type: TYPE };
-    }
+  var ENTRYTYPE = (ENTRY && ENTRY[TYPE]) ? ENTRY[TYPE].type : null;
+  if (!ENTRYTYPE) {
+    ENTRYTYPE = GETMESSAGETYPE(TYPE);
   }
-  var KEYS = Object.keys(IFACE);
-  var INVALID = null;
-  KEYS.forEach(function (KEY) {
-    if (INVALID) return;
-    var SPEC = IFACE[KEY];
-    var OPTIONAL = SPEC.charAt(SPEC.length - 1) === '?';
-    var EXPECTEDTYPE = OPTIONAL ? SPEC.slice(0, -1) : SPEC;
-    var VAL = MESSAGE[KEY] !== undefined ? MESSAGE[KEY] :
-      (MESSAGE[KEY.toLowerCase()] !== undefined ? MESSAGE[KEY.toLowerCase()] :
-      MESSAGE[KEY.toUpperCase()]);
-    if (VAL === undefined || VAL === null) {
-      if (!OPTIONAL) {
-        INVALID = { valid: false, error: 'type "' + TYPE + '" missing required field "' + KEY + '" (' + EXPECTEDTYPE + ')', type: TYPE };
-      }
-      return;
-    }
-    if (EXPECTEDTYPE === 'any') return;
-    if (EXPECTEDTYPE === 'array') {
-      if (!Array.isArray(VAL)) {
-        INVALID = { valid: false, error: 'type "' + TYPE + '" field "' + KEY + '" expected array got ' + (Array.isArray(VAL) ? 'array' : typeof VAL), type: TYPE };
-      }
-    } else if (EXPECTEDTYPE === 'object') {
-      if (VAL === null || typeof VAL !== 'object') {
-        INVALID = { valid: false, error: 'type "' + TYPE + '" field "' + KEY + '" expected object got ' + (VAL === null ? 'null' : typeof VAL), type: TYPE };
-      }
-    } else {
-      var ACTUALTYPE = typeof VAL;
-      if (ACTUALTYPE !== EXPECTEDTYPE) {
-        INVALID = { valid: false, error: 'type "' + TYPE + '" field "' + KEY + '" expected ' + EXPECTEDTYPE + ' got ' + ACTUALTYPE, type: TYPE };
-      }
-    }
+  if (!ENTRYTYPE) {
+    return { valid: false, error: 'unknown message type: ' + TYPE, type: TYPE };
+  }
+
+  var R = ENTRYTYPE.validate(MESSAGE);
+  if (R.valid !== true) {
+    return { valid: false, error: R.errors.join('; '), type: TYPE };
+  }
+
+  var UNDECLARED = [];
+  Object.keys(MESSAGE).forEach(function (K) {
+    if (MAILACTORENVELOPEKEYS[K] === true) return;
+    if (MESSAGE[K] === undefined) return;
+    if (ENTRYTYPE.iface[K] === undefined) UNDECLARED.push(K);
   });
-  if (INVALID) return INVALID;
+  if (UNDECLARED.length > 0) {
+    return { valid: false, error: 'undeclared fields: ' + UNDECLARED.join(', '), type: TYPE };
+  }
+
   return { valid: true, error: null, type: TYPE };
 }
 
-// Public. Registers a (type ↦ handler) mapping for ACTORNAME. IFACE is
-// the payload schema; HANDLERFN is the per-type handler (ENV, ARGS) → ….
-function REGISTERACTORMESSAGE(ACTORNAME, TYPE, IFACE, HANDLERFN) {
+// Public. Registers a (typevalue ↦ handler) mapping for ACTORNAME.
+// TYPEVALUE must be a type value produced by messagetype. HANDLERFN is
+// the per-type handler (ENV, ARGS) → …; it may be null.
+function REGISTERACTORMESSAGE(ACTORNAME, TYPEVALUE, HANDLERFN) {
   if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
     throw new Error('[REGISTERACTORMESSAGE] ACTORNAME must be a non-empty string');
   }
-  if (typeof TYPE !== 'string' || TYPE.length === 0) {
-    throw new Error('[REGISTERACTORMESSAGE] TYPE must be a non-empty string');
+  if (typeof TYPEVALUE !== 'function' || typeof TYPEVALUE.typename !== 'string' || TYPEVALUE.typename.length === 0) {
+    throw new Error('[REGISTERACTORMESSAGE] TYPEVALUE must be a type value produced by messagetype');
   }
   var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
   if (!ENTRY) {
     ENTRY = {};
     MAILACTORVOCABULARY[ACTORNAME] = ENTRY;
   }
-  ENTRY[TYPE] = { iface: IFACE || {}, handler: HANDLERFN || null };
-  return ENTRY[TYPE];
+  ENTRY[TYPEVALUE.typename] = { type: TYPEVALUE, handler: HANDLERFN || null };
+  return ENTRY[TYPEVALUE.typename];
 }
 
 // Public. Returns the per-type handler for (ACTORNAME, TYPE), or null.
@@ -112,18 +110,19 @@ function RESOLVEHANDLER(ACTORNAME, TYPE) {
   return null;
 }
 
-// Public. Projects MESSAGE onto the payload keys of the iface for
-// (ACTORNAME, TYPE), excluding envelope keys.
+// Public. Projects MESSAGE onto the payload keys of the type value's iface
+// for (ACTORNAME, TYPE). Envelope-identity keys are excluded defensively.
 function EXTRACTPAYLOAD(ACTORNAME, TYPE, MESSAGE) {
   var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
-  if (!ENTRY || !ENTRY[TYPE]) return {};
-  var IFACE = ENTRY[TYPE].iface || {};
-  var ARGS = {};
-  Object.keys(IFACE).forEach(function (KEY) {
-    if (MAILACTORENVELOPEKEYS[KEY] === true) return;
-    if (MESSAGE && MESSAGE[KEY] !== undefined) ARGS[KEY] = MESSAGE[KEY];
+  var ENTRYTYPE = (ENTRY && ENTRY[TYPE]) ? ENTRY[TYPE].type : null;
+  if (!ENTRYTYPE) return {};
+  var PROJECTED = ENTRYTYPE.project(MESSAGE);
+  Object.keys(MAILACTORENVELOPEKEYS).forEach(function (K) {
+    if (MAILACTORENVELOPEKEYS[K] === true && Object.prototype.hasOwnProperty.call(PROJECTED, K)) {
+      delete PROJECTED[K];
+    }
   });
-  return ARGS;
+  return PROJECTED;
 }
 
 // Public. Resolves the handler for (ACTORNAME, MESSAGE.TYPE), projects
@@ -338,27 +337,30 @@ function REJECTEXPECTATION(TAG, ERROR) {
 // Only BROADCAST's ifaces (recovered from the deleted registerconsumers.js
 // under @proposal=P-MESSAGEREGISTRY-ABSORPTION) remain, for
 // MAILACTORVALIDATE's field-shape check.
+//
+// @proposal=P-MESSAGETYPE-TYPED-INTERFACE — the BROADCAST ifaces are
+// now type values. The ifaces are declared inside the type value's SPEC.
 
-// @proposal=P-MESSAGEREGISTRY-ABSORPTION, R-EXEC — the BROADCAST ifaces
-// recovered from the deleted registerconsumers.js. The BROADCAST
-// recipient has no aggregate; the handler is null. Registration exists
-// for MAILACTORVALIDATE's field-shape check.
-REGISTERACTORMESSAGE('BROADCAST', 'BLOCKEXECUTED', {
-  PIPELINEID: 'string?',
-  STAGEPATH: 'array?',
-  ELEMENTID: 'string?',
-  TOKEN: 'string?',
-  RESULT: 'object'
-}, null);
+var BLOCKEXECUTEDTYPE = messagetype('BLOCKEXECUTED', {
+  PIPELINEID: optionaltype(stringtype()),
+  STAGEPATH: optionaltype(arraytype()),
+  ELEMENTID: optionaltype(stringtype()),
+  TOKEN: optionaltype(stringtype()),
+  RESULT: objecttype()
+});
+REGISTERMESSAGETYPE(BLOCKEXECUTEDTYPE);
+REGISTERACTORMESSAGE('BROADCAST', BLOCKEXECUTEDTYPE, null);
 
-REGISTERACTORMESSAGE('BROADCAST', 'BLOCKFAILED', {
-  PIPELINEID: 'string?',
-  STAGEPATH: 'array?',
-  ELEMENTID: 'string?',
-  TOKEN: 'string?',
-  ERROR: 'string',
-  DIAGNOSTIC: 'object'
-}, null);
+var BLOCKFAILEDTYPE = messagetype('BLOCKFAILED', {
+  PIPELINEID: optionaltype(stringtype()),
+  STAGEPATH: optionaltype(arraytype()),
+  ELEMENTID: optionaltype(stringtype()),
+  TOKEN: optionaltype(stringtype()),
+  ERROR: stringtype(),
+  DIAGNOSTIC: objecttype()
+});
+REGISTERMESSAGETYPE(BLOCKFAILEDTYPE);
+REGISTERACTORMESSAGE('BROADCAST', BLOCKFAILEDTYPE, null);
 
 // ============================================================
 // §8 — Wait primitive
@@ -486,10 +488,35 @@ function GENERATETAG() {
 // into FLATMESSAGE's literal so that the persisted envelope carries
 // the intended recipient, and RECIPIENT is guarded against payload
 // overwrite so the fold cannot be silently undone.
-function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CONTEXT, WAITMODE) {
+//
+// @proposal=P-MESSAGETYPE-TYPED-INTERFACE — the type argument may be
+// a type value or a registered type name. A name is resolved via
+// GETMESSAGETYPE; an unknown name raises. The payload's shape is
+// validated against the recipient's type value before dispatch.
+//
+// @proposal=P-IFACE-VALIDATION-GATE — when the recipient has a
+// registered dispatch behaviour (ACTORCONSUMERS[RECIPIENT] is a
+// function) but no registered message-type ifaces
+// (MAILACTORINTERFACES(RECIPIENT) is empty), SENDINSTRUCTION raises
+// [MAILACTOR] no-interface-for-recipient. This closes the silent
+// bypass that permitted undeclared fields to reach a handler whose
+// type had no shape contract.
+function SENDINSTRUCTION(RECIPIENT, TYPEARG, PAYLOAD, TAG, SENDER, RESPONSESPEC, CONTEXT, WAITMODE) {
   if (TAG === undefined) TAG = GENERATETAG();
   if (SENDER === undefined) SENDER = 'system';
   if (WAITMODE === undefined) WAITMODE = RESPONSESPEC ? 'mailbox' : 'promise';
+
+  var TYPE;
+  if (typeof TYPEARG === 'function' && typeof TYPEARG.typename === 'string' && TYPEARG.typename.length > 0) {
+    TYPE = TYPEARG.typename;
+  } else if (typeof TYPEARG === 'string' && TYPEARG.length > 0) {
+    if (typeof MESSAGETYPEEXISTS === 'function' && MESSAGETYPEEXISTS(TYPEARG) !== true) {
+      throw new Error('[SENDINSTRUCTION] unknown message type: ' + TYPEARG);
+    }
+    TYPE = TYPEARG;
+  } else {
+    throw new Error('[SENDINSTRUCTION] TYPE must be a type value or a non-empty string');
+  }
 
   var FLATMESSAGE = { TYPE: TYPE, SENDER: SENDER, TAG: TAG, RECIPIENT: RECIPIENT, WAITMODE: WAITMODE };
   if (PAYLOAD && typeof PAYLOAD === 'object') {
@@ -509,6 +536,9 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
     if (VALIDATION.valid === false) {
       throw new Error('[MAILACTOR] Message validation failed for ' + RECIPIENT + ': ' + VALIDATION.error);
     }
+  } else if (typeof ACTORCONSUMERS[RECIPIENT] === 'function') {
+    throw new Error('[MAILACTOR] no-interface-for-recipient: ' + RECIPIENT +
+      ' has a registered dispatch behaviour but no registered message-type ifaces');
   }
 
   var STRATEGY = INFERDISPATCHSTRATEGY(RECIPIENT, TYPE, FLATMESSAGE, SENDER, TAG, RESPONSESPEC);
@@ -555,9 +585,12 @@ function SENDRESPONSE(RECIPIENT, TAG, RESULT, SENDER, RESPONSETYPE) {
   if (RESPONSETYPE === undefined) {
     throw new Error('[SENDRESPONSE] responseType is required');
   }
-  var TYPE = RESPONSETYPE;
+  var TYPEVALUE = (typeof RESPONSETYPE === 'function') ? RESPONSETYPE : GETMESSAGETYPE(RESPONSETYPE);
+  if (!TYPEVALUE) {
+    throw new Error('[SENDRESPONSE] unknown response type: ' + RESPONSETYPE);
+  }
   var PAYLOAD = { RESULT: RESULT };
-  SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, undefined, null, 'mailbox');
+  SENDINSTRUCTION(RECIPIENT, TYPEVALUE, PAYLOAD, TAG, SENDER, undefined, null, 'mailbox');
 }
 
 function MAILGETACTIONSTATUS(ID) {
