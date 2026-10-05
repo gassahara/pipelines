@@ -595,6 +595,11 @@ function MAILGETACTIONSTATUS(ID) {
 // When both counters are zero and the first tick has run, the tick
 // returns without invoking DBLISTPREFIX and without emitting a
 // [DBACTOR] log line.
+//
+// @proposal=P-MAILBOXCONFIG-OVERRIDE-TIMING — the tick is scheduled by
+// a self-rescheduling setTimeout chain. Each tick re-reads
+// mailboxresolve('pollinterval'), so the appinit / bootloader overrides
+// are honored even when they are installed after this file has loaded.
 
 var MAILUNOPENEDCOUNT = 0;
 var MAILOPENEDCOUNT = 0;
@@ -670,4 +675,17 @@ function MAILDELIVER(MESSAGE) {
   logwarn(MAILSTATE, '[MAILACTOR]', 'DISCARDED UNROUTABLE ENVELOPE:', TYPE, TAG);
 }
 
-var MAILCONSUMERINTERVALID = setInterval(MAILCONSUMERSTEP, mailboxresolve('pollinterval'));
+// @proposal=P-MAILBOXCONFIG-OVERRIDE-TIMING — self-rescheduling chain.
+// MAILCONSUMERINTERVALID holds the current setTimeout handle. Each tick
+// re-reads mailboxresolve('pollinterval') so that later overrides (e.g.
+// a hot-reloaded appinit or bootloader config) are honored.
+var MAILCONSUMERINTERVALID = null;
+
+function MAILCONSUMERSCHEDULE() {
+  MAILCONSUMERINTERVALID = setTimeout(function () {
+    MAILCONSUMERSTEP();
+    MAILCONSUMERSCHEDULE();
+  }, mailboxresolve('pollinterval'));
+}
+
+MAILCONSUMERSCHEDULE();

@@ -341,13 +341,23 @@ function runpipelineboot(loadprogram, report, manifest) {
 
 var pipelinesbase = 'https://gassahara.github.io/pipelines/js/';
 function bootpipeline(ondone, options) {
-  if (typeof bootloadermailboxconfig === 'function' && options && options.mailboxconfig) {
-    bootloadermailboxconfig(options.mailboxconfig);
-  }
+  // @proposal=P-MAILBOXCONFIG-OVERRIDE-TIMING — the bootloader mailbox
+  // overrides are applied on the first script's onload, after
+  // factory/mailboxconfig.js has loaded (manifest position 1). The
+  // former pre-loop application was a no-op because mailboxconfig.js
+  // was not yet loaded at that point, and typeof
+  // bootloadermailboxconfig was 'undefined'.
+  var DEFERREDMAILBOXCONFIG = (options && options.mailboxconfig) || null;
   function loadscript(entry, done) {
     var s = document.createElement('script');
     s.src = pipelinesbase + entry.src;
-    s.onload = function() { done(null); };
+    s.onload = function() {
+      if (DEFERREDMAILBOXCONFIG !== null && typeof bootloadermailboxconfig === 'function') {
+        bootloadermailboxconfig(DEFERREDMAILBOXCONFIG);
+        DEFERREDMAILBOXCONFIG = null;
+      }
+      done(null);
+    };
     s.onerror = function() { done(new Error('failed to load ' + entry.src)); };
     document.head.appendChild(s);
   }
