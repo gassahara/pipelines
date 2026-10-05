@@ -15,8 +15,7 @@ function RENDERBEHAVIOR(ENV, MESSAGE) {
   return OUT.result;
 }
 
-REGISTERAGGREGATEBEHAVIOR('RENDERACTOR', RENDERBEHAVIOR);
-ACTORCONSUMERS['RENDERACTOR'] = RENDERBEHAVIOR;
+REGISTERDISPATCH('RENDERACTOR', RENDERBEHAVIOR);
 
 // ============================================================
 // §2 — Enqueue helpers

@@ -351,8 +351,7 @@ function DBBEHAVIOR(ENV, MESSAGE) {
   return DBBEHAVIORDISPATCH(ENV, MESSAGE);
 }
 
-REGISTERAGGREGATEBEHAVIOR('DBACTOR', DBBEHAVIOR);
-ACTORCONSUMERS['DBACTOR'] = DBBEHAVIOR;
+REGISTERDISPATCH('DBACTOR', DBBEHAVIOR);
 
 // ============================================================
 // §4 — Direct DB API (literals)

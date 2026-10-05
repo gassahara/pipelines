@@ -212,8 +212,7 @@ function WORLDMAPBEHAVIOR(ENV, MESSAGE) {
   return OUT.result;
 }
 
-REGISTERAGGREGATEBEHAVIOR('WORLDMAPACTOR', WORLDMAPBEHAVIOR);
-ACTORCONSUMERS['WORLDMAPACTOR'] = WORLDMAPBEHAVIOR;
+REGISTERDISPATCH('WORLDMAPACTOR', WORLDMAPBEHAVIOR);
 
 // ============================================================
 // §4 — World-map state registration and start

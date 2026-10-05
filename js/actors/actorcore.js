@@ -7,9 +7,21 @@ function REGISTERACTORSURFACE(ACTORNAME, SURFACE) {
   return SURFACE;
 }
 
-function REGISTERAGGREGATEBEHAVIOR(ACTORNAME, BEHAVIOR) {
-  AGGREGATEBEHAVIOR[ACTORNAME] = BEHAVIOR;
-  return BEHAVIOR;
+function REGISTERDISPATCH(ACTORNAME, BEHAVIOR) {
+  if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
+    throw new Error('[REGISTERDISPATCH] ACTORNAME must be a non-empty string');
+  }
+  if (typeof BEHAVIOR !== 'function') {
+    throw new Error('[REGISTERDISPATCH] BEHAVIOR must be a function');
+  }
+  var WRAPPED = function (ENV, MESSAGE) {
+    return Promise.resolve().then(function () {
+      return BEHAVIOR(ENV, MESSAGE);
+    });
+  };
+  AGGREGATEBEHAVIOR[ACTORNAME] = WRAPPED;
+  ACTORCONSUMERS[ACTORNAME] = WRAPPED;
+  return WRAPPED;
 }
 
 function GETACTORSURFACE(ACTORNAME) {
@@ -143,34 +155,28 @@ function DISPATCHINSTALL(INSTALLER, MESSAGE) {
 
 function DISPATCHTOACTOR(ACTORNAME, BEHAVIOR, MESSAGE, INSTALLER) {
   if (typeof BEHAVIOR !== 'function') {
-    throw new Error('[DISPATCHTOACTOR] BEHAVIOR must be a function');
+    return Promise.reject(new Error('[DISPATCHTOACTOR] BEHAVIOR must be a function'));
   }
   var ENV = GETACTORSTATE(ACTORNAME);
   if (ENV === undefined) ENV = {};
-  var RESULT = BEHAVIOR(ENV, MESSAGE);
-  if (RESULT && typeof RESULT.then === 'function') {
-    return RESULT.then(function (RESOLVED) {
-      var OUT = DISPATCHPROJECT(RESOLVED, MESSAGE, ACTORNAME);
-      DISPATCHPUBLISH(ACTORNAME, OUT.ENV);
-      DISPATCHINSTALL(INSTALLER, MESSAGE);
-      DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
-      return RESOLVED;
-    });
-  }
-  var OUT = DISPATCHPROJECT(RESULT, MESSAGE, ACTORNAME);
-  DISPATCHPUBLISH(ACTORNAME, OUT.ENV);
-  DISPATCHINSTALL(INSTALLER, MESSAGE);
-  DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
-  return RESULT;
+  return Promise.resolve(BEHAVIOR(ENV, MESSAGE)).then(function (RESOLVED) {
+    var OUT = DISPATCHPROJECT(RESOLVED, MESSAGE, ACTORNAME);
+    DISPATCHPUBLISH(ACTORNAME, OUT.ENV);
+    DISPATCHINSTALL(INSTALLER, MESSAGE);
+    DISPATCHRESPOND(MESSAGE, OUT.RESPONSE, ACTORNAME);
+    return RESOLVED;
+  });
 }
 
 function DISPATCHIMMUTABLE(ACTORNAME, BEHAVIOR, MESSAGE) {
   if (typeof BEHAVIOR !== 'function') {
-    throw new Error('[DISPATCHIMMUTABLE] BEHAVIOR must be a function');
+    return Promise.reject(new Error('[DISPATCHIMMUTABLE] BEHAVIOR must be a function'));
   }
-  var ENV = GETACTORSTATE(ACTORNAME);
-  if (ENV === undefined) ENV = {};
-  return BEHAVIOR(ENV, MESSAGE);
+  return Promise.resolve().then(function () {
+    var ENV = GETACTORSTATE(ACTORNAME);
+    if (ENV === undefined) ENV = {};
+    return BEHAVIOR(ENV, MESSAGE);
+  });
 }
 
 // ---------- §17.4 — Actor registry, render accessor, ping ----------

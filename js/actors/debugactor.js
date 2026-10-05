@@ -416,8 +416,7 @@ function DEBUGBEHAVIOR(ENV, MESSAGE) {
   return OUT.result;
 }
 
-REGISTERAGGREGATEBEHAVIOR('DEBUGACTOR', DEBUGBEHAVIOR);
-ACTORCONSUMERS['DEBUGACTOR'] = DEBUGBEHAVIOR;
+REGISTERDISPATCH('DEBUGACTOR', DEBUGBEHAVIOR);
 
 // ============================================================
 // §4 — Enqueue helpers (literals)

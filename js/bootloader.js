@@ -39,7 +39,7 @@ var pipelinesmanifest = [
   { src: 'actors/actorcore.js', provides: [
     // actor-surface and aggregate registries
     'ACTORSURFACEREGISTRY', 'AGGREGATEBEHAVIOR',
-    'REGISTERACTORSURFACE', 'REGISTERAGGREGATEBEHAVIOR',
+    'REGISTERACTORSURFACE',
     'GETACTORSURFACE', 'GETAGGREGATEBEHAVIOR', 'REGISTERACTORHANDLER',
     'MAKEPRODUCER',
     // shared actor registry
