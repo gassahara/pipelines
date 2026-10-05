@@ -6,6 +6,33 @@ REGISTERMESSAGETYPE('DELETE');
 REGISTERMESSAGETYPE('DBRESULT');
 REGISTERRESPONSETYPE('DBRESULT');
 
+var DBTAGCOUNTER = 0;
+
+function GENERATEDBTAG() {
+  DBTAGCOUNTER = DBTAGCOUNTER + 1;
+  return 'DBTAG' + Date.now() + DBTAGCOUNTER;
+}
+
+function SENDDBINSTRUCTION(TYPE, PAYLOAD, RESPONSESPEC) {
+  var MESSAGE = {
+    TYPE: TYPE,
+    TAG: GENERATEDBTAG(),
+    SENDER: 'DBACTOR',
+    WAITMODE: 'promise'
+  };
+  if (RESPONSESPEC !== undefined) MESSAGE.RESPONSESPEC = RESPONSESPEC;
+  if (PAYLOAD && typeof PAYLOAD === 'object') {
+    Object.keys(PAYLOAD).forEach(function (KEY) { MESSAGE[KEY] = PAYLOAD[KEY]; });
+  }
+  var CURRENTENV = GETACTORSTATE('WORLDMAPACTOR') || {};
+  var RESULT = DBBEHAVIOR(CURRENTENV, MESSAGE);
+  if (RESULT && typeof RESULT === 'object') {
+    if (RESULT.ENV !== undefined) SETACTORSTATE('WORLDMAPACTOR', RESULT.ENV);
+    if (RESULT.RESPONSE !== undefined) return Promise.resolve(RESULT.RESPONSE);
+  }
+  return Promise.resolve(RESULT);
+}
+
 var DBVERBOSITYCONSTANTS = createverbosityconstants();
 var DBSTATE = { level: DBVERBOSITYCONSTANTS.DEBUG };
 
@@ -332,31 +359,23 @@ ACTORCONSUMERS['DBACTOR'] = DBBEHAVIOR;
 // ============================================================
 
 function DBSTORE(KEY, VALUE) {
-  var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', 'STORE', { KEY: KEY, VALUE: VALUE }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
-  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
-    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
+  return SENDDBINSTRUCTION('STORE', { KEY: KEY, VALUE: VALUE }, { responsetype: 'DBRESULT' })
+    .then(function(RESPONSE) { return RESPONSE && RESPONSE.RESULT !== undefined ? RESPONSE.RESULT : undefined; });
 }
 
 function DBRESTORE(KEY) {
-  var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', 'RESTORE', { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
-  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
-    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
+  return SENDDBINSTRUCTION('RESTORE', { KEY: KEY }, { responsetype: 'DBRESULT' })
+    .then(function(RESPONSE) { return RESPONSE && RESPONSE.RESULT !== undefined ? RESPONSE.RESULT : undefined; });
 }
 
 function DBLIST() {
-  var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', 'LIST', {}, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
-  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
-    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
+  return SENDDBINSTRUCTION('LIST', {}, { responsetype: 'DBRESULT' })
+    .then(function(RESPONSE) { return RESPONSE && RESPONSE.RESULT !== undefined ? RESPONSE.RESULT : undefined; });
 }
 
 function DBDELETE(KEY) {
-  var TAG = GENERATETAG();
-  SENDINSTRUCTION('DBACTOR', 'DELETE', { KEY: KEY }, TAG, 'WORLDMAPACTOR', { responsetype: 'DBRESULT' });
-  return WAITFORMAILBOX({ TAG: TAG, SENDER: 'DBACTOR' }, mailboxresolve('storewaittimeout'))
-    .then(function(ENV) { return ENV && ENV.PAYLOAD ? ENV.PAYLOAD.RESULT : undefined; });
+  return SENDDBINSTRUCTION('DELETE', { KEY: KEY }, { responsetype: 'DBRESULT' })
+    .then(function(RESPONSE) { return RESPONSE && RESPONSE.RESULT !== undefined ? RESPONSE.RESULT : undefined; });
 }
 
 // ============================================================

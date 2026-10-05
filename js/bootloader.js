@@ -96,7 +96,8 @@ var pipelinesmanifest = [
   ] },
   { src: 'actors/dbactor.js', provides: [
     'DBBEHAVIOR', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE',
-    'STARTDBACTOR', 'SUBMIT', 'EXPECT', 'GETACTIONRESULT'
+    'STARTDBACTOR', 'SUBMIT', 'EXPECT', 'GETACTIONRESULT',
+    'GENERATEDBTAG', 'SENDDBINSTRUCTION'
   ], exemptFromL1L2: true },
   { src: 'actors/mailactor.js', provides: [
     'MAILBEHAVIOR', 'GENERATETAG', 'SENDINSTRUCTION', 'SENDRESPONSE',
