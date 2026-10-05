@@ -46,23 +46,6 @@ function REGISTERACTORHANDLER(ACTORNAME, TYPE, HANDLER) {
   return NEXTENV;
 }
 
-// @proposal=P68 — producer factory.
-function MAKEPRODUCER(ACTORNAME, TYPE) {
-  if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
-    throw new Error('[MAKEPRODUCER] ACTORNAME must be a non-empty string');
-  }
-  if (typeof TYPE !== 'string' || TYPE.length === 0) {
-    throw new Error('[MAKEPRODUCER] TYPE must be a non-empty string');
-  }
-  var ACTORNAMECAP = ACTORNAME;
-  var TYPECAP = TYPE;
-  return function (PAYLOAD, RESPONSESPEC, SENDER) {
-    var TAG = GENERATETAG();
-    SENDINSTRUCTION(ACTORNAMECAP, TYPECAP, PAYLOAD || {}, TAG, SENDER || 'system', RESPONSESPEC);
-    return TAG;
-  };
-}
-
 var ACTORSTATESREF = { current: Object.freeze({}) };
 
 function REGISTERACTORSTATE(ACTORNAME, INITIAL) {

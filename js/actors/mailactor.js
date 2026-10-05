@@ -17,6 +17,9 @@ var MAILACTORENVELOPEKEYS = {
   RESPONSESPEC: true,
   CONTEXT: true
 };
+
+// Private. Reads the iface map for one actor; used by SENDINSTRUCTION's
+// validation gate.
 function MAILACTORINTERFACES(ACTORNAME) {
   var ENTRY = MAILACTORVOCABULARY[ACTORNAME] || {};
   var MAP = {};
@@ -25,6 +28,10 @@ function MAILACTORINTERFACES(ACTORNAME) {
   });
   return MAP;
 }
+
+// Private. Transplanted body of the former MESSAGEREGISTRY.validate,
+// reading from MAILACTORVOCABULARY instead. MESSAGETYPEEXISTS is the
+// dynamic-register predicate from js/messagetypes.js (manifest #6).
 function MAILACTORVALIDATE(ACTORNAME, MESSAGE) {
   if (!MESSAGE || typeof MESSAGE !== 'object') {
     return { valid: false, error: 'message must be a non-null object', type: 'null' };
@@ -77,6 +84,9 @@ function MAILACTORVALIDATE(ACTORNAME, MESSAGE) {
   if (INVALID) return INVALID;
   return { valid: true, error: null, type: TYPE };
 }
+
+// Public. Registers a (type ↦ handler) mapping for ACTORNAME. IFACE is
+// the payload schema; HANDLERFN is the per-type handler (ENV, ARGS) → ….
 function REGISTERACTORMESSAGE(ACTORNAME, TYPE, IFACE, HANDLERFN) {
   if (typeof ACTORNAME !== 'string' || ACTORNAME.length === 0) {
     throw new Error('[REGISTERACTORMESSAGE] ACTORNAME must be a non-empty string');
@@ -92,6 +102,8 @@ function REGISTERACTORMESSAGE(ACTORNAME, TYPE, IFACE, HANDLERFN) {
   ENTRY[TYPE] = { iface: IFACE || {}, handler: HANDLERFN || null };
   return ENTRY[TYPE];
 }
+
+// Public. Returns the per-type handler for (ACTORNAME, TYPE), or null.
 function RESOLVEHANDLER(ACTORNAME, TYPE) {
   var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
   if (ENTRY && ENTRY[TYPE] && typeof ENTRY[TYPE].handler === 'function') {
@@ -99,6 +111,9 @@ function RESOLVEHANDLER(ACTORNAME, TYPE) {
   }
   return null;
 }
+
+// Public. Projects MESSAGE onto the payload keys of the iface for
+// (ACTORNAME, TYPE), excluding envelope keys.
 function EXTRACTPAYLOAD(ACTORNAME, TYPE, MESSAGE) {
   var ENTRY = MAILACTORVOCABULARY[ACTORNAME];
   if (!ENTRY || !ENTRY[TYPE]) return {};
@@ -110,6 +125,10 @@ function EXTRACTPAYLOAD(ACTORNAME, TYPE, MESSAGE) {
   });
   return ARGS;
 }
+
+// Public. Resolves the handler for (ACTORNAME, MESSAGE.TYPE), projects
+// MESSAGE to ARGS, and invokes the handler. Returns { matched, result }.
+// The sentinel is structurally distinct from any handler-returned value.
 function INVOKEHANDLER(ACTORNAME, ENV, MESSAGE) {
   if (!MESSAGE || typeof MESSAGE !== 'object') {
     return { matched: false, result: undefined };
@@ -125,7 +144,22 @@ function INVOKEHANDLER(ACTORNAME, ENV, MESSAGE) {
   var ARGS = EXTRACTPAYLOAD(ACTORNAME, TYPE, MESSAGE);
   return { matched: true, result: HANDLER(ENV, ARGS) };
 }
+
+// ============================================================
+// §1 — Mailbox state
+// ============================================================
+//
+// @proposal=P-MAILACTOR-DB-QUEUE-AND-ASYNC-DISPATCH — the queue is the
+// DB. EXPECTATIONS is retained as the local waiter registry: the
+// sender-side record of which TAGs the current process is awaiting.
+// The former in-memory mailbox and its indexes are retired.
+
 var EXPECTATIONS = {};
+
+// ============================================================
+// §2 — Dynamic broadcast-type registry
+// ============================================================
+
 var BROADCASTTYPESREF = { current: Object.freeze({}) };
 
 function GETBROADCASTTYPES() {
@@ -156,8 +190,16 @@ function UNREGISTERBROADCASTTYPE(TYPE) {
   BROADCASTTYPESREF.current = Object.freeze(NEXT);
   return true;
 }
+
+// @proposal=P-COMPILER-TYPE-LITERALS — literal type names, not
+// MESSAGETYPES lookups. The type-name register is dynamic.
 REGISTERBROADCASTTYPE('BLOCKEXECUTED');
 REGISTERBROADCASTTYPE('BLOCKFAILED');
+
+// ============================================================
+// §3 — Dynamic mailbox-exempt registry
+// ============================================================
+
 var MAILBOXEXEMPTREF = { current: Object.freeze({}) };
 
 function GETMAILBOXEXEMPT() {
@@ -190,6 +232,20 @@ function UNREGISTERMAILBOXEXEMPT(RECIPIENT) {
 }
 
 REGISTERMAILBOXEXEMPT('BROADCAST');
+
+// ============================================================
+// §4 — Mail transport primitives
+// ============================================================
+//
+// @proposal=P-MAILACTOR-DB-QUEUE-AND-ASYNC-DISPATCH — the deposit
+// primitive (ADDENVELOPETOMAILBOX) is retired: SENDINSTRUCTION writes
+// directly to the DB queue. The retention scheduler
+// (SCHEDULERETENTIONPRUNE) is retired: MAILGCSTEP performs the
+// scheduled deletion. CREATEEXPECTATION is idempotent so that the
+// caller's WAITFORMAILBOX (armed before the dispatched behaviour has
+// run) and DISPATCHINSTALL (armed after the behaviour returns) do not
+// clobber each other's expectation.
+
 function CREATEEXPECTATION(TAG, RECIPIENT, SENDER, TYPE, CONTEXT, RESPONSESPEC) {
   if (EXPECTATIONS[TAG] && EXPECTATIONS[TAG].STATUS === 'PENDING') {
     return EXPECTATIONS[TAG];
@@ -271,19 +327,22 @@ function REJECTEXPECTATION(TAG, ERROR) {
     try { FN(REJECTIONERROR); } catch (E) { /* do not block */ }
   });
 }
-function MAILSENDHANDLER(ENV, ARGS) {
-  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION: SEND');
-  var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
-  return { ENV: NEXTENV };
-}
 
-function MAILACKHANDLER(ENV, ARGS) {
-  logdebug(ENV, '[MAILACTOR]', 'BEHAVIOR HANDLING ACTION: ACK');
-  var NEXTENV = ENSUREENVSLICE(ENV, 'mail', function() { return { QUEUES: {}, NEXTID: 1 }; });
-  return { ENV: NEXTENV };
-}
-REGISTERACTORMESSAGE('MAILACTOR', 'SEND', { RECIPIENT: 'string', MESSAGE: 'object' }, MAILSENDHANDLER);
-REGISTERACTORMESSAGE('MAILACTOR', 'ACK', { RECIPIENT: 'string', IDS: 'array' }, MAILACKHANDLER);
+// ============================================================
+// §5 — Mail vocabulary registration
+// ============================================================
+//
+// @proposal=P-MAILACTOR-DEAD-BRANCH-REMOVAL — MAILACTOR no longer
+// registers any per-type handler of its own. The SEND and ACK branches
+// were unreachable; the handlers and their registrations were removed.
+// Only BROADCAST's ifaces (recovered from the deleted registerconsumers.js
+// under @proposal=P-MESSAGEREGISTRY-ABSORPTION) remain, for
+// MAILACTORVALIDATE's field-shape check.
+
+// @proposal=P-MESSAGEREGISTRY-ABSORPTION, R-EXEC — the BROADCAST ifaces
+// recovered from the deleted registerconsumers.js. The BROADCAST
+// recipient has no aggregate; the handler is null. Registration exists
+// for MAILACTORVALIDATE's field-shape check.
 REGISTERACTORMESSAGE('BROADCAST', 'BLOCKEXECUTED', {
   PIPELINEID: 'string?',
   STAGEPATH: 'array?',
@@ -300,13 +359,17 @@ REGISTERACTORMESSAGE('BROADCAST', 'BLOCKFAILED', {
   ERROR: 'string',
   DIAGNOSTIC: 'object'
 }, null);
-function MAILBEHAVIOR(ENV, MESSAGE) {
-  var OUT = INVOKEHANDLER('MAILACTOR', ENV, MESSAGE);
-  if (OUT.matched !== true) return ENV;
-  return OUT.result;
-}
 
-REGISTERDISPATCH('MAILACTOR', MAILBEHAVIOR);
+// ============================================================
+// §8 — Wait primitive
+// ============================================================
+//
+// @proposal=P-MAILACTOR-DB-QUEUE-AND-ASYNC-DISPATCH — WAITFORMAILBOX
+// arms the expectation (creating it if absent) and returns a Promise
+// that resolves when MAILDELIVER (invoked by the interval when the
+// matching envelope is read) calls RESOLVEEXPECTATION. Polling
+// mechanisms (QUERYMAILBOX, POLLFALLBACK) are retired.
+
 function WAITFORMAILBOX(FILTER, TIMEOUT) {
   if (TIMEOUT === undefined) TIMEOUT = mailboxresolve('expectationtimeout');
   var TAGVAL = FILTER && FILTER.TAG;
@@ -335,6 +398,17 @@ function WAITFORMAILBOX(FILTER, TIMEOUT) {
     }, TIMEOUT);
   });
 }
+
+// ============================================================
+// §9 — Broadcast subscription
+// ============================================================
+//
+// @proposal=P-MAILACTOR-DB-QUEUE-AND-ASYNC-DISPATCH — subscriber
+// handlers are wrapped at registration: the stored value is a
+// promise-returning function. DISPATCHBROADCAST iterates the wrappers
+// and does not invoke any subscriber within the caller's synchronous
+// frame.
+
 var BROADCASTSUBSCRIPTIONS = {};
 var BROADCASTSUBCOUNTER = 0;
 
@@ -384,19 +458,44 @@ function DISPATCHBROADCAST(MESSAGE) {
     });
   }, Promise.resolve());
 }
+
+// ============================================================
+// §10 — Tag generation and send primitives
+// ============================================================
+
 function GENERATETAG() {
   return 'TAG' + Date.now() + Math.random().toString(36).slice(2, 10);
 }
+
+// @proposal=P-MAILACTOR-DB-QUEUE-AND-ASYNC-DISPATCH — on the mailbox
+// route, SENDINSTRUCTION writes the flat message to the DB queue under
+// 'mail:unopened:' + TAG. The direct and broadcast routes are
+// unchanged. The external contract:
+//   direct route    — Promise resolving to { ENV, RESPONSE } (the
+//                     dispatcher's value; @proposal=P-SENDINSTRUCTION-
+//                     DIRECT-RETURN restores this shape).
+//   broadcast route — Promise resolving to TAG.
+//   mailbox route   — Promise resolving to TAG.
+//
+// @proposal=P-MAIL-INTERVAL-QUIET — the mailbox route also updates the
+// in-memory counter MAILUNOPENEDCOUNT: incremented before the DBSTORE
+// and decremented if the store fails, so the count reflects the number
+// of envelopes the current tab has pending in the unopened namespace.
+//
+// @proposal=P-SENDINSTRUCTION-RECIPIENT-FOLD — RECIPIENT is folded
+// into FLATMESSAGE's literal so that the persisted envelope carries
+// the intended recipient, and RECIPIENT is guarded against payload
+// overwrite so the fold cannot be silently undone.
 function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CONTEXT, WAITMODE) {
   if (TAG === undefined) TAG = GENERATETAG();
   if (SENDER === undefined) SENDER = 'system';
   if (WAITMODE === undefined) WAITMODE = RESPONSESPEC ? 'mailbox' : 'promise';
 
-  var FLATMESSAGE = { TYPE: TYPE, SENDER: SENDER, TAG: TAG, WAITMODE: WAITMODE };
+  var FLATMESSAGE = { TYPE: TYPE, SENDER: SENDER, TAG: TAG, RECIPIENT: RECIPIENT, WAITMODE: WAITMODE };
   if (PAYLOAD && typeof PAYLOAD === 'object') {
     Object.keys(PAYLOAD).forEach(function(KEY) {
       if (KEY !== 'TYPE' && KEY !== 'SENDER' && KEY !== 'TAG' &&
-          KEY !== 'RESPONSESPEC' && KEY !== 'CONTEXT' && KEY !== 'WAITMODE') {
+          KEY !== 'RECIPIENT' && KEY !== 'RESPONSESPEC' && KEY !== 'CONTEXT' && KEY !== 'WAITMODE') {
         FLATMESSAGE[KEY] = PAYLOAD[KEY];
       }
     });
@@ -440,7 +539,7 @@ function SENDINSTRUCTION(RECIPIENT, TYPE, PAYLOAD, TAG, SENDER, RESPONSESPEC, CO
           );
         }
       };
-      return DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, INSTALLER).then(function () { return TAG; });
+      return DISPATCHTOACTOR(RECIPIENT, CONSUMER, FLATMESSAGE, INSTALLER);
     }
   }
   MAILUNOPENEDCOUNT = MAILUNOPENEDCOUNT + 1;
@@ -471,20 +570,31 @@ function MAILGETACTIONSTATUS(ID) {
   return null;
 }
 
-function STARTMAILACTOR(OPTIONS) {
-  if (OPTIONS !== undefined) {
-    var LVL = typeof OPTIONS === 'number' ? OPTIONS :
-      (OPTIONS && OPTIONS.VERBOSITY !== undefined ? OPTIONS.VERBOSITY : (OPTIONS && OPTIONS.VERBOSITYLEVEL));
-    if (LVL !== undefined) {
-      var ENV = GETACTORSTATE('WORLDMAPACTOR');
-      if (ENV) ENV.VERBOSITY = LVL;
-    }
-  }
-  return {
-    GETSTATE: function() { return GETACTORSTATE('WORLDMAPACTOR'); },
-    DISPATCH: function(MSG) { return DISPATCHTOACTOR('MAILACTOR', MAILBEHAVIOR, MSG); }
-  };
-}
+// ============================================================
+// §11 — Consumer interval (P-MAILACTOR-DB-QUEUE-AND-ASYNC-DISPATCH)
+// ============================================================
+//
+// One interval per MAILACTOR. Each tick executes two passes:
+//   (1) GC pass — delete every envelope opened in a prior tick.
+//   (2) Read pass — read every unopened envelope; move it to the opened
+//       namespace; deliver it (resolve a pending expectation or
+//       dispatch to a registered recipient).
+//
+// The two-pass order gives the envelope lifetime: at most
+// 2 × pollinterval after deposit; at least pollinterval.
+//
+// @proposal=P-MAIL-INTERVAL-QUIET — the tick short-circuits when there
+// is no work to do. Three module-local variables track the state:
+//   MAILUNOPENEDCOUNT — envelopes this tab has deposited that have not
+//                       yet been read.
+//   MAILOPENEDCOUNT   — envelopes this tab has read that have not yet
+//                       been GC'd.
+//   MAILCONSUMERBOOTED — false until the first tick runs; the first tick
+//                        runs unconditionally so that a reload reconciles
+//                        the DB's actual state with the counters.
+// When both counters are zero and the first tick has run, the tick
+// returns without invoking DBLISTPREFIX and without emitting a
+// [DBACTOR] log line.
 
 var MAILUNOPENEDCOUNT = 0;
 var MAILOPENEDCOUNT = 0;
@@ -557,8 +667,7 @@ function MAILDELIVER(MESSAGE) {
     var CONSUMER = ACTORCONSUMERS[RECIPIENT];
     if (typeof CONSUMER === 'function') { DISPATCHTOACTOR(RECIPIENT, CONSUMER, MESSAGE); return; }
   }
-  var MAILCONSUMER = ACTORCONSUMERS['MAILACTOR'];
-  if (typeof MAILCONSUMER === 'function') DISPATCHTOACTOR('MAILACTOR', MAILCONSUMER, MESSAGE);
+  logwarn(MAILSTATE, '[MAILACTOR]', 'DISCARDED UNROUTABLE ENVELOPE:', TYPE, TAG);
 }
 
 var MAILCONSUMERINTERVALID = setInterval(MAILCONSUMERSTEP, mailboxresolve('pollinterval'));
