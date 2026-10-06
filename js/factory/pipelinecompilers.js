@@ -40,6 +40,13 @@ function makegenerator(type, wrapped, behaviour, attrs) {
   b.token = GENERATETAG();
   b.behaviour = behaviour;
   b.wrapped = wrapped;
+  // @proposal=P-CAPTUREERROR-OUTPUT-PROPAGATION — propagate the wrapped
+  // block's declared outputs onto the composite. Without this line,
+  // createpersistentelementwrapper reads an empty output set from the
+  // composite, invokes mapoutputs(result, []) = {}, and writes no key
+  // to env. Downstream consumers of the wrapped block's outputs then
+  // fail their inputs-defined check.
+  b.outputs = wrapped.outputs;
   return b;
 }
 
@@ -50,6 +57,11 @@ function makepipelineelement(id, childstate, attrs) {
   return b;
 }
 
+// ============================================================
+// B2 — Pipeline and stage manipulation
+// ============================================================
+
+// @proposal=P54 / @proposal=P56r2 — pipeline() uses makecompilerconstants.
 function pipeline(type, name, options) {
   var opts = options || {};
   var dnaconstants = creatednaserializerconstants();
@@ -218,6 +230,10 @@ function appendprogram(p, parent, child) {
   return next;
 }
 
+// ============================================================
+// B4 — Path accessors and primitives
+// ============================================================
+
 function walkentries(source, acc, step) {
   var keys = Object.keys(source || {});
   for (var i = 0; i < keys.length; i++) {
@@ -275,6 +291,11 @@ function setblockcompilertools(tools) {
   if (typeof tools.parsesource === 'function') blockcompilertools.parsesource = tools.parsesource;
 }
 
+// ============================================================
+// B4b — Response-shape helpers (sibling of fnblock.js's copy; see
+// fnblock.js header for the load-order rationale)
+// ============================================================
+
 function MATCHESTYPES(VALUE, SPEC) {
   if (typeof SPEC !== 'string' || SPEC.length === 0) return true;
   var OPTIONAL = SPEC.charAt(SPEC.length - 1) === '?';
@@ -292,6 +313,22 @@ function DESCRIBEOBSERVED(VALUE) {
   if (Array.isArray(VALUE)) return 'array';
   return typeof VALUE;
 }
+
+// ============================================================
+// B12 — Persistent element wrapper
+// ============================================================
+
+// @proposal=P-BLOCKCOMPILER-EXCHANGE-CONTRACT-002 — the contract of
+// mailboxmessage at this site. `exchange` selects the channel from the
+// `responsetype` argument: for a registered response type (any value of
+// MAILBOXFILTERTYPES, including MESSAGETYPES.TASKRESULT) it takes the
+// promise path and delivers the actor handler's RESPONSE directly. The
+// delivered shape for EXECUTEELEMENT is the flat settlement payload
+//   { TASKID, PIPELINEID, ELEMENTID, RESULT }
+// where RESULT is the block's own return value. For an unregistered
+// responsetype it takes the mailbox path and delivers a mailbox envelope
+// whose PAYLOAD.RESULT carries the same settlement payload. The unwrap
+// below reads both shapes; it discriminates on the presence of PAYLOAD.
 function createpersistentelementwrapper(compiledelement, elementdef, stagepath, pipelinename, options) {
   var elementid = elementdef.id || compiledelement.id || 'elementunknown';
   function wrapper(env) {
@@ -322,8 +359,13 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       : mailboxresolve('mailboxwaittimeout');
     var catchtimeout = (elementdef && elementdef.catchtimeout === true);
 
-    return exchange('EXECUTIONACTOR', 'EXECUTEELEMENT', descriptor, waitduration, 'TASKRESULT', tag)
+    return exchange('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, waitduration, MESSAGETYPES.TASKRESULT, tag)
       .then(function(mailboxmessage) {
+        // @proposal=P-BLOCKCOMPILER-EXCHANGE-SHAPE-001 — dual-shape unwrap.
+        // Promise-path deliveries are flat RESPONSEPAYLOAD objects; mailbox-
+        // path deliveries are envelopes with a PAYLOAD field. The
+        // discriminator is the presence of PAYLOAD. In both shapes the
+        // block's own return value is the final RESULT.
         var isEnvelope = (mailboxmessage && typeof mailboxmessage === 'object' && mailboxmessage.PAYLOAD && typeof mailboxmessage.PAYLOAD === 'object');
         var carrier = isEnvelope ? mailboxmessage.PAYLOAD : (mailboxmessage || {});
         var outer = (carrier.RESULT !== undefined) ? carrier.RESULT : ((carrier.result !== undefined) ? carrier.result : carrier);
@@ -350,9 +392,7 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
           throw failureError;
         }
         var outputkeys = Object.keys(blockoutputs || {});
-        // @proposal=P-RESPONSE-SHAPE-FIDELITY — the block's declared
-        // outputs travel as the type schema for shape validation.
-        var mapped = mapoutputs(result, outputkeys, blockoutputs);
+        var mapped = mapoutputs(result, outputkeys);
         Object.keys(mapped).forEach(function(k) { execenv[k] = mapped[k]; });
         logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'element completed:', elementid, 'pipeline:', pipelinename);
         return result;
