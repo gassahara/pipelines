@@ -288,16 +288,27 @@ function HYPERVISORBEHAVIORMARKBOOT(ENV, ARGS) {
 // in place (via createpersistentelementwrapper). This handler wraps the
 // result in a fresh ENV before returning so the world map receives a
 // distinct object.
+//
+// @proposal=P-EVENT-STAGE-ISOLATION (RUN 157/158) — additionally, the
+// handler now clones ARGS.ENV into ISOLATEDENV before invoking
+// orchestratestage. The stage's mutations apply to ISOLATEDENV only;
+// concurrent events each operate on their own isolated clone; the env
+// captured at registration (ARGS.ENV) is not mutated. The framework's
+// tag generator (GENERATETAG) and per-dispatch independence
+// (DISPATCHTOACTOR) now hold at the state level as well as at the message
+// level.
 function HYPERVISORBEHAVIOREVENTTRIGGERED(ENV, ARGS) {
   if (!ARGS.STAGE) {
     logwarn(ENV, '[HYPERVISOR]', 'EVENTTRIGGERED received without STAGE; no walk performed',
       'PIPELINEID:', ARGS.PIPELINEID, 'STAGEID:', ARGS.STAGEID);
     return ENV;
   }
+  var ISOLATEDENV = {};
+  Object.keys(ARGS.ENV || {}).forEach(function(K) { ISOLATEDENV[K] = ARGS.ENV[K]; });
   return orchestratestage(
     ARGS.STAGE,
     ARGS.PIPELINEID || 'event',
-    ARGS.ENV || {},
+    ISOLATEDENV,
     ARGS.STAGEPATH || [],
     ARGS.OPTIONS || {},
     true

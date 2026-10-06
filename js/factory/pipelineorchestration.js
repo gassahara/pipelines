@@ -247,8 +247,6 @@ function dispatchcccrecovery(type, pipelinename, stagepath, elementid, continuat
   //   `typeof MESSAGETYPES === 'undefined'`
   // is removed. No manifest-loaded file declares MESSAGETYPES, and the
   // guard, being always true, silently disabled CCC recovery dispatch.
-  // The body uses the `type` parameter (a string in
-  // {'CCCRETRY','CCCCONTINUE','CCCABORT'}), which the transport accepts.
   if (typeof SENDINSTRUCTION !== 'function') return;
   SENDINSTRUCTION('EXECUTIONACTOR', type, {
     PIPELINEID: pipelinename || 'UNKNOWNPIPELINE',
@@ -410,6 +408,13 @@ function runloop(stage, pipelinename, stagepath, env, options, loopcount, runblo
     });
 }
 
+// @proposal=P-EVENT-STAGE-ISOLATION (RUN 157/158) — the three reads/writes
+// of `blockcompilerstate.ACTIVECANCELLATIONTOKEN` that appeared in the
+// deployed orchestratestage body have been removed. The framework has no
+// notion of a single active stage; each message carries its own tag
+// (GENERATETAG), each dispatch is independent (DISPATCHTOACTOR). Cancellation
+// is identified by the stagetoken local — a per-invocation object — and by
+// nothing else.
 function orchestratestage(stage, pipelinename, env, stagepath, options, runblocks) {
   var compilerconstants = makecompilerconstants(options);
   var execute = runblocks === true;
@@ -444,8 +449,6 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
       throw new Error('[orchestratestage] unexpected element type: ' + elementdef.element);
     }
 
-    blockcompilerstate.ACTIVECANCELLATIONTOKEN = stagetoken;
-
     return Promise.resolve(elementfn).then(function(fn) {
       return fn(env);
     }).then(function() {
@@ -453,12 +456,8 @@ function orchestratestage(stage, pipelinename, env, stagepath, options, runblock
       return runnext();
     }).catch(function(err) {
       stagetoken.CANCELLED = true;
-      blockcompilerstate.ACTIVECANCELLATIONTOKEN = null;
       logerror(blockcompilerstate, '[BLOCKCOMPILER]', 'Element failed:', elementdef.id, err);
       throw err;
-    }).then(function(result) {
-      blockcompilerstate.ACTIVECANCELLATIONTOKEN = null;
-      return result;
     });
   }
 
@@ -546,7 +545,7 @@ function run(p, options) {
     var cenv = p.env || options.baseenv || {};
     return orchestratepipeline(p, 0, cenv, options, true).then(function(finalenv) {
       p.env = finalenv;
-      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'pipeline complete:', p.name);
+      loginfo(blockcompilerstate, '[BLOCKCOMPILER]', 'run pipeline complete:', p.name);
       return finalenv;
     });
   });
