@@ -55,7 +55,12 @@ function setaccent(selector, accentref, palette, prop) {
 
   var cssprop = prop || 'color';
 
-  SENDINSTRUCTION('RENDERACTOR', 'SETACCENT', {
+  // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR-owned
+  // 'SETACCENT' type name is obtained from its owner via
+  // RENDERACTORNAMES() rather than inlined as a string literal.
+  var RNAMES = RENDERACTORNAMES();
+
+  SENDINSTRUCTION('RENDERACTOR', RNAMES.SETACCENT, {
     SELECTOR: selector,
     PROP: cssprop,
     HEX: hex,
@@ -78,9 +83,20 @@ function setaccent(selector, accentref, palette, prop) {
 // roster is emitted internally, from run() and compile(), under the
 // gate `options.roster === true`. It is NOT exported. The frontend
 // supplies the boolean and does not walk the pipeline.
+//
+// @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the three former guards
+//   `typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined'`
+// are reduced to `typeof SENDINSTRUCTION !== 'function'`. No manifest-
+// loaded file declares MESSAGETYPES, so the second clause was always
+// true and silently disabled each path.
+//
+// @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR-owned
+// 'SETACCENT' type name (in setaccent) and the DEBUGACTOR-owned
+// 'LOGLINE' type name (in emitline) are obtained from their owners
+// via RENDERACTORNAMES() and DEBUGACTORNAMES() respectively.
 
 function showbootloader() {
-  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+  if (typeof SENDINSTRUCTION !== 'function') return;
   var bootloadermarkup =
       '<style>'
       + '@keyframes bootloaderpulse{0%,100%{opacity:0.4;transform:scale(0.9);}50%{opacity:1.0;transform:scale(1.0);}}'
@@ -104,7 +120,7 @@ function showbootloader() {
 }
 
 function hidebootloader() {
-  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+  if (typeof SENDINSTRUCTION !== 'function') return;
   SENDINSTRUCTION('RENDERACTOR', 'LOADINGINDICATOR', {
     ACTION: 'HIDE',
     ID: 'bootloadingindicator'
@@ -115,10 +131,16 @@ function hidebootloader() {
 // options.roster === true.
 function emitinitializationroster(p) {
   if (!p || !Array.isArray(p.elements)) return;
-  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+  if (typeof SENDINSTRUCTION !== 'function') return;
+
+  // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the DEBUGACTOR-owned
+  // 'LOGLINE' type name is obtained from its owner via DEBUGACTORNAMES()
+  // rather than inlined as a string literal. The accessor is read once
+  // per roster walk.
+  var DNAMES = DEBUGACTORNAMES();
 
   function emitline(kind, id, blocktype) {
-    SENDINSTRUCTION('DEBUGACTOR', 'LOGLINE', {
+    SENDINSTRUCTION('DEBUGACTOR', DNAMES.LOGLINE, {
       LEVEL: 'info',
       MESSAGE: 'set',
       DATA: { kind: kind, blockid: id, blocktype: blocktype || null },

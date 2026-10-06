@@ -14,6 +14,27 @@ var LOGLINETYPE = messagetype('LOGLINE', {
 });
 var RECOVERTYPE = messagetype('RECOVER', {});
 
+// @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the DEBUGACTOR-owned
+// SHOW type name, published by its owner. The factory layer (callwithstack.js)
+// obtains this by calling the accessor; it must not read a message-type table.
+function DEBUGACTORSHOWTYPENAME() { return 'SHOW'; }
+
+// @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the full DEBUGACTOR type-
+// name catalogue, published by its owner. The factory layer
+// (pipelinediagnostics.js::emitinitializationroster) obtains these
+// names via this accessor rather than inlining string literals. The
+// values are identical to those registered via REGISTERMESSAGETYPE
+// below.
+function DEBUGACTORNAMES() {
+  return Object.freeze({
+    INITOVERLAY: 'INITOVERLAY',
+    SHOW: 'SHOW',
+    HIDE: 'HIDE',
+    LOGLINE: 'LOGLINE',
+    RECOVER: 'RECOVER'
+  });
+}
+
 REGISTERMESSAGETYPE(INITOVERLAYTYPE);
 REGISTERMESSAGETYPE(SHOWTYPE);
 REGISTERMESSAGETYPE(HIDETYPE);
@@ -160,10 +181,6 @@ function BUILDLOGVIEWERHTML(LOGS, FILTER, AUTO) {
 // ============================================================
 // §1 — Message handlers (P64, P-ACTOR-FLOW-002)
 // ============================================================
-//
-// Handlers return { ENV, RESPONSE } or ENV or Promise<…>. Response
-// emission is handled by DISPATCHRESPOND; a response with no SENDER/TAG
-// is silently suppressed by the dispatcher.
 
 function DEBUGBEHAVIORPING(ENV, ARGS) {
   logdebug(ENV, '[DEBUGACTOR]', 'ACTION PING');
@@ -178,9 +195,6 @@ function DEBUGBEHAVIORINITOVERLAY(ENV, ARGS) {
 
   if (!DEBUGSLICE.GLOBALLISTENERSINSTALLED) {
     DEBUGSLICE.GLOBALLISTENERSINSTALLED = true;
-    // Listener registration is a one-time fire-and-forget; the listeners
-    // dispatch SENDINSTRUCTION later, so their effect flows through the
-    // transport, not through this handler's return.
     window.addEventListener('error', function(E) {
       E.preventDefault();
       logwarn(ENV, '[DEBUGACTOR]', 'GLOBAL WINDOW ERROR CAPTURED:', E.error || E);

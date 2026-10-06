@@ -222,12 +222,17 @@ function makecaptureerror(wrapped, policy) {
       resolvepromise = resolve;
       rejectpromise = reject;
 
+      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the two SUBSCRIBEBROADCAST
+      // TYPE names are obtained from their owner (mailactor.js) via
+      // BROADCASTNAMES() rather than inlined as string literals.
+      var BNAMES = BROADCASTNAMES();
+
       subfailed = SUBSCRIBEBROADCAST(
-        { TYPE: 'BLOCKFAILED', TOKEN: innertoken },
+        { TYPE: BNAMES.BLOCKFAILED, TOKEN: innertoken },
         handlefailure
       );
       subexecuted = SUBSCRIBEBROADCAST(
-        { TYPE: 'BLOCKEXECUTED', TOKEN: innertoken },
+        { TYPE: BNAMES.BLOCKEXECUTED, TOKEN: innertoken },
         handlesuccess
       );
 
@@ -286,12 +291,17 @@ function compilehttpblock(merged, id, sig, istextual, options) {
 
     var timeout = merged.timeout || mailboxresolve('mailboxwaittimeout');
 
-    return sendandawait('APIACTOR', istextual ? 'FETCH' : 'API', {
+    // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the request and response
+    // type names are obtained from their owner (apiactor.js) via
+    // APIACTORNAMES() rather than inlined as string literals.
+    var ANAMES = APIACTORNAMES();
+
+    return sendandawait('APIACTOR', istextual ? ANAMES.FETCH : ANAMES.API, {
       ENDPOINT: endpoint,
       METHOD: merged.method,
       PAYLOAD: payload,
       TOKEN: env.authsessionaccesstoken || ''
-    }, timeout, istextual ? 'FETCHRESULT' : 'APIRESULT')
+    }, timeout, istextual ? ANAMES.FETCHRESULT : ANAMES.APIRESULT)
       .then(function(result) {
         if (result && result.error) throw new Error(result.error);
         var finalresult = result && result.data !== undefined ? result.data : result;
@@ -347,6 +357,12 @@ function compileloaderblock(merged, id, sig) {
     var efftimeout = (timeout !== null) ? timeout : mailboxresolve('expectationtimeout');
     var starttime = Date.now();
 
+    // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR-owned
+    // 'LOADINGINDICATOR' type name (declared by renderactorhandlerio.js)
+    // is obtained from its owner via RENDERACTORNAMES() rather than inlined
+    // as a string literal.
+    var RNAMES = RENDERACTORNAMES();
+
     function resolvestate() {
       var state = {};
       inputnames.forEach(function(name) {
@@ -367,8 +383,19 @@ function compileloaderblock(merged, id, sig) {
       var tag = GENERATETAG();
       var payload = { ACTION: action, ID: overlayid };
       if (action === 'SHOW' && markup !== null) payload.MARKUP = markup;
-      if (typeof SENDINSTRUCTION === 'function' && typeof MESSAGETYPES !== 'undefined') {
-        SENDINSTRUCTION('RENDERACTOR', 'LOADINGINDICATOR', payload, tag, 'BLOCKCOMPILER');
+      // @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the former guard
+      //   `typeof MESSAGETYPES !== 'undefined'`
+      // is removed (Cycle 5). No manifest-loaded file declares MESSAGETYPES,
+      // and the guard, being always false, silently disabled the loading
+      // indicator dispatch. The body already used the string literal
+      // 'LOADINGINDICATOR', which RENDERACTOR registers via
+      // REGISTERMESSAGETYPE(LOADINGINDICATORTYPE).
+      //
+      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the type name itself is
+      // now obtained from its owner via RENDERACTORNAMES().LOADINGINDICATOR.
+      // (Corrective re-migration at Cycle 15e, closing RD-13-1.)
+      if (typeof SENDINSTRUCTION === 'function') {
+        SENDINSTRUCTION('RENDERACTOR', RNAMES.LOADINGINDICATOR, payload, tag, 'BLOCKCOMPILER');
       }
       return Promise.resolve();
     }
@@ -466,11 +493,16 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         var sentinelMarkup = '<span ' + SENTINELATTR + '="' + id +
           '" style="display:none" aria-hidden="true"></span>' + result.html;
 
-        return sendandawait('RENDERACTOR', 'HTML', {
+        // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR type
+        // names are obtained from their owner (renderactor.js) via
+        // RENDERACTORNAMES() rather than inlined as string literals.
+        var RNAMES = RENDERACTORNAMES();
+
+        return sendandawait('RENDERACTOR', RNAMES.HTML, {
           ID: target,
           MARKUP: sentinelMarkup,
           APPEND: !merged.replace
-        }, mailboxresolve('mailboxwaittimeout'), 'DOMRESULT')
+        }, mailboxresolve('mailboxwaittimeout'), RNAMES.DOMRESULT)
           .then(function(response) {
             if (response && typeof response === 'object' && response.ERROR !== undefined) {
               var htmlErr = new Error('[WRITER] HTML action failed for "' + target + '": ' +
@@ -563,47 +595,54 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         resolvedviewport = compilepathaccessor(props.viewport)(env);
       }
 
+      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR type
+      // names used by this compiler are obtained from their owner via
+      // RENDERACTORNAMES(). The switch remains a compiler-internal
+      // dispatch; only each case's assigned type-name value changes from
+      // a string literal to an accessor read.
+      var RNAMES = RENDERACTORNAMES();
+
       var msgtype;
       switch (cmd) {
-        case 'gethtml': msgtype = 'GETHTML'; break;
-        case 'getvalue': msgtype = 'GETVALUE'; break;
-        case 'getstyle': msgtype = 'GETSTYLE'; break;
-        case 'getposition': msgtype = 'GETPOSITION'; break;
-        case 'getlayout': msgtype = 'GETLAYOUT'; break;
-        case 'sethtml': msgtype = 'SETHTML'; break;
-        case 'setposition': msgtype = 'SETPOSITION'; break;
-        case 'setstyle': msgtype = 'SETSTYLE'; break;
-        case 'setvalue': msgtype = 'SETVALUE'; break;
-        case 'setlayout': msgtype = 'SETLAYOUT'; break;
-        case 'toggleclass': msgtype = 'TOGGLECLASS'; break;
-        case 'property': msgtype = 'PROPERTY'; break;
-        case 'getviewport': msgtype = 'GETVIEWPORT'; break;
-        case 'getscreen': msgtype = 'GETSCREEN'; break;
-        case 'matchmedia': msgtype = 'MATCHMEDIA'; break;
-        case 'getelements': msgtype = 'GETELEMENTS'; break;
-        case 'checkoverflow':            msgtype = 'CHECKOVERFLOW'; break;
-        case 'checkspacing':             msgtype = 'CHECKSPACING'; break;
-        case 'checkoverlap':             msgtype = 'CHECKOVERLAP'; break;
-        case 'checkscrollability':       msgtype = 'CHECKSCROLLABILITY'; break;
-        case 'checkcontrolledoverlay':   msgtype = 'CHECKCONTROLLEDOVERLAY'; break;
-        case 'correctoverflow':          msgtype = 'CORRECTOVERFLOW'; break;
-        case 'correctspacing':           msgtype = 'CORRECTSPACING'; break;
-        case 'correctoverlap':           msgtype = 'CORRECTOVERLAP'; break;
-        case 'correctscrollability':     msgtype = 'CORRECTSCROLLABILITY'; break;
-        case 'correctcontrolledoverlay': msgtype = 'CORRECTCONTROLLEDOVERLAY'; break;
-        case 'rewritestyleattrs':        msgtype = 'REWRITESTYLEATTRS'; break;
-        case 'consolidatestyles':        msgtype = 'CONSOLIDATESTYLES'; break;
-        case 'panelayout':               msgtype = 'PANELAYOUT'; break;
-        case 'palettegenerate':          msgtype = 'PALETTEGENERATE'; break;
-        case 'optimizecontrast':         msgtype = 'OPTIMIZECONTRAST'; break;
-        case 'optimizeharmony':          msgtype = 'OPTIMIZEHARMONY'; break;
-        case 'optimizetextvisibility':   msgtype = 'OPTIMIZETEXTVISIBILITY'; break;
-        case 'optimizebuttonvisibility': msgtype = 'OPTIMIZEBUTTONVISIBILITY'; break;
-        case 'verifycontrast':           msgtype = 'VERIFYCONTRAST'; break;
-        case 'verifytextvisibility':     msgtype = 'VERIFYTEXTVISIBILITY'; break;
-        case 'verifybuttonvisibility':   msgtype = 'VERIFYBUTTONVISIBILITY'; break;
-        case 'verifyharmony':            msgtype = 'VERIFYHARMONY'; break;
-        case 'checkfocusvisibility':     msgtype = 'CHECKFOCUSVISIBILITY'; break;
+        case 'gethtml': msgtype = RNAMES.GETHTML; break;
+        case 'getvalue': msgtype = RNAMES.GETVALUE; break;
+        case 'getstyle': msgtype = RNAMES.GETSTYLE; break;
+        case 'getposition': msgtype = RNAMES.GETPOSITION; break;
+        case 'getlayout': msgtype = RNAMES.GETLAYOUT; break;
+        case 'sethtml': msgtype = RNAMES.SETHTML; break;
+        case 'setposition': msgtype = RNAMES.SETPOSITION; break;
+        case 'setstyle': msgtype = RNAMES.SETSTYLE; break;
+        case 'setvalue': msgtype = RNAMES.SETVALUE; break;
+        case 'setlayout': msgtype = RNAMES.SETLAYOUT; break;
+        case 'toggleclass': msgtype = RNAMES.TOGGLECLASS; break;
+        case 'property': msgtype = RNAMES.PROPERTY; break;
+        case 'getviewport': msgtype = RNAMES.GETVIEWPORT; break;
+        case 'getscreen': msgtype = RNAMES.GETSCREEN; break;
+        case 'matchmedia': msgtype = RNAMES.MATCHMEDIA; break;
+        case 'getelements': msgtype = RNAMES.GETELEMENTS; break;
+        case 'checkoverflow':            msgtype = RNAMES.CHECKOVERFLOW; break;
+        case 'checkspacing':             msgtype = RNAMES.CHECKSPACING; break;
+        case 'checkoverlap':             msgtype = RNAMES.CHECKOVERLAP; break;
+        case 'checkscrollability':       msgtype = RNAMES.CHECKSCROLLABILITY; break;
+        case 'checkcontrolledoverlay':   msgtype = RNAMES.CHECKCONTROLLEDOVERLAY; break;
+        case 'correctoverflow':          msgtype = RNAMES.CORRECTOVERFLOW; break;
+        case 'correctspacing':           msgtype = RNAMES.CORRECTSPACING; break;
+        case 'correctoverlap':           msgtype = RNAMES.CORRECTOVERLAP; break;
+        case 'correctscrollability':     msgtype = RNAMES.CORRECTSCROLLABILITY; break;
+        case 'correctcontrolledoverlay': msgtype = RNAMES.CORRECTCONTROLLEDOVERLAY; break;
+        case 'rewritestyleattrs':        msgtype = RNAMES.REWRITESTYLEATTRS; break;
+        case 'consolidatestyles':        msgtype = RNAMES.CONSOLIDATESTYLES; break;
+        case 'panelayout':               msgtype = RNAMES.PANELAYOUT; break;
+        case 'palettegenerate':          msgtype = RNAMES.PALETTEGENERATE; break;
+        case 'optimizecontrast':         msgtype = RNAMES.OPTIMIZECONTRAST; break;
+        case 'optimizeharmony':          msgtype = RNAMES.OPTIMIZEHARMONY; break;
+        case 'optimizetextvisibility':   msgtype = RNAMES.OPTIMIZETEXTVISIBILITY; break;
+        case 'optimizebuttonvisibility': msgtype = RNAMES.OPTIMIZEBUTTONVISIBILITY; break;
+        case 'verifycontrast':           msgtype = RNAMES.VERIFYCONTRAST; break;
+        case 'verifytextvisibility':     msgtype = RNAMES.VERIFYTEXTVISIBILITY; break;
+        case 'verifybuttonvisibility':   msgtype = RNAMES.VERIFYBUTTONVISIBILITY; break;
+        case 'verifyharmony':            msgtype = RNAMES.VERIFYHARMONY; break;
+        case 'checkfocusvisibility':     msgtype = RNAMES.CHECKFOCUSVISIBILITY; break;
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
 
@@ -635,14 +674,10 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         outbound.OVERRIDES = props.overrides;
       }
 
-      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), 'DOMRESULT')
+      return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), RNAMES.DOMRESULT)
         .then(function(r) {
           // @proposal=P-RESPONSE-SHAPE-FIDELITY — defense-in-depth: the
-          // DOMQUERY response must never be the RENDERACTOR's env slice
-          // (the shape produced when no typed dispatcher matched, as in
-          // the RUN 5 anomaly). Such a shape indicates the response chain
-          // has been corrupted. Centralized shape validation lives in
-          // sendandawait (C20-PO).
+          // DOMQUERY response must never be the RENDERACTOR's env slice.
           if (r && typeof r === 'object' && !Array.isArray(r) &&
               Object.prototype.hasOwnProperty.call(r, 'GC') &&
               Object.prototype.hasOwnProperty.call(r, 'HTML') &&
@@ -683,7 +718,12 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (!outputkey) throw new Error('[crypto] requires outputs');
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
-      return sendandawait('RENDERACTOR', 'CRYPTO', { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), 'DOMRESULT')
+
+      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — RENDERACTOR type names
+      // obtained from their owner.
+      var RNAMES = RENDERACTORNAMES();
+
+      return sendandawait('RENDERACTOR', RNAMES.CRYPTO, { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), RNAMES.DOMRESULT)
         .then(function(r) { return wrapblockresult(r, sig); });
     };
     return wrapcompiledfn(innerfn, 'crypto', id);
@@ -704,15 +744,20 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       var command = merged.command || {};
       var cmd = command.COMMAND;
       var args = command.args || {};
-      var responsetype = 'TASKRESULT';
+
+      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — EXECUTIONACTOR type
+      // names obtained from their owner.
+      var ENAMES = EXECUTIONACTORNAMES();
+
+      var responsetype = ENAMES.TASKRESULT;
       var msgtype;
       switch (cmd) {
-        case 'get': msgtype = 'GETSTATUS'; break;
-        case 'tasks': msgtype = 'GETTASKS'; break;
-        case 'taskstatus': msgtype = 'GETTASKSTATUS'; break;
-        case 'awaittask': msgtype = 'AWAITTASK'; break;
-        case 'canceltask': msgtype = 'CANCELTASK'; break;
-        case 'stoptask': msgtype = 'STOPTASK'; break;
+        case 'get': msgtype = ENAMES.GETSTATUS; break;
+        case 'tasks': msgtype = ENAMES.GETTASKS; break;
+        case 'taskstatus': msgtype = ENAMES.GETTASKSTATUS; break;
+        case 'awaittask': msgtype = ENAMES.AWAITTASK; break;
+        case 'canceltask': msgtype = ENAMES.CANCELTASK; break;
+        case 'stoptask': msgtype = ENAMES.STOPTASK; break;
         default: throw new Error('[executionquery] unknown command: ' + cmd);
       }
       return sendandawait('EXECUTIONACTOR', msgtype, args, mailboxresolve('mailboxwaittimeout'), responsetype)

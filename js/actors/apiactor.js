@@ -21,6 +21,19 @@ REGISTERMESSAGETYPE(FETCHRESULTTYPE);
 REGISTERRESPONSETYPE('APIRESULT');
 REGISTERRESPONSETYPE('FETCHRESULT');
 
+// @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the APIACTOR-owned type
+// names, published by their owner. The factory layer
+// (blockcompilers.js::compilehttpblock) obtains these by calling the
+// accessor rather than inlining the string literals.
+function APIACTORNAMES() {
+  return Object.freeze({
+    API: 'API',
+    FETCH: 'FETCH',
+    APIRESULT: 'APIRESULT',
+    FETCHRESULT: 'FETCHRESULT'
+  });
+}
+
 function APIREQUESTCORE(ENV, ARGS, ISTEXTUAL) {
   logdebug(ENV, '[APIACTOR]', 'ACTION:', ISTEXTUAL ? 'FETCH' : 'API', 'METHOD:', ARGS.METHOD, 'ENDPOINT:', ARGS.ENDPOINT);
 

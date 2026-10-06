@@ -111,12 +111,20 @@ function callwithstack(initialstate, label, type, fn, args, options) {
             // composite), the DEBUGACTOR.SHOW dispatch is skipped. The
             // composite's policy owns the fall-through decision; a transient
             // failure must not render the overlay.
+            //
+            // @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the DEBUGACTOR's
+            // SHOW type name is now obtained from the DEBUGACTOR-owned
+            // accessor DEBUGACTORSHOWTYPENAME(), which returns the string
+            // 'SHOW'. The former `typeof MESSAGETYPES !== 'undefined'`
+            // clause in the guard is removed: no manifest-loaded file
+            // declares MESSAGETYPES, and the guard, being always false,
+            // silently disabled this whole block.
             if (!options.suppressshow) {
                 var sendinstfn = (typeof SENDINSTRUCTION === 'function') ? SENDINSTRUCTION : null;
                 var gentagfn = (typeof GENERATETAG === 'function') ? GENERATETAG : function() { return 'tag'; };
-                if (sendinstfn && typeof MESSAGETYPES !== 'undefined') {
+                if (sendinstfn) {
                     try {
-                        sendinstfn('DEBUGACTOR', MESSAGETYPES.SHOW, {
+                        sendinstfn('DEBUGACTOR', DEBUGACTORSHOWTYPENAME(), {
                             ERROR: err,
                             CONTINUATION: (err.diagnostic && err.diagnostic.CONTINUATION) || null
                         }, gentagfn(), 'callwithstack');
@@ -145,4 +153,3 @@ function callwithstack(initialstate, label, type, fn, args, options) {
     promise.cont = k;
     return promise;
 }
-

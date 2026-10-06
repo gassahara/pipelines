@@ -359,7 +359,12 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
       : mailboxresolve('mailboxwaittimeout');
     var catchtimeout = (elementdef && elementdef.catchtimeout === true);
 
-    return exchange('EXECUTIONACTOR', MESSAGETYPES.EXECUTEELEMENT, descriptor, waitduration, MESSAGETYPES.TASKRESULT, tag)
+    // @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the submission-interface
+    // type names are obtained from their owner (EXECUTIONACTOR), not read
+    // from a message-type table. See the RUN 89 materialization for the
+    // accessor's declaration.
+    var SUBMISSIONTYPES = EXECUTIONACTORSUBMISSIONTYPES();
+    return exchange('EXECUTIONACTOR', SUBMISSIONTYPES.ELEMENT, descriptor, waitduration, SUBMISSIONTYPES.RESPONSE, tag)
       .then(function(mailboxmessage) {
         // @proposal=P-BLOCKCOMPILER-EXCHANGE-SHAPE-001 — dual-shape unwrap.
         // Promise-path deliveries are flat RESPONSEPAYLOAD objects; mailbox-

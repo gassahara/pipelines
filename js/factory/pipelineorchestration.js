@@ -58,10 +58,15 @@ function sendandawait(recipient, type, payload, timeout, responsetype) {
 // ============================================================
 
 function loadscriptwithwitness(entry, basepath, timeout) {
-  return sendandawait('RENDERACTOR', 'LOADSCRIPT',
+  // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR-owned
+  // type names ('LOADSCRIPT' request, 'SCRIPTLOADED' response) are
+  // obtained from their owner via RENDERACTORNAMES() rather than
+  // inlined as string literals.
+  var RNAMES = RENDERACTORNAMES();
+  return sendandawait('RENDERACTOR', RNAMES.LOADSCRIPT,
                       { SRC: basepath + entry.src },
                       mailboxresolve('mailboxwaittimeout'),
-                      'SCRIPTLOADED')
+                      RNAMES.SCRIPTLOADED)
     .then(function(response) {
       if (response && response.ERROR) throw new Error(response.ERROR);
       if (entry.provides && entry.provides.length > 0) {
@@ -203,7 +208,12 @@ function registereventstage(stage, pipelinename, stagepath, env, options) {
     BRIEFCASE: stage.briefcase || {},
     OPTIONS: options || {}
   };
-  return sendandawait('RENDERACTOR', 'REGISTEREVENTLISTENER', payload, mailboxresolve('mailboxwaittimeout'), 'EVENTLISTENERREGISTERED')
+  // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR-owned
+  // type names ('REGISTEREVENTLISTENER' request,
+  // 'EVENTLISTENERREGISTERED' response) are obtained from their owner
+  // via RENDERACTORNAMES() rather than inlined as string literals.
+  var RNAMES = RENDERACTORNAMES();
+  return sendandawait('RENDERACTOR', RNAMES.REGISTEREVENTLISTENER, payload, mailboxresolve('mailboxwaittimeout'), RNAMES.EVENTLISTENERREGISTERED)
     .then(function(response) {
       if (response && response.error) {
         throw new Error('[registereventstage] Registration failed for ' + stage.id + ': ' + response.error);
@@ -233,7 +243,13 @@ function buildrecoveryerrorstate(err, elementid, pipelinename, stagepath) {
 }
 
 function dispatchcccrecovery(type, pipelinename, stagepath, elementid, continuation) {
-  if (typeof SENDINSTRUCTION !== 'function' || typeof MESSAGETYPES === 'undefined') return;
+  // @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the former guard
+  //   `typeof MESSAGETYPES === 'undefined'`
+  // is removed. No manifest-loaded file declares MESSAGETYPES, and the
+  // guard, being always true, silently disabled CCC recovery dispatch.
+  // The body uses the `type` parameter (a string in
+  // {'CCCRETRY','CCCCONTINUE','CCCABORT'}), which the transport accepts.
+  if (typeof SENDINSTRUCTION !== 'function') return;
   SENDINSTRUCTION('EXECUTIONACTOR', type, {
     PIPELINEID: pipelinename || 'UNKNOWNPIPELINE',
     PATH: (stagepath || []).concat([elementid]),

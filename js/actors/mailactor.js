@@ -362,6 +362,18 @@ var BLOCKFAILEDTYPE = messagetype('BLOCKFAILED', {
 REGISTERMESSAGETYPE(BLOCKFAILEDTYPE);
 REGISTERACTORMESSAGE('BROADCAST', BLOCKFAILEDTYPE, null);
 
+// @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the BROADCAST type names
+// owned by mailactor.js, published by their owner. The factory layer
+// (blockcompilers.js::makecaptureerror) obtains these by calling the
+// accessor rather than inlining the string literals. The values are
+// identical to the strings REGISTERBROADCASTTYPE installs.
+function BROADCASTNAMES() {
+  return Object.freeze({
+    BLOCKEXECUTED: 'BLOCKEXECUTED',
+    BLOCKFAILED: 'BLOCKFAILED'
+  });
+}
+
 // ============================================================
 // §8 — Wait primitive
 // ============================================================

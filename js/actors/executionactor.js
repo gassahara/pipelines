@@ -72,6 +72,39 @@ var REGISTERPIPELINETYPE = messagetype('REGISTERPIPELINE', {
 });
 var TASKRESULTTYPE = messagetype('TASKRESULT', {});
 
+// @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the submission-interface
+// type names, published by their owner. The factory layer obtains these
+// by calling this accessor; it must not read a message-type table.
+function EXECUTIONACTORSUBMISSIONTYPES() {
+  return { ELEMENT: 'EXECUTEELEMENT', RESPONSE: 'TASKRESULT' };
+}
+
+// @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the full EXECUTIONACTOR
+// type-name catalogue, published by its owner. The factory layer
+// (blockcompilers.js::compilehttpblock / compilers.executionquery)
+// obtains these names via this accessor rather than inlining string
+// literals. The values are identical to those registered via
+// REGISTERMESSAGETYPE above.
+function EXECUTIONACTORNAMES() {
+  return Object.freeze({
+    PIPELINELOADED: 'PIPELINELOADED',
+    ENVUPDATED: 'ENVUPDATED',
+    GETSTATUS: 'GETSTATUS',
+    EXECUTEELEMENT: 'EXECUTEELEMENT',
+    AWAITTASK: 'AWAITTASK',
+    GETTASKS: 'GETTASKS',
+    GETTASKSTATUS: 'GETTASKSTATUS',
+    CANCELTASK: 'CANCELTASK',
+    STOPTASK: 'STOPTASK',
+    CCCABORT: 'CCCABORT',
+    CCCCONTINUE: 'CCCCONTINUE',
+    CCCRETRY: 'CCCRETRY',
+    TASKSETTLED: 'TASKSETTLED',
+    REGISTERPIPELINE: 'REGISTERPIPELINE',
+    TASKRESULT: 'TASKRESULT'
+  });
+}
+
 REGISTERMESSAGETYPE(PIPELINELOADEDTYPE);
 REGISTERMESSAGETYPE(ENVUPDATEDTYPE);
 REGISTERMESSAGETYPE(GETSTATUSTYPE);
