@@ -1,75 +1,31 @@
-var CHECKOVERFLOWTYPE = messagetype('CHECKOVERFLOW', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CORRECTOVERFLOWTYPE = messagetype('CORRECTOVERFLOW', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CHECKSPACINGTYPE = messagetype('CHECKSPACING', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CORRECTSPACINGTYPE = messagetype('CORRECTSPACING', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CHECKOVERLAPTYPEType = messagetype('CHECKOVERLAP', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CORRECTOVERLAPTYPEType = messagetype('CORRECTOVERLAP', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CHECKSCROLLABILITYTYPEType = messagetype('CHECKSCROLLABILITY', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CORRECTSCROLLABILITYTYPEType = messagetype('CORRECTSCROLLABILITY', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CHECKCONTROLLEDOVERLAYTYPEType = messagetype('CHECKCONTROLLEDOVERLAY', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var CORRECTCONTROLLEDOVERLAYTYPEType = messagetype('CORRECTCONTROLLEDOVERLAY', {
-  ID: stringtype(),
-  OPTIONS: optionaltype(objecttype())
-});
-var REWRITESTYLEATTRSTYPEType = messagetype('REWRITESTYLEATTRS', {
-  ID: stringtype(),
-  RULES: arraytype()
-});
-var CONSOLIDATESTYLESTYPEType = messagetype('CONSOLIDATESTYLES', {
-  ID: stringtype(),
-  SAFEPROPS: optionaltype(arraytype())
-});
-var PANELAYOUTTYPEType = messagetype('PANELAYOUT', {
-  ID: stringtype(),
-  SHAPE: stringtype(),
-  VIEWPORT: objecttype(),
-  HEIGHT: optionaltype(anytype())
-});
+REGISTERMESSAGETYPE('CHECKOVERFLOW');
+REGISTERMESSAGETYPE('CORRECTOVERFLOW');
+REGISTERMESSAGETYPE('CHECKSPACING');
+REGISTERMESSAGETYPE('CORRECTSPACING');
+REGISTERMESSAGETYPE('CHECKOVERLAP');
+REGISTERMESSAGETYPE('CORRECTOVERLAP');
+REGISTERMESSAGETYPE('CHECKSCROLLABILITY');
+REGISTERMESSAGETYPE('CORRECTSCROLLABILITY');
+REGISTERMESSAGETYPE('CHECKCONTROLLEDOVERLAY');
+REGISTERMESSAGETYPE('CORRECTCONTROLLEDOVERLAY');
+REGISTERMESSAGETYPE('REWRITESTYLEATTRS');
+REGISTERMESSAGETYPE('CONSOLIDATESTYLES');
+REGISTERMESSAGETYPE('PANELAYOUT');
 
-REGISTERMESSAGETYPE(CHECKOVERFLOWTYPE);
-REGISTERMESSAGETYPE(CORRECTOVERFLOWTYPE);
-REGISTERMESSAGETYPE(CHECKSPACINGTYPE);
-REGISTERMESSAGETYPE(CORRECTSPACINGTYPE);
-REGISTERMESSAGETYPE(CHECKOVERLAPTYPEType);
-REGISTERMESSAGETYPE(CORRECTOVERLAPTYPEType);
-REGISTERMESSAGETYPE(CHECKSCROLLABILITYTYPEType);
-REGISTERMESSAGETYPE(CORRECTSCROLLABILITYTYPEType);
-REGISTERMESSAGETYPE(CHECKCONTROLLEDOVERLAYTYPEType);
-REGISTERMESSAGETYPE(CORRECTCONTROLLEDOVERLAYTYPEType);
-REGISTERMESSAGETYPE(REWRITESTYLEATTRSTYPEType);
-REGISTERMESSAGETYPE(CONSOLIDATESTYLESTYPEType);
-REGISTERMESSAGETYPE(PANELAYOUTTYPEType);
+// @proposal=P-STYLE-APPLICATION-GUARDS — the 13 direct-null handlers in this
+// file treat a missing target as a non-error skip. A caller that fires
+// before its target is provisioned (e.g. the recipe pipeline's style stage
+// listening on #styleselect while the recipe scaffold has not yet been
+// inserted) receives `{ APPLIED: false, SKIPPED: 'element not found: …' }`
+// instead of `{ ERROR: 'element not found: …' }`. The domquery block's
+// throw-on-r.ERROR path (blockcompilers.js::compilers.domquery) is thus not
+// entered for this class of failure. Non-missing-target error paths are
+// unchanged: a genuine throw inside SUREWRITESTYLEATTRS, SUCONSOLIDATESTYLES,
+// or an LC* check continues to propagate.
 
 function RENDERHANDLER_CHECKOVERFLOW(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var OPTS = ARGS.OPTIONS || {};
   var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
@@ -81,7 +37,7 @@ function RENDERHANDLER_CHECKOVERFLOW(ENV, ARGS) {
 
 function RENDERHANDLER_CORRECTOVERFLOW(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var OPTS = ARGS.OPTIONS || {};
   var VW = (typeof OPTS.viewportwidth === 'number' && OPTS.viewportwidth > 0) ? OPTS.viewportwidth : SUDETECTVIEWPORTWIDTH();
   if (VW === null) return { RESPONSE: { SKIPPED: 'viewport-undetectable' } };
@@ -94,7 +50,7 @@ function RENDERHANDLER_CORRECTOVERFLOW(ENV, ARGS) {
 
 function RENDERHANDLER_CHECKSPACING(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var OPTS = ARGS.OPTIONS || {};
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
@@ -105,7 +61,7 @@ function RENDERHANDLER_CHECKSPACING(ENV, ARGS) {
 
 function RENDERHANDLER_CORRECTSPACING(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var OPTS = ARGS.OPTIONS || {};
   var MINGAP = (typeof OPTS.mingap === 'number') ? OPTS.mingap : 12;
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
@@ -116,53 +72,53 @@ function RENDERHANDLER_CORRECTSPACING(ENV, ARGS) {
 
 function RENDERHANDLER_CHECKOVERLAP(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: { VIOLATIONS: LCCHECKOVERLAPDOC(ROOT) } };
 }
 
 function RENDERHANDLER_CORRECTOVERLAP(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var RESULT = LCCORRECTOVERLAPDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 }
 
 function RENDERHANDLER_CHECKSCROLLABILITY(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: { VIOLATIONS: LCCHECKSCROLLABILITYDOC(ROOT) } };
 }
 
 function RENDERHANDLER_CORRECTSCROLLABILITY(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var RESULT = LCCORRECTSCROLLABILITYDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 }
 
 function RENDERHANDLER_CHECKCONTROLLEDOVERLAY(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   return { RESPONSE: { VIOLATIONS: LCCHECKCONTROLLEDOVERLAYDOC(ROOT) } };
 }
 
 function RENDERHANDLER_CORRECTCONTROLLEDOVERLAY(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var RESULT = LCCORRECTCONTROLLEDOVERLAYDOC(ROOT);
   return { RESPONSE: { APPLIED: RESULT.applied, CONVERGED: RESULT.converged } };
 }
 
 function RENDERHANDLER_REWRITESTYLEATTRS(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   return { RESPONSE: { APPLIED: SUREWRITESTYLEATTRS(ROOT, ARGS.RULES || [], SC) } };
 }
 
 function RENDERHANDLER_CONSOLIDATESTYLES(ENV, ARGS) {
   var ROOT = document.getElementById(ARGS.ID);
-  if (!ROOT) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!ROOT) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   var SAFEPROPS = ARGS.SAFEPROPS || (SC && SC.createstylizerconstants ? SC.createstylizerconstants().safeprops : null);
   return { RESPONSE: { APPLIED: SUCONSOLIDATESTYLES(ROOT, SAFEPROPS, SC) } };
@@ -170,7 +126,7 @@ function RENDERHANDLER_CONSOLIDATESTYLES(ENV, ARGS) {
 
 function RENDERHANDLER_PANELAYOUT(ENV, ARGS) {
   var EL = document.getElementById(ARGS.ID);
-  if (!EL) return { RESPONSE: { ERROR: 'element not found: ' + ARGS.ID } };
+  if (!EL) return { RESPONSE: { APPLIED: false, SKIPPED: 'element not found: ' + ARGS.ID } };
   var SC = (typeof stylizercore !== 'undefined') ? stylizercore : null;
   if (!SC || typeof SC.computepanemaxwidth !== 'function') return { RESPONSE: { ERROR: 'stylizercore.computepanemaxwidth unavailable' } };
   var VIEWPORT = ARGS.VIEWPORT || {};
@@ -196,41 +152,54 @@ function RENDERHANDLER_PANELAYOUT(ENV, ARGS) {
   return { RESPONSE: { APPLIED: true, MAXWIDTH: MAXW, SHAPE: SHAPE, ROLE: ROLE, HEIGHT: HEIGHTAPPLIED } };
 }
 
-REGISTERACTORMESSAGE('RENDERACTOR', CHECKOVERFLOWTYPE,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKOVERFLOW',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CHECKOVERFLOW);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CORRECTOVERFLOWTYPE,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTOVERFLOW',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CORRECTOVERFLOW);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CHECKSPACINGTYPE,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKSPACING',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CHECKSPACING);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CORRECTSPACINGTYPE,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTSPACING',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CORRECTSPACING);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CHECKOVERLAPTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKOVERLAP',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CHECKOVERLAP);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CORRECTOVERLAPTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTOVERLAP',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CORRECTOVERLAP);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CHECKSCROLLABILITYTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKSCROLLABILITY',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CHECKSCROLLABILITY);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CORRECTSCROLLABILITYTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTSCROLLABILITY',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CORRECTSCROLLABILITY);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CHECKCONTROLLEDOVERLAYTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CHECKCONTROLLEDOVERLAY',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CHECKCONTROLLEDOVERLAY);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CORRECTCONTROLLEDOVERLAYTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CORRECTCONTROLLEDOVERLAY',
+  { ID: 'string', OPTIONS: 'object?' },
   RENDERHANDLER_CORRECTCONTROLLEDOVERLAY);
 
-REGISTERACTORMESSAGE('RENDERACTOR', REWRITESTYLEATTRSTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'REWRITESTYLEATTRS',
+  { ID: 'string', RULES: 'array' },
   RENDERHANDLER_REWRITESTYLEATTRS);
 
-REGISTERACTORMESSAGE('RENDERACTOR', CONSOLIDATESTYLESTYPEType,
+REGISTERACTORMESSAGE('RENDERACTOR', 'CONSOLIDATESTYLES',
+  { ID: 'string', SAFEPROPS: 'array?' },
   RENDERHANDLER_CONSOLIDATESTYLES);
 
-REGISTERACTORMESSAGE('RENDERACTOR', PANELAYOUTTYPEType,
-		     RENDERHANDLER_PANELAYOUT);
+REGISTERACTORMESSAGE('RENDERACTOR', 'PANELAYOUT',
+  { ID: 'string', SHAPE: 'string', VIEWPORT: 'object', HEIGHT: 'any?' },
+  RENDERHANDLER_PANELAYOUT);
