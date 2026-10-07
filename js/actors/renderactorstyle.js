@@ -226,45 +226,140 @@ function SUHARMONYSCORE(fg, bg, sc) {
 }
 
 // ============================================================
-// @proposal=P-PANEL-CONTENT-DECORATION (RUN 152) — extended walker.
+// @proposal=P-WALKER-STEP-MEMOIZATION (RUN 164/165) — the rule walker.
+//
+// Plan/apply factoring. The plan phase resolves each step rule's candidate
+// set exactly once and marks each candidate with a per-rule expando; the
+// apply phase performs a single recursive walk with O(1) membership checks.
+// Rule context is computed once per rule; a rule may carry a function-form
+// style (stylefn) that receives the matched element and the rule context
+// per application. Total cost is O(N · K) per invocation.
+//
+// The walker is ES5 and functional recursive: no imperative for/while;
+// the tree walk is a recursion over children indices.
 // ============================================================
+
+var SRSAMARKERPREFIX = '__srsa_step_';
+
+function hasstepfields(rule) {
+    return (rule.axis !== undefined) || (rule.index !== undefined) ||
+           (rule.skip !== undefined) || (rule.depth !== undefined) ||
+           (rule.content !== undefined);
+}
+
+function buildstep(rule) {
+    var step = { axis: (rule.axis !== undefined) ? rule.axis : 'descendant' };
+    if (rule.tag !== undefined) step.tag = rule.tag;
+    if (rule.class !== undefined) step.class = rule.class;
+    if (rule.id !== undefined) step.id = rule.id;
+    if (rule.index !== undefined) step.index = rule.index;
+    if (rule.skip !== undefined) step.skip = rule.skip;
+    if (rule.depth !== undefined) step.depth = rule.depth;
+    if (rule.content !== undefined) step.content = rule.content;
+    return step;
+}
+
+// PLAN PHASE — build a plan array of entries:
+//   { rule, isstep, markkey, candidates, rulecontext }
+// Every step rule's candidates are computed exactly once; every candidate
+// is marked with the entry's markkey. `sink` is called once per completed
+// entry so that partial plans are observable to the caller's try/finally.
+function buildplan(root, rules, sc, sink) {
+    return rules.reduce(function(plan, rule, ri) {
+        var entry;
+        if (hasstepfields(rule)) {
+            var candidates = SUAPPLYSTEP([root], buildstep(rule), null, sc);
+            var markkey = SRSAMARKERPREFIX + ri;
+            candidates.forEach(function(c) { c[markkey] = true; });
+            entry = {
+                rule: rule,
+                isstep: true,
+                markkey: markkey,
+                candidates: candidates,
+                rulecontext: { root: root, sc: sc }
+            };
+        } else {
+            entry = {
+                rule: rule,
+                isstep: false,
+                markkey: null,
+                candidates: null,
+                rulecontext: { root: root, sc: sc }
+            };
+        }
+        var nextplan = plan.concat([entry]);
+        sink(nextplan);
+        return nextplan;
+    }, []);
+}
+
+function matchentry(EL, entry) {
+    if (entry.isstep) return EL[entry.markkey] === true;
+    var rule = entry.rule;
+    if (rule.id && EL.id === rule.id) return true;
+    if (rule.tag && EL.tagName && EL.tagName.toLowerCase() === rule.tag.toLowerCase()) return true;
+    if (rule.class && EL.classList && EL.classList.contains(rule.class)) return true;
+    return false;
+}
+
+function applystyle(EL, style) {
+    Object.keys(style).forEach(function(prop) { EL.style[prop] = style[prop]; });
+}
+
+// APPLY PHASE — dispatch record-form style or function-form stylefn.
+function applyentry(EL, entry, counter) {
+    if (!matchentry(EL, entry)) return counter;
+    if (typeof entry.rule.stylefn === 'function') {
+        var computed = entry.rule.stylefn(EL, entry.rulecontext);
+        if (computed) {
+            applystyle(EL, computed);
+            return counter + 1;
+        }
+        return counter;
+    }
+    if (entry.rule.style) {
+        applystyle(EL, entry.rule.style);
+        return counter + 1;
+    }
+    return counter;
+}
+
+function applyplan(EL, plan, counter) {
+    return plan.reduce(function(acc, entry) { return applyentry(EL, entry, acc); }, counter);
+}
+
+function walkchildren(children, i, plan, counter) {
+    if (i >= children.length) return counter;
+    var afternode = walknode(children[i], plan, counter);
+    return walkchildren(children, i + 1, plan, afternode);
+}
+
+function walknode(EL, plan, counter) {
+    var afterplan = applyplan(EL, plan, counter);
+    return walkchildren(Array.prototype.slice.call(EL.children), 0, plan, afterplan);
+}
+
+// CLEANUP — remove markers left by the plan phase, including on partial
+// plans (RC-164-1). Called from the walker's try/finally.
+function cleanup(plan) {
+    plan.forEach(function(entry) {
+        if (entry.isstep && entry.candidates) {
+            entry.candidates.forEach(function(c) { delete c[entry.markkey]; });
+        }
+    });
+}
+
 function SUREWRITESTYLEATTRS(root, rules, sc) {
-    var count = 0;
-    function matchesStep(EL, rule) {
-        var step = {};
-        step.axis = (rule.axis !== undefined) ? rule.axis : 'descendant';
-        if (rule.tag !== undefined) step.tag = rule.tag;
-        if (rule.class !== undefined) step.class = rule.class;
-        if (rule.id !== undefined) step.id = rule.id;
-        if (rule.index !== undefined) step.index = rule.index;
-        if (rule.skip !== undefined) step.skip = rule.skip;
-        if (rule.depth !== undefined) step.depth = rule.depth;
-        if (rule.content !== undefined) step.content = rule.content;
-        var candidates = SUAPPLYSTEP([root], step, null, sc);
-        return candidates.indexOf(EL) !== -1;
+    var plan = [];
+    var counter = { n: 0 };
+    function sink(nextplan) { plan = nextplan; }
+    try {
+        buildplan(root, rules, sc, sink);
+        walknode(root, plan, counter);
+    } finally {
+        cleanup(plan);
     }
-    function applyrules(EL) {
-        rules.forEach(function(rule) {
-            var hasstep = (rule.axis !== undefined) || (rule.index !== undefined) ||
-                          (rule.skip !== undefined) || (rule.depth !== undefined) ||
-                          (rule.content !== undefined);
-            var matched = false;
-            if (hasstep) {
-                matched = matchesStep(EL, rule);
-            } else {
-                if (rule.id && EL.id === rule.id) matched = true;
-                else if (rule.tag && EL.tagName && EL.tagName.toLowerCase() === rule.tag.toLowerCase()) matched = true;
-                else if (rule.class && EL.classList && EL.classList.contains(rule.class)) matched = true;
-            }
-            if (matched && rule.style) {
-                Object.keys(rule.style).forEach(function(prop) { EL.style[prop] = rule.style[prop]; });
-                count++;
-            }
-        });
-        Array.prototype.slice.call(EL.children).forEach(applyrules);
-    }
-    applyrules(root);
-    return count;
+    return counter.n;
 }
 
 function SUCONSOLIDATESTYLES(root, safeprops, sc) {
