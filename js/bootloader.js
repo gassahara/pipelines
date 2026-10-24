@@ -66,7 +66,9 @@ var pipelinesmanifest = [
     'RESPONSETYPESREF', 'GETRESPONSETYPES',
     'REGISTERRESPONSETYPE', 'UNREGISTERRESPONSETYPE',
     'CCCREGISTRYREF', 'GETCCCREGISTRY',
-    'REGISTERCCCHANDLER', 'UNREGISTERCCCHANDLER', 'CCCNOTIFY'
+    'REGISTERCCCHANDLER', 'UNREGISTERCCCHANDLER', 'CCCNOTIFY',
+    'TRANSDUCERSETREGISTRYREF', 'REGISTERTRANSDUCERSET', 'GETTRANSDUCERSET',
+    'UNREGISTERTRANSDUCERSET'
   ] },
   { src: 'factory/layoutdirectives.js', provides: ['createlayoutdirectives'] },
   { src: 'fundamental/domref.js', provides: ['getrawelement', 'createdomref', 'removeref', 'isvaliddomref'] },
@@ -154,6 +156,9 @@ var pipelinesmanifest = [
   { src: 'actors/renderactorhandlerio.js',
     source: 'actors/renderactor.js',
     provides: [] },
+  { src: 'actors/renderactorhandlersettransformations.js',
+    source: 'actors/renderactor.js',
+    provides: [] },
   { src: 'actors/renderactor.js', provides: [
     'RENDERBEHAVIOR',
     'ENQUEUERENDER', 'ENQUEUECLEAR', 'ENQUEUEHTML', 'ENQUEUEREMOVE',
@@ -182,7 +187,8 @@ var pipelinesmanifest = [
     'OPTIMIZETEXTVISIBILITY', 'OPTIMIZEBUTTONVISIBILITY',
     'VERIFYCONTRAST', 'VERIFYTEXTVISIBILITY', 'VERIFYBUTTONVISIBILITY',
     'VERIFYHARMONY', 'CHECKFOCUSVISIBILITY',
-    'LOADSCRIPT', 'LOADINGINDICATOR'
+    'LOADSCRIPT', 'LOADINGINDICATOR',
+    'SETTRANSFORMATIONS'
   ] },
 
   { src: 'factory/pipelinecompilers.js',

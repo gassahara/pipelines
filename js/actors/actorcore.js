@@ -805,3 +805,50 @@ function FLUSHALLBATCHES() {
     FLUSHBATCH(K);
   });
 }
+
+// ---------- §19 — Transducer set registry ----------
+//
+// Ref-swap registry for transducer sets supplied to the SETTRANSFORMATIONS
+// command (frozen spec RUN 33, Iter 11). Sibling to RESPONSETYPESREF /
+// CCCREGISTRYREF in shape; supplies the local-configuration axis per
+// Instr-18 ("RULES are global, transducers are local").
+//
+// SET shape: { name: string, transducers: function[] }.
+// Registered sets are frozen by the caller; the registry freezes its own
+// map but does not deep-freeze SET.
+
+var TRANSDUCERSETREGISTRYREF = { current: Object.freeze({}) };
+
+function REGISTERTRANSDUCERSET(NAME, SET) {
+  if (typeof NAME !== 'string' || NAME.length === 0) {
+    throw new Error('[REGISTERTRANSDUCERSET] NAME must be a non-empty string');
+  }
+  if (!SET || typeof SET !== 'object' || !Array.isArray(SET.transducers)) {
+    throw new Error('[REGISTERTRANSDUCERSET] SET must be an object with .transducers array');
+  }
+  var CURRENT = TRANSDUCERSETREGISTRYREF.current;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) { NEXT[K] = CURRENT[K]; });
+  NEXT[NAME] = SET;
+  TRANSDUCERSETREGISTRYREF.current = Object.freeze(NEXT);
+  return SET;
+}
+
+function GETTRANSDUCERSET(NAME) {
+  if (typeof NAME !== 'string' || NAME.length === 0) return null;
+  var CURRENT = TRANSDUCERSETREGISTRYREF.current;
+  if (!Object.prototype.hasOwnProperty.call(CURRENT, NAME)) return null;
+  return CURRENT[NAME];
+}
+
+function UNREGISTERTRANSDUCERSET(NAME) {
+  if (typeof NAME !== 'string' || NAME.length === 0) return false;
+  var CURRENT = TRANSDUCERSETREGISTRYREF.current;
+  if (!Object.prototype.hasOwnProperty.call(CURRENT, NAME)) return false;
+  var NEXT = {};
+  Object.keys(CURRENT).forEach(function (K) {
+    if (K !== NAME) NEXT[K] = CURRENT[K];
+  });
+  TRANSDUCERSETREGISTRYREF.current = Object.freeze(NEXT);
+  return true;
+}

@@ -578,6 +578,14 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (typeof props.rules === 'string' && (containspathaccessorchars(props.rules) || (sig.inputs || []).indexOf(props.rules) !== -1)) {
         resolvedrules = compilepathaccessor(props.rules)(env);
       }
+      // INST-11b.1 — env-path resolution for `props.sources` (matches the
+      // `rewritestyleattrs` pattern used for `props.rules` above). The
+      // `settransformations` command carries an array of source objects
+      // via env.
+      var resolvedsources = props.sources;
+      if (typeof props.sources === 'string' && (containspathaccessorchars(props.sources) || (sig.inputs || []).indexOf(props.sources) !== -1)) {
+        resolvedsources = compilepathaccessor(props.sources)(env);
+      }
       var resolvedsafeprops = props.safeprops;
       if (typeof props.safeprops === 'string' && (containspathaccessorchars(props.safeprops) || (sig.inputs || []).indexOf(props.safeprops) !== -1)) {
         resolvedsafeprops = compilepathaccessor(props.safeprops)(env);
@@ -631,6 +639,10 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         case 'correctscrollability':     msgtype = RNAMES.CORRECTSCROLLABILITY; break;
         case 'correctcontrolledoverlay': msgtype = RNAMES.CORRECTCONTROLLEDOVERLAY; break;
         case 'rewritestyleattrs':        msgtype = RNAMES.REWRITESTYLEATTRS; break;
+        // INST-11b.2 — new dispatch case for SETTRANSFORMATIONS. Sibling
+        // of `rewritestyleattrs` (same rule-walker mechanism family, distinct
+        // application; Instr-19, C-10).
+        case 'settransformations':       msgtype = RNAMES.SETTRANSFORMATIONS; break;
         case 'consolidatestyles':        msgtype = RNAMES.CONSOLIDATESTYLES; break;
         case 'panelayout':               msgtype = RNAMES.PANELAYOUT; break;
         case 'palettegenerate':          msgtype = RNAMES.PALETTEGENERATE; break;
@@ -646,11 +658,17 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
 
+      // INST-11b.3 — outbound fields for settransformations. The handler
+      // (renderactorhandlersettransformations.js) reads SOURCES, RULES,
+      // TRANSDUCERSET, MODE. Other command cases ignore these fields.
       var outbound = {
         ID: props.id,
         VALUE: resolvedvalue,
         CLASSNAME: resolvedclassname,
         RULES: resolvedrules,
+        SOURCES: resolvedsources,
+        TRANSDUCERSET: props.transducerset,
+        MODE: props.mode,
         SAFEPROPS: resolvedsafeprops,
         THEMESTYLES: resolvedthemestyles,
         MINRATIO: props.minratio,

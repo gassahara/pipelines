@@ -21,6 +21,11 @@ REGISTERRESPONSETYPE('SCRIPTLOADED');
 // RENDERACTOR split-file set (its type value is declared in
 // renderactorhandlerio.js, pos 35). The catalogue here covers the
 // entire RENDERACTOR set, including that file's names.
+//
+// Pivot (RUN 33) — SETTRANSFORMATIONS is owned by
+// renderactorhandlersettransformations.js (added at Cycle 8 of the
+// pivot's blueprint). Its name is added to the catalogue here so that
+// factory-layer callers can reference it without inlining the literal.
 function RENDERACTORNAMES() {
   return Object.freeze({
     RENDER: 'RENDER',
@@ -82,7 +87,8 @@ function RENDERACTORNAMES() {
     EVENTLISTENERREGISTERED: 'EVENTLISTENERREGISTERED',
     SCRIPTLOADED: 'SCRIPTLOADED',
     LOADSCRIPT: 'LOADSCRIPT',
-    LOADINGINDICATOR: 'LOADINGINDICATOR'
+    LOADINGINDICATOR: 'LOADINGINDICATOR',
+    SETTRANSFORMATIONS: 'SETTRANSFORMATIONS'
   });
 }
 

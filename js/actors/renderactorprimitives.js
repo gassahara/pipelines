@@ -15,7 +15,8 @@ var DOMQUERYCOMMANDREGISTRY = {
     'rewritestyleattrs', 'consolidatestyles',
     'panelayout',
     'optimizecontrast', 'optimizeharmony',
-    'optimizetextvisibility', 'optimizebuttonvisibility'
+    'optimizetextvisibility', 'optimizebuttonvisibility',
+    'settransformations'
   ],
   messages: [
     'gethtml', 'getvalue', 'getstyle', 'getposition', 'getlayout',
@@ -30,7 +31,8 @@ var DOMQUERYCOMMANDREGISTRY = {
     'optimizecontrast', 'optimizeharmony',
     'optimizetextvisibility', 'optimizebuttonvisibility',
     'verifycontrast', 'verifytextvisibility', 'verifybuttonvisibility',
-    'verifyharmony', 'checkfocusvisibility'
+    'verifyharmony', 'checkfocusvisibility',
+    'settransformations'
   ],
   idexempt: ['getviewport', 'getscreen', 'matchmedia'],
   setterreqs: {
@@ -40,7 +42,8 @@ var DOMQUERYCOMMANDREGISTRY = {
     setvalue: ['value'],
     setlayout: ['value'],
     toggleclass: ['classname'],
-    rewritestyleattrs: ['rules']
+    rewritestyleattrs: ['rules'],
+    settransformations: []
   }
 };
 
