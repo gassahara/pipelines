@@ -12,6 +12,13 @@
 // yjblocks-transducers.js (Cycle 6R): 'overview', 'recipe', 'ingredients'.
 // No 'default' set exists.
 //
+// P-A-8 (Cycle A3, RUN 69) — the `{block: N}` locator (F-A-1..F-A-4)
+// resolves to the N-th Block-header. A Block-header is a Header section
+// whose immediately-following section is Content. This locator is stable
+// under varying numbers of leading metadata sub-headers (R-18) and
+// references no text or keyword (R-8). All existing locators
+// ({header: N}, {section: N}, 'end', sectionrange) are unchanged.
+//
 // Pipeline:
 //   1. Resolve TRANSDUCERSET via GETTRANSDUCERSET
 //   2. Normalise SOURCES into a flat depth-1 node array
@@ -213,7 +220,7 @@ function ytnormalizesources(sources) {
 }
 
 // ============================================================
-// §5 — Sections (Iter 15)
+// §5 — Sections (Iter 15 + P-A-8 F-A-1/F-A-4)
 // ============================================================
 
 function ytismarker(n) {
@@ -226,6 +233,37 @@ function ytismarker(n) {
 function ytclosesec(i, cs, cm, acc) {
   if (cs === null) return acc;
   return acc.concat([{ start: cs, end: i, marker: cm, isheader: (i - cs === 1) }]);
+}
+
+// INST-A3.1 (F-A-1, F-A-4) — post-pass that annotates each section with
+// `isblockheader`. A Block-header is a Header section (isheader === true)
+// whose immediately-following section exists and is a Content section
+// (isheader === false AND length >= 2). The length check excludes
+// leading orphan non-marker sections (which have marker === null and
+// length 1) from being mistaken for content. The check operates on the
+// sections array order, not on node indices; `sections[i+1]` is the
+// section whose `start` equals `sections[i].end`, i.e. "the immediately
+// following section". The last section has no successor and is not a
+// Block-header (F-A-1).
+function ytannotatesections(sections) {
+  function step(i, acc) {
+    if (i >= sections.length) return acc;
+    var s = sections[i];
+    var next = (i + 1 < sections.length) ? sections[i + 1] : null;
+    var isblockheader = s.isheader === true
+      && next !== null
+      && next.isheader === false
+      && (next.end - next.start) >= 2;
+    var annotated = {
+      start: s.start,
+      end: s.end,
+      marker: s.marker,
+      isheader: s.isheader,
+      isblockheader: isblockheader
+    };
+    return step(i + 1, acc.concat([annotated]));
+  }
+  return step(0, []);
 }
 
 function ytcomputesections(nodes) {
@@ -241,7 +279,7 @@ function ytcomputesections(nodes) {
     }
     return step(i + 1, cs, cm, acc);
   }
-  return step(0, null, null, []);
+  return ytannotatesections(step(0, null, null, []));
 }
 
 // ============================================================
@@ -258,6 +296,15 @@ function ytresolveindex(locator, sections, nodeslen) {
   }
   if (locator.section !== undefined) {
     if (locator.section < sections.length) return sections[locator.section].start;
+    return nodeslen;
+  }
+  // INST-A3.2 (F-A-3, F-A-4) — {block: N} resolves to the N-th
+  // Block-header's start index. Missing block (N >= |blockHeaderList|)
+  // resolves to nodeslen (the 'end' sentinel), consistent with the
+  // missing behaviour of {header: N} and {section: N} (F-A-3, I-A-5).
+  if (locator.block !== undefined) {
+    var blockheaders = sections.filter(function (s) { return s.isblockheader === true; });
+    if (locator.block < blockheaders.length) return blockheaders[locator.block].start;
     return nodeslen;
   }
   return nodeslen;
@@ -285,6 +332,13 @@ function ytmatchrule(nodes, rule) {
   if (rule.section !== undefined) {
     var sstart = ytresolveindex({ section: rule.section }, sections, nodes.length);
     return sstart < nodes.length ? [nodes[sstart]] : [];
+  }
+  // INST-A3.3 (F-A-4) — {block: N} selects the section beginning at
+  // BlockHeader(N).Index. The rule is usable standalone or as a
+  // sectionrange endpoint (via ytresolveindex above).
+  if (rule.block !== undefined) {
+    var bstart = ytresolveindex({ block: rule.block }, sections, nodes.length);
+    return bstart < nodes.length ? [nodes[bstart]] : [];
   }
   if (rule.tag) {
     return nodes.filter(function (n) { return n && n.tag === rule.tag; });

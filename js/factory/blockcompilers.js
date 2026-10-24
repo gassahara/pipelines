@@ -718,9 +718,21 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
             domqErr.diagnostic = { KIND: 'domquery-renderactor-failed', CMD: cmd, ID: props.id, RESPONSE: r };
             throw domqErr;
           }
+          // INST-A2.1 (P-A-4, Cycle A2) — surface APPLIED and BYTES from
+          // the response when present. `settransformations` returns
+          // { APPLIED, BYTES }; other commands' responses do not carry
+          // APPLIED, so their log format is unchanged (C-4). The append
+          // is conditional on the field's presence, not on `cmd`.
+          var appliedinfo = '';
+          if (r && typeof r === 'object' && r.APPLIED !== undefined) {
+            appliedinfo = ' APPLIED=' + r.APPLIED;
+            if (r.BYTES !== undefined) {
+              appliedinfo = appliedinfo + ' BYTES=' + r.BYTES;
+            }
+          }
           logdebug(blockcompilerstate, '[BLOCKCOMPILER]',
             'domquery', cmd, 'for', props.id, ':',
-            (r && typeof r === 'object' && r.ERROR ? 'error' : 'ok'));
+            (r && typeof r === 'object' && r.ERROR ? 'error' : 'ok') + appliedinfo);
           if (cmd === 'palettegenerate' && r && typeof r === 'object' && r.PALETTE !== undefined) {
             return wrapblockresult(r.PALETTE, sig);
           }
