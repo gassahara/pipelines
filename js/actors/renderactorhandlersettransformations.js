@@ -12,20 +12,20 @@
 // yjblocks-transducers.js (Cycle 6R): 'overview', 'recipe', 'ingredients'.
 // No 'default' set exists.
 //
-// P-A-8 (Cycle A3, RUN 69) — the `{block: N}` locator (F-A-1..F-A-4)
-// resolves to the N-th Block-header. A Block-header is a Header section
-// whose immediately-following section is Content. This locator is stable
-// under varying numbers of leading metadata sub-headers (R-18) and
-// references no text or keyword (R-8). All existing locators
-// ({header: N}, {section: N}, 'end', sectionrange) are unchanged.
+// P-A-8 (Cycle A3) — the `{block: N}` locator resolves to the N-th
+// Block-header. All existing locators ({header: N}, {section: N},
+// 'end', sectionrange) are unchanged.
 //
-// P-A-9/P-A-10 (Cycle A3R, RUN 76) — Length(s) is disambiguated to
-// *element count* (nodes with `tag`), excluding text nodes. frommd's
-// output places "\n" text nodes between elements; under node-count
-// Length (A3's original implementation), no section qualified as Header
-// and the overview/recipe partitions produced zero bytes (RUN 74 defect).
-// Under element-count Length, the classification matches the intent.
-// All other handler parts are unchanged.
+// P-A-18/P-A-20 (Cycle A12, RUN 89) — HTML is a closed format: tags
+// carry fixed semantics and whitespace between block-level elements is
+// not content at the structural layer. The parser (ytparsehtml) now
+// filters whitespace-only text nodes from its depth-1 output, and
+// ytnormalizesources does the same after unwrapping depth-1 <div>s.
+// With the parser producing a clean depth-1 array, node-count Length
+// (F-A-1) classifies sections correctly: a marker-only section has
+// node-length 1 (Header), a marker-plus-content section has node-length
+// ≥ 2 (Content). F-A-1R (element-count Length) and its A3R
+// materialisation are withdrawn as redundant.
 //
 // Pipeline:
 //   1. Resolve TRANSDUCERSET via GETTRANSDUCERSET
@@ -56,10 +56,44 @@ var YTVOIDELEMENTS = { hr: true, img: true, br: true, input: true };
 
 // ============================================================
 // §2 — HTML parser (string → node[]). No DOM.
+//
+// INST-A12.1 (P-A-18) — whitespace-only text nodes between block-level
+// elements are not HTML content. The parser filters them from the
+// depth-1 output so that ytcomputesections operates on a clean
+// structural array. Filtering is depth-1 only; inline whitespace
+// inside inline-context parents (e.g. between <b> and <i> inside a
+// <p>) is preserved by leaving deeper levels untouched.
 // ============================================================
 
 function ytistagspace(ch) {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
+}
+
+function ytiswhitespacechar(ch) {
+  return ch === ' ' || ch === '\t' || ch === '\n' ||
+         ch === '\r' || ch === '\f' || ch === '\v';
+}
+
+// A node is a whitespace-only text node iff it carries a `text` field
+// whose content is empty or consists entirely of whitespace chars.
+// Element nodes (nodes with `tag`) are never whitespace text.
+function ytiswhitespacetext(n) {
+  if (!n || n.text === undefined) return false;
+  var s = n.text;
+  if (s.length === 0) return true;
+  function step(i) {
+    if (i >= s.length) return true;
+    if (!ytiswhitespacechar(s.charAt(i))) return false;
+    return step(i + 1);
+  }
+  return step(0);
+}
+
+// Depth-1 filter. Applied by ytparsehtml at its return, and by
+// ytnormalizesources after unwrapping depth-1 <div>s (which can
+// re-expose whitespace text nodes that were at depth 2 to depth 1).
+function ytfilterdepthone(nodes) {
+  return nodes.filter(function (n) { return !ytiswhitespacetext(n); });
 }
 
 function ytfindtagend(s, i) {
@@ -183,9 +217,10 @@ function ytparsenodes(html, i, stopper, acc) {
     acc.concat([{ text: html.substring(i, endtext) }]));
 }
 
+// INST-A12.2 (P-A-18) — filter at the parser's return.
 function ytparsehtml(html) {
   if (typeof html !== 'string' || html.length === 0) return [];
-  return ytparsenodes(html, 0, null, []).nodes;
+  return ytfilterdepthone(ytparsenodes(html, 0, null, []).nodes);
 }
 
 // ============================================================
@@ -206,7 +241,7 @@ function ytserializenode(n) {
 }
 
 // ============================================================
-// §4 — Normalisation (Iter 15)
+// §4 — Normalisation
 // ============================================================
 
 function ytunwraplevel1divs(nodes) {
@@ -219,33 +254,24 @@ function ytunwraplevel1divs(nodes) {
   return [head].concat(ytunwraplevel1divs(tail));
 }
 
+// INST-A12.3 (P-A-18, C-28) — filter at the normaliser's return, after
+// unwrapping, because ytunwraplevel1divs can re-expose whitespace text
+// nodes from inside an unwrapped <div> at depth 1.
 function ytnormalizesources(sources) {
   var all = sources.reduce(function (acc, src) {
     var html = (src && typeof src.html === 'string') ? src.html : '';
     return acc.concat(ytparsehtml(html));
   }, []);
-  return ytunwraplevel1divs(all);
+  return ytfilterdepthone(ytunwraplevel1divs(all));
 }
 
 // ============================================================
-// §5 — Sections (Iter 15 + P-A-8 F-A-1/F-A-4 + P-A-9/P-A-10 F-A-1R/F-A-4R)
+// §5 — Sections (F-A-1 restored; A3R reverted by P-A-20)
 //
-// P-A-9 (RUN 75 Iteration 3, F-A-1R) — Length(s) is the count of
-// *element* children in the section's range [s.start, s.end) — nodes
-// with `tag !== undefined`. Text nodes (nodes with `text !== undefined`)
-// are excluded. Whitespace text nodes (frommd's `\n` separators between
-// elements) do not affect Length. Header(s) ⇔ Length(s) = 1 ∧ marker;
-// Content(s) ⇔ Length(s) ≥ 2. Block-header ⇔ Header(s) whose successor
-// is Content.
-//
-// The prior A3 (RUN 69) used node-count Length ((i - cs === 1) and
-// (next.end - next.start) >= 2), which classified every frommd section
-// as Content when text nodes were present, so no section was a Header,
-// so no Block-header existed, so all partition rules resolved to 'end'
-// and produced zero bytes (RUN 74 defect). A3R fixes this by switching
-// to element-count Length. SAMPLE-1 and SAMPLE-64 (whose modelled node
-// arrays contained no inter-element text nodes) produce identical
-// results under both readings — no regression.
+// Length(s) is node count: s.end - s.start. With the parser producing
+// a clean depth-1 array (P-A-18), a marker-only section has node
+// length 1 (Header) and a marker-plus-content section has node length
+// ≥ 2 (Content). No element-count workaround is needed.
 // ============================================================
 
 function ytismarker(n) {
@@ -255,37 +281,14 @@ function ytismarker(n) {
          n.tag === 'h4' || n.tag === 'h5' || n.tag === 'h6';
 }
 
-// INST-A3R.1 (F-A-4R "New helper") — element-count helper. Counts
-// element children (nodes with `tag`) in [start, end). Text nodes are
-// not counted. Tail-recursive per C-1.
-function ytelementcount(nodes, start, end) {
-  function step(i, count) {
-    if (i >= end) return count;
-    if (nodes[i] && nodes[i].tag !== undefined) {
-      return step(i + 1, count + 1);
-    }
-    return step(i + 1, count);
-  }
-  return step(start, 0);
-}
-
-// INST-A3R.2 (F-A-4R) — isheader computed via element-count Length.
-// `nodes` is threaded through so `ytelementcount` can measure the
-// section's range. The marker condition (F-A-1R: Marker(s.start)) is
-// guaranteed for every section produced by ytclosesec: ytclosesec is
-// called only when `cs !== null`, and `cs` is a marker position.
-function ytclosesec(i, cs, cm, acc, nodes) {
+// INST-A12.4 (P-A-20) — node-count isheader.
+function ytclosesec(i, cs, cm, acc) {
   if (cs === null) return acc;
-  var isheader = ytelementcount(nodes, cs, i) === 1;
-  return acc.concat([{ start: cs, end: i, marker: cm, isheader: isheader }]);
+  return acc.concat([{ start: cs, end: i, marker: cm, isheader: (i - cs === 1) }]);
 }
 
-// INST-A3R.4 (F-A-4R) — isblockheader computed via element-count
-// Length of the successor section. The `next.isheader === false`
-// clause is redundant under F-A-1R (isheader true implies Length = 1,
-// and Length ≥ 2 implies isheader false) but retained to match
-// F-A-4R's prescribed form verbatim.
-function ytannotatesections(sections, nodes) {
+// INST-A12.5 (P-A-20) — node-count isblockheader.
+function ytannotatesections(sections) {
   function step(i, acc) {
     if (i >= sections.length) return acc;
     var s = sections[i];
@@ -293,7 +296,7 @@ function ytannotatesections(sections, nodes) {
     var isblockheader = s.isheader === true
       && next !== null
       && next.isheader === false
-      && ytelementcount(nodes, next.start, next.end) >= 2;
+      && (next.end - next.start) >= 2;
     var annotated = {
       start: s.start,
       end: s.end,
@@ -306,15 +309,13 @@ function ytannotatesections(sections, nodes) {
   return step(0, []);
 }
 
-// INST-A3R.3 (F-A-4R) — scan logic unchanged; only (a) ytclosesec now
-// receives `nodes`, (b) orphan sections get `isheader: false`
-// explicitly, (c) ytannotatesections receives `nodes`.
+// INST-A12.7 (P-A-20) — scan logic unchanged; no `nodes` threading.
 function ytcomputesections(nodes) {
   function step(i, cs, cm, acc) {
-    if (i >= nodes.length) return ytclosesec(i, cs, cm, acc, nodes);
+    if (i >= nodes.length) return ytclosesec(i, cs, cm, acc);
     var n = nodes[i];
     if (ytismarker(n)) {
-      return step(i + 1, i, n, ytclosesec(i, cs, cm, acc, nodes));
+      return step(i + 1, i, n, ytclosesec(i, cs, cm, acc));
     }
     if (cs === null) {
       return step(i + 1, null, null,
@@ -322,7 +323,7 @@ function ytcomputesections(nodes) {
     }
     return step(i + 1, cs, cm, acc);
   }
-  return ytannotatesections(step(0, null, null, []), nodes);
+  return ytannotatesections(step(0, null, null, []));
 }
 
 // ============================================================
@@ -341,10 +342,6 @@ function ytresolveindex(locator, sections, nodeslen) {
     if (locator.section < sections.length) return sections[locator.section].start;
     return nodeslen;
   }
-  // INST-A3.2 (F-A-3, F-A-4) — {block: N} resolves to the N-th
-  // Block-header's start index. Missing block (N >= |blockHeaderList|)
-  // resolves to nodeslen (the 'end' sentinel), consistent with the
-  // missing behaviour of {header: N} and {section: N} (F-A-3, I-A-5).
   if (locator.block !== undefined) {
     var blockheaders = sections.filter(function (s) { return s.isblockheader === true; });
     if (locator.block < blockheaders.length) return blockheaders[locator.block].start;
@@ -376,9 +373,6 @@ function ytmatchrule(nodes, rule) {
     var sstart = ytresolveindex({ section: rule.section }, sections, nodes.length);
     return sstart < nodes.length ? [nodes[sstart]] : [];
   }
-  // INST-A3.3 (F-A-4) — {block: N} selects the section beginning at
-  // BlockHeader(N).Index. The rule is usable standalone or as a
-  // sectionrange endpoint (via ytresolveindex above).
   if (rule.block !== undefined) {
     var bstart = ytresolveindex({ block: rule.block }, sections, nodes.length);
     return bstart < nodes.length ? [nodes[bstart]] : [];
