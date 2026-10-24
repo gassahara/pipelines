@@ -19,6 +19,14 @@
 // references no text or keyword (R-8). All existing locators
 // ({header: N}, {section: N}, 'end', sectionrange) are unchanged.
 //
+// P-A-9/P-A-10 (Cycle A3R, RUN 76) — Length(s) is disambiguated to
+// *element count* (nodes with `tag`), excluding text nodes. frommd's
+// output places "\n" text nodes between elements; under node-count
+// Length (A3's original implementation), no section qualified as Header
+// and the overview/recipe partitions produced zero bytes (RUN 74 defect).
+// Under element-count Length, the classification matches the intent.
+// All other handler parts are unchanged.
+//
 // Pipeline:
 //   1. Resolve TRANSDUCERSET via GETTRANSDUCERSET
 //   2. Normalise SOURCES into a flat depth-1 node array
@@ -220,7 +228,24 @@ function ytnormalizesources(sources) {
 }
 
 // ============================================================
-// §5 — Sections (Iter 15 + P-A-8 F-A-1/F-A-4)
+// §5 — Sections (Iter 15 + P-A-8 F-A-1/F-A-4 + P-A-9/P-A-10 F-A-1R/F-A-4R)
+//
+// P-A-9 (RUN 75 Iteration 3, F-A-1R) — Length(s) is the count of
+// *element* children in the section's range [s.start, s.end) — nodes
+// with `tag !== undefined`. Text nodes (nodes with `text !== undefined`)
+// are excluded. Whitespace text nodes (frommd's `\n` separators between
+// elements) do not affect Length. Header(s) ⇔ Length(s) = 1 ∧ marker;
+// Content(s) ⇔ Length(s) ≥ 2. Block-header ⇔ Header(s) whose successor
+// is Content.
+//
+// The prior A3 (RUN 69) used node-count Length ((i - cs === 1) and
+// (next.end - next.start) >= 2), which classified every frommd section
+// as Content when text nodes were present, so no section was a Header,
+// so no Block-header existed, so all partition rules resolved to 'end'
+// and produced zero bytes (RUN 74 defect). A3R fixes this by switching
+// to element-count Length. SAMPLE-1 and SAMPLE-64 (whose modelled node
+// arrays contained no inter-element text nodes) produce identical
+// results under both readings — no regression.
 // ============================================================
 
 function ytismarker(n) {
@@ -230,22 +255,37 @@ function ytismarker(n) {
          n.tag === 'h4' || n.tag === 'h5' || n.tag === 'h6';
 }
 
-function ytclosesec(i, cs, cm, acc) {
-  if (cs === null) return acc;
-  return acc.concat([{ start: cs, end: i, marker: cm, isheader: (i - cs === 1) }]);
+// INST-A3R.1 (F-A-4R "New helper") — element-count helper. Counts
+// element children (nodes with `tag`) in [start, end). Text nodes are
+// not counted. Tail-recursive per C-1.
+function ytelementcount(nodes, start, end) {
+  function step(i, count) {
+    if (i >= end) return count;
+    if (nodes[i] && nodes[i].tag !== undefined) {
+      return step(i + 1, count + 1);
+    }
+    return step(i + 1, count);
+  }
+  return step(start, 0);
 }
 
-// INST-A3.1 (F-A-1, F-A-4) — post-pass that annotates each section with
-// `isblockheader`. A Block-header is a Header section (isheader === true)
-// whose immediately-following section exists and is a Content section
-// (isheader === false AND length >= 2). The length check excludes
-// leading orphan non-marker sections (which have marker === null and
-// length 1) from being mistaken for content. The check operates on the
-// sections array order, not on node indices; `sections[i+1]` is the
-// section whose `start` equals `sections[i].end`, i.e. "the immediately
-// following section". The last section has no successor and is not a
-// Block-header (F-A-1).
-function ytannotatesections(sections) {
+// INST-A3R.2 (F-A-4R) — isheader computed via element-count Length.
+// `nodes` is threaded through so `ytelementcount` can measure the
+// section's range. The marker condition (F-A-1R: Marker(s.start)) is
+// guaranteed for every section produced by ytclosesec: ytclosesec is
+// called only when `cs !== null`, and `cs` is a marker position.
+function ytclosesec(i, cs, cm, acc, nodes) {
+  if (cs === null) return acc;
+  var isheader = ytelementcount(nodes, cs, i) === 1;
+  return acc.concat([{ start: cs, end: i, marker: cm, isheader: isheader }]);
+}
+
+// INST-A3R.4 (F-A-4R) — isblockheader computed via element-count
+// Length of the successor section. The `next.isheader === false`
+// clause is redundant under F-A-1R (isheader true implies Length = 1,
+// and Length ≥ 2 implies isheader false) but retained to match
+// F-A-4R's prescribed form verbatim.
+function ytannotatesections(sections, nodes) {
   function step(i, acc) {
     if (i >= sections.length) return acc;
     var s = sections[i];
@@ -253,12 +293,12 @@ function ytannotatesections(sections) {
     var isblockheader = s.isheader === true
       && next !== null
       && next.isheader === false
-      && (next.end - next.start) >= 2;
+      && ytelementcount(nodes, next.start, next.end) >= 2;
     var annotated = {
       start: s.start,
       end: s.end,
       marker: s.marker,
-      isheader: s.isheader,
+      isheader: s.isheader === true,
       isblockheader: isblockheader
     };
     return step(i + 1, acc.concat([annotated]));
@@ -266,12 +306,15 @@ function ytannotatesections(sections) {
   return step(0, []);
 }
 
+// INST-A3R.3 (F-A-4R) — scan logic unchanged; only (a) ytclosesec now
+// receives `nodes`, (b) orphan sections get `isheader: false`
+// explicitly, (c) ytannotatesections receives `nodes`.
 function ytcomputesections(nodes) {
   function step(i, cs, cm, acc) {
-    if (i >= nodes.length) return ytclosesec(i, cs, cm, acc);
+    if (i >= nodes.length) return ytclosesec(i, cs, cm, acc, nodes);
     var n = nodes[i];
     if (ytismarker(n)) {
-      return step(i + 1, i, n, ytclosesec(i, cs, cm, acc));
+      return step(i + 1, i, n, ytclosesec(i, cs, cm, acc, nodes));
     }
     if (cs === null) {
       return step(i + 1, null, null,
@@ -279,7 +322,7 @@ function ytcomputesections(nodes) {
     }
     return step(i + 1, cs, cm, acc);
   }
-  return ytannotatesections(step(0, null, null, []));
+  return ytannotatesections(step(0, null, null, []), nodes);
 }
 
 // ============================================================
