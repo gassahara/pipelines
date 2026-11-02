@@ -222,16 +222,13 @@ function makecaptureerror(wrapped, policy) {
       resolvepromise = resolve;
       rejectpromise = reject;
 
-      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the two SUBSCRIBEBROADCAST
-      // TYPE names are obtained from their owner (mailactor.js) via
-      // BROADCASTNAMES() rather than inlined as string literals.
       var BNAMES = BROADCASTNAMES();
 
       subfailed = SUBSCRIBEBROADCAST(
         { TYPE: BNAMES.BLOCKFAILED, TOKEN: innertoken },
         handlefailure
       );
-      subexecuted = SUBSCRIBEBROADCAST(
+      subexecuted = SUBSCRIBBROADCAST(
         { TYPE: BNAMES.BLOCKEXECUTED, TOKEN: innertoken },
         handlesuccess
       );
@@ -291,9 +288,6 @@ function compilehttpblock(merged, id, sig, istextual, options) {
 
     var timeout = merged.timeout || mailboxresolve('mailboxwaittimeout');
 
-    // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the request and response
-    // type names are obtained from their owner (apiactor.js) via
-    // APIACTORNAMES() rather than inlined as string literals.
     var ANAMES = APIACTORNAMES();
 
     return sendandawait('APIACTOR', istextual ? ANAMES.FETCH : ANAMES.API, {
@@ -357,10 +351,6 @@ function compileloaderblock(merged, id, sig) {
     var efftimeout = (timeout !== null) ? timeout : mailboxresolve('expectationtimeout');
     var starttime = Date.now();
 
-    // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR-owned
-    // 'LOADINGINDICATOR' type name (declared by renderactorhandlerio.js)
-    // is obtained from its owner via RENDERACTORNAMES() rather than inlined
-    // as a string literal.
     var RNAMES = RENDERACTORNAMES();
 
     function resolvestate() {
@@ -383,17 +373,6 @@ function compileloaderblock(merged, id, sig) {
       var tag = GENERATETAG();
       var payload = { ACTION: action, ID: overlayid };
       if (action === 'SHOW' && markup !== null) payload.MARKUP = markup;
-      // @proposal=P-EXECUTIONACTOR-TYPE-PROVISION — the former guard
-      //   `typeof MESSAGETYPES !== 'undefined'`
-      // is removed (Cycle 5). No manifest-loaded file declares MESSAGETYPES,
-      // and the guard, being always false, silently disabled the loading
-      // indicator dispatch. The body already used the string literal
-      // 'LOADINGINDICATOR', which RENDERACTOR registers via
-      // REGISTERMESSAGETYPE(LOADINGINDICATORTYPE).
-      //
-      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the type name itself is
-      // now obtained from its owner via RENDERACTORNAMES().LOADINGINDICATOR.
-      // (Corrective re-migration at Cycle 15e, closing RD-13-1.)
       if (typeof SENDINSTRUCTION === 'function') {
         SENDINSTRUCTION('RENDERACTOR', RNAMES.LOADINGINDICATOR, payload, tag, 'BLOCKCOMPILER');
       }
@@ -484,18 +463,10 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         var target = merged.targetlabel || env.approot;
         if (!target) throw new Error('[WRITER] missing targetlabel/approot');
 
-        // @proposal=P-WRITER-POST-WRITE-PROOF — inject a sentinel span
-        // (display:none, aria-hidden) carrying the block's id, then
-        // verify the sentinel is present in the target's DOM subtree
-        // after the write. This distinguishes "the target already
-        // existed" from "the write actually delivered the markup".
         var SENTINELATTR = 'data-writer-proof-id';
         var sentinelMarkup = '<span ' + SENTINELATTR + '="' + id +
           '" style="display:none" aria-hidden="true"></span>' + result.html;
 
-        // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR type
-        // names are obtained from their owner (renderactor.js) via
-        // RENDERACTORNAMES() rather than inlined as string literals.
         var RNAMES = RENDERACTORNAMES();
 
         return sendandawait('RENDERACTOR', RNAMES.HTML, {
@@ -578,10 +549,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       if (typeof props.rules === 'string' && (containspathaccessorchars(props.rules) || (sig.inputs || []).indexOf(props.rules) !== -1)) {
         resolvedrules = compilepathaccessor(props.rules)(env);
       }
-      // INST-11b.1 — env-path resolution for `props.sources` (matches the
-      // `rewritestyleattrs` pattern used for `props.rules` above). The
-      // `settransformations` command carries an array of source objects
-      // via env.
       var resolvedsources = props.sources;
       if (typeof props.sources === 'string' && (containspathaccessorchars(props.sources) || (sig.inputs || []).indexOf(props.sources) !== -1)) {
         resolvedsources = compilepathaccessor(props.sources)(env);
@@ -603,11 +570,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         resolvedviewport = compilepathaccessor(props.viewport)(env);
       }
 
-      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — the RENDERACTOR type
-      // names used by this compiler are obtained from their owner via
-      // RENDERACTORNAMES(). The switch remains a compiler-internal
-      // dispatch; only each case's assigned type-name value changes from
-      // a string literal to an accessor read.
       var RNAMES = RENDERACTORNAMES();
 
       var msgtype;
@@ -639,9 +601,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         case 'correctscrollability':     msgtype = RNAMES.CORRECTSCROLLABILITY; break;
         case 'correctcontrolledoverlay': msgtype = RNAMES.CORRECTCONTROLLEDOVERLAY; break;
         case 'rewritestyleattrs':        msgtype = RNAMES.REWRITESTYLEATTRS; break;
-        // INST-11b.2 — new dispatch case for SETTRANSFORMATIONS. Sibling
-        // of `rewritestyleattrs` (same rule-walker mechanism family, distinct
-        // application; Instr-19, C-10).
         case 'settransformations':       msgtype = RNAMES.SETTRANSFORMATIONS; break;
         case 'consolidatestyles':        msgtype = RNAMES.CONSOLIDATESTYLES; break;
         case 'panelayout':               msgtype = RNAMES.PANELAYOUT; break;
@@ -658,9 +617,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         default: throw new Error('[DOMQUERY] unknown COMMAND: ' + cmd);
       }
 
-      // INST-11b.3 — outbound fields for settransformations. The handler
-      // (renderactorhandlersettransformations.js) reads SOURCES, RULES,
-      // TRANSDUCERSET, MODE. Other command cases ignore these fields.
       var outbound = {
         ID: props.id,
         VALUE: resolvedvalue,
@@ -694,8 +650,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
 
       return sendandawait('RENDERACTOR', msgtype, outbound, mailboxresolve('mailboxwaittimeout'), RNAMES.DOMRESULT)
         .then(function(r) {
-          // @proposal=P-RESPONSE-SHAPE-FIDELITY — defense-in-depth: the
-          // DOMQUERY response must never be the RENDERACTOR's env slice.
           if (r && typeof r === 'object' && !Array.isArray(r) &&
               Object.prototype.hasOwnProperty.call(r, 'GC') &&
               Object.prototype.hasOwnProperty.call(r, 'HTML') &&
@@ -718,11 +672,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
             domqErr.diagnostic = { KIND: 'domquery-renderactor-failed', CMD: cmd, ID: props.id, RESPONSE: r };
             throw domqErr;
           }
-          // INST-A2.1 (P-A-4, Cycle A2) — surface APPLIED and BYTES from
-          // the response when present. `settransformations` returns
-          // { APPLIED, BYTES }; other commands' responses do not carry
-          // APPLIED, so their log format is unchanged (C-4). The append
-          // is conditional on the field's presence, not on `cmd`.
           var appliedinfo = '';
           if (r && typeof r === 'object' && r.APPLIED !== undefined) {
             appliedinfo = ' APPLIED=' + r.APPLIED;
@@ -749,8 +698,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       var bytes = merged.bytes === undefined ? 512 : merged.bytes;
       if (typeof bytes !== 'number' || bytes <= 0) throw new Error('[crypto] bytes must be a positive number');
 
-      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — RENDERACTOR type names
-      // obtained from their owner.
       var RNAMES = RENDERACTORNAMES();
 
       return sendandawait('RENDERACTOR', RNAMES.CRYPTO, { BYTES: bytes }, mailboxresolve('mailboxwaittimeout'), RNAMES.DOMRESULT)
@@ -775,8 +722,6 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       var cmd = command.COMMAND;
       var args = command.args || {};
 
-      // @proposal=P-FACTORY-ACTOR-NAME-INVERSION — EXECUTIONACTOR type
-      // names obtained from their owner.
       var ENAMES = EXECUTIONACTORNAMES();
 
       var responsetype = ENAMES.TASKRESULT;
@@ -803,6 +748,102 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
 
   compilers[blocktypes.captureerror] = function(merged, id, sig) {
     return wrapcompiledfn(merged.behaviour, 'captureerror', id);
+  };
+
+  // @proposal=P-16.5 + P-16.5-correction — theory block type.
+  // Four-command dispatch (inittheory / addtheoryfunction / addtheory /
+  // runtheories) with shape preconditions per P-16.5-correction Option A.
+  // The compiler resolves property values and deps via buildblockproperties
+  // and passes values to the framework functions (no identifier lookups).
+  compilers[blocktypes.theory] = function(merged, id, sig) {
+    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling THEORY block:', id, 'command:', merged.command && merged.command.COMMAND);
+    var innerfn = function(env) {
+      var props = (merged.command && merged.command.properties) || {};
+      var cmd = merged.command && merged.command.COMMAND;
+      var inheritedproperties = {};
+      var blockprops = buildblockproperties(merged, inheritedproperties, sig, env);
+      var inputs = blockprops.inputs || {};
+      var deps = blockprops.deps || {};
+      var inputnames = sig.inputs || [];
+      var outputnames = Object.keys(sig.outputs || {});
+
+      if (cmd === 'inittheory') {
+        if (inputnames.length !== 0 || outputnames.length !== 1) {
+          var e1 = new Error('[theory] invalid-inittheory-shape');
+          e1.diagnostic = { KIND: 'invalid-inittheory-shape', INPUTS: inputnames, OUTPUTS: outputnames };
+          throw e1;
+        }
+        var statekey0 = outputnames[0];
+        var out0 = {};
+        out0[statekey0] = maketheoryblock();
+        return out0;
+      }
+
+      if (cmd === 'addtheoryfunction' || cmd === 'addtheory') {
+        if (inputnames.length !== 1 ||
+            outputnames.length !== 1 ||
+            outputnames[0] !== inputnames[0]) {
+          var e2 = new Error('[theory] invalid-accumulator-shape');
+          e2.diagnostic = { KIND: 'invalid-accumulator-shape', INPUTS: inputnames, OUTPUTS: outputnames };
+          throw e2;
+        }
+        var statekey1 = inputnames[0];
+        var state1 = inputs[statekey1];
+
+        if (cmd === 'addtheoryfunction') {
+          var fnval = deps[props.fnname];
+          var tf1 = maketheoryfunction(props.name, fnval);
+          var newstate1 = addtheoryfunction(state1, tf1);
+          var out1 = {};
+          out1[statekey1] = newstate1;
+          return out1;
+        }
+
+        var witnessvalues = (props.witnesses || []).map(function (w) {
+          var wtf = maketheoryfunction(w.name, deps[w.fnname]);
+          return makewitness(w.name, w.weight, wtf);
+        });
+        var extractor = maketheoryfunction(props.extractorname, deps[props.extractorfnname]);
+        var theory = maketheory(props.theoryid, witnessvalues, extractor);
+        var newstate2 = addtheory(state1, theory);
+        var out2 = {};
+        out2[statekey1] = newstate2;
+        return out2;
+      }
+
+      if (cmd === 'runtheories') {
+        if (inputnames.length < 2) {
+          var e3 = new Error('[theory] invalid-runtheories-shape');
+          e3.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'too-few-inputs', INPUTS: inputnames };
+          throw e3;
+        }
+        if (inputnames.indexOf(props.leafinput) === -1) {
+          var e4 = new Error('[theory] invalid-runtheories-shape');
+          e4.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'leafinput-not-in-inputs', LEAFINPUT: props.leafinput, INPUTS: inputnames };
+          throw e4;
+        }
+        var statekey2 = inputnames[0];
+        if (statekey2 === props.leafinput) {
+          var e5 = new Error('[theory] invalid-runtheories-shape');
+          e5.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'statekey-equals-leafinput', STATEKEY: statekey2, LEAFINPUT: props.leafinput };
+          throw e5;
+        }
+        if (outputnames.indexOf('ingredientnames') === -1 ||
+            outputnames.indexOf('ingredientcount') === -1 ||
+            outputnames.length !== 2) {
+          var e6 = new Error('[theory] invalid-runtheories-shape');
+          e6.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', OUTPUTS: outputnames };
+          throw e6;
+        }
+        var rr = runtheories(inputs[statekey2], inputs[props.leafinput], deps);
+        return { ingredientnames: rr.names, ingredientcount: rr.names.length };
+      }
+
+      var e7 = new Error('[theory] invalid-command: ' + String(cmd));
+      e7.diagnostic = { KIND: 'invalid-command', CMD: cmd };
+      throw e7;
+    };
+    return wrapcompiledfn(innerfn, 'theory', id);
   };
 
   return compilers;
