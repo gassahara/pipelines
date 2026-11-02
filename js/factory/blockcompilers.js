@@ -223,12 +223,11 @@ function makecaptureerror(wrapped, policy) {
       rejectpromise = reject;
 
       var BNAMES = BROADCASTNAMES();
-
       subfailed = SUBSCRIBEBROADCAST(
         { TYPE: BNAMES.BLOCKFAILED, TOKEN: innertoken },
         handlefailure
       );
-      subexecuted = SUBSCRIBBROADCAST(
+      subexecuted = SUBSCRIBEBROADCAST(
         { TYPE: BNAMES.BLOCKEXECUTED, TOKEN: innertoken },
         handlesuccess
       );
