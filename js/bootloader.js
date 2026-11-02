@@ -17,6 +17,10 @@ var pipelinesmanifest = [
     'analyzefnblock', 'createblockanalyzer', 'createblockanalyzers',
     'compilefnblock'
   ] },
+  { src: 'factory/theory.js', provides: [
+    'maketheoryfunction', 'makewitness', 'maketheory',
+    'maketheoryblock', 'addtheoryfunction', 'addtheory', 'runtheories'
+  ] },
   { src: 'messagetypes.js', provides: [
     'DYNAMICMESSAGETYPESREF', 'GETDYNAMICMESSAGETYPES',
     'REGISTERMESSAGETYPE', 'UNREGISTERMESSAGETYPE', 'MESSAGETYPEEXISTS'
@@ -263,11 +267,6 @@ function checkexistence(entry) {
   return { ok: missing.length === 0, missing: missing };
 }
 
-// @proposal=P-MAILACTOR-VOCABULARY-API (revision 2, RUN 23) — the
-// per-actor registration check now consults MAILACTOR's RESOLVEHANDLER.
-// The former MESSAGEREGISTRY.gethandler no longer exists. RESOLVEHANDLER
-// is defined at mailactor.js (manifest position 21); checkregistration
-// runs from aggregate(), after every script has loaded.
 function checkregistration(entry) {
   if (!entry.owner) return { ok: true, missing: [] };
   if (typeof RESOLVEHANDLER !== 'function') {
@@ -287,9 +286,6 @@ function checkstateregistration(entry) {
   return { ok: state !== undefined, missing: state === undefined ? 'WORLDMAPACTOR' : null };
 }
 
-// @proposal=P-BOOTLOADER-WITNESS-001 — the per-entry existence check
-// accumulates into `existencefailures`; the load loop advances through
-// every entry regardless, then reports all failures in one pass.
 function runpipelineboot(loadprogram, report, manifest) {
   var list = manifest || pipelinesmanifest;
   var index = 0;
@@ -333,12 +329,6 @@ function runpipelineboot(loadprogram, report, manifest) {
 
 var pipelinesbase = 'https://gassahara.github.io/pipelines/js/';
 function bootpipeline(ondone, options) {
-  // @proposal=P-MAILBOXCONFIG-OVERRIDE-TIMING — the bootloader mailbox
-  // overrides are applied on the first script's onload, after
-  // factory/mailboxconfig.js has loaded (manifest position 1). The
-  // former pre-loop application was a no-op because mailboxconfig.js
-  // was not yet loaded at that point, and typeof
-  // bootloadermailboxconfig was 'undefined'.
   var DEFERREDMAILBOXCONFIG = (options && options.mailboxconfig) || null;
   function loadscript(entry, done) {
     var s = document.createElement('script');
