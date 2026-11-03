@@ -426,6 +426,143 @@ function compileloaderblock(merged, id, sig) {
   return wrapcompiledfn(innerfn, 'loader', id);
 }
 
+// ============================================================
+// buildtheoriesdebug — theory-block diagnostic report
+// @proposal=P-THEORY-DEBUG-1 (RUN 31, Frozen)
+//
+// Mirrors js/factory/theory.js's M3 (score) and M4 (winner: strict >,
+// first-in-tie) semantics. Invoked only when the block's
+// command.properties.debug === true. Pure (no mutation of block,
+// leafast, deps). Total (never throws; per-witness and per-extractor
+// errors captured into the report).
+// ============================================================
+function buildtheoriesdebug(block, leafast, deps) {
+    if (!block || !Array.isArray(block.theories)) {
+        return {
+            schema: 'theoriesdebug.v1',
+            error: 'invalid-theory-block',
+            received_type: typeof block
+        };
+    }
+    var leaf_count = Array.isArray(leafast) ? leafast.length : 0;
+
+    function summarize_leaf() {
+        if (!Array.isArray(leafast) || leafast.length === 0) {
+            return { length: 0, first_node_kind: null, first_tag: null, first_text_preview: null };
+        }
+        var first = leafast[0];
+        var kind = 'unknown';
+        if (first && typeof first.tag === 'string') kind = 'element';
+        else if (first && typeof first.text === 'string') kind = 'text';
+        var tag = (kind === 'element') ? first.tag : null;
+        var text = null;
+        if (kind === 'text' && typeof first.text === 'string') {
+            var t = first.text;
+            text = t.length > 80 ? t.slice(0, 80) + '\u2026' : t;
+        }
+        return { length: leaf_count, first_node_kind: kind, first_tag: tag, first_text_preview: text };
+    }
+
+    function evalwitness(w, idx) {
+        var entry = {
+            index: idx,
+            name: (w && typeof w.name === 'string') ? w.name : 'unknown',
+            weight: (w && typeof w.weight === 'number') ? w.weight : 0,
+            fired: false, threw: false, error_message: null
+        };
+        if (!w || !w.theoryfunction || typeof w.theoryfunction.fn !== 'function') {
+            entry.threw = true;
+            entry.error_message = 'witness fn not callable';
+            return entry;
+        }
+        try {
+            entry.fired = !!w.theoryfunction.fn(leafast, deps);
+        } catch (e) {
+            entry.threw = true;
+            entry.error_message = (e && e.message) ? e.message : String(e);
+        }
+        return entry;
+    }
+
+    function evaltheory(t, idx) {
+        var wits = (t && Array.isArray(t.witnesses)) ? t.witnesses : [];
+        var wentries = wits.map(evalwitness);
+        var score = wentries.reduce(function (acc, w) {
+            return acc + (w.fired ? w.weight : 0);
+        }, 0);
+        return {
+            index: idx,
+            theoryid: (t && typeof t.theoryid === 'string') ? t.theoryid : 'unknown',
+            score: score,
+            is_winner: false,
+            witness_count: wentries.length,
+            witnesses: wentries,
+            extractor_ran: false,
+            extractor_result_type: 'undefined',
+            extractor_result_length: null,
+            extractor_result_sample: null,
+            extractor_error_message: null
+        };
+    }
+
+    var tentries = block.theories.map(evaltheory);
+
+    var winner_idx = null;
+    tentries.forEach(function (te, i) {
+        if (winner_idx === null) { winner_idx = i; return; }
+        if (te.score > tentries[winner_idx].score) { winner_idx = i; }
+    });
+
+    var winner_names = [];
+    var winner_summary = null;
+
+    if (winner_idx !== null) {
+        tentries[winner_idx].is_winner = true;
+        var wt = block.theories[winner_idx];
+        if (wt && wt.extractor && typeof wt.extractor.fn === 'function') {
+            try {
+                var names = wt.extractor.fn(leafast, deps);
+                tentries[winner_idx].extractor_ran = true;
+                tentries[winner_idx].extractor_result_type = Array.isArray(names) ? 'array' : typeof names;
+                if (Array.isArray(names)) {
+                    tentries[winner_idx].extractor_result_length = names.length;
+                    tentries[winner_idx].extractor_result_sample = names.slice(0, 3);
+                    winner_names = names;
+                }
+            } catch (e) {
+                tentries[winner_idx].extractor_ran = true;
+                tentries[winner_idx].extractor_error_message =
+                    (e && e.message) ? e.message : String(e);
+            }
+        }
+        winner_summary = {
+            theoryid: tentries[winner_idx].theoryid,
+            score: tentries[winner_idx].score,
+            names_count: (tentries[winner_idx].extractor_result_length !== null)
+                ? tentries[winner_idx].extractor_result_length
+                : 0
+        };
+    }
+
+    var totals = tentries.reduce(function (acc, te) {
+        return {
+            theories_evaluated: acc.theories_evaluated + 1,
+            witnesses_evaluated: acc.witnesses_evaluated + te.witnesses.length,
+            witnesses_fired: acc.witnesses_fired + te.witnesses.filter(function (w) { return w.fired; }).length
+        };
+    }, { theories_evaluated: 0, witnesses_evaluated: 0, witnesses_fired: 0 });
+
+    return {
+        schema: 'theoriesdebug.v1',
+        leafinput_count: leaf_count,
+        leafinput_summary: summarize_leaf(),
+        theories: tentries,
+        winner: winner_summary,
+        winner_names_verbatim: winner_names,
+        totals: totals
+    };
+}
+
 function createblockcompilers(blocktypes, inheritedkeys, options) {
   var compilers = {};
 
@@ -828,14 +965,51 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           throw e5;
         }
         if (outputnames.indexOf('ingredientnames') === -1 ||
-            outputnames.indexOf('ingredientcount') === -1 ||
-            outputnames.length !== 2) {
-          var e6 = new Error('[theory] invalid-runtheories-shape');
-          e6.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', OUTPUTS: outputnames };
-          throw e6;
+            outputnames.indexOf('ingredientcount') === -1) {
+            var e6 = new Error('[theory] invalid-runtheories-shape');
+            e6.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', OUTPUTS: outputnames };
+            throw e6;
+        }
+        var has_debug_output = outputnames.indexOf('theoriesdebug') !== -1;
+        var outputnames_ok = outputnames.every(function (k) {
+            return k === 'ingredientnames' || k === 'ingredientcount' || k === 'theoriesdebug';
+        });
+        if (!outputnames_ok) {
+            var e6b = new Error('[theory] invalid-runtheories-shape');
+            e6b.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', OUTPUTS: outputnames };
+            throw e6b;
+        }
+        if (has_debug_output && props.debug !== true) {
+            var e6c = new Error('[theory] invalid-runtheories-shape');
+            e6c.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'theoriesdebug-output-requires-debug-true', DEBUG: props.debug, OUTPUTS: outputnames };
+            throw e6c;
         }
         var rr = runtheories(inputs[statekey2], inputs[props.leafinput], deps);
-        return { ingredientnames: rr.names, ingredientcount: rr.names.length };
+        var out = { ingredientnames: rr.names, ingredientcount: rr.names.length };
+        if (props.debug === true) {
+            var report = buildtheoriesdebug(inputs[statekey2], inputs[props.leafinput], deps);
+            if (has_debug_output) {
+                out.theoriesdebug = report;
+            }
+            if (typeof SENDINSTRUCTION === 'function' && typeof DEBUGACTORNAMES === 'function') {
+                try {
+                    var DNAMES = DEBUGACTORNAMES();
+                    SENDINSTRUCTION('DEBUGACTOR', DNAMES.LOGLINE, {
+                        LEVEL: 'info',
+                        MESSAGE: 'theory-debug',
+                        DATA: { blockid: id, report: report },
+                        TIMESTAMP: Date.now(),
+                        PREFIX: 'theory'
+                    }, null, 'THEORY-DEBUG');
+                } catch (notifyerr) { /* diagnostic failures must not affect result */ }
+            }
+            if (typeof logblockdebug === 'function' && typeof blockcompilerstate === 'object') {
+                try {
+                    logblockdebug(blockcompilerstate, '[THEORY-DEBUG]', id, report);
+                } catch (logerr) { /* diagnostic failures must not affect result */ }
+            }
+        }
+        return out;
       }
 
       var e7 = new Error('[theory] invalid-command: ' + String(cmd));
