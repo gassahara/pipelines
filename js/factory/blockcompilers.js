@@ -559,7 +559,15 @@ function buildtheoriesdebug(block, leafast, deps) {
 
 // ============================================================
 // removenodefromast — pure AST node removal
-// @proposal=P-FIXPOINT-NAME-MODE
+// @proposal=P-FIXPOINT-NAME-MODE (RUN 37)
+// @proposal=P-FIXPOINT-SHRINK (RUN 48, Frozen) — reference-comparison
+//   propagation. Previously the length-comparison check discarded deep
+//   modifications: when a descendant's removal preserves the immediate
+//   child count of an ancestor (which is the common case, since the
+//   removal is a substitution at that level), the ancestor was pushed
+//   as the ORIGINAL. The bug caused 313 iterations in the observed run.
+//   Fix: at each level, compare newchildren[i] with n.children[i] by
+//   reference; rebuild n iff any reference differs.
 // ============================================================
 function removenodefromast(ast, node) {
     if (!Array.isArray(ast)) return ast;
@@ -571,8 +579,22 @@ function removenodefromast(ast, node) {
         if (n === node) return step(i + 1);
         if (n && typeof n.tag === 'string' && Array.isArray(n.children)) {
             var newchildren = removenodefromast(n.children, node);
-            if (newchildren.length !== n.children.length) out.push({ tag: n.tag, children: newchildren });
-            else out.push(n);
+            var changed = newchildren.length !== n.children.length;
+            if (!changed) {
+                var j = 0;
+                function cmp() {
+                    if (changed || j >= newchildren.length) return;
+                    if (newchildren[j] !== n.children[j]) { changed = true; return; }
+                    j = j + 1;
+                    cmp();
+                }
+                cmp();
+            }
+            if (changed) {
+                out.push({ tag: n.tag, children: newchildren });
+            } else {
+                out.push(n);
+            }
         } else {
             out.push(n);
         }
@@ -599,13 +621,55 @@ function countnodes(ast) {
 }
 
 // ============================================================
+// runregionfixpoint — region-mode fixpoint (step 1)
+// @proposal=P-TWO-STEP-V2 (RUN 48, Frozen) — one region per iteration;
+//   remove the region's subtree; retry until NULL (score === 0), invalid
+//   extractor return, or empty AST. Bounded by countnodes(initial) + 1.
+// ============================================================
+function runregionfixpoint(theories, initial_ast, deps) {
+    if (!Array.isArray(initial_ast)) {
+        return { regions: [], iterations: 0, iteration_trace: [] };
+    }
+    var max_iterations = countnodes(initial_ast) + 1;
+    var accumulator = [];
+    var iteration_trace = [];
+    var current = initial_ast;
+    var iteration = 0;
+    function loop() {
+        if (iteration >= max_iterations) return;
+        var rr = runtheories(theories, current, deps);
+        if (!rr || rr.score === 0) {
+            iteration_trace.push({ iteration: iteration, theoryid: null, score: 0, region_count: 0 });
+            iteration = iteration + 1;
+            return;
+        }
+        if (!Array.isArray(rr.names) || rr.names.length === 0) {
+            iteration_trace.push({ iteration: iteration, theoryid: rr.theoryname, score: rr.score, region_count: 0 });
+            iteration = iteration + 1;
+            return;
+        }
+        var region = rr.names[0];
+        if (!region || typeof region !== 'object' ||
+            (typeof region.tag !== 'string' && typeof region.text !== 'string')) {
+            iteration_trace.push({ iteration: iteration, theoryid: rr.theoryname, score: rr.score, region_count: 0, invalid_region: true });
+            iteration = iteration + 1;
+            return;
+        }
+        accumulator.push(region);
+        iteration_trace.push({ iteration: iteration, theoryid: rr.theoryname, score: rr.score, region_count: 1 });
+        current = removenodefromast(current, region);
+        if (countnodes(current) === 0) { iteration = iteration + 1; return; }
+        iteration = iteration + 1;
+        loop();
+    }
+    loop();
+    return { regions: accumulator, iterations: iteration, iteration_trace: iteration_trace };
+}
+
+// ============================================================
 // runnamefixpoint — name-mode fixpoint per region (step 2)
 // @proposal=P-FIXPOINT-NAME-MODE (RUN 37)
-// @proposal=P-FIXPOINT-VALIDATE (RUN 44, Frozen) — string filter:
-//   rr.names is filtered to entries with typeof === 'string' before
-//   accumulation. Non-string entries (an extractor returning an AST
-//   or object where a string is expected) are dropped; if all entries
-//   are non-string, progress guard 1 terminates the loop cleanly.
+// @proposal=P-FIXPOINT-VALIDATE (RUN 44, Frozen) — string filter
 // ============================================================
 function runnamefixpoint(theories, leaf_value, deps) {
     var regions = [];
@@ -1096,23 +1160,28 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           e5.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'statekey-equals-leafinput', STATEKEY: statekey2, LEAFINPUT: props.leafinput };
           throw e5;
         }
-        if (props.mode === 'region') {
-          var e6r = new Error('[theory] region-mode-removed');
-          e6r.diagnostic = { KIND: 'region-mode-removed', MODE: props.mode };
-          throw e6r;
+        var mode;
+        if (props.mode === 'region') { mode = 'region'; }
+        else if (props.mode === 'name' || props.mode === undefined) { mode = 'name'; }
+        else {
+          var e6m = new Error('[theory] unknown-mode');
+          e6m.diagnostic = { KIND: 'unknown-mode', MODE: props.mode };
+          throw e6m;
         }
-        var required_keys = ['ingredientnames', 'ingredientcount'];
+        var required_keys = (mode === 'region')
+            ? ['ingredientregions', 'regions_count']
+            : ['ingredientnames', 'ingredientcount'];
         var required_ok = required_keys.every(function (k) { return outputnames.indexOf(k) !== -1; });
         if (!required_ok) {
             var e6 = new Error('[theory] invalid-runtheories-shape');
-            e6.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'missing-required-output', OUTPUTS: outputnames, REQUIRED: required_keys };
+            e6.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'missing-required-output', MODE: mode, OUTPUTS: outputnames, REQUIRED: required_keys };
             throw e6;
         }
         var allowed = required_keys.concat(['theoriesdebug']);
         var all_ok = outputnames.every(function (k) { return allowed.indexOf(k) !== -1; });
         if (!all_ok) {
             var e6b = new Error('[theory] invalid-runtheories-shape');
-            e6b.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', OUTPUTS: outputnames };
+            e6b.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', MODE: mode, OUTPUTS: outputnames };
             throw e6b;
         }
         var has_debug_output = outputnames.indexOf('theoriesdebug') !== -1;
@@ -1123,10 +1192,17 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         }
         var theories_accumulator = inputs[statekey2];
         var leaf_value = inputs[props.leafinput];
-        var fixpoint_result = runnamefixpoint(theories_accumulator, leaf_value, deps);
-        var out = { ingredientnames: fixpoint_result.names, ingredientcount: fixpoint_result.names.length };
+        var fixpoint_result;
+        var out;
+        if (mode === 'region') {
+            fixpoint_result = runregionfixpoint(theories_accumulator, leaf_value, deps);
+            out = { ingredientregions: fixpoint_result.regions, regions_count: fixpoint_result.regions.length };
+        } else {
+            fixpoint_result = runnamefixpoint(theories_accumulator, leaf_value, deps);
+            out = { ingredientnames: fixpoint_result.names, ingredientcount: fixpoint_result.names.length };
+        }
         if (props.debug === true) {
-            var report = buildtheoriesdebug_full(theories_accumulator, leaf_value, deps, 'name', fixpoint_result);
+            var report = buildtheoriesdebug_full(theories_accumulator, leaf_value, deps, mode, fixpoint_result);
             if (has_debug_output) {
                 out.theoriesdebug = report;
             }
@@ -1136,7 +1212,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
                     SENDINSTRUCTION('DEBUGACTOR', DNAMES.LOGLINE, {
                         LEVEL: 'info',
                         MESSAGE: 'theory-debug',
-                        DATA: { blockid: id, mode: 'name', report: report },
+                        DATA: { blockid: id, mode: mode, report: report },
                         TIMESTAMP: Date.now(),
                         PREFIX: 'theory'
                     }, null, 'THEORY-DEBUG');
