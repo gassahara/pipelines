@@ -429,12 +429,6 @@ function compileloaderblock(merged, id, sig) {
 // ============================================================
 // buildtheoriesdebug — theory-block diagnostic report
 // @proposal=P-THEORY-DEBUG-1 (RUN 31, Frozen)
-//
-// Mirrors js/factory/theory.js's M3 (score) and M4 (winner: strict >,
-// first-in-tie) semantics. Invoked only when the block's
-// command.properties.debug === true. Pure (no mutation of block,
-// leafast, deps). Total (never throws; per-witness and per-extractor
-// errors captured into the report).
 // ============================================================
 function buildtheoriesdebug(block, leafast, deps) {
     if (!block || !Array.isArray(block.theories)) {
@@ -565,7 +559,7 @@ function buildtheoriesdebug(block, leafast, deps) {
 
 // ============================================================
 // removenodefromast — pure AST node removal
-// @proposal=P-FIXPOINT-REGION-MODE / P-FIXPOINT-NAME-MODE
+// @proposal=P-FIXPOINT-NAME-MODE
 // ============================================================
 function removenodefromast(ast, node) {
     if (!Array.isArray(ast)) return ast;
@@ -605,51 +599,13 @@ function countnodes(ast) {
 }
 
 // ============================================================
-// runregionfixpoint — region-mode fixpoint (step 1)
-// @proposal=P-FIXPOINT-REGION-MODE (RUN 37) — extract one region per
-// iteration via winner's extractor; remove from AST; retry until
-// null-extract (canonical) or score 0 (defensive) or empty AST.
-// ============================================================
-function runregionfixpoint(theories, initial_ast, deps) {
-    if (!Array.isArray(initial_ast)) {
-        return { regions: [], iterations: 0, iteration_trace: [] };
-    }
-    var max_iterations = countnodes(initial_ast) + 1;
-    var accumulator = [];
-    var iteration_trace = [];
-    var current = initial_ast;
-    var iteration = 0;
-    function loop() {
-        if (iteration >= max_iterations) return;
-        var rr = runtheories(theories, current, deps);
-        if (!rr || rr.score === 0) {
-            iteration_trace.push({ iteration: iteration, theoryid: null, score: 0, region_count: 0 });
-            iteration = iteration + 1;
-            return;
-        }
-        if (!Array.isArray(rr.names) || rr.names.length === 0 || rr.names[0] === null || rr.names[0] === undefined) {
-            iteration_trace.push({ iteration: iteration, theoryid: rr.theoryname, score: rr.score, region_count: 0 });
-            iteration = iteration + 1;
-            return;
-        }
-        var region = rr.names[0];
-        accumulator.push(region);
-        iteration_trace.push({ iteration: iteration, theoryid: rr.theoryname, score: rr.score, region_count: 1 });
-        current = removenodefromast(current, region);
-        if (countnodes(current) === 0) { iteration = iteration + 1; return; }
-        iteration = iteration + 1;
-        loop();
-    }
-    loop();
-    return { regions: accumulator, iterations: iteration, iteration_trace: iteration_trace };
-}
-
-// ============================================================
 // runnamefixpoint — name-mode fixpoint per region (step 2)
-// @proposal=P-FIXPOINT-NAME-MODE (RUN 37) — for each region, iterate:
-// winner extracts names via THEORYCONSUMECHANNEL-informed consumption;
-// remove consumed source nodes; retry until score 0, empty names,
-// empty consumed, or empty AST. Global dedupe across regions.
+// @proposal=P-FIXPOINT-NAME-MODE (RUN 37)
+// @proposal=P-FIXPOINT-VALIDATE (RUN 44, Frozen) — string filter:
+//   rr.names is filtered to entries with typeof === 'string' before
+//   accumulation. Non-string entries (an extractor returning an AST
+//   or object where a string is expected) are dropped; if all entries
+//   are non-string, progress guard 1 terminates the loop cleanly.
 // ============================================================
 function runnamefixpoint(theories, leaf_value, deps) {
     var regions = [];
@@ -686,22 +642,28 @@ function runnamefixpoint(theories, leaf_value, deps) {
                 iteration = iteration + 1;
                 return;
             }
+            var valid_names = rr.names.filter(function (n) { return typeof n === 'string'; });
+            if (valid_names.length === 0) {
+                iteration_trace.push({ region: region_idx, iteration: iteration, theoryid: rr.theoryname, score: rr.score, names_count: 0, consumed_count: 0 });
+                iteration = iteration + 1;
+                return;
+            }
             var consumed = null;
             if (typeof THEORYCONSUMECHANNEL !== 'undefined' && THEORYCONSUMECHANNEL && Array.isArray(THEORYCONSUMECHANNEL.consumed)) {
                 consumed = THEORYCONSUMECHANNEL.consumed;
             }
             if (!consumed || consumed.length === 0) {
-                iteration_trace.push({ region: region_idx, iteration: iteration, theoryid: rr.theoryname, score: rr.score, names_count: rr.names.length, consumed_count: 0 });
+                iteration_trace.push({ region: region_idx, iteration: iteration, theoryid: rr.theoryname, score: rr.score, names_count: valid_names.length, consumed_count: 0 });
                 iteration = iteration + 1;
                 return;
             }
-            rr.names.forEach(function (name) {
-                if (typeof name === 'string' && all_seen[name] !== true) {
+            valid_names.forEach(function (name) {
+                if (all_seen[name] !== true) {
                     all_seen[name] = true;
                     all_names.push(name);
                 }
             });
-            iteration_trace.push({ region: region_idx, iteration: iteration, theoryid: rr.theoryname, score: rr.score, names_count: rr.names.length, consumed_count: consumed.length });
+            iteration_trace.push({ region: region_idx, iteration: iteration, theoryid: rr.theoryname, score: rr.score, names_count: valid_names.length, consumed_count: consumed.length });
             var next_current = current;
             consumed.forEach(function (node) { next_current = removenodefromast(next_current, node); });
             current = next_current;
@@ -1134,21 +1096,23 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
           e5.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'statekey-equals-leafinput', STATEKEY: statekey2, LEAFINPUT: props.leafinput };
           throw e5;
         }
-        var mode = (props.mode === 'region') ? 'region' : 'name';
-        var required_keys = (mode === 'region')
-            ? ['ingredientregions', 'regions_count']
-            : ['ingredientnames', 'ingredientcount'];
+        if (props.mode === 'region') {
+          var e6r = new Error('[theory] region-mode-removed');
+          e6r.diagnostic = { KIND: 'region-mode-removed', MODE: props.mode };
+          throw e6r;
+        }
+        var required_keys = ['ingredientnames', 'ingredientcount'];
         var required_ok = required_keys.every(function (k) { return outputnames.indexOf(k) !== -1; });
         if (!required_ok) {
             var e6 = new Error('[theory] invalid-runtheories-shape');
-            e6.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'missing-required-output', MODE: mode, OUTPUTS: outputnames, REQUIRED: required_keys };
+            e6.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'missing-required-output', OUTPUTS: outputnames, REQUIRED: required_keys };
             throw e6;
         }
         var allowed = required_keys.concat(['theoriesdebug']);
         var all_ok = outputnames.every(function (k) { return allowed.indexOf(k) !== -1; });
         if (!all_ok) {
             var e6b = new Error('[theory] invalid-runtheories-shape');
-            e6b.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', MODE: mode, OUTPUTS: outputnames };
+            e6b.diagnostic = { KIND: 'invalid-runtheories-shape', REASON: 'unexpected-output-keys', OUTPUTS: outputnames };
             throw e6b;
         }
         var has_debug_output = outputnames.indexOf('theoriesdebug') !== -1;
@@ -1159,17 +1123,10 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         }
         var theories_accumulator = inputs[statekey2];
         var leaf_value = inputs[props.leafinput];
-        var fixpoint_result;
-        var out;
-        if (mode === 'region') {
-            fixpoint_result = runregionfixpoint(theories_accumulator, leaf_value, deps);
-            out = { ingredientregions: fixpoint_result.regions, regions_count: fixpoint_result.regions.length };
-        } else {
-            fixpoint_result = runnamefixpoint(theories_accumulator, leaf_value, deps);
-            out = { ingredientnames: fixpoint_result.names, ingredientcount: fixpoint_result.names.length };
-        }
+        var fixpoint_result = runnamefixpoint(theories_accumulator, leaf_value, deps);
+        var out = { ingredientnames: fixpoint_result.names, ingredientcount: fixpoint_result.names.length };
         if (props.debug === true) {
-            var report = buildtheoriesdebug_full(theories_accumulator, leaf_value, deps, mode, fixpoint_result);
+            var report = buildtheoriesdebug_full(theories_accumulator, leaf_value, deps, 'name', fixpoint_result);
             if (has_debug_output) {
                 out.theoriesdebug = report;
             }
@@ -1179,7 +1136,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
                     SENDINSTRUCTION('DEBUGACTOR', DNAMES.LOGLINE, {
                         LEVEL: 'info',
                         MESSAGE: 'theory-debug',
-                        DATA: { blockid: id, mode: mode, report: report },
+                        DATA: { blockid: id, mode: 'name', report: report },
                         TIMESTAMP: Date.now(),
                         PREFIX: 'theory'
                     }, null, 'THEORY-DEBUG');
