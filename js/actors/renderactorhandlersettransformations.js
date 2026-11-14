@@ -5,12 +5,14 @@
 // vocabulary family, different application (rules select, then
 // transducers transform). No shared code with REWRITESTYLEATTRS (Instr-19).
 //
-// Pivot (RUN 47–49) — the message carries TRANSDUCERSET: stringtype(),
-// a name resolved via GETTRANSDUCERSET (registry added at Cycle 7). The
-// handler applies SET.transducers in declared order; an unknown name is
-// a hard error (fail-fast per U-19). Three named sets are registered by
-// yjblocks-transducers.js (Cycle 6R): 'overview', 'recipe', 'ingredients'.
-// No 'default' set exists.
+// @proposal=P-AUDIT-F-001 (RUN 23, Frozen) — the message carries
+// TRANSDUCERS: arraytype(), an ordered array of function values
+// delivered by the frontend's block declaration. The former
+// TRANSDUCERSET: stringtype() name-lookup path and its
+// GETTRANSDUCERSET resolution are removed; the handler reads
+// ARGS.TRANSDUCERS directly and applies the array via the
+// handler-local ytapplytransducers (WITHOUT the 'j'; distinct from the
+// removed frontend helper yjtapplytransducerset).
 //
 // P-A-8 (Cycle A3) — the `{block: N}` locator resolves to the N-th
 // Block-header. All existing locators ({header: N}, {section: N},
@@ -22,16 +24,13 @@
 // filters whitespace-only text nodes from its depth-1 output, and
 // ytnormalizesources does the same after unwrapping depth-1 <div>s.
 // With the parser producing a clean depth-1 array, node-count Length
-// (F-A-1) classifies sections correctly: a marker-only section has
-// node-length 1 (Header), a marker-plus-content section has node-length
-// ≥ 2 (Content). F-A-1R (element-count Length) and its A3R
-// materialisation are withdrawn as redundant.
+// (F-A-1) classifies sections correctly.
 //
 // Pipeline:
-//   1. Resolve TRANSDUCERSET via GETTRANSDUCERSET
+//   1. Read ARGS.TRANSDUCERS (array of function values)
 //   2. Normalise SOURCES into a flat depth-1 node array
 //   3. Apply RULES to select the working scope (union)
-//   4. Apply SET.transducers in declared order (each: tree → tree)
+//   4. Apply ARGS.TRANSDUCERS in declared order (each: tree → tree)
 //   5. Serialise to HTML
 //   6. Inject via MODE ('replace' | 'append')
 
@@ -39,7 +38,7 @@ var SETTRANSFORMATIONSTYPE = messagetype('SETTRANSFORMATIONS', {
   ID: stringtype(),
   SOURCES: arraytype(),
   RULES: arraytype(),
-  TRANSDUCERSET: stringtype(),
+  TRANSDUCERS: arraytype(),
   MODE: stringtype(),
   STYLE: optionaltype(objecttype()),
   PALETTE: optionaltype(objecttype()),
@@ -432,16 +431,11 @@ function RENDERHANDLER_SETTRANSFORMATIONS(ENV, ARGS) {
   if (!Array.isArray(ARGS.RULES)) {
     throw new Error('[settransformations] RULES must be an array');
   }
-  if (typeof ARGS.TRANSDUCERSET !== 'string' || ARGS.TRANSDUCERSET.length === 0) {
-    throw new Error('[settransformations] TRANSDUCERSET must be a non-empty string');
+  if (!Array.isArray(ARGS.TRANSDUCERS)) {
+    throw new Error('[settransformations] TRANSDUCERS must be an array');
   }
   if (ARGS.MODE !== 'replace' && ARGS.MODE !== 'append') {
     throw new Error('[settransformations] MODE must be "replace" or "append"');
-  }
-
-  var SET = GETTRANSDUCERSET(ARGS.TRANSDUCERSET);
-  if (!SET || !Array.isArray(SET.transducers)) {
-    throw new Error('[settransformations] unknown transducer set: ' + ARGS.TRANSDUCERSET);
   }
 
   var TARGET = document.getElementById(ARGS.ID);
@@ -463,7 +457,7 @@ function RENDERHANDLER_SETTRANSFORMATIONS(ENV, ARGS) {
     config: (typeof CLASSIFIERCONFIG !== 'undefined' && CLASSIFIERCONFIG !== null) ? CLASSIFIERCONFIG : {}
   };
 
-  var transformedroot = ytapplytransducers(scope, SET.transducers, context);
+  var transformedroot = ytapplytransducers(scope, ARGS.TRANSDUCERS, context);
 
   var html;
   if (transformedroot && transformedroot.tag === YJROOTTAG) {

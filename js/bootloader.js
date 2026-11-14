@@ -70,9 +70,7 @@ var pipelinesmanifest = [
     'RESPONSETYPESREF', 'GETRESPONSETYPES',
     'REGISTERRESPONSETYPE', 'UNREGISTERRESPONSETYPE',
     'CCCREGISTRYREF', 'GETCCCREGISTRY',
-    'REGISTERCCCHANDLER', 'UNREGISTERCCCHANDLER', 'CCCNOTIFY',
-    'TRANSDUCERSETREGISTRYREF', 'REGISTERTRANSDUCERSET', 'GETTRANSDUCERSET',
-    'UNREGISTERTRANSDUCERSET'
+    'REGISTERCCCHANDLER', 'UNREGISTERCCCHANDLER', 'CCCNOTIFY'
   ] },
   { src: 'factory/layoutdirectives.js', provides: ['createlayoutdirectives'] },
   { src: 'fundamental/domref.js', provides: ['getrawelement', 'createdomref', 'removeref', 'isvaliddomref'] },

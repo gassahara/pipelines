@@ -960,7 +960,7 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
         CLASSNAME: resolvedclassname,
         RULES: resolvedrules,
         SOURCES: resolvedsources,
-        TRANSDUCERSET: props.transducerset,
+        TRANSDUCERS: props.transducers,
         MODE: props.mode,
         SAFEPROPS: resolvedsafeprops,
         THEMESTYLES: resolvedthemestyles,
