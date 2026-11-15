@@ -248,6 +248,25 @@ function DEBUGBEHAVIORSHOW(ENV, ARGS) {
     (ARGS.ERROR && ARGS.ERROR.DIAGNOSTIC && ARGS.ERROR.DIAGNOSTIC.DEBUGTRACE) || []
   );
 
+  if (ARGS.ERROR && ARGS.ERROR.diagnostic && Array.isArray(ARGS.ERROR.diagnostic.table)) {
+    var ASSERTTABLEHTML = '<div class="assertion-table" style="margin-top:20px;font-family:monospace;font-size:13px;">'
+      + '<h4 style="color:#ff5555;margin:0 0 8px;">Assertion table</h4>'
+      + '<table style="width:100%;border-collapse:collapse;">'
+      + '<thead><tr><th style="text-align:left;padding:4px;border-bottom:1px solid #444;">desc</th>'
+      + '<th style="text-align:left;padding:4px;border-bottom:1px solid #444;">ok</th>'
+      + '<th style="text-align:left;padding:4px;border-bottom:1px solid #444;">values</th></tr></thead>'
+      + '<tbody>'
+      + ARGS.ERROR.diagnostic.table.map(function(ROW) {
+          return '<tr>'
+            + '<td style="padding:4px;border-bottom:1px solid #222;">' + (ROW.desc || '') + '</td>'
+            + '<td style="padding:4px;border-bottom:1px solid #222;color:' + (ROW.ok ? '#33cc33' : '#ff5555') + ';">' + (ROW.ok ? 'OK' : 'FAIL') + '</td>'
+            + '<td style="padding:4px;border-bottom:1px solid #222;">' + JSON.stringify(ROW.values || {}) + '</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table></div>';
+    OVERLAY.insertAdjacentHTML('beforeend', ASSERTTABLEHTML);
+  }
+
   var LOGVIEWERHTML = BUILDLOGVIEWERHTML(DEBUGSLICE.LOGS || [], DEBUGSLICE.LOGFILTER || 'all', DEBUGSLICE.LOGVIEWERAUTO !== false);
   var LOGPANEL = document.createElement('div');
   LOGPANEL.id = 'debuglogpanel';

@@ -23,7 +23,8 @@ function createblockcompilerconstants() {
       wait: 'wait', executionquery: 'executionquery',
       loader: 'loader',
       captureerror: 'captureerror',
-      theory: 'theory'
+      theory: 'theory',
+      assertion: 'assertion'
     },
     inheritedkeys: ['authsessionaccesstoken', 'currenttheme', 'themetokens', 'cssprefix', 'agents']
   };

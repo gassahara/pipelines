@@ -394,6 +394,10 @@ function createpersistentelementwrapper(compiledelement, elementdef, stagepath, 
           if (failurediagnostic.RETRYTOKEN !== undefined) failureError.diagnostic.RETRYTOKEN = failurediagnostic.RETRYTOKEN;
           if (failurediagnostic.CONTINUATION !== undefined) failureError.diagnostic.CONTINUATION = failurediagnostic.CONTINUATION;
           if (failurediagnostic.KIND !== undefined) failureError.diagnostic.KIND = failurediagnostic.KIND;
+          if (failurediagnostic.CONTEXT !== undefined) failureError.diagnostic.CONTEXT = failurediagnostic.CONTEXT;
+          if (failurediagnostic.CONTRACT_FAIL !== undefined) failureError.diagnostic.CONTRACT_FAIL = failurediagnostic.CONTRACT_FAIL;
+          if (failurediagnostic.values !== undefined) failureError.diagnostic.values = failurediagnostic.values;
+          if (failurediagnostic.table !== undefined) failureError.diagnostic.table = failurediagnostic.table;
           throw failureError;
         }
         var outputkeys = Object.keys(blockoutputs || {});

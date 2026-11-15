@@ -5,6 +5,7 @@ var pipelinesmanifest = [
   { src: 'factory/tuning/limits.js', provides: [
     'fnmaxsourcechars'
   ] },
+  { src: 'factory/contract.js', provides: ['makecontract'] },
   { src: 'factory/tokenscanner.js', provides: [
     'isidentifierstart', 'isidentifierpart'
   ] },

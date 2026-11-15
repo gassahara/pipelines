@@ -104,6 +104,13 @@ function createerrorcontext(id, stagetype) {
     err.diagnostic = err.diagnostic || {};
     err.diagnostic.BLOCKID = id;
     err.diagnostic.STAGETYPE = stagetype;
+    if (err.contractfail && err.contractfail.element === 'CONTRACT_FAIL') {
+      err.diagnostic.KIND = 'contract-fail';
+      err.diagnostic.CONTEXT = err.contractfail.first ? err.contractfail.first.desc : null;
+      err.diagnostic.CONTRACT_FAIL = err.diagnostic.CONTEXT;
+      err.diagnostic.values = err.contractfail.first ? err.contractfail.first.values : null;
+      err.diagnostic.table = err.contractfail.table;
+    }
     throw err;
   };
 }
@@ -1232,6 +1239,47 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
       throw e7;
     };
     return wrapcompiledfn(innerfn, 'theory', id);
+  };
+
+  compilers[blocktypes.assertion] = function(merged, id, sig, inheritedproperties) {
+    if (inheritedproperties === undefined) inheritedproperties = {};
+    logdebug(blockcompilerstate, '[BLOCKCOMPILER]', 'compiling ASSERTION block:', id);
+    var innerfn = function(env) {
+      var properties = buildblockproperties(merged, inheritedproperties, sig, env);
+      var contract = merged.assertions;
+      if (!contract || contract.element !== 'CONTRACT' || !Array.isArray(contract.assertions)) {
+        throw new Error('[ASSERTION] block "' + id + '" must declare assertions from makecontract(...)');
+      }
+      var table = contract.assertions.map(function(entry) {
+        var value = compilepathaccessor(entry.input)(env);
+        var values = {};
+        entry.fields.forEach(function(f) {
+          if (f === 'receivedtype') values.receivedtype = typeof value;
+          else if (f === 'isnull') values.isnull = (value === null);
+          else if (f === 'isundef') values.isundef = (value === undefined);
+          else if (f === 'isarray') values.isarray = Array.isArray(value);
+          else if (f === 'length') values.length = (value && typeof value.length === 'number') ? value.length : null;
+          else if (f === 'value') values.value = value;
+          else if (f === 'path') values.path = entry.input;
+        });
+        try {
+          var result = entry.test(value);
+          return { desc: entry.desc, ok: result === true, fields: entry.fields, values: values };
+        } catch (e) {
+          return { desc: entry.desc, ok: false, fields: entry.fields, values: values, threw: true, error: e && e.message ? e.message : String(e) };
+        }
+      });
+      var assert_ok = table.every(function(e) { return e.ok === true; });
+      if (merged.mode !== 'data' && !assert_ok) {
+        var first = null;
+        table.some(function(e) { if (!e.ok) { first = e; return true; } return false; });
+        var failureerror = new Error('[CONTRACT_FAIL:' + (first ? first.desc : 'unknown') + ']');
+        failureerror.contractfail = { element: 'CONTRACT_FAIL', table: table, first: first };
+        throw failureerror;
+      }
+      return { assert_ok: assert_ok, assert_table: table };
+    };
+    return wrapcompiledfn(innerfn, 'assertion', id);
   };
 
   return compilers;
