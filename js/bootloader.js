@@ -326,7 +326,7 @@ function runpipelineboot(loadprogram, report, manifest) {
   loadnext();
 }
 
-var pipelinesbase = 'https://gassahara.github.io/pipelines/js/';
+var pipelinesbase = './js/';
 function bootpipeline(ondone, options) {
   var DEFERREDMAILBOXCONFIG = (options && options.mailboxconfig) || null;
   function loadscript(entry, done) {
