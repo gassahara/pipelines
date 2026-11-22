@@ -809,15 +809,41 @@ function createblockcompilers(blocktypes, inheritedkeys, options) {
 
         var SENTINELATTR = 'data-writer-proof-id';
         var sentinelMarkup = '<span ' + SENTINELATTR + '="' + id +
-          '" style="display:none" aria-hidden="true"></span>' + result.html;
+          '" style="display:none" aria-hidden="true"></span>';
+
+        var defaultTransformers = (typeof getwritertransformerset === 'function')
+          ? getwritertransformerset()
+          : null;
+        var baseTransformers = defaultTransformers;
+        if (options && options.writertransformers !== undefined && options.writertransformers !== null) {
+          if (baseTransformers && typeof mergewritertransformers === 'function') {
+            baseTransformers = mergewritertransformers(baseTransformers, options.writertransformers);
+          } else if (typeof options.writertransformers === 'object') {
+            baseTransformers = options.writertransformers;
+          }
+        }
+        var activeTransformers = baseTransformers;
+        if (merged && merged.transformers !== undefined && merged.transformers !== null) {
+          if (activeTransformers && typeof mergewritertransformers === 'function') {
+            activeTransformers = mergewritertransformers(activeTransformers, merged.transformers);
+          } else if (typeof merged.transformers === 'object') {
+            activeTransformers = merged.transformers;
+          }
+        }
 
         var RNAMES = RENDERACTORNAMES();
 
-        return sendandawait('RENDERACTOR', RNAMES.HTML, {
+        var htmlPayload = {
           ID: target,
-          MARKUP: sentinelMarkup,
-          APPEND: !merged.replace
-        }, mailboxresolve('mailboxwaittimeout'), RNAMES.DOMRESULT)
+          MARKUP: String(result.html),
+          APPEND: !merged.replace,
+          SENTINEL: sentinelMarkup
+        };
+        if (activeTransformers) {
+          htmlPayload.TRANSFORMERS = activeTransformers;
+        }
+
+        return sendandawait('RENDERACTOR', RNAMES.HTML, htmlPayload, mailboxresolve('mailboxwaittimeout'), RNAMES.DOMRESULT)
           .then(function(response) {
             if (response && typeof response === 'object' && response.ERROR !== undefined) {
               var htmlErr = new Error('[WRITER] HTML action failed for "' + target + '": ' +

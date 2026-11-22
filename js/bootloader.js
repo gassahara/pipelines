@@ -89,6 +89,15 @@ var pipelinesmanifest = [
     'resolvepath', 'getprop', 'getproperty', 'getfunction', 'setproperty',
     'createnodefromtemplate', 'deepmerge'
   ] },
+  { src: 'factory/writertransformers.js', provides: [
+    'WRITERTRANSFORMERSETREF', 'makewritertransformerset',
+    'replacewritertransformer', 'wrapwritertransformer',
+    'addwritertransformer', 'removewritertransformer',
+    'mergewritertransformers', 'getwritertransformerset',
+    'setwritertransformerset', 'updatewritertransformerset',
+    'resetwritertransformerset', 'applywritertransformers',
+    'wtparsehtml', 'wtserializenode'
+  ] },
   { src: 'actors/dbactor.js', provides: [
     'DBBEHAVIOR', 'DBSTORE', 'DBRESTORE', 'DBLIST', 'DBDELETE',
     'STARTDBACTOR', 'SUBMIT', 'EXPECT', 'GETACTIONRESULT',
@@ -326,7 +335,7 @@ function runpipelineboot(loadprogram, report, manifest) {
   loadnext();
 }
 
-var pipelinesbase = './js/';
+var pipelinesbase = "FRAMEWORK/js/"; //https://github.com/gassahara/pipelines/js/
 function bootpipeline(ondone, options) {
   var DEFERREDMAILBOXCONFIG = (options && options.mailboxconfig) || null;
   function loadscript(entry, done) {

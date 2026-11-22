@@ -10,7 +10,9 @@ var CLEARTYPE = messagetype('CLEAR', {
 var HTMLTYPE = messagetype('HTML', {
   ID: stringtype(),
   MARKUP: stringtype(),
-  APPEND: booleantype()
+  APPEND: booleantype(),
+  TRANSFORMERS: optionaltype(objecttype()),
+  SENTINEL: optionaltype(stringtype())
 });
 var REMOVETYPE = messagetype('REMOVE', {
   ID: stringtype()
@@ -85,12 +87,46 @@ function RENDERHANDLER_REMOVE(ENV, ARGS) {
   return true;
 }
 
+function DESCRIBEDOMELEMENT(EL) {
+  if (!EL || typeof EL.tagName !== 'string') return { tag: '', id: null, classes: [] };
+  var cls = (typeof EL.className === 'string' && EL.className.length > 0)
+    ? EL.className.split(' ').filter(function (s) { return s.length > 0; })
+    : [];
+  return {
+    tag: EL.tagName.toLowerCase(),
+    id: EL.id || null,
+    classes: cls
+  };
+}
+
+function BUILDWRITERDOMCONTEXT(EL, APPEND) {
+  function climbancestors(curr, acc) {
+    if (!curr || curr.nodeType !== 1) return acc;
+    return climbancestors(curr.parentElement, acc.concat([DESCRIBEDOMELEMENT(curr)]));
+  }
+  var existing = Array.prototype.slice.call(EL && EL.children ? EL.children : []).map(DESCRIBEDOMELEMENT);
+  return {
+    target: DESCRIBEDOMELEMENT(EL),
+    ancestors: EL ? climbancestors(EL.parentElement, []) : [],
+    append: !!APPEND,
+    existingChildren: existing
+  };
+}
+
 function RENDERHANDLER_HTML(ENV, ARGS) {
   return WAITFORDOMREADY()
     .then(function() {
       return WITHELEMENTRETRY(ARGS.ID, null, function(EL) {
-        if (ARGS.APPEND) EL.insertAdjacentHTML('beforeend', ARGS.MARKUP);
-        else EL.innerHTML = ARGS.MARKUP;
+        var DOMCONTEXT = BUILDWRITERDOMCONTEXT(EL, ARGS.APPEND);
+        var ACTIVESET = ARGS.TRANSFORMERS ||
+          (typeof getwritertransformerset === 'function' ? getwritertransformerset() : null);
+        var TRANSFORMED = (ACTIVESET && typeof applywritertransformers === 'function')
+          ? applywritertransformers(ARGS.MARKUP, DOMCONTEXT, ACTIVESET)
+          : ARGS.MARKUP;
+        var SENTINEL = (typeof ARGS.SENTINEL === 'string') ? ARGS.SENTINEL : '';
+        var FINALMARKUP = SENTINEL + TRANSFORMED;
+        if (ARGS.APPEND) EL.insertAdjacentHTML('beforeend', FINALMARKUP);
+        else EL.innerHTML = FINALMARKUP;
       });
     })
     .then(function() { return { RESPONSE: true }; })
