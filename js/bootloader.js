@@ -18,6 +18,9 @@ var pipelinesmanifest = [
     'analyzefnblock', 'createblockanalyzer', 'createblockanalyzers',
     'compilefnblock'
   ] },
+  { src: 'factory/domqueryconstants.js', provides: [
+    'domquerygetters', 'domquerysetters', 'domquerymessages'
+  ] },
   { src: 'factory/theory.js', provides: [
     'maketheoryfunction', 'makewitness', 'maketheory',
     'maketheoryblock', 'addtheoryfunction', 'addtheory', 'runtheories'
